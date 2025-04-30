@@ -39,7 +39,7 @@ RUN echo "export GIT_BRANCH=${GIT_BRANCH}" >> /env_vars && \
 WORKDIR "${APP_HOME}"
 
 # Clone the repository
-RUN git clone "https://github.com/${GIT_OWNER}/horde-worker-reGen.git" . && \
+RUN git clone "https://github.com/${GIT_OWNER}/HordeWorkerReGen.git" . && \
     git switch "${GIT_BRANCH}"
 
 # Create virtual environment
