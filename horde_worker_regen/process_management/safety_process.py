@@ -189,23 +189,28 @@ class HordeSafetyProcess(HordeProcess):
 
         # Set base output directory
         base_output_directory = "/output"
-
-        # Pre-calculate the date-based output directory
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        output_directory = os.path.join(base_output_directory, current_date)
-
+        
+        # Pre-calculate the date-based output directory parts
+        now = datetime.now()
+        year = now.strftime("%Y")
+        year_month = now.strftime("%Y-%m")
+        year_month_day = now.strftime("%Y-%m-%d")
+        
+        # Construct the full output directory path: /output/YYYY/YYYY-MM/YYYY-MM-DD/
+        output_directory = os.path.join(base_output_directory, year, year_month, year_month_day)
+        
         # Ensure the directory is created and set full permissions (read, write, execute for all)
         os.makedirs(output_directory, exist_ok=True)
         os.chmod(output_directory, 0o777)
-
+        
         for image_base64 in message.images_base64:
             # Decode the image from base64
             image_bytes = BytesIO(base64.b64decode(image_base64))
-
+        
             # Generate a timestamp with milliseconds only once per image
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")[:-3]
+            timestamp = now.strftime("%Y-%m-%d_%H-%M-%S.%f")[:-3]
             output_path = os.path.join(output_directory, f"{timestamp}.png")
-
+        
             # Open the image using PIL
             image_as_pil_0 = Image.open(image_bytes)
 
