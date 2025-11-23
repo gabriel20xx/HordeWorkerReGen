@@ -199,9 +199,17 @@ class HordeSafetyProcess(HordeProcess):
         # Construct the full output directory path: /output/YYYY/YYYY-MM/YYYY-MM-DD/
         output_directory = os.path.join(base_output_directory, year, year_month, year_month_day)
         
-        # Ensure the directory is created and set full permissions (read, write, execute for all)
-        os.makedirs(output_directory, exist_ok=True)
-        os.chmod(output_directory, 0o777)
+        # Build directories
+        year_dir = os.path.join(base_output_directory, year)
+        year_month_dir = os.path.join(year_dir, year_month)
+        year_month_day_dir = os.path.join(year_month_dir, year_month_day)
+        
+        # Create all directories
+        os.makedirs(year_month_day_dir, exist_ok=True)
+        
+        # Apply permissions only to the three relevant ones
+        for d in [year_dir, year_month_dir, year_month_day_dir]:
+            os.chmod(d, 0o777)
         
         for image_base64 in message.images_base64:
             # Decode the image from base64
