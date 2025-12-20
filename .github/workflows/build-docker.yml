@@ -41,6 +41,6 @@ jobs:
           context: ./HordeWorkerReGen
           push: ${{ github.event_name == 'push' }}
           tags: |
-            gabriel20xx/hordeworkerregen:latest
-            gabriel20xx/hordeworkerregen:${{ github.sha }}
+            gabriel20xx/stable-horde-worker:regen
+            gabriel20xx/stable-horde-worker:${{ github.sha }}
           platforms: linux/amd64,linux/arm64
