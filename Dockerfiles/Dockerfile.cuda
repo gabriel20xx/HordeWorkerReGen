@@ -16,6 +16,8 @@ RUN apt-get update && \
     python${PYTHON_VERSION} \
     python3-pip \
     python${PYTHON_VERSION}-venv \
+    python${PYTHON_VERSION}-dev \
+    python${PYTHON_VERSION}-distutils \
     libgl1 \
     git && \
     apt-get clean && \
