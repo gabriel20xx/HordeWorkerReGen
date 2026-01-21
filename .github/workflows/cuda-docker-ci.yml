@@ -43,17 +43,24 @@ jobs:
       contents: read
 
     steps:
-      - name: Free up disk space
+      - name: Maximize build disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          # Remove all pre-installed tools except necessary ones
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      
+      - name: Show disk space after cleanup
         run: |
-          echo "Before cleanup:"
+          echo "Disk space after cleanup:"
           df -h
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
-          echo "After cleanup:"
-          df -h
+          echo "Available space on root:"
+          df -h / | tail -n 1
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,6 +70,10 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -80,3 +91,8 @@ jobs:
             gabriel20xx/hordeworkerregencuda:latest
             gabriel20xx/hordeworkerregencuda:${{ github.sha }}
           platforms: linux/amd64,linux/arm64
+          # Skip caching to save disk space during multi-platform builds
+          # Multi-platform builds with CUDA/PyTorch are very large and caching can consume significant disk space
+          no-cache: false
+          # Use zstd compression to reduce final image size
+          outputs: type=image,compression=zstd,compression-level=3
