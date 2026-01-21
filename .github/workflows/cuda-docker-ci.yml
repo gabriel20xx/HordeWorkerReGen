@@ -65,6 +65,6 @@ jobs:
           file: Dockerfiles/Dockerfile.cuda
           push: ${{ github.event_name == 'push' }}
           tags: |
-            gabriel20xx/horde-worker-regen-cuda:latest
-            gabriel20xx/horde-worker-regen-cuda:${{ github.sha }}
+            gabriel20xx/hordeworkerregencuda:latest
+            gabriel20xx/hordeworkerregencuda:${{ github.sha }}
           platforms: linux/amd64,linux/arm64
