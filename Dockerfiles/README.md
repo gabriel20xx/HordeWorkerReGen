@@ -217,7 +217,15 @@ If you have a local install of the worker, you can use the script `convert_confi
 1. If encountering pip cache-related errors, try building without cache: `--build-arg USE_PIP_CACHE=false`
 2. Ensure you have the necessary GPU drivers installed on your host system.
 3. For ROCm, make sure your system supports the specified ROCm version.
-4. If you see "Could not resolve host: github.com" errors when starting the container, this means the container cannot access GitHub to update the repository. The container will continue running with the existing code. To disable update attempts entirely, set the `AUTO_UPDATE=false` environment variable when running the container.
+4. If you see "Could not resolve host: github.com" errors when starting the container, this means the container cannot access GitHub to update the repository. The container will continue running with the existing code. To disable update attempts entirely, set the `AUTO_UPDATE=false` environment variable when running the container:
+   ```bash
+   docker run -e AUTO_UPDATE=false -it --gpus all horde-worker-regen:cuda
+   ```
+   Or in docker compose, add it to the environment section:
+   ```yaml
+   environment:
+     - AUTO_UPDATE=false
+   ```
 
 ## Updating
 
