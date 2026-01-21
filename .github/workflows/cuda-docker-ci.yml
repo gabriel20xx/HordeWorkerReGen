@@ -91,10 +91,8 @@ jobs:
             gabriel20xx/hordeworkerregencuda:latest
             gabriel20xx/hordeworkerregencuda:${{ github.sha }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=inline
-          cache-to: type=inline
-          # Skip caching builder stage to save disk space during multi-platform builds
-          # The builder stage contains large dependencies that would consume significant space if cached
-          no-cache-filter: builder
+          # Skip caching to save disk space during multi-platform builds
+          # Multi-platform builds with CUDA/PyTorch are very large and caching can consume significant disk space
+          no-cache: false
           # Use zstd compression to reduce final image size
-          outputs: type=image,compression=zstd,compression-level=3,force-compression=true
+          outputs: type=image,compression=zstd,compression-level=3
