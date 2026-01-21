@@ -10,8 +10,21 @@ else
 fi
 
 cd ${APP_HOME}
-git fetch
-git reset --hard origin/${GIT_BRANCH:-main}
+
+# Optionally update the repository if AUTO_UPDATE is set and network is available
+# Default behavior is to update to ensure latest code is used
+if [ "${AUTO_UPDATE:-true}" = "true" ]; then
+    echo "Attempting to update repository from GitHub..."
+    if git fetch 2>/dev/null; then
+        git reset --hard origin/${GIT_BRANCH:-main}
+        echo "Repository updated successfully."
+    else
+        echo "Warning: Unable to fetch updates from GitHub (network may be unavailable)."
+        echo "Continuing with existing code in the container."
+    fi
+else
+    echo "AUTO_UPDATE is disabled, skipping repository update."
+fi
 
 . venv/bin/activate
 
