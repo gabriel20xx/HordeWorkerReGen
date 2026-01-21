@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Maximize build disk space
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@v1.3.1
         with:
           # Remove all pre-installed tools except necessary ones
           tool-cache: true
@@ -93,6 +93,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           cache-from: type=inline
           cache-to: type=inline
-          # Optimize build to reduce disk usage
+          # Skip caching builder stage to save disk space during multi-platform builds
+          # The builder stage contains large dependencies that would consume significant space if cached
           no-cache-filter: builder
+          # Use zstd compression to reduce final image size
           outputs: type=image,compression=zstd,compression-level=3,force-compression=true
