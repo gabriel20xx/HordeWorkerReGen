@@ -43,36 +43,21 @@ jobs:
       contents: read
 
     steps:
-      - name: Free up disk space
+      - name: Maximize build disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # Remove all pre-installed tools except necessary ones
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      
+      - name: Show disk space after cleanup
         run: |
-          echo "Before cleanup:"
-          df -h
-          echo "Disk usage by directory:"
-          sudo du -h -d 1 /usr/share | sort -h -r | head -n 20
-          
-          # Remove large pre-installed software
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/.ghcup
-          
-          # Remove large package caches
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
-          
-          # Remove Homebrew
-          sudo rm -rf /home/linuxbrew
-          
-          # Clean Docker
-          sudo docker system prune --all --volumes --force
-          
-          # Remove swap file to free additional space (if present)
-          sudo swapoff -a || true
-          sudo rm -f /mnt/swapfile || true
-          
-          echo "After cleanup:"
+          echo "Disk space after cleanup:"
           df -h
           echo "Available space on root:"
           df -h / | tail -n 1
