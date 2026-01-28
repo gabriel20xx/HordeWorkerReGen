@@ -2908,6 +2908,7 @@ class HordeWorkerProcessManager:
             logger.warning(f"Failed to dump generation metadata: {type(e).__name__} {e}")
         generation_metadata["model"] = completed_job_info.sdk_api_job_info.model
 
+        # ! IMPORTANT: Start own code
         lora_descriptions: list[str] = []
         try:
             loras = completed_job_info.sdk_api_job_info.payload.loras or []
@@ -2948,6 +2949,7 @@ class HordeWorkerProcessManager:
             logger.warning(f"Failed to build LoRA descriptions: {type(e).__name__} {e}")
 
         generation_metadata["lora_descriptions"] = lora_descriptions
+        # ! IMPORTANT: End own code
 
         safety_message_sent_succeeded = safety_process.safe_send_message(
             HordeSafetyControlMessage(

@@ -188,6 +188,7 @@ class HordeSafetyProcess(HordeProcess):
 
         safety_evaluations: list[HordeSafetyEvaluation] = []
 
+        # ! IMPORTANT: Start own code
         # Set base output directory
         base_output_directory = "/output"
         
@@ -298,6 +299,7 @@ class HordeSafetyProcess(HordeProcess):
                 )
 
                 continue
+            # ! IMPORTANT: End own code
 
             nsfw_result: NSFWResult | None = self._nsfw_checker.check_for_nsfw(
                 image=image_as_pil,

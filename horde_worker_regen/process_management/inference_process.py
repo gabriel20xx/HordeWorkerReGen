@@ -521,6 +521,9 @@ class HordeInferenceProcess(HordeProcess):
         self._current_job_inference_steps_complete = False
         self._last_job_inference_rate = None
 
+        # ! IMPORTANT: Start own code
+        original_prompt = job_info.payload.prompt
+
         try:
             prompt = job_info.payload.prompt
             if prompt and "###" in prompt:
@@ -538,6 +541,7 @@ class HordeInferenceProcess(HordeProcess):
                 job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
         except Exception as e:
             logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
+        # ! IMPORTANT: End own code
 
         try:
             self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
@@ -561,6 +565,11 @@ class HordeInferenceProcess(HordeProcess):
             self._in_post_processing = False
             self._current_job_inference_steps_complete = False
             self._vae_lock_was_acquired = False
+
+            # ! IMPORTANT: Start own code
+            with contextlib.suppress(Exception):
+                job_info.payload.prompt = original_prompt
+            # ! IMPORTANT: End own code
 
             with contextlib.suppress(Exception):
                 self._inference_semaphore.release()
