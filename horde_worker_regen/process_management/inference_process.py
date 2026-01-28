@@ -432,6 +432,7 @@ class HordeInferenceProcess(HordeProcess):
     _vae_lock_was_acquired: bool = False
 
     _last_job_inference_rate: str | None = None
+    _last_sanitized_negative_prompt: str | None = None
 
     def progress_callback(
         self,
@@ -523,6 +524,7 @@ class HordeInferenceProcess(HordeProcess):
 
         # ! IMPORTANT: Start own code
         original_prompt = job_info.payload.prompt
+        self._last_sanitized_negative_prompt = None
 
         try:
             prompt = job_info.payload.prompt
@@ -538,6 +540,7 @@ class HordeInferenceProcess(HordeProcess):
                 cleaned_negative = re.sub(r"\s*,\s*", ", ", cleaned_negative)
                 cleaned_negative = re.sub(r"\s{2,}", " ", cleaned_negative)
                 cleaned_negative = cleaned_negative.strip(" ,")
+                self._last_sanitized_negative_prompt = cleaned_negative
                 job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
         except Exception as e:
             logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
@@ -684,6 +687,7 @@ class HordeInferenceProcess(HordeProcess):
         job_info: ImageGenerateJobPopResponse,
         results: list[ResultingImageReturn] | None,
         time_elapsed: float,
+        sanitized_negative_prompt: str | None,
     ) -> None:
         """Send an inference result message to the main process.
 
@@ -718,6 +722,7 @@ class HordeInferenceProcess(HordeProcess):
             time_elapsed=time_elapsed,
             job_image_results=all_image_results,
             sdk_api_job_info=job_info,
+            sanitized_negative_prompt=sanitized_negative_prompt,
         )
         self.process_message_queue.put(message)
 
@@ -800,6 +805,7 @@ class HordeInferenceProcess(HordeProcess):
                         job_info=message.sdk_api_job_info,
                         results=None,
                         time_elapsed=time.time() - time_start,
+                        sanitized_negative_prompt=self._last_sanitized_negative_prompt,
                     )
 
                     active_model_name = self._active_model_name
@@ -833,6 +839,7 @@ class HordeInferenceProcess(HordeProcess):
                     job_info=message.sdk_api_job_info,
                     results=results,
                     time_elapsed=time.time() - time_start,
+                    sanitized_negative_prompt=self._last_sanitized_negative_prompt,
                 )
             else:
                 logger.critical(f"Received unexpected message: {message}")

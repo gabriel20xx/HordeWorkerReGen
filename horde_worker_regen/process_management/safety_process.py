@@ -224,28 +224,31 @@ class HordeSafetyProcess(HordeProcess):
             # Open the image using PIL
             image_as_pil_0 = Image.open(image_bytes)
 
+            original_prompt = message.prompt
+
             try:
                 from PIL import PngImagePlugin
 
                 # Create a PngInfo object to hold metadata
                 metadata = PngImagePlugin.PngInfo()
 
-                if "###" in message.prompt:
+                if "###" in original_prompt:
                     # Split the text at "###"
-                    parts = message.prompt.split("###")
+                    parts = original_prompt.split("###")
 
                     # Get the string before and after "###"
                     positive_prompt = parts[0]
                     negative_prompt = parts[1]
                 else:
-                    positive_prompt = message.prompt
+                    positive_prompt = original_prompt
                     negative_prompt = ""
+
+                generation_metadata = message.generation_metadata or {}
+                sanitized_negative_prompt = generation_metadata.get("sanitized_negative_prompt")
 
                 # Add custom metadata
                 metadata.add_text("Positive prompt", positive_prompt)
-                metadata.add_text("Negative prompt", negative_prompt)
-
-                generation_metadata = message.generation_metadata or {}
+                metadata.add_text("Negative prompt", sanitized_negative_prompt or negative_prompt)
 
                 def _add_metadata_text(key: str, value: object) -> None:
                     if value is None:
@@ -283,7 +286,8 @@ class HordeSafetyProcess(HordeProcess):
             except Exception as e:
                 image_as_pil_0.save(output_path, "png")
                 logger.error(f"Failed to save picture with metadata, saving without: {e}")
-
+            # ! IMPORTANT: End own code
+            
             try:
                 # Open the image using PIL
                 image_as_pil = Image.open(image_bytes)
@@ -299,11 +303,10 @@ class HordeSafetyProcess(HordeProcess):
                 )
 
                 continue
-            # ! IMPORTANT: End own code
 
             nsfw_result: NSFWResult | None = self._nsfw_checker.check_for_nsfw(
                 image=image_as_pil,
-                prompt=message.prompt,
+                prompt=original_prompt, # ! IMPORTANT: Changed "message.prompt" to "original_prompt"
                 model_info=message.horde_model_info,
             )
 

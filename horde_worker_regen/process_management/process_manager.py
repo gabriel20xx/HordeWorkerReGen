@@ -884,6 +884,11 @@ class HordeJobInfo(BaseModel):  # TODO: Split into a new file
 
     time_to_download_aux_models: float | None = None
 
+    # ! IMPORTANT: Start own code
+    sanitized_negative_prompt: str | None = None
+    """The sanitized negative prompt used for inference, if any."""
+    # ! IMPORTANT: End own code
+
     @property
     def is_job_checked_for_safety(self) -> bool:
         """Return true if the job has been checked for safety."""
@@ -2099,6 +2104,7 @@ class HordeWorkerProcessManager:
                     job_info.state = message.state
                     job_info.time_to_generate = message.time_elapsed
                     job_info.job_image_results = message.job_image_results
+                    job_info.sanitized_negative_prompt = message.sanitized_negative_prompt
 
                     self.jobs_pending_safety_check.append(job_info)
                 else:
@@ -2950,6 +2956,9 @@ class HordeWorkerProcessManager:
 
         generation_metadata["lora_descriptions"] = lora_descriptions
         # ! IMPORTANT: End own code
+
+        if completed_job_info.sanitized_negative_prompt is not None:
+            generation_metadata["sanitized_negative_prompt"] = completed_job_info.sanitized_negative_prompt
 
         safety_message_sent_succeeded = safety_process.safe_send_message(
             HordeSafetyControlMessage(

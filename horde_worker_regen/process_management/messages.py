@@ -227,6 +227,10 @@ class HordeInferenceResultMessage(HordeProcessMessage):
     state: GENERATION_STATE
     """The state of the job to be sent to the API."""
     sdk_api_job_info: ImageGenerateJobPopResponse
+    # ! IMPORTANT: Start own code
+    sanitized_negative_prompt: str | None = None
+    """The sanitized negative prompt used for inference, if any."""
+    # ! IMPORTANT: End own code
 
     @property
     def faults_count(self) -> int:
