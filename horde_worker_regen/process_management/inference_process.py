@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import contextlib
 import gc
 import sys
@@ -524,12 +525,17 @@ class HordeInferenceProcess(HordeProcess):
             prompt = job_info.payload.prompt
             if prompt and "###" in prompt:
                 positive_prompt, negative_prompt = prompt.split("###", 1)
-                to_remove = "child, infant, underage, immature, teenager, tween"
-                if to_remove in negative_prompt:
-                    cleaned_negative = negative_prompt.replace(to_remove, "").strip()
-                    cleaned_negative = cleaned_negative.lstrip(", ").rstrip(", ")
-                    cleaned_negative = cleaned_negative.replace(" ,", ",").replace(",,", ",").strip(", ")
-                    job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
+                cleaned_negative = negative_prompt
+                cleaned_negative = re.sub(
+                    r"\b(child|infant|underage|immature|teenager|tween)\b",
+                    "",
+                    cleaned_negative,
+                    flags=re.IGNORECASE,
+                )
+                cleaned_negative = re.sub(r"\s*,\s*", ", ", cleaned_negative)
+                cleaned_negative = re.sub(r"\s{2,}", " ", cleaned_negative)
+                cleaned_negative = cleaned_negative.strip(" ,")
+                job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
         except Exception as e:
             logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
 
