@@ -62,8 +62,8 @@ RUN --mount=type=cache,target="${PIP_CACHE_DIR}",sharing=locked,id=pip-cache \
 FROM builder AS final
 
 WORKDIR "${APP_HOME}"
-COPY entrypoint.sh /entrypoint.sh
-COPY setup_*.sh "${APP_HOME}"
+COPY Dockerfiles/entrypoint.sh /entrypoint.sh
+COPY Dockerfiles/setup_*.sh "${APP_HOME}"
 RUN chmod +x /entrypoint.sh
 
 STOPSIGNAL SIGINT
