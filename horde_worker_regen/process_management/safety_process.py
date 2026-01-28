@@ -250,7 +250,10 @@ class HordeSafetyProcess(HordeProcess):
 
                 # Add custom metadata
                 metadata.add_text("Positive prompt", positive_prompt)
-                metadata.add_text("Negative prompt", sanitized_negative_prompt or negative_prompt)
+                metadata.add_text(
+                    "Negative prompt",
+                    sanitized_negative_prompt if sanitized_negative_prompt is not None else negative_prompt,
+                )
 
                 def _add_metadata_text(key: str, value: object) -> None:
                     if value is None:
@@ -327,13 +330,15 @@ class HordeSafetyProcess(HordeProcess):
                 logger.info(f"Censor list detected NSFW in image {message.job_id}.")
 
             # ! IMPORTANT: Start own code
-            if metadata is not None and (nsfw_result.is_nsfw or nsfw_result.is_csam or replacement_image_base64):
+            if metadata is not None:
                 if nsfw_result.is_csam:
                     metadata.add_text("Safety", "csam")
                 elif replacement_image_base64:
                     metadata.add_text("Safety", "censored")
                 elif nsfw_result.is_nsfw:
                     metadata.add_text("Safety", "nsfw")
+                else:
+                    metadata.add_text("Safety", "clean")
 
             try:
                 # Save the image as a PNG file
