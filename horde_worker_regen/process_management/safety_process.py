@@ -275,14 +275,18 @@ class HordeSafetyProcess(HordeProcess):
                     if generation_metadata.get("steps") is not None
                     else generation_metadata.get("ddim_steps"),
                 )
-                _add_metadata_text("Post processing", generation_metadata.get("post_processing"))
+                post_processing = generation_metadata.get("post_processing")
+                if isinstance(post_processing, list):
+                    _add_metadata_text("Post processing", ", ".join(str(v) for v in post_processing))
+                else:
+                    _add_metadata_text("Post processing", post_processing)
 
                 lora_descriptions = generation_metadata.get("lora_descriptions") or []
                 if isinstance(lora_descriptions, list) and lora_descriptions:
-                    lora_text = ", ".join([f"<{entry}>" for entry in lora_descriptions])
+                    lora_text = ", ".join(lora_descriptions)
                 else:
                     lora_text = ""
-                metadata.add_text("LORAs", lora_text)
+                metadata.add_text("LoRAs", lora_text)
 
                 if "karras" in generation_metadata and "schedule_type" not in generation_metadata:
                     schedule_type = "karras" if generation_metadata.get("karras") else "native"

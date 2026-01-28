@@ -2923,7 +2923,7 @@ class HordeWorkerProcessManager:
                 strength = None
 
                 if isinstance(lora, dict):
-                    name = lora.get("name") or lora.get("lora_name") or lora.get("model") or lora.get("id")
+                    name = lora.get("name") or lora.get("lora_name") or lora.get("model")
                     strength = (
                         lora.get("strength")
                         or lora.get("weight")
@@ -2935,7 +2935,6 @@ class HordeWorkerProcessManager:
                         getattr(lora, "name", None)
                         or getattr(lora, "lora_name", None)
                         or getattr(lora, "model", None)
-                        or getattr(lora, "id", None)
                     )
                     strength = (
                         getattr(lora, "strength", None)
