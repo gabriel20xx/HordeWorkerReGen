@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import contextlib
 import gc
 import sys
@@ -520,6 +521,28 @@ class HordeInferenceProcess(HordeProcess):
         self._current_job_inference_steps_complete = False
         self._last_job_inference_rate = None
 
+        # ! IMPORTANT: Start own code
+        original_prompt = job_info.payload.prompt
+
+        try:
+            prompt = job_info.payload.prompt
+            if prompt and "###" in prompt:
+                positive_prompt, negative_prompt = prompt.split("###", 1)
+                cleaned_negative = negative_prompt
+                cleaned_negative = re.sub(
+                    r"\b(child|infant|underage|immature|teenager|tween)\b",
+                    "",
+                    cleaned_negative,
+                    flags=re.IGNORECASE,
+                )
+                cleaned_negative = re.sub(r"\s*,\s*", ", ", cleaned_negative)
+                cleaned_negative = re.sub(r"\s{2,}", " ", cleaned_negative)
+                cleaned_negative = cleaned_negative.strip(" ,")
+                job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
+        except Exception as e:
+            logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
+        # ! IMPORTANT: End own code
+
         try:
             self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
             logger.info(f"Starting inference for job(s) {job_info.ids}")
@@ -542,6 +565,11 @@ class HordeInferenceProcess(HordeProcess):
             self._in_post_processing = False
             self._current_job_inference_steps_complete = False
             self._vae_lock_was_acquired = False
+
+            # ! IMPORTANT: Start own code
+            with contextlib.suppress(Exception):
+                job_info.payload.prompt = original_prompt
+            # ! IMPORTANT: End own code
 
             with contextlib.suppress(Exception):
                 self._inference_semaphore.release()

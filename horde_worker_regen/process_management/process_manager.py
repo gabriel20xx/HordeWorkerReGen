@@ -2900,6 +2900,57 @@ class HordeWorkerProcessManager:
         model_info = {}
         if completed_job_info.sdk_api_job_info.model in self.stable_diffusion_reference.root:
             model_info = self.stable_diffusion_reference.root[completed_job_info.sdk_api_job_info.model].model_dump()
+
+        generation_metadata: dict[str, object] = {}
+        try:
+            generation_metadata.update(completed_job_info.sdk_api_job_info.payload.model_dump(exclude_none=True))
+        except Exception as e:
+            logger.warning(f"Failed to dump generation metadata: {type(e).__name__} {e}")
+        generation_metadata["model"] = completed_job_info.sdk_api_job_info.model
+
+        # ! IMPORTANT: Start own code
+        lora_descriptions: list[str] = []
+        try:
+            loras = completed_job_info.sdk_api_job_info.payload.loras or []
+            for lora in loras:
+                name = None
+                strength = None
+
+                if isinstance(lora, dict):
+                    name = lora.get("name") or lora.get("lora_name") or lora.get("model") or lora.get("id")
+                    strength = (
+                        lora.get("strength")
+                        or lora.get("weight")
+                        or lora.get("clip")
+                        or lora.get("alpha")
+                    )
+                else:
+                    name = (
+                        getattr(lora, "name", None)
+                        or getattr(lora, "lora_name", None)
+                        or getattr(lora, "model", None)
+                        or getattr(lora, "id", None)
+                    )
+                    strength = (
+                        getattr(lora, "strength", None)
+                        or getattr(lora, "weight", None)
+                        or getattr(lora, "clip", None)
+                        or getattr(lora, "alpha", None)
+                    )
+
+                if name is None:
+                    name = str(lora)
+
+                if strength is None:
+                    strength = 1.0
+
+                lora_descriptions.append(f"{name}:{strength}")
+        except Exception as e:
+            logger.warning(f"Failed to build LoRA descriptions: {type(e).__name__} {e}")
+
+        generation_metadata["lora_descriptions"] = lora_descriptions
+        # ! IMPORTANT: End own code
+
         safety_message_sent_succeeded = safety_process.safe_send_message(
             HordeSafetyControlMessage(
                 control_flag=HordeControlFlag.EVALUATE_SAFETY,
@@ -2909,6 +2960,7 @@ class HordeWorkerProcessManager:
                 censor_nsfw=completed_job_info.sdk_api_job_info.payload.use_nsfw_censor,
                 sfw_worker=not self.bridge_data.nsfw,
                 horde_model_info=model_info,
+                generation_metadata=generation_metadata,
                 # TODO: update this to use a class instead of a dict?
             ),
         )

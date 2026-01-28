@@ -4,6 +4,7 @@ import base64
 import enum
 import time
 import os
+import json
 from datetime import datetime
 from enum import auto
 from io import BytesIO
@@ -187,6 +188,7 @@ class HordeSafetyProcess(HordeProcess):
 
         safety_evaluations: list[HordeSafetyEvaluation] = []
 
+        # ! IMPORTANT: Start own code
         # Set base output directory
         base_output_directory = "/output"
         
@@ -242,7 +244,34 @@ class HordeSafetyProcess(HordeProcess):
                 # Add custom metadata
                 metadata.add_text("Positive prompt", positive_prompt)
                 metadata.add_text("Negative prompt", negative_prompt)
-                metadata.add_text("Model info", message.horde_model_info)
+
+                generation_metadata = message.generation_metadata or {}
+
+                def _add_metadata_text(key: str, value: object) -> None:
+                    if value is None:
+                        return
+                    if isinstance(value, str):
+                        metadata.add_text(key, value)
+                    else:
+                        metadata.add_text(key, json.dumps(value, ensure_ascii=False, default=str))
+
+                # Explicitly add key fields when available
+                _add_metadata_text("Model name", generation_metadata.get("model"))
+                _add_metadata_text("Sampler", generation_metadata.get("sampler_name"))
+                _add_metadata_text("Seed", generation_metadata.get("seed"))
+                _add_metadata_text("CFG scale", generation_metadata.get("cfg_scale"))
+                _add_metadata_text("DDIM steps", generation_metadata.get("ddim_steps"))
+                _add_metadata_text("Post processing", generation_metadata.get("post_processing"))
+
+                lora_descriptions = generation_metadata.get("lora_descriptions") or []
+                if isinstance(lora_descriptions, list) and lora_descriptions:
+                    lora_text = ", ".join([f"<{entry}>" for entry in lora_descriptions])
+                    metadata.add_text("LORAs", lora_text)
+
+                if "karras" in generation_metadata and "schedule_type" not in generation_metadata:
+                    schedule_type = "karras" if generation_metadata.get("karras") else "native"
+                    _add_metadata_text("Schedule type", schedule_type)
+
             except Exception as e:
                 logger.error(f"Failed to add metadata: {e}")
 
@@ -270,6 +299,7 @@ class HordeSafetyProcess(HordeProcess):
                 )
 
                 continue
+            # ! IMPORTANT: End own code
 
             nsfw_result: NSFWResult | None = self._nsfw_checker.check_for_nsfw(
                 image=image_as_pil,
