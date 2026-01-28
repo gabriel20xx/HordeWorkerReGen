@@ -243,10 +243,6 @@ class HordeSafetyProcess(HordeProcess):
                 # Add custom metadata
                 metadata.add_text("Positive prompt", positive_prompt)
                 metadata.add_text("Negative prompt", negative_prompt)
-                metadata.add_text(
-                    "Model info",
-                    json.dumps(message.horde_model_info, ensure_ascii=False, default=str),
-                )
 
                 generation_metadata = message.generation_metadata or {}
 
@@ -263,15 +259,18 @@ class HordeSafetyProcess(HordeProcess):
                 _add_metadata_text("Sampler", generation_metadata.get("sampler_name"))
                 _add_metadata_text("Seed", generation_metadata.get("seed"))
                 _add_metadata_text("CFG scale", generation_metadata.get("cfg_scale"))
-                _add_metadata_text("Steps", generation_metadata.get("ddim_steps"))
-                _add_metadata_text("LoRAs", generation_metadata.get("loras"))
+                _add_metadata_text("DDIM steps", generation_metadata.get("ddim_steps"))
+                _add_metadata_text("Post processing", generation_metadata.get("post_processing"))
+
+                lora_descriptions = generation_metadata.get("lora_descriptions") or []
+                if isinstance(lora_descriptions, list) and lora_descriptions:
+                    lora_text = ", ".join([f"<{entry}>" for entry in lora_descriptions])
+                    metadata.add_text("LORAs", lora_text)
 
                 if "karras" in generation_metadata and "schedule_type" not in generation_metadata:
                     schedule_type = "karras" if generation_metadata.get("karras") else "native"
                     _add_metadata_text("Schedule type", schedule_type)
 
-                # Add the full metadata dump
-                _add_metadata_text("Generation metadata", generation_metadata)
             except Exception as e:
                 logger.error(f"Failed to add metadata: {e}")
 
