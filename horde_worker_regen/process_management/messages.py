@@ -329,6 +329,9 @@ class HordeSafetyControlMessage(HordeControlMessage):
     horde_model_info: dict
     """The model info as defined in the horde model reference."""
 
+    generation_metadata: dict = Field(default_factory=dict)
+    """All available generation metadata for saving into image files."""
+
     @model_validator(mode="after")
     def validate_censor_flags_logical(self) -> HordeSafetyControlMessage:
         """Validate that the censor flags are logical (reasonable)."""
