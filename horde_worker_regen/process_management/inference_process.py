@@ -521,6 +521,19 @@ class HordeInferenceProcess(HordeProcess):
         self._last_job_inference_rate = None
 
         try:
+            prompt = job_info.payload.prompt
+            if prompt and "###" in prompt:
+                positive_prompt, negative_prompt = prompt.split("###", 1)
+                to_remove = "child, infant, underage, immature, teenager, tween"
+                if to_remove in negative_prompt:
+                    cleaned_negative = negative_prompt.replace(to_remove, "").strip()
+                    cleaned_negative = cleaned_negative.lstrip(", ").rstrip(", ")
+                    cleaned_negative = cleaned_negative.replace(" ,", ",").replace(",,", ",").strip(", ")
+                    job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
+        except Exception as e:
+            logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
+
+        try:
             self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
             logger.info(f"Starting inference for job(s) {job_info.ids}")
             esi_count = len(job_info.extra_source_images) if job_info.extra_source_images is not None else 0
