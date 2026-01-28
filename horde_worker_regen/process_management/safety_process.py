@@ -226,6 +226,8 @@ class HordeSafetyProcess(HordeProcess):
 
             original_prompt = message.prompt
 
+            metadata: PngImagePlugin.PngInfo | None = None
+
             try:
                 from PIL import PngImagePlugin
 
@@ -252,6 +254,7 @@ class HordeSafetyProcess(HordeProcess):
 
                 def _add_metadata_text(key: str, value: object) -> None:
                     if value is None:
+                        metadata.add_text(key, "")
                         return
                     if isinstance(value, str):
                         metadata.add_text(key, value)
@@ -263,13 +266,20 @@ class HordeSafetyProcess(HordeProcess):
                 _add_metadata_text("Sampler", generation_metadata.get("sampler_name"))
                 _add_metadata_text("Seed", generation_metadata.get("seed"))
                 _add_metadata_text("CFG scale", generation_metadata.get("cfg_scale"))
-                _add_metadata_text("DDIM steps", generation_metadata.get("ddim_steps"))
+                _add_metadata_text(
+                    "Steps",
+                    generation_metadata.get("steps")
+                    if generation_metadata.get("steps") is not None
+                    else generation_metadata.get("ddim_steps"),
+                )
                 _add_metadata_text("Post processing", generation_metadata.get("post_processing"))
 
                 lora_descriptions = generation_metadata.get("lora_descriptions") or []
                 if isinstance(lora_descriptions, list) and lora_descriptions:
                     lora_text = ", ".join([f"<{entry}>" for entry in lora_descriptions])
-                    metadata.add_text("LORAs", lora_text)
+                else:
+                    lora_text = ""
+                metadata.add_text("LORAs", lora_text)
 
                 if "karras" in generation_metadata and "schedule_type" not in generation_metadata:
                     schedule_type = "karras" if generation_metadata.get("karras") else "native"
@@ -277,17 +287,8 @@ class HordeSafetyProcess(HordeProcess):
 
             except Exception as e:
                 logger.error(f"Failed to add metadata: {e}")
-
-            try:
-                # Save the image as a PNG file
-                image_as_pil_0.save(output_path, "png", pnginfo=metadata)
-
-                logger.info(f"Image saved as {output_path}")
-            except Exception as e:
-                image_as_pil_0.save(output_path, "png")
-                logger.error(f"Failed to save picture with metadata, saving without: {e}")
             # ! IMPORTANT: End own code
-            
+
             try:
                 # Open the image using PIL
                 image_as_pil = Image.open(image_bytes)
@@ -324,6 +325,28 @@ class HordeSafetyProcess(HordeProcess):
             elif message.censor_nsfw and nsfw_result.is_nsfw:
                 replacement_image_base64 = self.censor_sfw_request_image_base64
                 logger.info(f"Censor list detected NSFW in image {message.job_id}.")
+
+            # ! IMPORTANT: Start own code
+            if metadata is not None and (nsfw_result.is_nsfw or nsfw_result.is_csam or replacement_image_base64):
+                if nsfw_result.is_csam:
+                    metadata.add_text("Safety", "csam")
+                elif replacement_image_base64:
+                    metadata.add_text("Safety", "censored")
+                elif nsfw_result.is_nsfw:
+                    metadata.add_text("Safety", "nsfw")
+
+            try:
+                # Save the image as a PNG file
+                if metadata is not None:
+                    image_as_pil_0.save(output_path, "png", pnginfo=metadata)
+                else:
+                    image_as_pil_0.save(output_path, "png")
+
+                logger.info(f"Image saved as {output_path}")
+            except Exception as e:
+                image_as_pil_0.save(output_path, "png")
+                logger.error(f"Failed to save picture with metadata, saving without: {e}")
+            # ! IMPORTANT: End own code
 
             safety_evaluations.append(
                 HordeSafetyEvaluation(
