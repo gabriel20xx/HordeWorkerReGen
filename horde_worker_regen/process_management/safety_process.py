@@ -255,6 +255,11 @@ class HordeSafetyProcess(HordeProcess):
                     sanitized_negative_prompt if sanitized_negative_prompt is not None else negative_prompt,
                 )
 
+                metadata.add_text(
+                    "Generated at",
+                    datetime.now().isoformat(timespec="seconds"),
+                )
+
                 def _add_metadata_text(key: str, value: object) -> None:
                     if value is None:
                         metadata.add_text(key, "")
