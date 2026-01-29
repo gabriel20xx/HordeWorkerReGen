@@ -271,15 +271,21 @@ class HordeSafetyProcess(HordeProcess):
 
                 # Explicitly add key fields when available
                 _add_metadata_text("Model name", generation_metadata.get("model"))
+                _add_metadata_text("Model hash", generation_metadata.get("model_hash"))
                 _add_metadata_text("Sampler", generation_metadata.get("sampler_name"))
                 _add_metadata_text("Seed", generation_metadata.get("seed"))
+                _add_metadata_text("Seed resize from", generation_metadata.get("seed_resize_from"))
+                _add_metadata_text("Seed resize from width", generation_metadata.get("seed_resize_from_width"))
+                _add_metadata_text("Seed resize from height", generation_metadata.get("seed_resize_from_height"))
                 _add_metadata_text("CFG scale", generation_metadata.get("cfg_scale"))
+                _add_metadata_text("Denoising strength", generation_metadata.get("denoising_strength"))
                 _add_metadata_text(
                     "Steps",
                     generation_metadata.get("steps")
                     if generation_metadata.get("steps") is not None
                     else generation_metadata.get("ddim_steps"),
                 )
+                _add_metadata_text("Version", generation_metadata.get("version"))
                 post_processing = generation_metadata.get("post_processing")
                 if isinstance(post_processing, list):
                     _add_metadata_text("Post processing", ", ".join(str(v) for v in post_processing))
@@ -292,6 +298,31 @@ class HordeSafetyProcess(HordeProcess):
                 else:
                     lora_text = ""
                 metadata.add_text("Loras", lora_text)
+
+                lora_hashes = generation_metadata.get("lora_hashes")
+                if lora_hashes is None:
+                    try:
+                        lora_hash_list: list[str] = []
+                        loras = generation_metadata.get("loras") or []
+                        for lora in loras:
+                            if isinstance(lora, dict):
+                                lora_hash = lora.get("hash") or lora.get("lora_hash") or lora.get("sha")
+                            else:
+                                lora_hash = (
+                                    getattr(lora, "hash", None)
+                                    or getattr(lora, "lora_hash", None)
+                                    or getattr(lora, "sha", None)
+                                )
+                            if lora_hash is not None:
+                                lora_hash_list.append(str(lora_hash))
+                        lora_hashes = lora_hash_list
+                    except Exception:
+                        lora_hashes = None
+
+                if isinstance(lora_hashes, list):
+                    _add_metadata_text("LoRA hashes", ", ".join(str(v) for v in lora_hashes))
+                else:
+                    _add_metadata_text("LoRA hashes", lora_hashes)
 
                 if "karras" in generation_metadata and "schedule_type" not in generation_metadata:
                     schedule_type = "karras" if generation_metadata.get("karras") else "native"
