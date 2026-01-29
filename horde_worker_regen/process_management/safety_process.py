@@ -286,7 +286,7 @@ class HordeSafetyProcess(HordeProcess):
                     lora_text = ", ".join(lora_descriptions)
                 else:
                     lora_text = ""
-                metadata.add_text("LoRAs", lora_text)
+                metadata.add_text("Loras", lora_text)
 
                 if "karras" in generation_metadata and "schedule_type" not in generation_metadata:
                     schedule_type = "karras" if generation_metadata.get("karras") else "native"
