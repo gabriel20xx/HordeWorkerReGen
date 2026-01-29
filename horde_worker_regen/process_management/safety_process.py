@@ -256,7 +256,7 @@ class HordeSafetyProcess(HordeProcess):
                 )
 
                 metadata.add_text(
-                    "Generated at",
+                    "Created at",
                     datetime.now().isoformat(timespec="seconds"),
                 )
 
