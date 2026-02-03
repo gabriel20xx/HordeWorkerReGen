@@ -42,7 +42,14 @@ _MULTIPLE_SPACES_PATTERN = re.compile(r"\s{2,}")
 ```python
 # Report progress every 5% using integer division
 progress_threshold = total_bytes // 20  # 5% increments
-current_segment = downloaded_bytes // progress_threshold if progress_threshold > 0 else 0
+
+# Handle small files (< 20 bytes) by always reporting when complete
+if progress_threshold == 0:
+    if downloaded_bytes == total_bytes:
+        # Send update
+    return
+
+current_segment = downloaded_bytes // progress_threshold
 
 if current_segment > self._download_progress_counter:
     self._download_progress_counter = current_segment
@@ -52,7 +59,8 @@ if current_segment > self._download_progress_counter:
 **Impact**:
 - Eliminates floating-point precision errors
 - Reduces CPU overhead during downloads
-- Ensures exactly 20 progress reports per download
+- Ensures exactly 20 progress reports per download (or 1 for files < 20 bytes)
+- Handles small files gracefully with completion-only reporting
 - More predictable behavior
 
 ### 3. Megapixelsteps Calculation Caching (High Impact)
@@ -63,9 +71,10 @@ if current_segment > self._download_progress_counter:
 
 **Solution**: Added caching with invalidation on job add/remove:
 ```python
-# Cache variables
+# Cache variables initialized at startup
+# Cache is valid with 0 since there are no pending jobs initially
 self._cached_pending_megapixelsteps: int = 0
-self._megapixelsteps_cache_valid: bool = False
+self._megapixelsteps_cache_valid: bool = True
 
 def get_pending_megapixelsteps(self) -> int:
     if self._megapixelsteps_cache_valid:
