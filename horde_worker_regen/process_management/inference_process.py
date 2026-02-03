@@ -11,6 +11,14 @@ import time
 
 from horde_worker_regen.consts import BASE_LORA_DOWNLOAD_TIMEOUT, EXTRA_LORA_DOWNLOAD_TIMEOUT
 
+# Precompiled regex patterns for prompt sanitization (performance optimization)
+_NEGATIVE_PROMPT_KEYWORDS_PATTERN = re.compile(
+    r"\b(child|infant|underage|immature|teenager|tween)\b",
+    flags=re.IGNORECASE,
+)
+_MULTIPLE_COMMAS_PATTERN = re.compile(r"\s*,\s*")
+_MULTIPLE_SPACES_PATTERN = re.compile(r"\s{2,}")
+
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
 except Exception:
@@ -81,6 +89,10 @@ class HordeInferenceProcess(HordeProcess):
     _active_model_name: str | None = None
     """The name of the currently active model. Note that other models may be loaded in RAM or VRAM."""
     _aux_model_lock: Lock
+    
+    # Download progress tracking (performance optimization)
+    _download_progress_counter: int = 0
+    _download_total_bytes: int = 0
 
     def __init__(
         self,
@@ -242,8 +254,18 @@ class HordeInferenceProcess(HordeProcess):
             downloaded_bytes (int): The number of bytes downloaded so far.
             total_bytes (int): The total number of bytes to download.
         """
-        # TODO
-        if downloaded_bytes % (total_bytes / 20) == 0:
+        # Reset counter if total bytes changed (new download)
+        if total_bytes != self._download_total_bytes:
+            self._download_progress_counter = 0
+            self._download_total_bytes = total_bytes
+        
+        # Report progress every 5% instead of using floating point modulo
+        # This avoids precision issues and reduces message spam
+        progress_threshold = total_bytes // 20  # 5% increments (20 reports total)
+        current_segment = downloaded_bytes // progress_threshold if progress_threshold > 0 else 0
+        
+        if current_segment > self._download_progress_counter:
+            self._download_progress_counter = current_segment
             self.send_process_state_change_message(
                 process_state=HordeProcessState.DOWNLOADING_MODEL,
                 info=f"Downloading model ({downloaded_bytes} / {total_bytes})",
@@ -531,14 +553,10 @@ class HordeInferenceProcess(HordeProcess):
             if prompt and "###" in prompt:
                 positive_prompt, negative_prompt = prompt.split("###", 1)
                 cleaned_negative = negative_prompt
-                cleaned_negative = re.sub(
-                    r"\b(child|infant|underage|immature|teenager|tween)\b",
-                    "",
-                    cleaned_negative,
-                    flags=re.IGNORECASE,
-                )
-                cleaned_negative = re.sub(r"\s*,\s*", ", ", cleaned_negative)
-                cleaned_negative = re.sub(r"\s{2,}", " ", cleaned_negative)
+                # Use precompiled regex patterns for better performance
+                cleaned_negative = _NEGATIVE_PROMPT_KEYWORDS_PATTERN.sub("", cleaned_negative)
+                cleaned_negative = _MULTIPLE_COMMAS_PATTERN.sub(", ", cleaned_negative)
+                cleaned_negative = _MULTIPLE_SPACES_PATTERN.sub(" ", cleaned_negative)
                 cleaned_negative = cleaned_negative.strip(" ,")
                 self._last_sanitized_negative_prompt = cleaned_negative
                 job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"

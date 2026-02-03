@@ -1399,6 +1399,10 @@ class HordeWorkerProcessManager:
 
         self.jobs_pending_inference = deque()
         self._jobs_pending_inference_lock = Lock_Asyncio()
+        
+        # Cache for megapixelsteps calculation (performance optimization)
+        self._cached_pending_megapixelsteps: int = 0
+        self._megapixelsteps_cache_valid: bool = False
 
         self.job_pop_timestamps: dict[ImageGenerateJobPopResponse, float] = {}
         self._job_pop_timestamps_lock = Lock_Asyncio()
@@ -2063,6 +2067,7 @@ class HordeWorkerProcessManager:
                             f"Job {message.sdk_api_job_info.id_} found in job_deque. (Process {message.process_id})",
                         )
                         self.jobs_pending_inference.remove(message.sdk_api_job_info)
+                        self._invalidate_megapixelsteps_cache()
                     continue
 
                 job_info = self.jobs_lookup[message.sdk_api_job_info]
@@ -2079,6 +2084,7 @@ class HordeWorkerProcessManager:
                 for job in self.jobs_pending_inference:
                     if job.id_ == message.sdk_api_job_info.id_:
                         self.jobs_pending_inference.remove(job)
+                        self._invalidate_megapixelsteps_cache()
                         break
 
                 self.total_num_completed_jobs += 1
@@ -3574,6 +3580,7 @@ class HordeWorkerProcessManager:
         else:
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
+                self._invalidate_megapixelsteps_cache()
 
             if (
                 self._skipped_line_next_job_and_process is not None
@@ -3655,7 +3662,15 @@ class HordeWorkerProcessManager:
         return int(job_effective_pixel_steps / 1_000_000)
 
     def get_pending_megapixelsteps(self) -> int:
-        """Return the number of megapixelsteps that are pending in the job deque."""
+        """Return the number of megapixelsteps that are pending in the job deque.
+        
+        Uses caching to avoid recalculating on every call.
+        """
+        # Return cached value if still valid
+        if self._megapixelsteps_cache_valid:
+            return self._cached_pending_megapixelsteps
+        
+        # Recalculate and cache
         job_deque_megapixelsteps = 0
         for job in self.jobs_pending_inference:
             job_megapixelsteps = self.get_single_job_effective_megapixelsteps(job)
@@ -3664,7 +3679,13 @@ class HordeWorkerProcessManager:
         for _ in self.jobs_pending_submit:
             job_deque_megapixelsteps += 4
 
+        self._cached_pending_megapixelsteps = job_deque_megapixelsteps
+        self._megapixelsteps_cache_valid = True
         return job_deque_megapixelsteps
+    
+    def _invalidate_megapixelsteps_cache(self) -> None:
+        """Invalidate the megapixelsteps cache when jobs are added or removed."""
+        self._megapixelsteps_cache_valid = False
 
     def should_wait_for_pending_megapixelsteps(self) -> bool:
         """Check if the number of megapixelsteps in the job deque is above the limit."""
@@ -4214,6 +4235,7 @@ class HordeWorkerProcessManager:
 
         async with self._jobs_pending_inference_lock, self._job_pop_timestamps_lock:
             self.jobs_pending_inference.append(job_pop_response)
+            self._invalidate_megapixelsteps_cache()
             jobs = []
             for job in self.jobs_pending_inference:
                 if job.id_ is not None:
