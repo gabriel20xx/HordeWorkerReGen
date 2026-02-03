@@ -256,6 +256,16 @@ class HordeSafetyEvaluation(BaseModel):
     failed: bool = False
     """If the safety evaluation failed."""
 
+# ! IMPORTANT: Start own code
+class HordeSavedImageInfo(BaseModel):
+    """Information about an image saved to disk by a child process."""
+
+    path: str
+    """The filesystem path where the image was saved."""
+
+    metadata_embedded: bool = False
+    """Whether generation metadata was embedded in the saved image (e.g., PNG text chunks)."""
+# ! IMPORTANT: End own code
 
 class HordeSafetyResultMessage(HordeProcessMessage):
     """Safety result messages that are sent from the child processes to the main process."""
@@ -265,6 +275,10 @@ class HordeSafetyResultMessage(HordeProcessMessage):
     safety_evaluations: list[HordeSafetyEvaluation]
     """A list of safety evaluations for each image in the job."""
 
+    # ! IMPORTANT: Start own code
+    saved_images: list[HordeSavedImageInfo] = Field(default_factory=list)
+    """Images saved to disk during safety evaluation (e.g., debug/archival outputs)."""
+    # ! IMPORTANT: End own code
 
 class HordeControlFlag(enum.Enum):
     """Control flags are sent from the main process to the child processes."""

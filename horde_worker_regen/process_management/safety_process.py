@@ -28,6 +28,9 @@ from horde_worker_regen.process_management.messages import (
     HordeControlFlag,
     HordeControlMessage,
     HordeProcessState,
+    # ! IMPORTANT: Start own code
+    HordeSavedImageInfo,
+    # ! IMPORTANT: End own code
     HordeSafetyControlMessage,
     HordeSafetyEvaluation,
     HordeSafetyResultMessage,
@@ -189,6 +192,8 @@ class HordeSafetyProcess(HordeProcess):
         safety_evaluations: list[HordeSafetyEvaluation] = []
 
         # ! IMPORTANT: Start own code
+        saved_images: list[HordeSavedImageInfo] = []
+
         # Set base output directory
         base_output_directory = "/output"
         
@@ -387,10 +392,23 @@ class HordeSafetyProcess(HordeProcess):
                 else:
                     image_as_pil_0.save(output_path, "png")
 
-                logger.info(f"Image saved as {output_path}")
+                if metadata is not None:
+                    logger.info(
+                        f"Saved image + embedded metadata to disk for job {message.job_id}: {output_path}",
+                    )
+                    saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=True))
+                else:
+                    logger.info(
+                        f"Saved image to disk (no metadata) for job {message.job_id}: {output_path}",
+                    )
+                    saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
             except Exception as e:
                 image_as_pil_0.save(output_path, "png")
-                logger.error(f"Failed to save picture with metadata, saving without: {e}")
+                logger.warning(
+                    f"Failed to save image with embedded metadata for job {message.job_id}; "
+                    f"saved without metadata instead: {type(e).__name__} {e}. Path: {output_path}",
+                )
+                saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
             # ! IMPORTANT: End own code
 
             safety_evaluations.append(
@@ -414,6 +432,9 @@ class HordeSafetyProcess(HordeProcess):
                 time_elapsed=time_elapsed,
                 job_id=message.job_id,
                 safety_evaluations=safety_evaluations,
+                # ! IMPORTANT: Start own code
+                saved_images=saved_images,
+                # ! IMPORTANT: End own code
             ),
         )
         self.send_process_state_change_message(HordeProcessState.WAITING_FOR_JOB, "Waiting for job")

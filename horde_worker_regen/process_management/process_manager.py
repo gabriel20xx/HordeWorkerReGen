@@ -2177,6 +2177,22 @@ class HordeWorkerProcessManager:
                     f"Job {message.job_id} had {num_images_censored} images censored and took "
                     f"{message.time_elapsed:.2f} seconds to check safety",
                 )
+                
+                # ! IMPORTANT: Start own code
+                if message.saved_images:
+                    first_path = message.saved_images[0].path
+                    more_count = len(message.saved_images) - 1
+                    embedded_count = sum(1 for s in message.saved_images if s.metadata_embedded)
+                    more_suffix = f" (+{more_count} more)" if more_count > 0 else ""
+
+                    logger.opt(ansi=True).info(
+                        "\0<fg #da9dff>"
+                        f"Saved image(s) to disk for job {str(message.job_id)[:8]}: "
+                        f"{first_path}{more_suffix} "
+                        f"(metadata embedded {embedded_count}/{len(message.saved_images)})"
+                        "</>",
+                    )
+                # ! IMPORTANT: End own code
 
                 if any_safety_failed:
                     completed_job_info.state = GENERATION_STATE.faulted
