@@ -1401,8 +1401,9 @@ class HordeWorkerProcessManager:
         self._jobs_pending_inference_lock = Lock_Asyncio()
         
         # Cache for megapixelsteps calculation (performance optimization)
+        # Initialize as valid with 0 since there are no pending jobs at startup
         self._cached_pending_megapixelsteps: int = 0
-        self._megapixelsteps_cache_valid: bool = False
+        self._megapixelsteps_cache_valid: bool = True
 
         self.job_pop_timestamps: dict[ImageGenerateJobPopResponse, float] = {}
         self._job_pop_timestamps_lock = Lock_Asyncio()

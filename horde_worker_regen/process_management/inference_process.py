@@ -89,10 +89,6 @@ class HordeInferenceProcess(HordeProcess):
     _active_model_name: str | None = None
     """The name of the currently active model. Note that other models may be loaded in RAM or VRAM."""
     _aux_model_lock: Lock
-    
-    # Download progress tracking (performance optimization)
-    _download_progress_counter: int = 0
-    _download_total_bytes: int = 0
 
     def __init__(
         self,
@@ -132,6 +128,10 @@ class HordeInferenceProcess(HordeProcess):
         )
 
         self._aux_model_lock = aux_model_lock
+        
+        # Download progress tracking (performance optimization)
+        self._download_progress_counter: int = 0
+        self._download_total_bytes: int = 0
 
         # We import these here to guard against potentially importing them in the main process
         # which would create shared objects, potentially causing issues
@@ -262,7 +262,17 @@ class HordeInferenceProcess(HordeProcess):
         # Report progress every 5% instead of using floating point modulo
         # This avoids precision issues and reduces message spam
         progress_threshold = total_bytes // 20  # 5% increments (20 reports total)
-        current_segment = downloaded_bytes // progress_threshold if progress_threshold > 0 else 0
+        
+        # Handle small files (< 20 bytes) by always reporting when complete
+        if progress_threshold == 0:
+            if downloaded_bytes == total_bytes:
+                self.send_process_state_change_message(
+                    process_state=HordeProcessState.DOWNLOADING_MODEL,
+                    info=f"Downloading model ({downloaded_bytes} / {total_bytes})",
+                )
+            return
+        
+        current_segment = downloaded_bytes // progress_threshold
         
         if current_segment > self._download_progress_counter:
             self._download_progress_counter = current_segment
