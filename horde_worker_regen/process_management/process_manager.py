@@ -21,6 +21,7 @@ from io import BytesIO
 from multiprocessing.context import BaseContext
 from multiprocessing.synchronize import Lock as Lock_MultiProcessing
 from multiprocessing.synchronize import Semaphore
+from typing import TYPE_CHECKING
 
 import aiohttp
 import aiohttp.client_exceptions
@@ -90,6 +91,9 @@ from horde_worker_regen.process_management.messages import (
     ModelLoadState,
 )
 from horde_worker_regen.process_management.worker_entry_points import start_inference_process, start_safety_process
+
+if TYPE_CHECKING:
+    from horde_worker_regen.webui.server import WorkerWebUI
 
 sslcontext = ssl.create_default_context(cafile=certifi.where())
 
@@ -1479,6 +1483,14 @@ class HordeWorkerProcessManager:
             except Exception as e:
                 logger.error(e)
                 time.sleep(5)
+
+        # Initialize web UI if enabled
+        self.webui: WorkerWebUI | None = None
+        if self.bridge_data.enable_webui:
+            from horde_worker_regen.webui.server import WorkerWebUI
+
+            self.webui = WorkerWebUI(port=self.bridge_data.webui_port)
+            logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -5116,6 +5128,105 @@ class HordeWorkerProcessManager:
     def _handle_exception(self, future: asyncio.Future) -> None:
         """Logs exceptions from asyncio tasks.
 
+    def update_webui_status(self) -> None:
+        """Update the web UI with current worker status."""
+        if self.webui is None:
+            return
+
+        # Get current job info
+        current_job = None
+        if len(self.jobs_in_progress) > 0:
+            job = self.jobs_in_progress[0]
+            job_info = self.jobs_lookup.get(job)
+            if job_info:
+                # Find the process handling this job
+                progress = None
+                state = None
+                for process in self._process_map.values():
+                    if process.last_job_referenced == job:
+                        progress = process.last_heartbeat_percent_complete
+                        state = process.last_process_state.name if process.last_process_state else None
+                        break
+
+                current_job = {
+                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                    "model": job.model,
+                    "progress": progress,
+                    "state": state or "Processing",
+                }
+
+        # Get job queue
+        job_queue = []
+        for job in list(self.jobs_pending_inference)[:10]:  # Limit to first 10
+            job_queue.append({
+                "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                "model": job.model,
+            })
+
+        # Get process info
+        processes = []
+        for process_info in self._process_map.values():
+            processes.append({
+                "id": process_info.process_id,
+                "type": process_info.process_type.name,
+                "state": process_info.last_process_state.name,
+                "model": process_info.loaded_horde_model_name,
+                "progress": process_info.last_heartbeat_percent_complete,
+            })
+
+        # Get loaded models
+        models_loaded = list({
+            process.loaded_horde_model_name
+            for process in self._process_map.values()
+            if process.loaded_horde_model_name is not None
+        })
+
+        # Calculate total resource usage
+        total_ram_mb = sum(p.ram_usage_bytes for p in self._process_map.values()) / (1024 * 1024)
+        total_vram_mb = sum(p.vram_usage_bytes for p in self._process_map.values()) / (1024 * 1024)
+        
+        # Get max VRAM from devices
+        max_vram_mb = 0
+        if len(self._device_map.root) > 0:
+            max_vram_mb = max(device.total_memory for device in self._device_map.root.values()) / (1024 * 1024)
+
+        # Calculate kudos per hour
+        kudos_per_hour = 0.0
+        if len(self.kudos_events) > 0:
+            time_window = 3600  # 1 hour
+            recent_kudos = sum(
+                kudos for timestamp, kudos in self.kudos_events
+                if time.time() - timestamp < time_window
+            )
+            kudos_per_hour = recent_kudos
+
+        # Get user kudos total
+        user_kudos_total = None
+        if self.user_info and self.user_info.kudos_details:
+            user_kudos_total = self.user_info.kudos_details.accumulated
+
+        # Update the web UI
+        self.webui.update_status(
+            worker_name=self.bridge_data.dreamer_worker_name,
+            jobs_popped=self.num_jobs_total,
+            jobs_completed=self.total_num_completed_jobs,
+            jobs_faulted=self._num_jobs_faulted,
+            kudos_earned_session=self.kudos_generated_this_session,
+            kudos_per_hour=kudos_per_hour,
+            current_job=current_job,
+            job_queue=job_queue,
+            processes=processes,
+            models_loaded=models_loaded,
+            ram_usage_mb=total_ram_mb,
+            vram_usage_mb=total_vram_mb,
+            total_vram_mb=max_vram_mb,
+            maintenance_mode=self._last_pop_maintenance_mode,
+            user_kudos_total=user_kudos_total,
+        )
+
+    def _handle_exception(self, future: asyncio.Future) -> None:
+        """Logs exceptions from asyncio tasks.
+
         :param future: asyncio task to monitor
         :return: None
         """
@@ -5126,6 +5237,21 @@ class HordeWorkerProcessManager:
             else:
                 logger.error(f"exception thrown by a main loop task: {ex}")
                 logger.exception(ex)
+
+    async def _webui_update_loop(self) -> None:
+        """Update the web UI periodically with current worker status."""
+        while True:
+            try:
+                if self._shutting_down:
+                    break
+
+                self.update_webui_status()
+                await asyncio.sleep(2.0)  # Update every 2 seconds
+            except CancelledError:
+                self._shutdown()
+                break
+            except Exception as e:
+                logger.error(f"Error in webui update loop: {e}")
 
     async def _main_loop(self) -> None:
         process_control_loop = asyncio.create_task(self._process_control_loop(), name="process_control_loop")
@@ -5145,10 +5271,20 @@ class HordeWorkerProcessManager:
             bridge_data_loop = asyncio.create_task(self._bridge_data_loop(), name="bridge_data_loop")
             bridge_data_loop.add_done_callback(self._handle_exception)
 
+        # Start web UI if enabled
+        webui_update_loop = None
+        if self.webui is not None:
+            await self.webui.start()
+            webui_update_loop = asyncio.create_task(self._webui_update_loop(), name="webui_update_loop")
+            webui_update_loop.add_done_callback(self._handle_exception)
+
         tasks = [process_control_loop, api_call_loop, api_get_user_info_loop, job_submit_loop]
 
         if bridge_data_loop is not None:
             tasks.append(bridge_data_loop)
+        
+        if webui_update_loop is not None:
+            tasks.append(webui_update_loop)
 
         self._aiohttp_client_session = ClientSession(requote_redirect_url=False)
         self.horde_client_session = AIHordeAPIAsyncClientSession(
@@ -5156,8 +5292,13 @@ class HordeWorkerProcessManager:
             apikey=self.bridge_data.api_key,
         )
 
-        async with self._aiohttp_client_session, self.horde_client_session:
-            await asyncio.gather(*tasks)
+        try:
+            async with self._aiohttp_client_session, self.horde_client_session:
+                await asyncio.gather(*tasks)
+        finally:
+            # Stop web UI when shutting down
+            if self.webui is not None:
+                await self.webui.stop()
 
     _caught_sigints = 0
     """The number of SIGINTs or SIGTERMs caught."""
