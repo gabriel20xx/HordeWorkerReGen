@@ -1185,12 +1185,6 @@ class HordeWorkerProcessManager:
     _num_jobs_faulted: int = 0
     """The number of jobs which were marked as faulted. This may not include jobs which failed for unknown reasons."""
 
-    _failed_models: dict[str, int]
-    """A dictionary tracking models that have failed and their failure counts."""
-
-    _last_failed_models_print_time: float = 0
-    """The last time we printed the failed models summary."""
-
     jobs_pending_submit: list[HordeJobInfo]
     """A list of HordeJobInfo objects containing the job, the state, and whether or not the job was censored."""
 
@@ -1461,6 +1455,7 @@ class HordeWorkerProcessManager:
 
         # Track models that have failed
         self._failed_models: dict[str, int] = {}
+        self._last_failed_models_print_time: float = 0.0
 
         self.stable_diffusion_reference = None
 
