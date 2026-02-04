@@ -560,25 +560,27 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """Return true if the process is actively doing inference but progress has stalled.
         
         This detects jobs that are stuck in the INFERENCE_STARTING state with:
-        1. No heartbeat received for timeout period, OR
-        2. Progress not advancing for timeout period (stuck at same percentage)
+        1. Progress not advancing for timeout period (stuck at same percentage), OR
+        2. No heartbeat received for timeout period (including last step / VAE decode phase)
         """
         if self[process_id].last_process_state != HordeProcessState.INFERENCE_STARTING:
             return False
 
         # Check if we're getting heartbeats but progress isn't advancing
-        # This catches jobs stuck at a specific progress percentage
+        # This catches jobs stuck at a specific progress percentage, including the last step
         time_since_progress = time.time() - self[process_id].last_progress_timestamp
         if time_since_progress > inference_step_timeout:
             # Progress hasn't advanced in too long - job is stuck
             return True
 
-        # Original check: no heartbeat received for timeout period
-        # This catches jobs that have completely stopped sending heartbeats
-        return bool(
-            self[process_id].last_heartbeat_type == HordeHeartbeatType.INFERENCE_STEP
-            and self[process_id].last_heartbeat_delta > inference_step_timeout,
-        )
+        # Check if no heartbeat received for timeout period
+        # This catches jobs that have completely stopped responding
+        # Note: We check all heartbeat types, not just INFERENCE_STEP, to catch
+        # jobs stuck in the last step (VAE decode) which send PIPELINE_STATE_CHANGE heartbeats
+        if self[process_id].last_heartbeat_delta > inference_step_timeout:
+            return True
+        
+        return False
 
     def num_inference_processes(self) -> int:
         """Return the number of inference processes."""

@@ -497,17 +497,31 @@ class HordeInferenceProcess(HordeProcess):
         if self._current_job_inference_steps_complete:
             if not self._vae_lock_was_acquired:
                 self._vae_lock_was_acquired = True
-                self._vae_decode_semaphore.acquire()
-                log_free_ram()
-                logger.debug("Acquired VAE decode semaphore")
+                # Use timeout on VAE semaphore acquire to prevent indefinite blocking
+                # This prevents jobs from hanging at the last step waiting for VAE decode
+                acquired = self._vae_decode_semaphore.acquire(timeout=300)  # 5 minute timeout
+                if not acquired:
+                    logger.error("Failed to acquire VAE decode semaphore within timeout - job may hang")
+                    # Continue anyway, will be caught by stuck detection
+                else:
+                    log_free_ram()
+                    logger.debug("Acquired VAE decode semaphore")
 
-            self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
+            # Send heartbeat with 100% progress to indicate we're in final stage
+            self.send_heartbeat_message(
+                heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                percent_complete=100,
+            )
             return
 
         if progress_report.comfyui_progress is not None and progress_report.comfyui_progress.current_step == (
             progress_report.comfyui_progress.total_steps
         ):
-            self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
+            # Report 100% progress when last step is reached
+            self.send_heartbeat_message(
+                heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                percent_complete=100,
+            )
             self._current_job_inference_steps_complete = True
             logger.debug("Current job inference steps complete")
         elif progress_report.comfyui_progress is not None and progress_report.comfyui_progress.current_step > 0:
