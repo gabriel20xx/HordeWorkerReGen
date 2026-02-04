@@ -1098,6 +1098,10 @@ class APIWorkerMessage(BaseModel):
 class HordeWorkerProcessManager:
     """Manages and controls processes to act as a horde worker."""
 
+    # Constants for failing models tracking
+    FAILED_MODELS_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
+    MAX_FAILING_MODELS_TO_DISPLAY = 10
+
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
 
@@ -4883,13 +4887,16 @@ class HordeWorkerProcessManager:
                 f"<fg #7dcea0>{job_info_message}</>",
             )
 
-            # Print failing models periodically (every 5 minutes)
-            if self._failed_models and cur_time - self._last_failed_models_print_time > 300:
+            # Print failing models periodically
+            if (
+                self._failed_models
+                and cur_time - self._last_failed_models_print_time > self.FAILED_MODELS_REPORT_INTERVAL_SECONDS
+            ):
                 logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
                 logging_function("<b>Failing Models Summary:</b>")
                 # Sort by failure count descending
                 sorted_failures = sorted(self._failed_models.items(), key=lambda x: x[1], reverse=True)
-                for model_name, count in sorted_failures[:10]:  # Show top 10
+                for model_name, count in sorted_failures[: self.MAX_FAILING_MODELS_TO_DISPLAY]:
                     logging_function(f"  <fg #ff6b6b>{model_name}: {count} failures</>")
                 self._last_failed_models_print_time = cur_time
 
