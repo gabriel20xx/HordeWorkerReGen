@@ -21,7 +21,8 @@ _MULTIPLE_SPACES_PATTERN = re.compile(r"\s{2,}")
 
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
-except Exception:
+except (ImportError, AttributeError):
+    # PipeConnection not available on all platforms, fall back to Connection
     from multiprocessing.connection import Connection  # type: ignore
 from multiprocessing.synchronize import Lock, Semaphore
 from typing import TYPE_CHECKING

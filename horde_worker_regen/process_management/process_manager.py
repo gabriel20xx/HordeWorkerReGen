@@ -96,7 +96,8 @@ sslcontext = ssl.create_default_context(cafile=certifi.where())
 # This is due to Linux/Windows differences in the multiprocessing module
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
-except Exception:
+except (ImportError, AttributeError):
+    # PipeConnection not available on all platforms, fall back to Connection
     from multiprocessing.connection import Connection  # type: ignore
 
 
