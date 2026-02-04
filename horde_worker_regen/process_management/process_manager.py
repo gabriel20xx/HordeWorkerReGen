@@ -5307,11 +5307,7 @@ class HordeWorkerProcessManager:
                 # Enhanced logging for stuck job detection
                 time_since_heartbeat = process_info.last_heartbeat_delta
                 time_since_progress = now - process_info.last_progress_timestamp
-                progress_str = (
-                    f"{process_info.last_heartbeat_percent_complete}%"
-                    if process_info.last_heartbeat_percent_complete is not None
-                    else "Not available"
-                )
+                progress_str = f"{process_info.last_heartbeat_percent_complete}%" if process_info.last_heartbeat_percent_complete is not None else "Not available"
                 logger.error(
                     f"{process_info} seems to be stuck mid inference - "
                     f"Last heartbeat: {time_since_heartbeat:.1f}s ago, "
