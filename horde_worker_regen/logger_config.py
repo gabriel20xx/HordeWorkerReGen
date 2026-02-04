@@ -1,5 +1,6 @@
 """Utilities for configuring the logger with a standardized format."""
 
+import os
 import sys
 
 from loguru import logger
@@ -21,6 +22,13 @@ def configure_logger_format() -> None:
     # Remove all handlers added by HordeLog
     logger.remove()
 
+    # Determine the appropriate log level
+    # DEBUG messages are too verbose for normal operation
+    # Use INFO as default, or DEBUG if explicitly requested via environment variable
+    log_level = "INFO"
+    if os.getenv("AIWORKER_DEBUG", "").lower() in ("1", "true", "yes"):
+        log_level = "DEBUG"
+    
     # Define custom level colors for better visual distinction
     level_formats = {
         "TRACE": "<dim><cyan>{time:YYYY-MM-DD HH:mm:ss.SSS}</cyan></dim> <dim>│</dim> <dim><cyan>{level: <8}</cyan></dim> <dim>│</dim> <dim>{message}</dim>",
@@ -43,6 +51,6 @@ def configure_logger_format() -> None:
     logger.add(
         sys.stderr,
         format=format_record,
-        level="DEBUG",
+        level=log_level,  # Use INFO by default to reduce clutter
         colorize=True,  # Enable ANSI colors
     )

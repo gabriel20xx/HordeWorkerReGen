@@ -209,6 +209,24 @@ webui_port: 7861    # Change if you have a port conflict
 
 Watch the terminal for progress, completed jobs, kudos earned, stats, and errors.
 
+The terminal output now features:
+- 🎨 **Colorful log levels** - Color-coded messages (INFO=cyan, SUCCESS=green, WARNING=yellow, ERROR=red)
+- 📊 **Visual separators** - Clean box-drawing characters (╔═══╗) for better readability
+- 😀 **Emoji markers** - Icons for different operations (🚀 Starting, 💰 Kudos, 📩 New Job, etc.)
+- 📝 **Compact format** - Worker info, kudos, and memory on single lines
+
+**Debug Logging:**
+By default, DEBUG messages are hidden to reduce clutter. To enable detailed debug logs, set:
+```bash
+export AIWORKER_DEBUG=1
+./horde-bridge.sh
+```
+
+Or use the `-v` flag for verbose output:
+```bash
+./horde-bridge.sh -vvv  # Maximum verbosity
+```
+
 Detailed logs are in the `logs` directory:
 
 - `bridge*.log`: All info
