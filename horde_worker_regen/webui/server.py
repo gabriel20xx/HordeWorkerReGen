@@ -271,15 +271,12 @@ class WorkerWebUI:
             color: white;
             font-size: 1.2em;
             margin-top: 50px;
+            animation: pulse 2s ease-in-out infinite;
         }
         
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
-        }
-        
-        .loading {
-            animation: pulse 2s ease-in-out infinite;
         }
         
         .wide-card {
@@ -523,12 +520,15 @@ class WorkerWebUI:
                 });
         }
         
+        // Constants
+        const DEFAULT_UPDATE_INTERVAL_MS = 2000;
+        
         // Fetch config and start updates
         async function initializeUpdates() {
             try {
                 const configResponse = await fetch('/api/config');
                 const config = await configResponse.json();
-                const updateInterval = config.update_interval_ms || 2000;
+                const updateInterval = config.update_interval_ms || DEFAULT_UPDATE_INTERVAL_MS;
                 
                 // Update immediately
                 updateStatus();
@@ -537,9 +537,9 @@ class WorkerWebUI:
                 setInterval(updateStatus, updateInterval);
             } catch (error) {
                 console.error('Error fetching config:', error);
-                // Fallback to default 2 second interval
+                // Fallback to default interval
                 updateStatus();
-                setInterval(updateStatus, 2000);
+                setInterval(updateStatus, DEFAULT_UPDATE_INTERVAL_MS);
             }
         }
         

@@ -101,6 +101,12 @@ sslcontext = ssl.create_default_context(cafile=certifi.where())
 BYTES_TO_MEGABYTES = 1024 * 1024
 """Conversion factor from bytes to megabytes."""
 
+MAX_WEBUI_QUEUE_ITEMS = 10
+"""Maximum number of queued jobs to display in the web UI."""
+
+KUDOS_CALCULATION_WINDOW_SECONDS = 3600
+"""Time window (1 hour) for calculating kudos per hour."""
+
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
 try:
@@ -5161,7 +5167,7 @@ class HordeWorkerProcessManager:
 
         # Get job queue
         job_queue = []
-        for job in list(self.jobs_pending_inference)[:10]:  # Limit to first 10
+        for job in list(self.jobs_pending_inference)[:MAX_WEBUI_QUEUE_ITEMS]:  # Limit to first N
             job_queue.append({
                 "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                 "model": job.model,
@@ -5197,10 +5203,9 @@ class HordeWorkerProcessManager:
         # Calculate kudos per hour
         kudos_per_hour = 0.0
         if len(self.kudos_events) > 0:
-            time_window = 3600  # 1 hour
             recent_kudos = sum(
                 kudos for timestamp, kudos in self.kudos_events
-                if time.time() - timestamp < time_window
+                if time.time() - timestamp < KUDOS_CALCULATION_WINDOW_SECONDS
             )
             kudos_per_hour = recent_kudos
 
