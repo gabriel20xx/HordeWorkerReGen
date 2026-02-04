@@ -182,6 +182,31 @@ Tailor settings to your GPU, following these pointers:
 
 ### Monitoring
 
+#### Web UI
+
+The worker includes a built-in web interface for monitoring status and progress:
+
+- **Access**: Open `http://localhost:7861` in your browser (default port)
+- **Real-time updates**: Status refreshes automatically every 2 seconds
+- **Information displayed**:
+  - Worker name and status (Active/Maintenance)
+  - Session uptime and statistics
+  - Current job progress with live percentage
+  - Jobs queued, completed, and faulted
+  - Kudos earned (session and total)
+  - Active models loaded
+  - Process states
+  - System resources (RAM/VRAM usage)
+
+To enable/disable or configure the web UI, edit `bridgeData.yaml`:
+
+```yaml
+enable_webui: true  # Set to false to disable
+webui_port: 7861    # Change if you have a port conflict
+```
+
+#### Terminal and Logs
+
 Watch the terminal for progress, completed jobs, kudos earned, stats, and errors.
 
 Detailed logs are in the `logs` directory:
