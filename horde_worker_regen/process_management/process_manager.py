@@ -146,6 +146,12 @@ class HordeProcessInfo:
     """The number of inference steps that have been completed since the last heartbeat."""
     last_heartbeat_percent_complete: int | None
     """The last percentage reported by the process."""
+    
+    # Progress tracking for detecting stalled inference jobs
+    last_progress_timestamp: float
+    """Last time progress (percent_complete) actually advanced."""
+    last_progress_value: int | None
+    """The last progress value to detect if progress is advancing."""
 
     last_received_timestamp: float
     """Last time we updated the process info. If we're regularly working, then this value should change frequently."""
@@ -210,6 +216,10 @@ class HordeProcessInfo:
         self.last_heartbeat_type = HordeHeartbeatType.OTHER
         self.heartbeats_inference_steps = 0
         self.last_heartbeat_percent_complete = None
+        
+        # Initialize progress tracking
+        self.last_progress_timestamp = time.time()
+        self.last_progress_value = None
 
         self.last_job_referenced = None
 
@@ -375,6 +385,13 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         else:
             self[process_id].heartbeats_inference_steps = 0
 
+        # Update progress tracking to detect stalled jobs
+        if percent_complete is not None:
+            # Check if progress has actually advanced
+            if self[process_id].last_progress_value != percent_complete:
+                self[process_id].last_progress_timestamp = time.time()
+                self[process_id].last_progress_value = percent_complete
+        
         self[process_id].last_heartbeat_percent_complete = percent_complete
 
     def on_process_ending(self, process_id: int) -> None:
@@ -453,6 +470,9 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             self[process_id].last_heartbeat_delta = 0
             self[process_id].last_heartbeat_timestamp = time.time()
             self[process_id].heartbeats_inference_steps = 0
+            # Reset progress tracking for new job
+            self[process_id].last_progress_timestamp = time.time()
+            self[process_id].last_progress_value = None
 
         self[process_id].last_job_referenced = last_job_referenced
         self[process_id].last_received_timestamp = time.time()
@@ -516,6 +536,10 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         self[process_id].last_heartbeat_timestamp = time.time()
         self[process_id].heartbeats_inference_steps = 0
         self[process_id].last_heartbeat_percent_complete = None
+        
+        # Reset progress tracking for new job
+        self[process_id].last_progress_timestamp = time.time()
+        self[process_id].last_progress_value = None
 
     def delete_safety_processes(self) -> None:
         """Clear all safety processes."""
@@ -533,14 +557,24 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         process_id: int,
         inference_step_timeout: int,
     ) -> bool:
-        """Return true if the process is actively doing inference but we haven't received a heartbeat in a while."""
+        """Return true if the process is actively doing inference but progress has stalled.
+        
+        This detects jobs that are stuck in the INFERENCE_STARTING state with:
+        1. No heartbeat received for timeout period, OR
+        2. Progress not advancing for timeout period (stuck at same percentage)
+        """
         if self[process_id].last_process_state != HordeProcessState.INFERENCE_STARTING:
             return False
 
-        last_heartbeat_percent_complete = self[process_id].last_heartbeat_percent_complete
-        if last_heartbeat_percent_complete is not None and last_heartbeat_percent_complete < 1:
-            return False
+        # Check if we're getting heartbeats but progress isn't advancing
+        # This catches jobs stuck at a specific progress percentage
+        time_since_progress = time.time() - self[process_id].last_progress_timestamp
+        if time_since_progress > inference_step_timeout:
+            # Progress hasn't advanced in too long - job is stuck
+            return True
 
+        # Original check: no heartbeat received for timeout period
+        # This catches jobs that have completely stopped sending heartbeats
         return bool(
             self[process_id].last_heartbeat_type == HordeHeartbeatType.INFERENCE_STEP
             and self[process_id].last_heartbeat_delta > inference_step_timeout,
@@ -5265,7 +5299,16 @@ class HordeWorkerProcessManager:
                 process_info.process_id,
                 self.bridge_data.inference_step_timeout,
             ):
-                logger.error(f"{process_info} seems to be stuck mid inference, replacing it")
+                # Enhanced logging for stuck job detection
+                time_since_heartbeat = process_info.last_heartbeat_delta
+                time_since_progress = now - process_info.last_progress_timestamp
+                logger.error(
+                    f"{process_info} seems to be stuck mid inference - "
+                    f"Last heartbeat: {time_since_heartbeat:.1f}s ago, "
+                    f"Last progress change: {time_since_progress:.1f}s ago, "
+                    f"Progress: {process_info.last_heartbeat_percent_complete}%, "
+                    f"Job: {process_info.last_job_referenced.id_ if process_info.last_job_referenced else 'None'}"
+                )
                 self._replace_inference_process(process_info)
                 any_replaced = True
                 self._recently_recovered = True
