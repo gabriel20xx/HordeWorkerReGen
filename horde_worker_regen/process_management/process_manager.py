@@ -4444,23 +4444,21 @@ class HordeWorkerProcessManager:
 
         if self.kudos_generated_this_session > 0:
             log_function(
-                f"<fg #7dcea0>{kudos_info_string}</>",
+                f"<fg #ffd700>💰 Kudos: {kudos_info_string}</>",
             )
 
         logger.debug(f"len(kudos_events): {len(self.kudos_events)}")
         if self.user_info is not None and self.user_info.kudos_details is not None:
-            log_function(
-                "<fg #7dcea0>"
-                f"Total Kudos Accumulated: {self.user_info.kudos_details.accumulated:,.2f} "
+            total_kudos_msg = (
+                f"Total Accumulated: {self.user_info.kudos_details.accumulated:,.2f} "
                 f"(all workers for {self.user_info.username})"
-                "</>",
             )
             if self.user_info.kudos_details.accumulated is not None and self.user_info.kudos_details.accumulated < 0:
-                log_function(
-                    "<fg #7dcea0>"
-                    "Negative kudos means you've requested more than you've earned. This can be normal."
-                    "</>",
-                )
+                total_kudos_msg += " | ⚠️ Negative kudos = more requested than earned"
+            
+            log_function(
+                f"<fg #ffd700>💰 {total_kudos_msg}</>",
+            )
 
     async def api_get_user_info(self) -> None:
         """Get the information associated with this API key from the API."""
@@ -4842,10 +4840,10 @@ class HordeWorkerProcessManager:
 
             process_info_strings = self._process_map.get_process_info_strings()
 
-            logging_function("<fg #dddddd>" + str("^" * 80) + "</>")
+            logging_function("<fg #00d7ff>╔" + "═" * 78 + "╗</>")
 
             if len(self._api_messages_received) > 0:
-                logging_function("<b>API Messages:</b>")
+                logging_function("<b><fg #ffd700>📢 API Messages:</></b>")
                 for message_id, message in self._api_messages_received.items():
                     try:
                         message_text = message.message_text or ""
@@ -4868,25 +4866,25 @@ class HordeWorkerProcessManager:
 
             # Only show detailed process info if not in limited console mode
             if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
-                logging_function("<b>Process info:</b>")
+                logging_function("<b><fg #00d7ff>🔧 Processes:</></b>")
                 for process_info_string in process_info_strings:
                     logging_function("  " + process_info_string)
 
-                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+                logging_function("<fg #00d7ff>├" + "─" * 78 + "┤</>")
             else:
                 # In limited mode, just show a brief summary
                 num_busy = self._process_map.num_busy_processes()
                 num_total = len(self._process_map)
-                logging_function(f"<b>Processes:</b> {num_busy}/{num_total} busy")
-                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+                logging_function(f"<b><fg #00d7ff>🔧 Processes:</></b> {num_busy}/{num_total} busy")
+                logging_function("<fg #00d7ff>├" + "─" * 78 + "┤</>")
 
-            logging_function("<b>Job Info:</b>")
+            logging_function("<b><fg #00ff87>📋 Jobs:</></b>")
             jobs = []
             for x in self.jobs_pending_inference:
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
                 jobs.append(f"<{shortened_id}: <u>{x.model}></u>")
 
-            logging_function(f'  Jobs: {", ".join(jobs)}')
+            logging_function(f'  {", ".join(jobs) if jobs else "No pending jobs"}')
 
             active_models = {
                 process.loaded_horde_model_name
@@ -4896,20 +4894,20 @@ class HordeWorkerProcessManager:
 
             logger.debug(f"Active models: {active_models}")
 
-            job_info_message = "  Session job info: " + " | ".join(
+            job_info_message = "  " + " | ".join(
                 [
-                    f"pending start: {len(self.jobs_pending_inference)} (eMPS: {self.get_pending_megapixelsteps()})",
-                    f"jobs popped: {self.num_jobs_total}",
-                    f"submitted: {self.total_num_completed_jobs}",
+                    f"pending: {len(self.jobs_pending_inference)} ({self.get_pending_megapixelsteps()} eMPS)",
+                    f"popped: {self.num_jobs_total}",
+                    f"done: {self.total_num_completed_jobs}",
                     f"faulted: {self._num_jobs_faulted}",
-                    f"slow_jobs: {self._num_job_slowdowns}",
-                    f"process_recoveries: {self._num_process_recoveries}",
-                    f"{self._time_spent_no_jobs_available:.2f} seconds without jobs",
+                    f"slow: {self._num_job_slowdowns}",
+                    f"recoveries: {self._num_process_recoveries}",
+                    f"no jobs: {self._time_spent_no_jobs_available:.1f}s",
                 ],
             )
 
             logging_function(
-                f"<fg #7dcea0>{job_info_message}</>",
+                f"<fg #00ff87>{job_info_message}</>",
             )
 
             # Print failing models periodically
@@ -4917,62 +4915,51 @@ class HordeWorkerProcessManager:
                 self._failed_models
                 and cur_time - self._last_failed_models_print_time > self.FAILED_MODELS_REPORT_INTERVAL_SECONDS
             ):
-                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
-                logging_function("<b>Failing Models Summary:</b>")
+                logging_function("<fg #00d7ff>├" + "─" * 78 + "┤</>")
+                logging_function("<b><fg #ff5f5f>⚠️  Failing Models:</></b>")
                 # Sort by failure count descending
                 sorted_failures = sorted(self._failed_models.items(), key=lambda x: x[1], reverse=True)
                 for model_name, count in sorted_failures[: self.MAX_FAILING_MODELS_TO_DISPLAY]:
                     logging_function(f"  <fg #ff6b6b>{model_name}: {count} failures</>")
                 self._last_failed_models_print_time = cur_time
 
-            logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+            logging_function("<fg #00d7ff>├" + "─" * 78 + "┤</>")
 
             # Only show detailed process info if not in limited console mode
             if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
-                logging_function("<b>Worker Info:</b>")
+                logging_function("<b><fg #5fd7ff>⚙️  Worker Config:</></b>")
 
                 max_power_dimension = int(math.sqrt(self.bridge_data.max_power * 8 * 64 * 64))
-                logger.info(
-                    "  "
-                    + " | ".join(
-                        [
-                            f"dreamer_name: {self.bridge_data.dreamer_worker_name}",
-                            f"(v{horde_worker_regen.__version__})",
-                            f"horde user: {self.user_info.username if self.user_info is not None else 'Unknown'}",
-                            f"num_models: {len(self.bridge_data.image_models_to_load)}",
-                            f"custom_models: {bool(self.bridge_data.custom_models)}",
-                            f"max_power: {self.bridge_data.max_power} ({max_power_dimension}x{max_power_dimension})",
-                            f"max_threads: {self.max_concurrent_inference_processes}",
-                            f"queue_size: {self.bridge_data.queue_size}",
-                            f"safety_on_gpu: {self.bridge_data.safety_on_gpu}",
-                        ],
-                    ),
+                worker_info = " | ".join(
+                    [
+                        f"name: {self.bridge_data.dreamer_worker_name}",
+                        f"v{horde_worker_regen.__version__}",
+                        f"user: {self.user_info.username if self.user_info is not None else 'Unknown'}",
+                        f"models: {len(self.bridge_data.image_models_to_load)}",
+                        f"custom: {bool(self.bridge_data.custom_models)}",
+                        f"power: {self.bridge_data.max_power} ({max_power_dimension}x{max_power_dimension})",
+                        f"threads: {self.max_concurrent_inference_processes}",
+                        f"queue: {self.bridge_data.queue_size}",
+                        f"safety_gpu: {self.bridge_data.safety_on_gpu}",
+                        f"img2img: {self.bridge_data.allow_img2img}",
+                        f"lora: {self.bridge_data.allow_lora}",
+                        f"cn: {self.bridge_data.allow_controlnet}",
+                        f"sdxl_cn: {self.bridge_data.allow_sdxl_controlnet}",
+                        f"pp: {self.bridge_data.allow_post_processing}",
+                        f"pp_overlap: {self.bridge_data.post_process_job_overlap}",
+                    ]
                 )
-                logger.info(
-                    "  "
-                    + " | ".join(
-                        [
-                            f"allow_img2img: {self.bridge_data.allow_img2img}",
-                            f"allow_lora: {self.bridge_data.allow_lora}",
-                            f"allow_controlnet: {self.bridge_data.allow_controlnet}",
-                            f"allow_sdxl_controlnet: {self.bridge_data.allow_sdxl_controlnet}",
-                            f"allow_post_processing: {self.bridge_data.allow_post_processing}",
-                            f"post_process_job_overlap: {self.bridge_data.post_process_job_overlap}",
-                        ],
-                    ),
-                )
+                logger.info(f"  {worker_info}")
 
-                logger.info(
-                    "  "
-                    + " | ".join(
-                        [
-                            f"unload_models_from_vram_often: {self.bridge_data.unload_models_from_vram_often}",
-                            f"high_performance_mode: {self.bridge_data.high_performance_mode}",
-                            f"moderate_performance_mode: {self.bridge_data.moderate_performance_mode}",
-                            f"high_memory_mode: {self.bridge_data.high_memory_mode}",
-                        ],
-                    ),
+                memory_info = " | ".join(
+                    [
+                        f"unload_vram: {self.bridge_data.unload_models_from_vram_often}",
+                        f"high_perf: {self.bridge_data.high_performance_mode}",
+                        f"med_perf: {self.bridge_data.moderate_performance_mode}",
+                        f"high_mem: {self.bridge_data.high_memory_mode}",
+                    ]
                 )
+                logger.info(f"  {memory_info}")
 
             logger.debug(
                 " | ".join(
@@ -5073,13 +5060,13 @@ class HordeWorkerProcessManager:
                     )
 
             if self._shutting_down:
-                logger.warning("*" * 80)
-                logger.warning("Shutting down after current jobs are finished...")
+                logger.warning("<fg #ff5f5f>╔" + "═" * 78 + "╗</>")
+                logger.warning("<fg #ff5f5f>║ 🛑 SHUTTING DOWN - Finishing current jobs...                              ║</>")
+                logger.warning("<fg #ff5f5f>╚" + "═" * 78 + "╝</>")
                 self._status_message_frequency = 5.0
-                logger.warning("*" * 80)
 
             self._last_status_message_time = cur_time
-            logging_function("<fg #dddddd>" + str("v" * 80) + "</>")
+            logging_function("<fg #00d7ff>╚" + "═" * 78 + "╝</>")
 
     _bridge_data_loop_interval = 1.0
     """The interval between bridge data loop iterations."""
