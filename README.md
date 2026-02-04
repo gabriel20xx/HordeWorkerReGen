@@ -211,18 +211,33 @@ Watch the terminal for progress, completed jobs, kudos earned, stats, and errors
 
 The terminal output now features:
 - 🎨 **Colorful log levels** - Color-coded messages (INFO=cyan, SUCCESS=green, WARNING=yellow, ERROR=red)
-- 📊 **Visual separators** - Clean box-drawing characters (╔═══╗) for better readability
-- 😀 **Emoji markers** - Icons for different operations (🚀 Starting, 💰 Kudos, 📩 New Job, etc.)
 - 📝 **Compact format** - Worker info, kudos, and memory on single lines
+- 🔇 **Clean output** - DEBUG messages hidden by default
 
-**Debug Logging:**
-By default, DEBUG messages are hidden to reduce clutter. To enable detailed debug logs, set:
+**Log Level Control:**
+
+Set log level using the `AIWORKER_LOG_LEVEL` environment variable (default: `INFO`):
+
 ```bash
-export AIWORKER_DEBUG=1
+# For Docker
+docker run -e AIWORKER_LOG_LEVEL=INFO ...
+
+# For direct execution
+export AIWORKER_LOG_LEVEL=INFO  # Default - shows INFO, SUCCESS, WARNING, ERROR, CRITICAL
+export AIWORKER_LOG_LEVEL=DEBUG # Verbose - shows all messages including debug
+export AIWORKER_LOG_LEVEL=WARNING # Quiet - only warnings and errors
 ./horde-bridge.sh
 ```
 
-Or use the `-v` flag for verbose output:
+Valid levels: `TRACE`, `DEBUG`, `INFO`, `SUCCESS`, `WARNING`, `ERROR`, `CRITICAL`
+
+**Legacy debug flag:**
+```bash
+export AIWORKER_DEBUG=1  # Equivalent to AIWORKER_LOG_LEVEL=DEBUG
+./horde-bridge.sh
+```
+
+**Or use the `-v` flag for verbose output:**
 ```bash
 ./horde-bridge.sh -vvv  # Maximum verbosity
 ```

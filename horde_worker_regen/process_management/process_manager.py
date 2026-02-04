@@ -4444,7 +4444,7 @@ class HordeWorkerProcessManager:
 
         if self.kudos_generated_this_session > 0:
             log_function(
-                f"<fg #ffd700>💰 Kudos: {kudos_info_string}</>",
+                f"<fg #ffd700>Kudos: {kudos_info_string}</>",
             )
 
         logger.debug(f"len(kudos_events): {len(self.kudos_events)}")
@@ -4454,10 +4454,10 @@ class HordeWorkerProcessManager:
                 f"(all workers for {self.user_info.username})"
             )
             if self.user_info.kudos_details.accumulated is not None and self.user_info.kudos_details.accumulated < 0:
-                total_kudos_msg += " | ⚠️ Negative kudos = more requested than earned"
+                total_kudos_msg += " | Negative kudos = more requested than earned"
             
             log_function(
-                f"<fg #ffd700>💰 {total_kudos_msg}</>",
+                f"<fg #ffd700>{total_kudos_msg}</>",
             )
 
     async def api_get_user_info(self) -> None:
@@ -4840,10 +4840,10 @@ class HordeWorkerProcessManager:
 
             process_info_strings = self._process_map.get_process_info_strings()
 
-            logging_function("<fg #00d7ff>╔" + "═" * 78 + "╗</>")
+            logging_function("<fg #00d7ff>" + "=" * 80 + "</>")
 
             if len(self._api_messages_received) > 0:
-                logging_function("<b><fg #ffd700>📢 API Messages:</></b>")
+                logging_function("<b><fg #ffd700>API Messages:</></b>")
                 for message_id, message in self._api_messages_received.items():
                     try:
                         message_text = message.message_text or ""
@@ -4866,19 +4866,19 @@ class HordeWorkerProcessManager:
 
             # Only show detailed process info if not in limited console mode
             if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
-                logging_function("<b><fg #00d7ff>🔧 Processes:</></b>")
+                logging_function("<b><fg #00d7ff>Processes:</></b>")
                 for process_info_string in process_info_strings:
                     logging_function("  " + process_info_string)
 
-                logging_function("<fg #00d7ff>├" + "─" * 78 + "┤</>")
+                logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
             else:
                 # In limited mode, just show a brief summary
                 num_busy = self._process_map.num_busy_processes()
                 num_total = len(self._process_map)
-                logging_function(f"<b><fg #00d7ff>🔧 Processes:</></b> {num_busy}/{num_total} busy")
-                logging_function("<fg #00d7ff>├" + "─" * 78 + "┤</>")
+                logging_function(f"<b><fg #00d7ff>Processes:</></b> {num_busy}/{num_total} busy")
+                logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
 
-            logging_function("<b><fg #00ff87>📋 Jobs:</></b>")
+            logging_function("<b><fg #00ff87>Jobs:</></b>")
             jobs = []
             for x in self.jobs_pending_inference:
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
@@ -4915,19 +4915,19 @@ class HordeWorkerProcessManager:
                 self._failed_models
                 and cur_time - self._last_failed_models_print_time > self.FAILED_MODELS_REPORT_INTERVAL_SECONDS
             ):
-                logging_function("<fg #00d7ff>├" + "─" * 78 + "┤</>")
-                logging_function("<b><fg #ff5f5f>⚠️  Failing Models:</></b>")
+                logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
+                logging_function("<b><fg #ff5f5f>Failing Models:</></b>")
                 # Sort by failure count descending
                 sorted_failures = sorted(self._failed_models.items(), key=lambda x: x[1], reverse=True)
                 for model_name, count in sorted_failures[: self.MAX_FAILING_MODELS_TO_DISPLAY]:
                     logging_function(f"  <fg #ff6b6b>{model_name}: {count} failures</>")
                 self._last_failed_models_print_time = cur_time
 
-            logging_function("<fg #00d7ff>├" + "─" * 78 + "┤</>")
+            logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
 
             # Only show detailed process info if not in limited console mode
             if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
-                logging_function("<b><fg #5fd7ff>⚙️  Worker Config:</></b>")
+                logging_function("<b><fg #5fd7ff>Worker Config:</></b>")
 
                 max_power_dimension = int(math.sqrt(self.bridge_data.max_power * 8 * 64 * 64))
                 worker_info = " | ".join(
@@ -5060,13 +5060,13 @@ class HordeWorkerProcessManager:
                     )
 
             if self._shutting_down:
-                logger.warning("<fg #ff5f5f>╔" + "═" * 78 + "╗</>")
-                logger.warning("<fg #ff5f5f>║ 🛑 SHUTTING DOWN - Finishing current jobs...                              ║</>")
-                logger.warning("<fg #ff5f5f>╚" + "═" * 78 + "╝</>")
+                logger.warning("<fg #ff5f5f>" + "=" * 80 + "</>")
+                logger.warning("<fg #ff5f5f>SHUTTING DOWN - Finishing current jobs...</>")
+                logger.warning("<fg #ff5f5f>" + "=" * 80 + "</>")
                 self._status_message_frequency = 5.0
 
             self._last_status_message_time = cur_time
-            logging_function("<fg #00d7ff>╚" + "═" * 78 + "╝</>")
+            logging_function("<fg #00d7ff>" + "=" * 80 + "</>")
 
     _bridge_data_loop_interval = 1.0
     """The interval between bridge data loop iterations."""
