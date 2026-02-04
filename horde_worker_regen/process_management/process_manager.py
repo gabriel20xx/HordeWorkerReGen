@@ -2233,7 +2233,7 @@ class HordeWorkerProcessManager:
 
                     logger.opt(ansi=True).info(
                         "\0<fg #da9dff>"
-                        f"Saved image(s) to disk for job {str(message.job_id)[:8]}: "
+                        f"SAVED image(s) to disk for job {str(message.job_id)[:8]}: "
                         f"{first_path}{more_suffix} "
                         f"(metadata embedded {embedded_count}/{len(message.saved_images)})"
                         "</>",
