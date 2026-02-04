@@ -2232,7 +2232,7 @@ class HordeWorkerProcessManager:
                     more_suffix = f" (+{more_count} more)" if more_count > 0 else ""
 
                     logger.opt(ansi=True).info(
-                        "\0<fg #da9dff>"
+                        "<fg #2ecc71>"
                         f"SAVED image(s) to disk for job {str(message.job_id)[:8]}: "
                         f"{first_path}{more_suffix} "
                         f"(metadata embedded {embedded_count}/{len(message.saved_images)})"
