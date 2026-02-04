@@ -11,10 +11,21 @@ import time
 
 from horde_worker_regen.consts import BASE_LORA_DOWNLOAD_TIMEOUT, EXTRA_LORA_DOWNLOAD_TIMEOUT
 
+# Precompiled regex patterns for prompt sanitization (performance optimization)
+_NEGATIVE_PROMPT_KEYWORDS_PATTERN = re.compile(
+    r"\b(child|infant|underage|immature|teenager|tween)\b",
+    flags=re.IGNORECASE,
+)
+_MULTIPLE_COMMAS_PATTERN = re.compile(r"\s*,\s*")
+_MULTIPLE_SPACES_PATTERN = re.compile(r"\s{2,}")
+
+# ! IMPORTANT: Start of own code
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
-except Exception:
+except (ImportError, AttributeError):
+    # PipeConnection not available on all platforms, fall back to Connection
     from multiprocessing.connection import Connection  # type: ignore
+# ! IMPORTANT: End of own code
 from multiprocessing.synchronize import Lock, Semaphore
 from typing import TYPE_CHECKING
 
@@ -64,6 +75,10 @@ else:
 
 class HordeInferenceProcess(HordeProcess):
     """Represents an inference process, which generates images."""
+
+    # Timeout for VAE decode semaphore acquire (seconds)
+    # Prevents indefinite blocking at the last inference step
+    VAE_SEMAPHORE_TIMEOUT = 300  # 5 minutes
 
     _inference_semaphore: Semaphore
     """A semaphore used to limit the number of concurrent inference jobs."""
@@ -120,6 +135,10 @@ class HordeInferenceProcess(HordeProcess):
         )
 
         self._aux_model_lock = aux_model_lock
+        
+        # Download progress tracking (performance optimization)
+        self._download_progress_counter: int = 0
+        self._download_total_bytes: int = 0
 
         # We import these here to guard against potentially importing them in the main process
         # which would create shared objects, potentially causing issues
@@ -242,8 +261,28 @@ class HordeInferenceProcess(HordeProcess):
             downloaded_bytes (int): The number of bytes downloaded so far.
             total_bytes (int): The total number of bytes to download.
         """
-        # TODO
-        if downloaded_bytes % (total_bytes / 20) == 0:
+        # Reset counter if total bytes changed (new download)
+        if total_bytes != self._download_total_bytes:
+            self._download_progress_counter = 0
+            self._download_total_bytes = total_bytes
+        
+        # Report progress every 5% instead of using floating point modulo
+        # This avoids precision issues and reduces message spam
+        progress_threshold = total_bytes // 20  # 5% increments (20 reports total)
+        
+        # Handle small files (< 20 bytes) by always reporting when complete
+        if progress_threshold == 0:
+            if downloaded_bytes == total_bytes:
+                self.send_process_state_change_message(
+                    process_state=HordeProcessState.DOWNLOADING_MODEL,
+                    info=f"Downloading model ({downloaded_bytes} / {total_bytes})",
+                )
+            return
+        
+        current_segment = downloaded_bytes // progress_threshold
+        
+        if current_segment > self._download_progress_counter:
+            self._download_progress_counter = current_segment
             self.send_process_state_change_message(
                 process_state=HordeProcessState.DOWNLOADING_MODEL,
                 info=f"Downloading model ({downloaded_bytes} / {total_bytes})",
@@ -465,17 +504,35 @@ class HordeInferenceProcess(HordeProcess):
         if self._current_job_inference_steps_complete:
             if not self._vae_lock_was_acquired:
                 self._vae_lock_was_acquired = True
-                self._vae_decode_semaphore.acquire()
-                log_free_ram()
-                logger.debug("Acquired VAE decode semaphore")
+                # Use timeout on VAE semaphore acquire to prevent indefinite blocking
+                # This prevents jobs from hanging at the last step waiting for VAE decode
+                acquired = self._vae_decode_semaphore.acquire(timeout=self.VAE_SEMAPHORE_TIMEOUT)
+                if not acquired:
+                    logger.error(
+                        f"Failed to acquire VAE decode semaphore within {self.VAE_SEMAPHORE_TIMEOUT}s timeout. "
+                        "Job will continue but may fail. This will be detected as stuck if it doesn't complete soon."
+                    )
+                    # Job continues without VAE semaphore (likely to fail during decode)
+                    # If it hangs, stuck detection will trigger after inference_step_timeout
+                else:
+                    log_free_ram()
+                    logger.debug("Acquired VAE decode semaphore")
 
-            self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
+            # Send heartbeat with 100% progress to indicate we're in final stage
+            self.send_heartbeat_message(
+                heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                percent_complete=100,
+            )
             return
 
         if progress_report.comfyui_progress is not None and progress_report.comfyui_progress.current_step == (
             progress_report.comfyui_progress.total_steps
         ):
-            self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
+            # Report 100% progress when last step is reached
+            self.send_heartbeat_message(
+                heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                percent_complete=100,
+            )
             self._current_job_inference_steps_complete = True
             logger.debug("Current job inference steps complete")
         elif progress_report.comfyui_progress is not None and progress_report.comfyui_progress.current_step > 0:
@@ -531,14 +588,10 @@ class HordeInferenceProcess(HordeProcess):
             if prompt and "###" in prompt:
                 positive_prompt, negative_prompt = prompt.split("###", 1)
                 cleaned_negative = negative_prompt
-                cleaned_negative = re.sub(
-                    r"\b(child|infant|underage|immature|teenager|tween)\b",
-                    "",
-                    cleaned_negative,
-                    flags=re.IGNORECASE,
-                )
-                cleaned_negative = re.sub(r"\s*,\s*", ", ", cleaned_negative)
-                cleaned_negative = re.sub(r"\s{2,}", " ", cleaned_negative)
+                # Use precompiled regex patterns for better performance
+                cleaned_negative = _NEGATIVE_PROMPT_KEYWORDS_PATTERN.sub("", cleaned_negative)
+                cleaned_negative = _MULTIPLE_COMMAS_PATTERN.sub(", ", cleaned_negative)
+                cleaned_negative = _MULTIPLE_SPACES_PATTERN.sub(" ", cleaned_negative)
                 cleaned_negative = cleaned_negative.strip(" ,")
                 self._last_sanitized_negative_prompt = cleaned_negative
                 job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"

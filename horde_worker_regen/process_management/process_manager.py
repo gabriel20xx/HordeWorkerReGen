@@ -94,10 +94,13 @@ from horde_worker_regen.process_management.worker_entry_points import start_infe
 sslcontext = ssl.create_default_context(cafile=certifi.where())
 
 # This is due to Linux/Windows differences in the multiprocessing module
+# ! IMPORTANT: Start of own code
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
-except Exception:
+except (ImportError, AttributeError):
+    # PipeConnection not available on all platforms, fall back to Connection
     from multiprocessing.connection import Connection  # type: ignore
+# ! IMPORTANT: End of own code
 
 
 # As of 3.11, asyncio.TimeoutError is deprecated and is an alias for builtins.TimeoutError
@@ -146,6 +149,12 @@ class HordeProcessInfo:
     """The number of inference steps that have been completed since the last heartbeat."""
     last_heartbeat_percent_complete: int | None
     """The last percentage reported by the process."""
+    
+    # Progress tracking for detecting stalled inference jobs
+    last_progress_timestamp: float
+    """Last time progress (percent_complete) actually advanced."""
+    last_progress_value: int | None
+    """The last progress value to detect if progress is advancing."""
 
     last_received_timestamp: float
     """Last time we updated the process info. If we're regularly working, then this value should change frequently."""
@@ -210,6 +219,10 @@ class HordeProcessInfo:
         self.last_heartbeat_type = HordeHeartbeatType.OTHER
         self.heartbeats_inference_steps = 0
         self.last_heartbeat_percent_complete = None
+        
+        # Initialize progress tracking
+        self.last_progress_timestamp = time.time()
+        self.last_progress_value = None
 
         self.last_job_referenced = None
 
@@ -375,6 +388,13 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         else:
             self[process_id].heartbeats_inference_steps = 0
 
+        # Update progress tracking to detect stalled jobs
+        if percent_complete is not None:
+            # Check if progress has actually advanced
+            if self[process_id].last_progress_value != percent_complete:
+                self[process_id].last_progress_timestamp = time.time()
+                self[process_id].last_progress_value = percent_complete
+        
         self[process_id].last_heartbeat_percent_complete = percent_complete
 
     def on_process_ending(self, process_id: int) -> None:
@@ -453,6 +473,9 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             self[process_id].last_heartbeat_delta = 0
             self[process_id].last_heartbeat_timestamp = time.time()
             self[process_id].heartbeats_inference_steps = 0
+            # Reset progress tracking for new job
+            self[process_id].last_progress_timestamp = time.time()
+            self[process_id].last_progress_value = None
 
         self[process_id].last_job_referenced = last_job_referenced
         self[process_id].last_received_timestamp = time.time()
@@ -516,6 +539,10 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         self[process_id].last_heartbeat_timestamp = time.time()
         self[process_id].heartbeats_inference_steps = 0
         self[process_id].last_heartbeat_percent_complete = None
+        
+        # Reset progress tracking for new job
+        self[process_id].last_progress_timestamp = time.time()
+        self[process_id].last_progress_value = None
 
     def delete_safety_processes(self) -> None:
         """Clear all safety processes."""
@@ -533,18 +560,30 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         process_id: int,
         inference_step_timeout: int,
     ) -> bool:
-        """Return true if the process is actively doing inference but we haven't received a heartbeat in a while."""
+        """Return true if the process is actively doing inference but progress has stalled.
+        
+        This detects jobs that are stuck in the INFERENCE_STARTING state with:
+        1. Progress not advancing for timeout period (stuck at same percentage), OR
+        2. No heartbeat received for timeout period (including last step / VAE decode phase)
+        """
         if self[process_id].last_process_state != HordeProcessState.INFERENCE_STARTING:
             return False
 
-        last_heartbeat_percent_complete = self[process_id].last_heartbeat_percent_complete
-        if last_heartbeat_percent_complete is not None and last_heartbeat_percent_complete < 1:
-            return False
+        # Check if we're getting heartbeats but progress isn't advancing
+        # This catches jobs stuck at a specific progress percentage, including the last step
+        time_since_progress = time.time() - self[process_id].last_progress_timestamp
+        if time_since_progress > inference_step_timeout:
+            # Progress hasn't advanced in too long - job is stuck
+            return True
 
-        return bool(
-            self[process_id].last_heartbeat_type == HordeHeartbeatType.INFERENCE_STEP
-            and self[process_id].last_heartbeat_delta > inference_step_timeout,
-        )
+        # Check if no heartbeat received for timeout period
+        # This catches jobs that have completely stopped responding
+        # Note: We check all heartbeat types, not just INFERENCE_STEP, to catch
+        # jobs stuck in the last step (VAE decode) which send PIPELINE_STATE_CHANGE heartbeats
+        if self[process_id].last_heartbeat_delta > inference_step_timeout:
+            return True
+        
+        return False
 
     def num_inference_processes(self) -> int:
         """Return the number of inference processes."""
@@ -1399,6 +1438,11 @@ class HordeWorkerProcessManager:
 
         self.jobs_pending_inference = deque()
         self._jobs_pending_inference_lock = Lock_Asyncio()
+        
+        # Cache for megapixelsteps calculation (performance optimization)
+        # Initialize as valid with 0 since there are no pending jobs at startup
+        self._cached_pending_megapixelsteps: int = 0
+        self._megapixelsteps_cache_valid: bool = True
 
         self.job_pop_timestamps: dict[ImageGenerateJobPopResponse, float] = {}
         self._job_pop_timestamps_lock = Lock_Asyncio()
@@ -2063,6 +2107,7 @@ class HordeWorkerProcessManager:
                             f"Job {message.sdk_api_job_info.id_} found in job_deque. (Process {message.process_id})",
                         )
                         self.jobs_pending_inference.remove(message.sdk_api_job_info)
+                        self._invalidate_megapixelsteps_cache()
                     continue
 
                 job_info = self.jobs_lookup[message.sdk_api_job_info]
@@ -2079,6 +2124,7 @@ class HordeWorkerProcessManager:
                 for job in self.jobs_pending_inference:
                     if job.id_ == message.sdk_api_job_info.id_:
                         self.jobs_pending_inference.remove(job)
+                        self._invalidate_megapixelsteps_cache()
                         break
 
                 self.total_num_completed_jobs += 1
@@ -2186,8 +2232,8 @@ class HordeWorkerProcessManager:
                     more_suffix = f" (+{more_count} more)" if more_count > 0 else ""
 
                     logger.opt(ansi=True).info(
-                        "\0<fg #da9dff>"
-                        f"Saved image(s) to disk for job {str(message.job_id)[:8]}: "
+                        "<fg #00d9ff>"
+                        f"SAVED image(s) to disk for job {str(message.job_id)[:8]}: "
                         f"{first_path}{more_suffix} "
                         f"(metadata embedded {embedded_count}/{len(message.saved_images)})"
                         "</>",
@@ -3574,6 +3620,7 @@ class HordeWorkerProcessManager:
         else:
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
+                self._invalidate_megapixelsteps_cache()
 
             if (
                 self._skipped_line_next_job_and_process is not None
@@ -3655,7 +3702,15 @@ class HordeWorkerProcessManager:
         return int(job_effective_pixel_steps / 1_000_000)
 
     def get_pending_megapixelsteps(self) -> int:
-        """Return the number of megapixelsteps that are pending in the job deque."""
+        """Return the number of megapixelsteps that are pending in the job deque.
+        
+        Uses caching to avoid recalculating on every call.
+        """
+        # Return cached value if still valid
+        if self._megapixelsteps_cache_valid:
+            return self._cached_pending_megapixelsteps
+        
+        # Recalculate and cache
         job_deque_megapixelsteps = 0
         for job in self.jobs_pending_inference:
             job_megapixelsteps = self.get_single_job_effective_megapixelsteps(job)
@@ -3664,7 +3719,13 @@ class HordeWorkerProcessManager:
         for _ in self.jobs_pending_submit:
             job_deque_megapixelsteps += 4
 
+        self._cached_pending_megapixelsteps = job_deque_megapixelsteps
+        self._megapixelsteps_cache_valid = True
         return job_deque_megapixelsteps
+    
+    def _invalidate_megapixelsteps_cache(self) -> None:
+        """Invalidate the megapixelsteps cache when jobs are added or removed."""
+        self._megapixelsteps_cache_valid = False
 
     def should_wait_for_pending_megapixelsteps(self) -> bool:
         """Check if the number of megapixelsteps in the job deque is above the limit."""
@@ -4214,6 +4275,7 @@ class HordeWorkerProcessManager:
 
         async with self._jobs_pending_inference_lock, self._job_pop_timestamps_lock:
             self.jobs_pending_inference.append(job_pop_response)
+            self._invalidate_megapixelsteps_cache()
             jobs = []
             for job in self.jobs_pending_inference:
                 if job.id_ is not None:
@@ -5242,7 +5304,16 @@ class HordeWorkerProcessManager:
                 process_info.process_id,
                 self.bridge_data.inference_step_timeout,
             ):
-                logger.error(f"{process_info} seems to be stuck mid inference, replacing it")
+                # Enhanced logging for stuck job detection
+                time_since_heartbeat = process_info.last_heartbeat_delta
+                time_since_progress = now - process_info.last_progress_timestamp
+                logger.error(
+                    f"{process_info} seems to be stuck mid inference - "
+                    f"Last heartbeat: {time_since_heartbeat:.1f}s ago, "
+                    f"Last progress change: {time_since_progress:.1f}s ago, "
+                    f"Progress: {process_info.last_heartbeat_percent_complete}%, "
+                    f"Job: {process_info.last_job_referenced.id_ if process_info.last_job_referenced else 'None'}"
+                )
                 self._replace_inference_process(process_info)
                 any_replaced = True
                 self._recently_recovered = True
