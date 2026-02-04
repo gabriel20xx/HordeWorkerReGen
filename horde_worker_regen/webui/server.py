@@ -11,13 +11,15 @@ from loguru import logger
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
 
-    def __init__(self, port: int = 7861) -> None:
+    def __init__(self, port: int = 7861, update_interval: float = 2.0) -> None:
         """Initialize the web UI server.
 
         Args:
             port: The port to run the web server on (default: 7861)
+            update_interval: How often to update status in seconds (default: 2.0)
         """
         self.port = port
+        self.update_interval = update_interval
         self.app = web.Application()
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
@@ -49,7 +51,13 @@ class WorkerWebUI:
         """Set up the web server routes."""
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/api/status", self._handle_status)
+        self.app.router.add_get("/api/config", self._handle_config)
         self.app.router.add_get("/health", self._handle_health)
+
+    async def _handle_config(self, request: web.Request) -> web.Response:
+        """Handle config API request."""
+        # Return update interval in milliseconds for JavaScript
+        return web.json_response({"update_interval_ms": int(self.update_interval * 1000)})
 
     async def _handle_index(self, request: web.Request) -> web.Response:
         """Serve the main HTML page."""
@@ -515,9 +523,27 @@ class WorkerWebUI:
                 });
         }
         
-        // Update immediately and then every 2 seconds
-        updateStatus();
-        setInterval(updateStatus, 2000);
+        // Fetch config and start updates
+        async function initializeUpdates() {
+            try {
+                const configResponse = await fetch('/api/config');
+                const config = await configResponse.json();
+                const updateInterval = config.update_interval_ms || 2000;
+                
+                // Update immediately
+                updateStatus();
+                
+                // Then set interval based on config
+                setInterval(updateStatus, updateInterval);
+            } catch (error) {
+                console.error('Error fetching config:', error);
+                // Fallback to default 2 second interval
+                updateStatus();
+                setInterval(updateStatus, 2000);
+            }
+        }
+        
+        initializeUpdates();
     </script>
 </body>
 </html>

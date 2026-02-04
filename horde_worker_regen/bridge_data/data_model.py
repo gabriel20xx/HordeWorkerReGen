@@ -127,7 +127,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
     """The port to run the web UI on."""
 
     webui_update_interval: float = Field(default=2.0, ge=0.5, le=10.0)
-    """The interval in seconds between web UI updates (default: 2.0 seconds)."""
+    """The interval in seconds between web UI backend updates. Valid range: 0.5 to 10 seconds."""
 
     @model_validator(mode="after")
     def validate_performance_modes(self) -> reGenBridgeData:

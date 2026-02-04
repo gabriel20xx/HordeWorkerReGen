@@ -1493,7 +1493,10 @@ class HordeWorkerProcessManager:
         if self.bridge_data.enable_webui:
             from horde_worker_regen.webui.server import WorkerWebUI
 
-            self.webui = WorkerWebUI(port=self.bridge_data.webui_port)
+            self.webui = WorkerWebUI(
+                port=self.bridge_data.webui_port,
+                update_interval=self.bridge_data.webui_update_interval,
+            )
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
     def remove_maintenance(self) -> None:

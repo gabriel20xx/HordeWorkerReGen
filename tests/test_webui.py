@@ -10,15 +10,15 @@ from horde_worker_regen.webui.server import WorkerWebUI
 
 def test_webui_creation():
     """Test that WorkerWebUI can be instantiated."""
-    webui = WorkerWebUI(port=7862)  # Use different port for testing
+    webui = WorkerWebUI(port=0)  # Let OS assign a port
     assert webui is not None
-    assert webui.port == 7862
+    assert webui.port == 0
     assert webui.status_data is not None
 
 
 def test_webui_status_update():
     """Test that WorkerWebUI status can be updated."""
-    webui = WorkerWebUI(port=7862)
+    webui = WorkerWebUI(port=0)  # Let OS assign a port
     
     # Update some status values
     webui.update_status(
@@ -42,7 +42,7 @@ def test_webui_status_update():
 @pytest.mark.asyncio
 async def test_webui_start_stop():
     """Test that WorkerWebUI can be started and stopped."""
-    webui = WorkerWebUI(port=7863)  # Use different port for testing
+    webui = WorkerWebUI(port=0)  # Let OS assign an available port
     
     try:
         # Start the server
@@ -51,9 +51,12 @@ async def test_webui_start_stop():
         # Give it a moment to start
         await asyncio.sleep(0.5)
         
+        # Get the actual port assigned
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+        
         # Verify it's running by checking if we can access the health endpoint
         async with aiohttp.ClientSession() as session:
-            async with session.get("http://localhost:7863/health") as response:
+            async with session.get(f"http://localhost:{actual_port}/health") as response:
                 assert response.status == 200
                 data = await response.json()
                 assert data["status"] == "ok"
