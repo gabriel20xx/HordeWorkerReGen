@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import base64
-import re
 import contextlib
 import gc
+import re
 import sys
 import time
 
@@ -135,7 +135,7 @@ class HordeInferenceProcess(HordeProcess):
         )
 
         self._aux_model_lock = aux_model_lock
-        
+
         # Download progress tracking (performance optimization)
         self._download_progress_counter: int = 0
         self._download_total_bytes: int = 0
@@ -265,11 +265,11 @@ class HordeInferenceProcess(HordeProcess):
         if total_bytes != self._download_total_bytes:
             self._download_progress_counter = 0
             self._download_total_bytes = total_bytes
-        
+
         # Report progress every 5% instead of using floating point modulo
         # This avoids precision issues and reduces message spam
         progress_threshold = total_bytes // 20  # 5% increments (20 reports total)
-        
+
         # Handle small files (< 20 bytes) by always reporting when complete
         if progress_threshold == 0:
             if downloaded_bytes == total_bytes:
@@ -278,9 +278,9 @@ class HordeInferenceProcess(HordeProcess):
                     info=f"Downloading model ({downloaded_bytes} / {total_bytes})",
                 )
             return
-        
+
         current_segment = downloaded_bytes // progress_threshold
-        
+
         if current_segment > self._download_progress_counter:
             self._download_progress_counter = current_segment
             self.send_process_state_change_message(
@@ -510,7 +510,7 @@ class HordeInferenceProcess(HordeProcess):
                 if not acquired:
                     logger.error(
                         f"Failed to acquire VAE decode semaphore within {self.VAE_SEMAPHORE_TIMEOUT}s timeout. "
-                        "Job will continue but may fail. This will be detected as stuck if it doesn't complete soon."
+                        "Job will continue but may fail. This will be detected as stuck if it doesn't complete soon.",
                     )
                     # Job continues without VAE semaphore (likely to fail during decode)
                     # If it hangs, stuck detection will trigger after inference_step_timeout
@@ -535,7 +535,12 @@ class HordeInferenceProcess(HordeProcess):
             )
             self._current_job_inference_steps_complete = True
             logger.debug("Current job inference steps complete")
-        elif progress_report.comfyui_progress is not None and progress_report.comfyui_progress.current_step > 0:
+            # Log progress to console
+            logger.info(
+                f"Progress: Step {progress_report.comfyui_progress.current_step}/"
+                f"{progress_report.comfyui_progress.total_steps} (100%)",
+            )
+        elif progress_report.comfyui_progress is not None and progress_report.comfyui_progress.current_step >= 0:
             warning = None
 
             if progress_report.comfyui_progress.rate_unit == ComfyUIProgressUnit.SECONDS_PER_ITERATION and (
@@ -551,17 +556,30 @@ class HordeInferenceProcess(HordeProcess):
                     "removing the model type triggering this message or turning off other features."
                 )
 
-            self._last_job_inference_rate = (
-                f"{progress_report.comfyui_progress.rate:.2f} "
-                f"{progress_report.comfyui_progress.rate_unit.name.lower().replace('_', ' ')}"
+            if progress_report.comfyui_progress.current_step > 0:
+                self._last_job_inference_rate = (
+                    f"{progress_report.comfyui_progress.rate:.2f} "
+                    f"{progress_report.comfyui_progress.rate_unit.name.lower().replace('_', ' ')}"
+                )
+
+            # Log progress to console for every step
+            logger.info(
+                f"Progress: Step {progress_report.comfyui_progress.current_step}/"
+                f"{progress_report.comfyui_progress.total_steps} "
+                f"({progress_report.comfyui_progress.percent:.1f}%)",
             )
+
             self.send_heartbeat_message(
                 heartbeat_type=HordeHeartbeatType.INFERENCE_STEP,
                 process_warning=warning,
                 percent_complete=progress_report.comfyui_progress.percent,
             )
         else:
-            self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
+            # Send heartbeat with 0% if no progress info is available yet
+            self.send_heartbeat_message(
+                heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                percent_complete=0,
+            )
 
     def start_inference(self, job_info: ImageGenerateJobPopResponse) -> list[ResultingImageReturn] | None:
         """Start an inference job in the HordeLib instance.
