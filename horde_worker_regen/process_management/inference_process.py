@@ -73,6 +73,10 @@ else:
 class HordeInferenceProcess(HordeProcess):
     """Represents an inference process, which generates images."""
 
+    # Timeout for VAE decode semaphore acquire (seconds)
+    # Prevents indefinite blocking at the last inference step
+    VAE_SEMAPHORE_TIMEOUT = 300  # 5 minutes
+
     _inference_semaphore: Semaphore
     """A semaphore used to limit the number of concurrent inference jobs."""
 
@@ -499,10 +503,14 @@ class HordeInferenceProcess(HordeProcess):
                 self._vae_lock_was_acquired = True
                 # Use timeout on VAE semaphore acquire to prevent indefinite blocking
                 # This prevents jobs from hanging at the last step waiting for VAE decode
-                acquired = self._vae_decode_semaphore.acquire(timeout=300)  # 5 minute timeout
+                acquired = self._vae_decode_semaphore.acquire(timeout=self.VAE_SEMAPHORE_TIMEOUT)
                 if not acquired:
-                    logger.error("Failed to acquire VAE decode semaphore within timeout - job may hang")
-                    # Continue anyway, will be caught by stuck detection
+                    logger.error(
+                        f"Failed to acquire VAE decode semaphore within {self.VAE_SEMAPHORE_TIMEOUT}s timeout. "
+                        "Job will continue but may fail. This will be detected as stuck if it doesn't complete soon."
+                    )
+                    # Job continues without VAE semaphore (likely to fail during decode)
+                    # If it hangs, stuck detection will trigger after inference_step_timeout
                 else:
                     log_free_ram()
                     logger.debug("Acquired VAE decode semaphore")
