@@ -5125,9 +5125,6 @@ class HordeWorkerProcessManager:
                 self._shutdown()
                 logger.debug(f"CancelledError: {e}")
 
-    def _handle_exception(self, future: asyncio.Future) -> None:
-        """Logs exceptions from asyncio tasks.
-
     def update_webui_status(self) -> None:
         """Update the web UI with current worker status."""
         if self.webui is None:

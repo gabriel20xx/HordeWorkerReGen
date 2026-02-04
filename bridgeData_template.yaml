@@ -72,6 +72,14 @@ remove_maintenance_on_init: false
 # We *do not* recommend this setting for most users.
 limited_console_messages: false
 
+# Enable the web UI to view worker status and progress in your browser.
+# When enabled, you can access it at http://localhost:7861 (or whatever port you set).
+enable_webui: true
+
+# The port to run the web UI on. Must be between 1024 and 65535.
+# Default is 7861. Change this if you have a port conflict.
+webui_port: 7861
+
 #######################################
 ## Dreamer (Stable Diffusion Worker) ##
 #######################################
