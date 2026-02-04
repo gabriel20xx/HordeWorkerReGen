@@ -80,6 +80,10 @@ enable_webui: true
 # Default is 7861. Change this if you have a port conflict.
 webui_port: 7861
 
+# How often (in seconds) the web UI updates its status.
+# Default is 2 seconds. Valid range: 0.5 to 10 seconds.
+webui_update_interval: 2.0
+
 #######################################
 ## Dreamer (Stable Diffusion Worker) ##
 #######################################

@@ -97,6 +97,10 @@ if TYPE_CHECKING:
 
 sslcontext = ssl.create_default_context(cafile=certifi.where())
 
+# Constants
+BYTES_TO_MEGABYTES = 1024 * 1024
+"""Conversion factor from bytes to megabytes."""
+
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
 try:
@@ -5179,13 +5183,13 @@ class HordeWorkerProcessManager:
         })
 
         # Calculate total resource usage
-        total_ram_mb = sum(p.ram_usage_bytes for p in self._process_map.values()) / (1024 * 1024)
-        total_vram_mb = sum(p.vram_usage_bytes for p in self._process_map.values()) / (1024 * 1024)
+        total_ram_mb = sum(p.ram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
+        total_vram_mb = sum(p.vram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
         
         # Get max VRAM from devices
         max_vram_mb = 0
         if len(self._device_map.root) > 0:
-            max_vram_mb = max(device.total_memory for device in self._device_map.root.values()) / (1024 * 1024)
+            max_vram_mb = max(device.total_memory for device in self._device_map.root.values()) / BYTES_TO_MEGABYTES
 
         # Calculate kudos per hour
         kudos_per_hour = 0.0
@@ -5243,7 +5247,7 @@ class HordeWorkerProcessManager:
                     break
 
                 self.update_webui_status()
-                await asyncio.sleep(2.0)  # Update every 2 seconds
+                await asyncio.sleep(self.bridge_data.webui_update_interval)
             except CancelledError:
                 self._shutdown()
                 break

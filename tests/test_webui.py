@@ -2,6 +2,7 @@
 
 import asyncio
 
+import aiohttp
 import pytest
 
 from horde_worker_regen.webui.server import WorkerWebUI
@@ -51,7 +52,6 @@ async def test_webui_start_stop():
         await asyncio.sleep(0.5)
         
         # Verify it's running by checking if we can access the health endpoint
-        import aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.get("http://localhost:7863/health") as response:
                 assert response.status == 200
