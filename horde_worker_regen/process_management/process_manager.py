@@ -1098,6 +1098,10 @@ class APIWorkerMessage(BaseModel):
 class HordeWorkerProcessManager:
     """Manages and controls processes to act as a horde worker."""
 
+    # Constants for failing models tracking
+    FAILED_MODELS_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
+    MAX_FAILING_MODELS_TO_DISPLAY = 10
+
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
 
@@ -1452,6 +1456,10 @@ class HordeWorkerProcessManager:
         self.kudos_events: list[tuple[float, float]] = []
 
         self._api_messages_received = {}
+
+        # Track models that have failed
+        self._failed_models: dict[str, int] = {}
+        self._last_failed_models_print_time: float = 0.0
 
         self.stable_diffusion_reference = None
 
@@ -3631,6 +3639,11 @@ class HordeWorkerProcessManager:
             job_info.fault_job()
             job_info.time_to_generate = self.bridge_data.process_timeout
 
+            # Track the failing model
+            if faulted_job.model is not None:
+                model_name = faulted_job.model
+                self._failed_models[model_name] = self._failed_models.get(model_name, 0) + 1
+
             if process_info is not None:
                 logger.error(f"Job {faulted_job.id_} faulted due to process {process_info.process_id} crashing")
 
@@ -4828,11 +4841,19 @@ class HordeWorkerProcessManager:
                     except Exception as e:
                         logger.warning(f"Failed to print API message: {e}")
 
-            logging_function("<b>Process info:</b>")
-            for process_info_string in process_info_strings:
-                logging_function("  " + process_info_string)
+            # Only show detailed process info if not in limited console mode
+            if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
+                logging_function("<b>Process info:</b>")
+                for process_info_string in process_info_strings:
+                    logging_function("  " + process_info_string)
 
-            logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+            else:
+                # In limited mode, just show a brief summary
+                num_busy = self._process_map.num_busy_processes()
+                num_total = len(self._process_map)
+                logging_function(f"<b>Processes:</b> {num_busy}/{num_total} busy")
+                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
 
             logging_function("<b>Job Info:</b>")
             jobs = []
@@ -4865,52 +4886,68 @@ class HordeWorkerProcessManager:
             logging_function(
                 f"<fg #7dcea0>{job_info_message}</>",
             )
+
+            # Print failing models periodically
+            if (
+                self._failed_models
+                and cur_time - self._last_failed_models_print_time > self.FAILED_MODELS_REPORT_INTERVAL_SECONDS
+            ):
+                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+                logging_function("<b>Failing Models Summary:</b>")
+                # Sort by failure count descending
+                sorted_failures = sorted(self._failed_models.items(), key=lambda x: x[1], reverse=True)
+                for model_name, count in sorted_failures[: self.MAX_FAILING_MODELS_TO_DISPLAY]:
+                    logging_function(f"  <fg #ff6b6b>{model_name}: {count} failures</>")
+                self._last_failed_models_print_time = cur_time
+
             logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
 
-            logging_function("<b>Worker Info:</b>")
+            # Only show detailed process info if not in limited console mode
+            if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
+                logging_function("<b>Worker Info:</b>")
 
-            max_power_dimension = int(math.sqrt(self.bridge_data.max_power * 8 * 64 * 64))
-            logger.info(
-                "  "
-                + " | ".join(
-                    [
-                        f"dreamer_name: {self.bridge_data.dreamer_worker_name}",
-                        f"(v{horde_worker_regen.__version__})",
-                        f"horde user: {self.user_info.username if self.user_info is not None else 'Unknown'}",
-                        f"num_models: {len(self.bridge_data.image_models_to_load)}",
-                        f"custom_models: {bool(self.bridge_data.custom_models)}",
-                        f"max_power: {self.bridge_data.max_power} ({max_power_dimension}x{max_power_dimension})",
-                        f"max_threads: {self.max_concurrent_inference_processes}",
-                        f"queue_size: {self.bridge_data.queue_size}",
-                        f"safety_on_gpu: {self.bridge_data.safety_on_gpu}",
-                    ],
-                ),
-            )
-            logger.info(
-                "  "
-                + " | ".join(
-                    [
-                        f"allow_img2img: {self.bridge_data.allow_img2img}",
-                        f"allow_lora: {self.bridge_data.allow_lora}",
-                        f"allow_controlnet: {self.bridge_data.allow_controlnet}",
-                        f"allow_sdxl_controlnet: {self.bridge_data.allow_sdxl_controlnet}",
-                        f"allow_post_processing: {self.bridge_data.allow_post_processing}",
-                        f"post_process_job_overlap: {self.bridge_data.post_process_job_overlap}",
-                    ],
-                ),
-            )
+                max_power_dimension = int(math.sqrt(self.bridge_data.max_power * 8 * 64 * 64))
+                logger.info(
+                    "  "
+                    + " | ".join(
+                        [
+                            f"dreamer_name: {self.bridge_data.dreamer_worker_name}",
+                            f"(v{horde_worker_regen.__version__})",
+                            f"horde user: {self.user_info.username if self.user_info is not None else 'Unknown'}",
+                            f"num_models: {len(self.bridge_data.image_models_to_load)}",
+                            f"custom_models: {bool(self.bridge_data.custom_models)}",
+                            f"max_power: {self.bridge_data.max_power} ({max_power_dimension}x{max_power_dimension})",
+                            f"max_threads: {self.max_concurrent_inference_processes}",
+                            f"queue_size: {self.bridge_data.queue_size}",
+                            f"safety_on_gpu: {self.bridge_data.safety_on_gpu}",
+                        ],
+                    ),
+                )
+                logger.info(
+                    "  "
+                    + " | ".join(
+                        [
+                            f"allow_img2img: {self.bridge_data.allow_img2img}",
+                            f"allow_lora: {self.bridge_data.allow_lora}",
+                            f"allow_controlnet: {self.bridge_data.allow_controlnet}",
+                            f"allow_sdxl_controlnet: {self.bridge_data.allow_sdxl_controlnet}",
+                            f"allow_post_processing: {self.bridge_data.allow_post_processing}",
+                            f"post_process_job_overlap: {self.bridge_data.post_process_job_overlap}",
+                        ],
+                    ),
+                )
 
-            logger.info(
-                "  "
-                + " | ".join(
-                    [
-                        f"unload_models_from_vram_often: {self.bridge_data.unload_models_from_vram_often}",
-                        f"high_performance_mode: {self.bridge_data.high_performance_mode}",
-                        f"moderate_performance_mode: {self.bridge_data.moderate_performance_mode}",
-                        f"high_memory_mode: {self.bridge_data.high_memory_mode}",
-                    ],
-                ),
-            )
+                logger.info(
+                    "  "
+                    + " | ".join(
+                        [
+                            f"unload_models_from_vram_often: {self.bridge_data.unload_models_from_vram_often}",
+                            f"high_performance_mode: {self.bridge_data.high_performance_mode}",
+                            f"moderate_performance_mode: {self.bridge_data.moderate_performance_mode}",
+                            f"high_memory_mode: {self.bridge_data.high_memory_mode}",
+                        ],
+                    ),
+                )
 
             logger.debug(
                 " | ".join(

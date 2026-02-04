@@ -264,6 +264,11 @@ def init() -> None:
         verbosity_count=target_verbosity,
     )
 
+    # Configure standardized log format: timestamp | level | message
+    from horde_worker_regen.logger_config import configure_logger_format
+
+    configure_logger_format()
+
     # We only need to download the legacy DBs once, so we do it here instead of in the worker processes
 
     main(

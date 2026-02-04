@@ -66,6 +66,11 @@ def start_inference_process(
                 verbosity_count=5,  # FIXME
             )
 
+            # Configure standardized log format: timestamp | level | message
+            from horde_worker_regen.logger_config import configure_logger_format
+
+            configure_logger_format()
+
             logger.debug(
                 f"Initialising hordelib with process_id={process_id}, "
                 f"process_launch_identifier={process_launch_identifier}, "
@@ -181,6 +186,11 @@ def start_safety_process(
                 process_id=process_id,
                 verbosity_count=5,  # FIXME
             )
+
+            # Configure standardized log format: timestamp | level | message
+            from horde_worker_regen.logger_config import configure_logger_format
+
+            configure_logger_format()
 
             logger.debug(f"Initialising hordelib with process_id={process_id} and high_memory_mode={high_memory_mode}")
 
