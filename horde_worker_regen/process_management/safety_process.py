@@ -322,7 +322,9 @@ class HordeSafetyProcess(HordeProcess):
                             if lora_hash is not None:
                                 lora_hash_list.append(str(lora_hash))
                         lora_hashes = lora_hash_list
-                    except Exception:
+                    except (AttributeError, KeyError, TypeError) as e:
+                        # Handle cases where lora object doesn't have expected attributes
+                        logger.debug(f"Failed to extract lora hash: {e}")
                         lora_hashes = None
 
                 if isinstance(lora_hashes, list):
@@ -334,14 +336,16 @@ class HordeSafetyProcess(HordeProcess):
                     schedule_type = "karras" if generation_metadata.get("karras") else "native"
                     _add_metadata_text("Schedule type", schedule_type)
 
-            except Exception as e:
+            except (KeyError, ValueError, TypeError) as e:
+                # Handle metadata extraction errors, but continue with image processing
                 logger.error(f"Failed to add metadata: {e}")
             # ! IMPORTANT: End own code
 
             try:
                 # Open the image using PIL
                 image_as_pil = Image.open(image_bytes)
-            except Exception as e:
+            except (OSError, ValueError) as e:
+                # Handle PIL image open errors (corrupted images, unsupported formats)
                 logger.error(f"Failed to open image: {type(e).__name__} {e}")
                 safety_evaluations.append(
                     HordeSafetyEvaluation(
