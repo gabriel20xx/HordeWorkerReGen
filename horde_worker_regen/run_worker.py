@@ -265,13 +265,9 @@ def init() -> None:
     )
 
     # Configure standardized log format: timestamp | level | message
-    logger.remove()  # Remove all handlers added by HordeLog
-    logger.add(
-        sys.stderr,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
-        level="DEBUG",
-        colorize=True,
-    )
+    from horde_worker_regen.logger_config import configure_logger_format
+
+    configure_logger_format()
 
     # We only need to download the legacy DBs once, so we do it here instead of in the worker processes
 
