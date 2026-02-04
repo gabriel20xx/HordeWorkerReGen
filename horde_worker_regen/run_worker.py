@@ -264,6 +264,15 @@ def init() -> None:
         verbosity_count=target_verbosity,
     )
 
+    # Configure standardized log format: timestamp | level | message
+    logger.remove()  # Remove all handlers added by HordeLog
+    logger.add(
+        sys.stderr,
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+        level="DEBUG",
+        colorize=True,
+    )
+
     # We only need to download the legacy DBs once, so we do it here instead of in the worker processes
 
     main(

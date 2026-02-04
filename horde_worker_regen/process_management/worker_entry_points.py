@@ -66,6 +66,15 @@ def start_inference_process(
                 verbosity_count=5,  # FIXME
             )
 
+            # Configure standardized log format: timestamp | level | message
+            logger.remove()  # Remove all handlers added by HordeLog
+            logger.add(
+                sys.stderr,
+                format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+                level="DEBUG",
+                colorize=True,
+            )
+
             logger.debug(
                 f"Initialising hordelib with process_id={process_id}, "
                 f"process_launch_identifier={process_launch_identifier}, "
@@ -180,6 +189,15 @@ def start_safety_process(
                 setup_logging=True,
                 process_id=process_id,
                 verbosity_count=5,  # FIXME
+            )
+
+            # Configure standardized log format: timestamp | level | message
+            logger.remove()  # Remove all handlers added by HordeLog
+            logger.add(
+                sys.stderr,
+                format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+                level="DEBUG",
+                colorize=True,
             )
 
             logger.debug(f"Initialising hordelib with process_id={process_id} and high_memory_mode={high_memory_mode}")
