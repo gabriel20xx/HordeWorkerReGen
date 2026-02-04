@@ -10,11 +10,13 @@ import time
 from abc import abstractmethod
 from enum import auto
 
+# ! IMPORTANT: Start of own code
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
 except (ImportError, AttributeError):
     # PipeConnection not available on all platforms, fall back to Connection
     from multiprocessing.connection import Connection  # type: ignore
+# ! IMPORTANT: End of own code
 from multiprocessing.synchronize import Lock
 from typing import TYPE_CHECKING
 

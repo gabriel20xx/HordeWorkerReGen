@@ -163,6 +163,7 @@ class LogConsoleRewriter(io.StringIO):
 
 def init() -> None:
     """Initialise the worker, including logging, environment variables, and other housekeeping."""
+    # ! IMPORTANT: Start of own code
     # Try to set spawn method, ignore if already set
     try:
         multiprocessing.set_start_method("spawn", force=True)
@@ -176,6 +177,7 @@ def init() -> None:
             logger.debug("Removed .abort file")
         except OSError as e:
             logger.warning(f"Failed to remove .abort file: {e}")
+    # ! IMPORTANT: End of own code
 
     print(f"Multiprocessing start method: {multiprocessing.get_start_method()}")
 

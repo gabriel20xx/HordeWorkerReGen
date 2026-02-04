@@ -10,11 +10,13 @@ from enum import auto
 from io import BytesIO
 from typing import TYPE_CHECKING
 
+# ! IMPORTANT: Start of own code
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
 except (ImportError, AttributeError):
     # PipeConnection not available on all platforms, fall back to Connection
     from multiprocessing.connection import Connection  # type: ignore
+# ! IMPORTANT: End of own code
 from multiprocessing.synchronize import Lock
 
 import PIL
@@ -322,10 +324,12 @@ class HordeSafetyProcess(HordeProcess):
                             if lora_hash is not None:
                                 lora_hash_list.append(str(lora_hash))
                         lora_hashes = lora_hash_list
+                    # ! IMPORTANT: Start of own code
                     except (AttributeError, KeyError, TypeError) as e:
                         # Handle cases where lora object doesn't have expected attributes
                         logger.debug(f"Failed to extract lora hash: {e}")
                         lora_hashes = None
+                    # ! IMPORTANT: End of own code
 
                 if isinstance(lora_hashes, list):
                     _add_metadata_text("LoRA hashes", ", ".join(str(v) for v in lora_hashes))
@@ -336,17 +340,21 @@ class HordeSafetyProcess(HordeProcess):
                     schedule_type = "karras" if generation_metadata.get("karras") else "native"
                     _add_metadata_text("Schedule type", schedule_type)
 
+            # ! IMPORTANT: Start of own code
             except (KeyError, ValueError, TypeError) as e:
                 # Handle metadata extraction errors, but continue with image processing
                 logger.error(f"Failed to add metadata: {e}")
+            # ! IMPORTANT: End of own code
             # ! IMPORTANT: End own code
 
+            # ! IMPORTANT: Start of own code
             try:
                 # Open the image using PIL
                 image_as_pil = Image.open(image_bytes)
             except (OSError, ValueError) as e:
                 # Handle PIL image open errors (corrupted images, unsupported formats)
                 logger.error(f"Failed to open image: {type(e).__name__} {e}")
+            # ! IMPORTANT: End of own code
                 safety_evaluations.append(
                     HordeSafetyEvaluation(
                         is_nsfw=True,

@@ -94,11 +94,13 @@ from horde_worker_regen.process_management.worker_entry_points import start_infe
 sslcontext = ssl.create_default_context(cafile=certifi.where())
 
 # This is due to Linux/Windows differences in the multiprocessing module
+# ! IMPORTANT: Start of own code
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
 except (ImportError, AttributeError):
     # PipeConnection not available on all platforms, fall back to Connection
     from multiprocessing.connection import Connection  # type: ignore
+# ! IMPORTANT: End of own code
 
 
 # As of 3.11, asyncio.TimeoutError is deprecated and is an alias for builtins.TimeoutError
