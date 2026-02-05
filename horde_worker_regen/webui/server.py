@@ -45,6 +45,7 @@ class WorkerWebUI:
             "user_kudos_total": 0.0,
             "last_image_base64": None,
             "console_logs": [],
+            "faulted_jobs_history": [],
         }
         
         self._setup_routes()
@@ -223,6 +224,86 @@ class WorkerWebUI:
         .job-id {
             font-family: monospace;
             color: #667eea;
+            font-weight: 600;
+        }
+        
+        .faulted-jobs-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .faulted-job-item {
+            background: #fff5f5;
+            border: 1px solid #fecaca;
+            border-left: 4px solid #dc2626;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+        
+        .faulted-job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #fecaca;
+        }
+        
+        .faulted-job-id {
+            font-family: monospace;
+            color: #dc2626;
+            font-weight: 700;
+            font-size: 0.95em;
+        }
+        
+        .faulted-job-time {
+            color: #666;
+            font-size: 0.85em;
+        }
+        
+        .faulted-job-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .faulted-job-detail {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .faulted-job-label {
+            color: #666;
+            font-size: 0.8em;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 2px;
+        }
+        
+        .faulted-job-value {
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .faulted-job-lora {
+            background: #fef3c7;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            display: inline-block;
+            margin: 2px;
+        }
+        
+        .faulted-job-controlnet {
+            background: #dbeafe;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            display: inline-block;
+            color: #1e40af;
             font-weight: 600;
         }
         
@@ -407,6 +488,15 @@ class WorkerWebUI:
                     <h2>Processes (<span id="process-count">0</span>)</h2>
                     <div id="processes" class="process-list">
                         <div style="text-align: center; color: #999; padding: 20px;">No process info</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="grid">
+                <div class="card">
+                    <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
+                    <div id="faulted-jobs" class="faulted-jobs-list" style="max-height: 400px; overflow-y: auto;">
+                        <div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>
                     </div>
                 </div>
             </div>
@@ -666,6 +756,97 @@ class WorkerWebUI:
                         processesDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No process info</div>';
                     }
                     
+                    // Faulted Jobs
+                    const faultedJobsDiv = document.getElementById('faulted-jobs');
+                    const faultedJobsCount = document.getElementById('faulted-jobs-count');
+                    if (data.faulted_jobs_history && data.faulted_jobs_history.length > 0) {
+                        faultedJobsCount.textContent = data.faulted_jobs_history.length;
+                        faultedJobsDiv.innerHTML = data.faulted_jobs_history.map(job => {
+                            const faultedTime = new Date(job.time_faulted * 1000);
+                            const timeStr = faultedTime.toLocaleString();
+                            
+                            let detailsHtml = '<div class="faulted-job-details">';
+                            
+                            // Model
+                            detailsHtml += `
+                                <div class="faulted-job-detail">
+                                    <span class="faulted-job-label">Model</span>
+                                    <span class="faulted-job-value">${escapeHtml(job.model)}</span>
+                                </div>
+                            `;
+                            
+                            // Size
+                            if (job.width && job.height) {
+                                detailsHtml += `
+                                    <div class="faulted-job-detail">
+                                        <span class="faulted-job-label">Size</span>
+                                        <span class="faulted-job-value">${job.width}x${job.height}</span>
+                                    </div>
+                                `;
+                            }
+                            
+                            // Steps
+                            if (job.steps) {
+                                detailsHtml += `
+                                    <div class="faulted-job-detail">
+                                        <span class="faulted-job-label">Steps</span>
+                                        <span class="faulted-job-value">${job.steps}</span>
+                                    </div>
+                                `;
+                            }
+                            
+                            // Sampler
+                            if (job.sampler) {
+                                detailsHtml += `
+                                    <div class="faulted-job-detail">
+                                        <span class="faulted-job-label">Sampler</span>
+                                        <span class="faulted-job-value">${escapeHtml(job.sampler)}</span>
+                                    </div>
+                                `;
+                            }
+                            
+                            detailsHtml += '</div>';
+                            
+                            // LoRAs
+                            let lorasHtml = '';
+                            if (job.loras && job.loras.length > 0) {
+                                lorasHtml = '<div style="margin-top: 8px;">';
+                                lorasHtml += '<span class="faulted-job-label" style="display: block; margin-bottom: 4px;">LoRAs:</span>';
+                                job.loras.forEach(lora => {
+                                    const loraName = lora.name || 'Unknown';
+                                    lorasHtml += `<span class="faulted-job-lora">${escapeHtml(loraName)}</span>`;
+                                });
+                                lorasHtml += '</div>';
+                            }
+                            
+                            // ControlNet
+                            let controlnetHtml = '';
+                            if (job.controlnet) {
+                                controlnetHtml = `
+                                    <div style="margin-top: 8px;">
+                                        <span class="faulted-job-label" style="display: block; margin-bottom: 4px;">ControlNet:</span>
+                                        <span class="faulted-job-controlnet">${escapeHtml(job.controlnet)}</span>
+                                    </div>
+                                `;
+                            }
+                            
+                            return `
+                                <div class="faulted-job-item">
+                                    <div class="faulted-job-header">
+                                        <span class="faulted-job-id">${escapeHtml(job.job_id)}</span>
+                                        <span class="faulted-job-time">${timeStr}</span>
+                                    </div>
+                                    ${detailsHtml}
+                                    ${lorasHtml}
+                                    ${controlnetHtml}
+                                </div>
+                            `;
+                        }).join('');
+                    } else {
+                        faultedJobsCount.textContent = '0';
+                        faultedJobsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>';
+                    }
+                    
                     // Last Generated Image
                     const lastImageContainer = document.getElementById('last-image-container');
                     if (data.last_image_base64) {
@@ -759,6 +940,7 @@ class WorkerWebUI:
         user_kudos_total: float | None = None,
         last_image_base64: str | None = None,
         console_logs: list[str] | None = None,
+        faulted_jobs_history: list[dict[str, Any]] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -780,6 +962,7 @@ class WorkerWebUI:
             user_kudos_total: Total kudos accumulated by the user
             last_image_base64: Base64 encoded last generated image
             console_logs: Recent console log messages
+            faulted_jobs_history: List of faulted jobs with details
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -815,6 +998,8 @@ class WorkerWebUI:
             self.status_data["last_image_base64"] = last_image_base64
         if console_logs is not None:
             self.status_data["console_logs"] = console_logs
+        if faulted_jobs_history is not None:
+            self.status_data["faulted_jobs_history"] = faulted_jobs_history
         
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]
