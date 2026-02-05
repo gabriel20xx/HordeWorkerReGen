@@ -1,4 +1,5 @@
 torch==2.9.1
+nvidia-ml-py # Replacement for deprecated pynvml
 qrcode==7.4.2 # >8 breaks horde-engine 2.20.12 via the qr code generation nodes
 mediapipe==0.10.21 # >= 0.10.30 has breaking changes for horde-engine 2.20.x
 
