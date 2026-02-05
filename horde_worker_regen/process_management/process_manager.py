@@ -1496,6 +1496,15 @@ class HordeWorkerProcessManager:
 
         # Initialize web UI if enabled
         self.webui: WorkerWebUI | None = None
+        self._last_image_base64: str | None = None
+        """The last generated image in base64 format for webui preview."""
+        self._console_logs: list[str] = []
+        """Recent console logs for webui display."""
+        self._max_console_logs: int = 100
+        """Maximum number of console logs to keep."""
+        self._log_handler_id: int | None = None
+        """ID of the logger handler for capturing console logs."""
+        
         if self.bridge_data.enable_webui:
             from horde_worker_regen.webui.server import WorkerWebUI
 
@@ -1504,6 +1513,31 @@ class HordeWorkerProcessManager:
                 update_interval=self.bridge_data.webui_update_interval,
             )
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
+            
+            # Add a log handler to capture logs for webui
+            self._log_handler_id = logger.add(
+                self._capture_log_for_webui,
+                format="{time:HH:mm:ss} | {level: <8} | {message}",
+                level="INFO",
+                colorize=False,
+            )
+
+    def _capture_log_for_webui(self, message: str) -> None:
+        """Capture log messages for webui display.
+        
+        Args:
+            message: The formatted log message
+        """
+        # Strip ANSI color codes if any
+        import re
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        clean_message = ansi_escape.sub('', message).strip()
+        
+        if clean_message:
+            self._console_logs.append(clean_message)
+            # Keep only the last N logs
+            if len(self._console_logs) > self._max_console_logs:
+                self._console_logs = self._console_logs[-self._max_console_logs:]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -2184,6 +2218,10 @@ class HordeWorkerProcessManager:
                     job_info.time_to_generate = message.time_elapsed
                     job_info.job_image_results = message.job_image_results
                     job_info.sanitized_negative_prompt = message.sanitized_negative_prompt
+                    
+                    # Capture last image for webui preview
+                    if self.webui and message.job_image_results and len(message.job_image_results) > 0:
+                        self._last_image_base64 = message.job_image_results[0].image_base64
 
                     self.jobs_pending_safety_check.append(job_info)
                 else:
@@ -5150,6 +5188,7 @@ class HordeWorkerProcessManager:
                     "model": job.model,
                     "progress": progress,
                     "state": state or "Processing",
+                    "is_complete": state == "INFERENCE_COMPLETE" if state else False,
                 }
 
         # Get job queue
@@ -5218,6 +5257,8 @@ class HordeWorkerProcessManager:
             total_vram_mb=max_vram_mb,
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
+            last_image_base64=self._last_image_base64,
+            console_logs=self._console_logs[-50:] if self._console_logs else [],
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:

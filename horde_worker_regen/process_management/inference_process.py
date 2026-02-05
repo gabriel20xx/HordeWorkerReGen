@@ -574,6 +574,8 @@ class HordeInferenceProcess(HordeProcess):
                 process_warning=warning,
                 percent_complete=progress_report.comfyui_progress.percent,
             )
+            # Send memory report with VRAM to update webui resources display
+            self.send_memory_report_message(include_vram=True)
         else:
             # Send heartbeat with 0% if no progress info is available yet
             self.send_heartbeat_message(
