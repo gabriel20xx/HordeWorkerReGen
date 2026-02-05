@@ -4545,12 +4545,12 @@ class HordeWorkerProcessManager:
         kudos_info_string_elements = []
         if time_since_session_start < 3600:
             kudos_info_string_elements = [
-                f"Session: {self.kudos_generated_this_session:,.2f} / "
+                f"Session: {self.kudos_generated_this_session:,.1f} / "
                 f"{time_since_session_start / 60:.1f}m",
             ]
         else:
             kudos_info_string_elements = [
-                f"Session: {self.kudos_generated_this_session:,.2f} / "
+                f"Session: {self.kudos_generated_this_session:,.1f} / "
                 f"{time_since_session_start / 3600:.1f}h",
             ]
 
