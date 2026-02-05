@@ -1537,13 +1537,14 @@ class HordeWorkerProcessManager:
         """Capture log messages for webui display.
         
         Args:
-            message: The formatted log message
+            message: The formatted log message (may contain ANSI color codes)
         """
-        # Strip ANSI color codes using compiled pattern
+        # Strip ANSI color codes only for checking if message is empty
         clean_message = self.ANSI_ESCAPE_PATTERN.sub('', message).strip()
         
         if clean_message:
-            self._console_logs.append(clean_message)
+            # Store the original message with ANSI codes for colored display in webui
+            self._console_logs.append(message.strip())
             # Keep only the last N logs
             if len(self._console_logs) > self._MAX_CONSOLE_LOGS_BUFFER:
                 self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER:]
