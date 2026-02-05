@@ -284,6 +284,14 @@ class WorkerWebUI:
         .wide-card {
             grid-column: 1 / -1;
         }
+        
+        .subsection-heading {
+            color: #667eea;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #e0e7ff;
+            padding-bottom: 5px;
+        }
     </style>
 </head>
 <body>
@@ -362,7 +370,7 @@ class WorkerWebUI:
                 <div class="card">
                     <h2>Job Queue & Active Models</h2>
                     <div style="margin-bottom: 20px;">
-                        <h3 style="color: #667eea; font-size: 1.1em; margin-bottom: 10px; border-bottom: 1px solid #e0e7ff; padding-bottom: 5px;">
+                        <h3 class="subsection-heading">
                             Job Queue (<span id="queue-count">0</span>)
                         </h3>
                         <div id="job-queue" class="job-queue">
@@ -370,7 +378,7 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div>
-                        <h3 style="color: #667eea; font-size: 1.1em; margin-bottom: 10px; border-bottom: 1px solid #e0e7ff; padding-bottom: 5px;">
+                        <h3 class="subsection-heading">
                             Active Models
                         </h3>
                         <div id="models-loaded" class="model-list">
