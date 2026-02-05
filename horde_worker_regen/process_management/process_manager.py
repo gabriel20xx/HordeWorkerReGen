@@ -5312,17 +5312,22 @@ class HordeWorkerProcessManager:
                     "is_complete": state == "INFERENCE_COMPLETE" if state else False,
                     "batch_size": job.payload.n_iter if job.payload else None,
                 }
-        elif len(self.jobs_pending_safety_check) > 0:
+        elif self.jobs_pending_safety_check:
             # Show recently completed job in safety check with 100% progress
-            job_info = self.jobs_pending_safety_check[0]
-            current_job = {
-                "id": str(job_info.sdk_api_job_info.id_.root)[:8] if job_info.sdk_api_job_info.id_ else "N/A",
-                "model": job_info.sdk_api_job_info.model,
-                "progress": 100,
-                "state": "INFERENCE_COMPLETE",
-                "is_complete": True,
-                "batch_size": job_info.sdk_api_job_info.payload.n_iter if job_info.sdk_api_job_info.payload else None,
-            }
+            # This ensures users see the job reach 100% before it disappears
+            try:
+                job_info = self.jobs_pending_safety_check[0]
+                current_job = {
+                    "id": str(job_info.sdk_api_job_info.id_.root)[:8] if job_info.sdk_api_job_info.id_ else "N/A",
+                    "model": job_info.sdk_api_job_info.model,
+                    "progress": 100,
+                    "state": "INFERENCE_COMPLETE",
+                    "is_complete": True,
+                    "batch_size": job_info.sdk_api_job_info.payload.n_iter if job_info.sdk_api_job_info.payload else None,
+                }
+            except (IndexError, AttributeError):
+                # Safety check list may have been modified, ignore and show no current job
+                pass
 
         # Get job queue
         job_queue = []
