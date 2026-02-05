@@ -943,6 +943,9 @@ class HordeJobInfo(BaseModel):  # TODO: Split into a new file
     """The sanitized negative prompt used for inference, if any."""
     # ! IMPORTANT: End own code
 
+    retry_count: int = 0
+    """The number of times this job has been retried after faulting."""
+
     @property
     def is_job_checked_for_safety(self) -> bool:
         """Return true if the job has been checked for safety."""
@@ -1119,6 +1122,9 @@ class HordeWorkerProcessManager:
     
     # Constants for worker config display
     WORKER_CONFIG_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
+    
+    # Constants for job retry logic
+    MAX_JOB_RETRIES = 1  # Number of retries for faulted jobs
     
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
@@ -3692,6 +3698,8 @@ class HordeWorkerProcessManager:
     ) -> None:
         """Mark a job as faulted and add it to the completed jobs list to report it faulted.
 
+        If the job has not been retried yet, it will be retried once before being marked as faulted.
+
         Args:
             faulted_job (ImageGenerateJobPopResponse): The job that faulted.
             process_info (HordeProcessInfo | None, optional): The process that faulted the job. Defaults to None.
@@ -3701,6 +3709,37 @@ class HordeWorkerProcessManager:
         if job_info is None:
             logger.error(f"Job {faulted_job.id_} not found in jobs_lookup")
         else:
+            # Check if the job should be retried
+            if job_info.retry_count < self.MAX_JOB_RETRIES:
+                # Retry the job once
+                job_info.retry_count += 1
+                logger.warning(
+                    f"Job {faulted_job.id_} faulted, retrying (retry attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})"
+                )
+                
+                # Remove from jobs_in_progress if present
+                if faulted_job in self.jobs_in_progress:
+                    logger.debug(f"Removing job {faulted_job.id_} from jobs_in_progress for retry")
+                    self.jobs_in_progress.remove(faulted_job)
+                
+                # Re-queue the job for another attempt
+                # Check to avoid duplicates in case the job is still in the queue
+                if faulted_job not in self.jobs_pending_inference:
+                    self.jobs_pending_inference.append(faulted_job)
+                    self._invalidate_megapixelsteps_cache()
+                    logger.info(f"Job {faulted_job.id_} re-queued for retry")
+                else:
+                    logger.debug(f"Job {faulted_job.id_} already in jobs_pending_inference, not re-queuing")
+                
+                return
+            
+            # Job has exhausted all retry attempts, proceed with faulting
+            retry_text = "retry attempt" if self.MAX_JOB_RETRIES == 1 else "retry attempts"
+            logger.error(
+                f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} {retry_text}, "
+                f"marking as permanently faulted"
+            )
+            
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
                 self._invalidate_megapixelsteps_cache()
@@ -5479,6 +5518,12 @@ class HordeWorkerProcessManager:
         responding, they will spend much longer in the queue than they should while the server waits for the worker
         to respond (and ultimately times out).
         """
+        # Mark all jobs currently in progress as faulted before clearing them
+        if len(self.jobs_in_progress) > 0:
+            for job in list(self.jobs_in_progress):
+                self.handle_job_fault(faulted_job=job, process_info=None)
+            logger.error("Cleared jobs in progress")
+
         if len(self.jobs_pending_inference) > 0:
             self.jobs_pending_inference.clear()
             self._last_job_submitted_time = time.time()
@@ -5495,10 +5540,6 @@ class HordeWorkerProcessManager:
         if len(self.jobs_lookup) > 0:
             self.jobs_lookup.clear()
             logger.error("Cleared jobs lookup")
-
-        if len(self.jobs_in_progress) > 0:
-            self.jobs_in_progress.clear()
-            logger.error("Cleared jobs in progress")
 
         if len(self.jobs_pending_submit) > 0:
             self.jobs_pending_submit.clear()
