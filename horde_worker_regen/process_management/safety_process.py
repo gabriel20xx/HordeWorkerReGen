@@ -112,7 +112,7 @@ class HordeSafetyProcess(HordeProcess):
             import warnings
             warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
             warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU.*")
-            
+
             from horde_safety.deep_danbooru_model import get_deep_danbooru_model
             from horde_safety.interrogate import get_interrogator_no_blip
         except Exception as e:
