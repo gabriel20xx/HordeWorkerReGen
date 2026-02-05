@@ -1213,7 +1213,7 @@ class HordeWorkerProcessManager:
     _num_jobs_faulted: int = 0
     """The number of jobs which were marked as faulted. This may not include jobs which failed for unknown reasons."""
 
-    _faulted_jobs_history: list[dict[str, Any]] = []
+    _faulted_jobs_history: list[dict[str, Any]]
     """A list of faulted jobs with their details for display in the webui."""
     _max_faulted_jobs_history: int = 20
     """Maximum number of faulted jobs to keep in history."""

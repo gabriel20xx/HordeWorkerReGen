@@ -231,6 +231,8 @@ class WorkerWebUI:
             display: flex;
             flex-direction: column;
             gap: 10px;
+            max-height: 400px;
+            overflow-y: auto;
         }
         
         .faulted-job-item {
@@ -495,7 +497,7 @@ class WorkerWebUI:
             <div class="grid">
                 <div class="card">
                     <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
-                    <div id="faulted-jobs" class="faulted-jobs-list" style="max-height: 400px; overflow-y: auto;">
+                    <div id="faulted-jobs" class="faulted-jobs-list">
                         <div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>
                     </div>
                 </div>
@@ -762,8 +764,14 @@ class WorkerWebUI:
                     if (data.faulted_jobs_history && data.faulted_jobs_history.length > 0) {
                         faultedJobsCount.textContent = data.faulted_jobs_history.length;
                         faultedJobsDiv.innerHTML = data.faulted_jobs_history.map(job => {
-                            const faultedTime = new Date(job.time_faulted * 1000);
-                            const timeStr = faultedTime.toLocaleString();
+                            // Validate and format timestamp
+                            let timeStr = 'Unknown time';
+                            if (job.time_faulted && !isNaN(job.time_faulted)) {
+                                const faultedTime = new Date(job.time_faulted * 1000);
+                                if (!isNaN(faultedTime.getTime())) {
+                                    timeStr = faultedTime.toLocaleString();
+                                }
+                            }
                             
                             let detailsHtml = '<div class="faulted-job-details">';
                             
