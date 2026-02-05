@@ -1,6 +1,7 @@
 """Entry point for the Horde Worker reGen."""
 
 import sys
+import traceback
 
 try:
     from horde_worker_regen.run_worker import init
@@ -34,7 +35,6 @@ if __name__ == "__main__":
         print()
         print(f"Error: {type(e).__name__}: {e}")
         print()
-        import traceback
         traceback.print_exc()
         print()
         print("=" * 80)
