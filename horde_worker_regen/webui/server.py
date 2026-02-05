@@ -419,6 +419,16 @@ class WorkerWebUI:
         // Constants for UI behavior
         const SCROLL_TOLERANCE_PX = 1; // Pixel tolerance for scroll position detection
         
+        // Helper function to check if element is scrolled to bottom
+        function isScrolledToBottom(element, tolerance) {
+            return element.scrollHeight - element.clientHeight <= element.scrollTop + tolerance;
+        }
+        
+        // Helper function to escape HTML to prevent XSS
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+        
         function updateStatus() {
             fetch('/api/status')
                 .then(response => response.json())
@@ -562,10 +572,9 @@ class WorkerWebUI:
                     // Console Logs
                     const consoleLogsDiv = document.getElementById('console-logs');
                     if (data.console_logs && data.console_logs.length > 0) {
-                        const wasScrolledToBottom = consoleLogsDiv.scrollHeight - consoleLogsDiv.clientHeight <= consoleLogsDiv.scrollTop + SCROLL_TOLERANCE_PX;
+                        const wasScrolledToBottom = isScrolledToBottom(consoleLogsDiv, SCROLL_TOLERANCE_PX);
                         consoleLogsDiv.innerHTML = data.console_logs.map(log => {
-                            // Escape HTML to prevent XSS
-                            const escapedLog = log.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            const escapedLog = escapeHtml(log);
                             return `<div style="margin: 2px 0; white-space: pre-wrap; word-break: break-word;">${escapedLog}</div>`;
                         }).join('');
                         // Auto-scroll to bottom if was already at bottom

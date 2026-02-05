@@ -1119,7 +1119,7 @@ class HordeWorkerProcessManager:
     
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
-    _ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
 
@@ -1534,7 +1534,7 @@ class HordeWorkerProcessManager:
             message: The formatted log message
         """
         # Strip ANSI color codes using compiled pattern
-        clean_message = self._ANSI_ESCAPE_PATTERN.sub('', message).strip()
+        clean_message = self.ANSI_ESCAPE_PATTERN.sub('', message).strip()
         
         if clean_message:
             self._console_logs.append(clean_message)
