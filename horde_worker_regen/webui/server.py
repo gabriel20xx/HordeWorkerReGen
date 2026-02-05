@@ -11,12 +11,12 @@ from loguru import logger
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
 
-    def __init__(self, port: int = 3000, update_interval: float = 2.0) -> None:
+    def __init__(self, port: int = 3000, update_interval: float = 1.0) -> None:
         """Initialize the web UI server.
 
         Args:
             port: The port to run the web server on (default: 3000)
-            update_interval: How often to update status in seconds (default: 2.0)
+            update_interval: How often to update status in seconds (default: 1.0)
         """
         self.port = port
         self.update_interval = update_interval
@@ -583,7 +583,7 @@ class WorkerWebUI:
         }
         
         // Constants
-        const DEFAULT_UPDATE_INTERVAL_MS = 2000;
+        const DEFAULT_UPDATE_INTERVAL_MS = 1000;
         
         // Fetch config and start updates
         async function initializeUpdates() {
