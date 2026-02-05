@@ -3728,6 +3728,7 @@ class HordeWorkerProcessManager:
                 "height": faulted_job.payload.height if faulted_job.payload else None,
                 "steps": faulted_job.payload.ddim_steps if faulted_job.payload else None,
                 "sampler": faulted_job.payload.sampler_name if faulted_job.payload else None,
+                "batch_size": faulted_job.payload.n_iter if faulted_job.payload else None,
                 "loras": [],
                 "controlnet": None,
                 "workflow": faulted_job.payload.workflow if faulted_job.payload else None,
@@ -5243,6 +5244,7 @@ class HordeWorkerProcessManager:
                     "progress": progress,
                     "state": state or "Processing",
                     "is_complete": state == "INFERENCE_COMPLETE" if state else False,
+                    "batch_size": job.payload.n_iter if job.payload else None,
                 }
 
         # Get job queue
@@ -5252,6 +5254,7 @@ class HordeWorkerProcessManager:
                 {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
+                    "batch_size": job.payload.n_iter if job.payload else None,
                 }
             )
 

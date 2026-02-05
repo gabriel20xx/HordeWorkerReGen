@@ -710,6 +710,12 @@ class WorkerWebUI:
                                 <span class="stat-label">State:</span>
                                 <span class="stat-value">${stateDisplay}</span>
                             </div>
+                            ${job.batch_size && job.batch_size > 1 ? `
+                            <div class="stat">
+                                <span class="stat-label">Batch Size:</span>
+                                <span class="stat-value">${job.batch_size}x</span>
+                            </div>
+                            ` : ''}
                             ${job.progress !== null && job.progress !== undefined ? `
                             <div style="margin-top: 10px;">
                                 <div style="margin-bottom: 5px; color: #666;">Progress:</div>
@@ -729,11 +735,14 @@ class WorkerWebUI:
                     queueCount.textContent = data.job_queue.length;
                     
                     if (data.job_queue.length > 0) {
-                        queueDiv.innerHTML = data.job_queue.map(job => `
-                            <div class="job-item">
-                                <span class="job-id">${job.id || 'N/A'}</span>: ${job.model || 'Unknown model'}
-                            </div>
-                        `).join('');
+                        queueDiv.innerHTML = data.job_queue.map(job => {
+                            const batchInfo = job.batch_size && job.batch_size > 1 ? ` (${job.batch_size}x batch)` : '';
+                            return `
+                                <div class="job-item">
+                                    <span class="job-id">${job.id || 'N/A'}</span>: ${job.model || 'Unknown model'}${batchInfo}
+                                </div>
+                            `;
+                        }).join('');
                     } else {
                         queueDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">Queue is empty</div>';
                     }
@@ -818,6 +827,16 @@ class WorkerWebUI:
                                     <div class="faulted-job-detail">
                                         <span class="faulted-job-label">Sampler</span>
                                         <span class="faulted-job-value">${escapeHtml(job.sampler)}</span>
+                                    </div>
+                                `;
+                            }
+                            
+                            // Batch Size (only if > 1)
+                            if (job.batch_size && job.batch_size > 1) {
+                                detailsHtml += `
+                                    <div class="faulted-job-detail">
+                                        <span class="faulted-job-label">Batch Size</span>
+                                        <span class="faulted-job-value">${job.batch_size}x</span>
                                     </div>
                                 `;
                             }
