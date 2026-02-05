@@ -4545,25 +4545,25 @@ class HordeWorkerProcessManager:
         kudos_info_string_elements = []
         if time_since_session_start < 3600:
             kudos_info_string_elements = [
-                f"Total Session Kudos: {self.kudos_generated_this_session:,.2f} over "
-                f"{time_since_session_start / 60:.2f} minutes",
+                f"Session: {self.kudos_generated_this_session:,.2f} / "
+                f"{time_since_session_start / 60:.1f}m",
             ]
         else:
             kudos_info_string_elements = [
-                f"Total Session Kudos: {self.kudos_generated_this_session:,.2f} over "
-                f"{time_since_session_start / 3600:.2f} hours",
+                f"Session: {self.kudos_generated_this_session:,.2f} / "
+                f"{time_since_session_start / 3600:.1f}h",
             ]
 
         if time_since_session_start > 3600:
             kudos_info_string_elements.append(
-                f"Session: {kudos_per_hour_session:,.2f} (actual) kudos/hr",
+                f"{kudos_per_hour_session:,.1f} kd/hr",
             )
             # kudos_info_string_elements.append(
             #     f"Last Hour: {kudos_total_past_hour:,.2f} kudos",
             # )
         else:
             kudos_info_string_elements.append(
-                f"Session: {kudos_per_hour_session:,.2f} (extrapolated) kudos/hr",
+                f"{kudos_per_hour_session:,.1f} kd/hr (est)",
             )
             # kudos_info_string_elements.append(
             #     "Last Hour: (pending) kudos",
@@ -4571,7 +4571,7 @@ class HordeWorkerProcessManager:
 
         if self._time_spent_no_jobs_available > self._max_time_spent_no_jobs_available:
             kudos_info_string_elements.append(
-                f"Active (jobs available): {active_kudos_per_hour:,.2f} kudos/hr",
+                f"Active: {active_kudos_per_hour:,.1f} kd/hr",
             )
 
         return " | ".join(kudos_info_string_elements)
@@ -4596,8 +4596,8 @@ class HordeWorkerProcessManager:
         logger.debug(f"len(kudos_events): {len(self.kudos_events)}")
         if self.user_info is not None and self.user_info.kudos_details is not None:
             total_kudos_msg = (
-                f"Total Accumulated: {self.user_info.kudos_details.accumulated:,.2f} "
-                f"(all workers for {self.user_info.username})"
+                f"Total: {self.user_info.kudos_details.accumulated:,.0f} "
+                f"({self.user_info.username})"
             )
             if self.user_info.kudos_details.accumulated is not None and self.user_info.kudos_details.accumulated < 0:
                 total_kudos_msg += " | Negative kudos = more requested than earned"
