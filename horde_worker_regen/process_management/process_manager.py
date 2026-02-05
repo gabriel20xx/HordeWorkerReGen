@@ -2312,9 +2312,10 @@ class HordeWorkerProcessManager:
                     embedded_count = sum(1 for s in message.saved_images if s.metadata_embedded)
                     more_suffix = f" (+{more_count} more)" if more_count > 0 else ""
 
+                    image_word = "image" if len(message.saved_images) == 1 else "images"
                     logger.opt(ansi=True).info(
                         "<fg #00d9ff>"
-                        f"Saved {len(message.saved_images)} image(s) to disk for job {str(message.job_id)[:8]}: "
+                        f"Saved {len(message.saved_images)} {image_word} to disk for job {str(message.job_id)[:8]}: "
                         f"{first_path}{more_suffix} "
                         f"(metadata embedded {embedded_count}/{len(message.saved_images)})"
                         "</>",
