@@ -1275,7 +1275,7 @@ class HordeWorkerProcessManager:
     _api_call_loop_interval = 1
     """The number of seconds to wait between each loop of the main API call loop."""
 
-    _api_get_user_info_interval = 15
+    _api_get_user_info_interval = 60
     """The number of seconds to wait between each fetch of the user info."""
 
     _last_get_user_info_time: float = 0
