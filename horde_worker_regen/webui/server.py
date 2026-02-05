@@ -467,29 +467,36 @@ class WorkerWebUI:
                         result += parts[i];
                     }
                 } else {
-                    // ANSI code
+                    // ANSI code - process codes cumulatively
                     const codes = parts[i].split(';');
-                    currentStyles = [];
                     
                     for (const code of codes) {
                         if (code === '0' || code === '') {
-                            // Reset
+                            // Reset all styles
                             currentStyles = [];
                         } else if (code === '1') {
-                            // Bold
-                            currentStyles.push('font-weight:bold');
+                            // Bold - check if not already applied
+                            if (!currentStyles.some(s => s.startsWith('font-weight:'))) {
+                                currentStyles.push('font-weight:bold');
+                            }
                         } else if (code === '3') {
                             // Italic
-                            currentStyles.push('font-style:italic');
+                            if (!currentStyles.some(s => s.startsWith('font-style:'))) {
+                                currentStyles.push('font-style:italic');
+                            }
                         } else if (code === '4') {
                             // Underline
-                            currentStyles.push('text-decoration:underline');
+                            if (!currentStyles.some(s => s.startsWith('text-decoration:'))) {
+                                currentStyles.push('text-decoration:underline');
+                            }
                         } else if (colors[code] || colors[parts[i]]) {
-                            // Foreground color
+                            // Foreground color - replace existing color
+                            currentStyles = currentStyles.filter(s => !s.startsWith('color:'));
                             const color = colors[code] || colors[parts[i]];
                             currentStyles.push('color:' + color);
                         } else if (bgColors[code]) {
-                            // Background color
+                            // Background color - replace existing bg color
+                            currentStyles = currentStyles.filter(s => !s.startsWith('background-color:'));
                             currentStyles.push('background-color:' + bgColors[code]);
                         }
                     }
