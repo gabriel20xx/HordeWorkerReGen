@@ -69,6 +69,9 @@ call "%MAMBA_ROOT_PREFIX%\condabin\micromamba.bat" activate windows
 
 python -s -m pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128 -U
 
+REM Uninstall deprecated pynvml package to ensure nvidia-ml-py is used instead
+python -s -m pip uninstall -y pynvml
+
 if defined hordelib (
   python -s -m pip uninstall -y hordelib horde_engine horde_model_reference
   python -s -m pip install horde_engine horde_model_reference --extra-index-url https://download.pytorch.org/whl/cu128

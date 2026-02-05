@@ -54,6 +54,7 @@ ARG USE_PIP_CACHE=true
 
 RUN --mount=type=cache,target="${PIP_CACHE_DIR}",sharing=locked,id=pip-cache \
     . /env_vars && \
+    pip uninstall -y pynvml && \
     if [ "${USE_PIP_CACHE}" = "true" ]; then \
         pip install --cache-dir="${PIP_CACHE_DIR}" opencv-python-headless -r requirements.txt -U --extra-index-url "https://download.pytorch.org/whl/cu${CUDA_VERSION_SHORT}"; \
     else \
