@@ -132,6 +132,7 @@ def test_webui_faulted_jobs_history() -> None:
     assert webui.status_data["faulted_jobs_history"] == test_faulted_jobs
     assert len(webui.status_data["faulted_jobs_history"]) == 2
     assert webui.status_data["faulted_jobs_history"][0]["job_id"] == "job123"
+    assert webui.status_data["faulted_jobs_history"][0]["model"] == "TestModel1"
     assert webui.status_data["faulted_jobs_history"][0]["batch_size"] == 4
     assert webui.status_data["faulted_jobs_history"][0]["fault_phase"] == "During Inference"
     assert webui.status_data["faulted_jobs_history"][1]["model"] == "TestModel2"
