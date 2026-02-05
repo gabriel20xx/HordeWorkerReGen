@@ -285,6 +285,20 @@ class WorkerWebUI:
             grid-column: 1 / -1;
         }
         
+        .last-image-container {
+            min-height: 432px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .last-image-container img {
+            width: 768px;
+            height: 432px;
+            object-fit: contain;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: block;
         .subsection-heading {
             color: #667eea;
             font-size: 1.1em;
@@ -400,7 +414,7 @@ class WorkerWebUI:
             <div class="grid">
                 <div class="card">
                     <h2>Last Generated Image</h2>
-                    <div id="last-image-container">
+                    <div id="last-image-container" class="last-image-container">
                         <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
                     </div>
                 </div>
@@ -657,7 +671,6 @@ class WorkerWebUI:
                     if (data.last_image_base64) {
                         lastImageContainer.innerHTML = `
                             <img src="data:image/png;base64,${data.last_image_base64}" 
-                                 style="width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" 
                                  alt="Last generated image" />
                         `;
                     } else {
