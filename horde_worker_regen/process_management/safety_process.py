@@ -109,7 +109,6 @@ class HordeSafetyProcess(HordeProcess):
 
         try:
             # Suppress known warnings from dependencies
-            warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
             warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU.*")
 
             from horde_safety.deep_danbooru_model import get_deep_danbooru_model
