@@ -1120,8 +1120,10 @@ class HordeWorkerProcessManager:
     # Constants for webui log capture
     _ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     """Compiled regex pattern for removing ANSI escape codes from logs."""
+    _MAX_CONSOLE_LOGS_BUFFER = 100
+    """Maximum number of console logs to keep in memory buffer."""
     _WEBUI_CONSOLE_LOGS_LIMIT = 50
-    """Number of recent logs to send to webui (kept in memory: 100)."""
+    """Number of recent logs to send to webui from buffer."""
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1507,8 +1509,6 @@ class HordeWorkerProcessManager:
         """The last generated image in base64 format for webui preview."""
         self._console_logs: list[str] = []
         """Recent console logs for webui display."""
-        self._max_console_logs: int = 100
-        """Maximum number of console logs to keep."""
         self._log_handler_id: int | None = None
         """ID of the logger handler for capturing console logs."""
         
@@ -1541,8 +1541,8 @@ class HordeWorkerProcessManager:
         if clean_message:
             self._console_logs.append(clean_message)
             # Keep only the last N logs
-            if len(self._console_logs) > self._max_console_logs:
-                self._console_logs = self._console_logs[-self._max_console_logs:]
+            if len(self._console_logs) > self._MAX_CONSOLE_LOGS_BUFFER:
+                self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER:]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""

@@ -470,7 +470,7 @@ class WorkerWebUI:
                         } else if (job.state) {
                             // Convert snake_case to Title Case
                             stateDisplay = job.state.split('_').map(word => 
-                                word.charAt(0) + word.slice(1).toLowerCase()
+                                word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
                             ).join(' ');
                         }
                         
@@ -559,8 +559,8 @@ class WorkerWebUI:
                     // Console Logs
                     const consoleLogsDiv = document.getElementById('console-logs');
                     if (data.console_logs && data.console_logs.length > 0) {
-                        const SCROLL_TOLERANCE = 1; // Pixel tolerance for scroll position detection
-                        const wasScrolledToBottom = consoleLogsDiv.scrollHeight - consoleLogsDiv.clientHeight <= consoleLogsDiv.scrollTop + SCROLL_TOLERANCE;
+                        const SCROLL_TOLERANCE_PX = 1; // Pixel tolerance for scroll position detection
+                        const wasScrolledToBottom = consoleLogsDiv.scrollHeight - consoleLogsDiv.clientHeight <= consoleLogsDiv.scrollTop + SCROLL_TOLERANCE_PX;
                         consoleLogsDiv.innerHTML = data.console_logs.map(log => {
                             // Escape HTML to prevent XSS
                             const escapedLog = log.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
