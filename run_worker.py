@@ -25,4 +25,17 @@ except ImportError as e:
     sys.exit(1)
 
 if __name__ == "__main__":
-    init()
+    try:
+        init()
+    except Exception as e:
+        print("=" * 80)
+        print("ERROR: Worker initialization failed")
+        print("=" * 80)
+        print()
+        print(f"Error: {type(e).__name__}: {e}")
+        print()
+        import traceback
+        traceback.print_exc()
+        print()
+        print("=" * 80)
+        sys.exit(1)
