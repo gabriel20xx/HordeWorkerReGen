@@ -429,6 +429,76 @@ class WorkerWebUI:
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
         
+        // ANSI color code to HTML converter
+        function ansiToHtml(text) {
+            // Escape HTML first to prevent XSS
+            text = escapeHtml(text);
+            
+            // ANSI color codes mapping
+            const colors = {
+                '30': '#000000', '31': '#cd3131', '32': '#0dbc79', '33': '#e5e510',
+                '34': '#2472c8', '35': '#bc3fbc', '36': '#11a8cd', '37': '#e5e5e5',
+                '90': '#666666', '91': '#f14c4c', '92': '#23d18b', '93': '#f5f543',
+                '94': '#3b8eea', '95': '#d670d6', '96': '#29b8db', '97': '#ffffff',
+                // Bright foreground colors
+                '1;30': '#666666', '1;31': '#f14c4c', '1;32': '#23d18b', '1;33': '#f5f543',
+                '1;34': '#3b8eea', '1;35': '#d670d6', '1;36': '#29b8db', '1;37': '#ffffff',
+            };
+            
+            const bgColors = {
+                '40': '#000000', '41': '#cd3131', '42': '#0dbc79', '43': '#e5e510',
+                '44': '#2472c8', '45': '#bc3fbc', '46': '#11a8cd', '47': '#e5e5e5',
+                '100': '#666666', '101': '#f14c4c', '102': '#23d18b', '103': '#f5f543',
+                '104': '#3b8eea', '105': '#d670d6', '106': '#29b8db', '107': '#ffffff',
+            };
+            
+            let result = '';
+            let currentStyles = [];
+            
+            // Split by ANSI escape sequences
+            const parts = text.split(/\x1b\[([0-9;]+)m/);
+            
+            for (let i = 0; i < parts.length; i++) {
+                if (i % 2 === 0) {
+                    // Regular text
+                    if (currentStyles.length > 0) {
+                        result += '<span style="' + currentStyles.join(';') + '">' + parts[i] + '</span>';
+                    } else {
+                        result += parts[i];
+                    }
+                } else {
+                    // ANSI code
+                    const codes = parts[i].split(';');
+                    currentStyles = [];
+                    
+                    for (const code of codes) {
+                        if (code === '0' || code === '') {
+                            // Reset
+                            currentStyles = [];
+                        } else if (code === '1') {
+                            // Bold
+                            currentStyles.push('font-weight:bold');
+                        } else if (code === '3') {
+                            // Italic
+                            currentStyles.push('font-style:italic');
+                        } else if (code === '4') {
+                            // Underline
+                            currentStyles.push('text-decoration:underline');
+                        } else if (colors[code] || colors[parts[i]]) {
+                            // Foreground color
+                            const color = colors[code] || colors[parts[i]];
+                            currentStyles.push('color:' + color);
+                        } else if (bgColors[code]) {
+                            // Background color
+                            currentStyles.push('background-color:' + bgColors[code]);
+                        }
+                    }
+                }
+            }
+            
+            return result;
+        }
+        
         function updateStatus() {
             fetch('/api/status')
                 .then(response => response.json())
@@ -574,8 +644,8 @@ class WorkerWebUI:
                     if (data.console_logs && data.console_logs.length > 0) {
                         const wasScrolledToBottom = isScrolledToBottom(consoleLogsDiv, SCROLL_TOLERANCE_PX);
                         consoleLogsDiv.innerHTML = data.console_logs.map(log => {
-                            const escapedLog = escapeHtml(log);
-                            return `<div style="margin: 2px 0; white-space: pre-wrap; word-break: break-word;">${escapedLog}</div>`;
+                            const coloredLog = ansiToHtml(log);
+                            return `<div style="margin: 2px 0; white-space: pre-wrap; word-break: break-word;">${coloredLog}</div>`;
                         }).join('');
                         // Auto-scroll to bottom if was already at bottom
                         if (wasScrolledToBottom) {
