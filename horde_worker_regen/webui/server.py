@@ -440,7 +440,7 @@ class WorkerWebUI:
                 '34': '#2472c8', '35': '#bc3fbc', '36': '#11a8cd', '37': '#e5e5e5',
                 '90': '#666666', '91': '#f14c4c', '92': '#23d18b', '93': '#f5f543',
                 '94': '#3b8eea', '95': '#d670d6', '96': '#29b8db', '97': '#ffffff',
-                // Bright foreground colors
+                // Bold+color combinations for loguru compatibility
                 '1;30': '#666666', '1;31': '#f14c4c', '1;32': '#23d18b', '1;33': '#f5f543',
                 '1;34': '#3b8eea', '1;35': '#d670d6', '1;36': '#29b8db', '1;37': '#ffffff',
             };
@@ -489,11 +489,10 @@ class WorkerWebUI:
                             if (!currentStyles.some(s => s.startsWith('text-decoration:'))) {
                                 currentStyles.push('text-decoration:underline');
                             }
-                        } else if (colors[code] || colors[parts[i]]) {
+                        } else if (colors[code]) {
                             // Foreground color - replace existing color
                             currentStyles = currentStyles.filter(s => !s.startsWith('color:'));
-                            const color = colors[code] || colors[parts[i]];
-                            currentStyles.push('color:' + color);
+                            currentStyles.push('color:' + colors[code]);
                         } else if (bgColors[code]) {
                             // Background color - replace existing bg color
                             currentStyles = currentStyles.filter(s => !s.startsWith('background-color:'));
