@@ -1118,12 +1118,10 @@ class HordeWorkerProcessManager:
     MAX_FAILING_MODELS_TO_DISPLAY = 10
     
     # Constants for webui log capture
+    # Compiled regex pattern for removing ANSI escape codes from logs
     _ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    """Compiled regex pattern for removing ANSI escape codes from logs."""
-    _MAX_CONSOLE_LOGS_BUFFER = 100
-    """Maximum number of console logs to keep in memory buffer."""
-    _WEBUI_CONSOLE_LOGS_LIMIT = 50
-    """Number of recent logs to send to webui from buffer."""
+    _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
+    _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""

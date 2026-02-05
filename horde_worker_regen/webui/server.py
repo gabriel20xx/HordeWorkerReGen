@@ -416,6 +416,9 @@ class WorkerWebUI:
             return mb.toFixed(1) + ' MB';
         }
         
+        // Constants for UI behavior
+        const SCROLL_TOLERANCE_PX = 1; // Pixel tolerance for scroll position detection
+        
         function updateStatus() {
             fetch('/api/status')
                 .then(response => response.json())
@@ -559,7 +562,6 @@ class WorkerWebUI:
                     // Console Logs
                     const consoleLogsDiv = document.getElementById('console-logs');
                     if (data.console_logs && data.console_logs.length > 0) {
-                        const SCROLL_TOLERANCE_PX = 1; // Pixel tolerance for scroll position detection
                         const wasScrolledToBottom = consoleLogsDiv.scrollHeight - consoleLogsDiv.clientHeight <= consoleLogsDiv.scrollTop + SCROLL_TOLERANCE_PX;
                         consoleLogsDiv.innerHTML = data.console_logs.map(log => {
                             // Escape HTML to prevent XSS
