@@ -1,8 +1,12 @@
 """The primary package for the reGen worker."""
 
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv is not installed yet, which is fine during initial import
+    # The run_worker.py will catch this and show a helpful error message
+    pass
 
 from pathlib import Path  # noqa: E402
 
