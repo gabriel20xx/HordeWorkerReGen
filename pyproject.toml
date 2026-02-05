@@ -28,7 +28,7 @@ classifiers = [
 
 
 [project.scripts]
-run_worker = "horde_worker_regen.run_worker:start"
+run_worker = "horde_worker_regen.run_worker:init"
 download_models = "horde_worker_regen.download_models:main"
 
 [tool.setuptools.dynamic]
