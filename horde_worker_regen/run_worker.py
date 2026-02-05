@@ -130,12 +130,12 @@ class LogConsoleRewriter(io.StringIO):
             "Traceback (most recent call last)",
             "Traceback (innermost last)",
         ]
-        
+
         traceback_indicators = [
             "  File ",
             "    ^",
         ]
-        
+
         error_indicators = [
             "Error:",
             "Exception:",
@@ -145,13 +145,13 @@ class LogConsoleRewriter(io.StringIO):
         # Check if we're starting a traceback
         if any(indicator in message for indicator in traceback_start_indicators):
             self.in_traceback = True
-        
+
         # Check if this line is part of a traceback
         is_traceback_line = any(indicator in message for indicator in traceback_indicators)
-        
+
         # Check if this is an error/exception line (likely the end of a traceback)
         is_error_line = any(indicator in message for indicator in error_indicators)
-        
+
         # Reset traceback mode after an empty line (common after error messages)
         if self.in_traceback and not message.strip():
             self.in_traceback = False
@@ -162,7 +162,7 @@ class LogConsoleRewriter(io.StringIO):
                 # Likely an exception message, keep in traceback mode
                 pass
             elif message.startswith("    "):
-                # Indented code snippet in traceback, keep in traceback mode  
+                # Indented code snippet in traceback, keep in traceback mode
                 pass
             else:
                 # Definitely not traceback anymore
