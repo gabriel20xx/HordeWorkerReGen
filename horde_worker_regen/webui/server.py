@@ -683,7 +683,7 @@ class WorkerWebUI:
                         } else if (job.state === 'INFERENCE_COMPLETE') {
                             stateDisplay = 'Finished';
                         } else if (job.state === 'INFERENCE_STARTING') {
-                            stateDisplay = 'Starting';
+                            stateDisplay = 'Inference';
                         } else if (job.state) {
                             // Convert snake_case to Title Case
                             stateDisplay = job.state.split('_').map(word => 
