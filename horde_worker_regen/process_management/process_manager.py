@@ -5535,10 +5535,9 @@ class HordeWorkerProcessManager:
 
         # Clear only the jobs that were already pending, not the ones added for retry
         if len(self.jobs_pending_inference) > 0:
-            # Count jobs kept for retry before filtering
-            jobs_before_clear = len(self.jobs_pending_inference)
             # Filter out old pending jobs, keep only retry jobs
-            self.jobs_pending_inference = [job for job in self.jobs_pending_inference if job not in jobs_pending_before_fault]
+            # Convert back to deque to maintain the original data structure
+            self.jobs_pending_inference = deque([job for job in self.jobs_pending_inference if job not in jobs_pending_before_fault])
             self._last_job_submitted_time = time.time()
             
             # Log how many jobs were kept for retry
