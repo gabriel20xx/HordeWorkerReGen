@@ -4428,12 +4428,12 @@ class HordeWorkerProcessManager:
             > 0
         )
         logger.opt(ansi=True).info(
-            "<fg #a200ff>"
+            "<b><fg #a200ff>"
             f"Popped job {job_pop_response.id_} "
             f"({self.get_single_job_effective_megapixelsteps(job_pop_response)} eMPS) "
             f"(model: {job_pop_response.model}, batch: {job_pop_response.payload.n_iter}, "
             f"loras: {has_loras}, post_processing: {has_post_processing})"
-            "</>",
+            "</></b>",
         )
 
         # region TODO: move to horde_sdk
