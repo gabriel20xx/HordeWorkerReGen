@@ -5479,6 +5479,12 @@ class HordeWorkerProcessManager:
         responding, they will spend much longer in the queue than they should while the server waits for the worker
         to respond (and ultimately times out).
         """
+        # Mark all jobs currently in progress as faulted before clearing them
+        if len(self.jobs_in_progress) > 0:
+            for job in list(self.jobs_in_progress):
+                self.handle_job_fault(faulted_job=job, process_info=None)
+            logger.error("Cleared jobs in progress")
+
         if len(self.jobs_pending_inference) > 0:
             self.jobs_pending_inference.clear()
             self._last_job_submitted_time = time.time()
@@ -5495,10 +5501,6 @@ class HordeWorkerProcessManager:
         if len(self.jobs_lookup) > 0:
             self.jobs_lookup.clear()
             logger.error("Cleared jobs lookup")
-
-        if len(self.jobs_in_progress) > 0:
-            self.jobs_in_progress.clear()
-            logger.error("Cleared jobs in progress")
 
         if len(self.jobs_pending_submit) > 0:
             self.jobs_pending_submit.clear()
