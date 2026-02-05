@@ -117,6 +117,7 @@ class LogConsoleRewriter(io.StringIO):
     def __init__(self, original_iostream: io.TextIOBase) -> None:
         """Initialise the rewriter."""
         self.original_iostream = original_iostream
+        self.in_traceback = False  # Track if we're currently printing a traceback
 
         pattern = r"\[36m(\d+)"
 
@@ -124,35 +125,82 @@ class LogConsoleRewriter(io.StringIO):
 
     def write(self, message: str) -> int:
         """Rewrite the message to make it more readable where possible."""
-        replacements = [
-            ("horde_worker_regen.process_management.process_manager", "Worker"),
-            ("horde_worker_regen.", ""),
-            ("receive_and_handle_process_messages", "Process"),
-            ("start_inference_processes", "Starting"),
-            ("_start_inference_process", "Starting"),
-            ("start_inference_process", "Starting"),
-            ("start_safety_process", "Safety"),
-            ("start_inference", "Process"),
-            ("print_status_method", "Status"),
-            ("log_kudos_info", "Kudos"),
-            ("submit_single_generation", "Submit"),
-            ("preload_models", "Loading"),
-            ("api_job_pop", "New Job"),
-            ("_process_control_loop", "Control"),
-            ("_bridge_data_loop", "Config"),
-            ("enable_performance_mode", "Performance"),
-            ("replace_hung_processes", "Recovery"),
-            ("handle_job_fault", "Job Fault"),
-            ("api_submit_job", "Submitting"),
-            ("_end_inference_process", "Stopping"),
+        # Check if this message starts or continues a traceback
+        traceback_start_indicators = [
+            "Traceback (most recent call last)",
+            "Traceback (innermost last)",
+        ]
+        
+        traceback_indicators = [
+            "  File ",
+            "    ^",
+        ]
+        
+        error_indicators = [
+            "Error:",
+            "Exception:",
+            "Warning:",
         ]
 
-        for old, new in replacements:
-            message = message.replace(old, new)
+        # Check if we're starting a traceback
+        if any(indicator in message for indicator in traceback_start_indicators):
+            self.in_traceback = True
+        
+        # Check if this line is part of a traceback
+        is_traceback_line = any(indicator in message for indicator in traceback_indicators)
+        
+        # Check if this is an error/exception line (likely the end of a traceback)
+        is_error_line = any(indicator in message for indicator in error_indicators)
+        
+        # Reset traceback mode after an empty line (common after error messages)
+        if self.in_traceback and not message.strip():
+            self.in_traceback = False
+        # If we're in traceback mode and hit a non-traceback line, reset
+        elif self.in_traceback and message.strip() and not is_traceback_line and not is_error_line:
+            # Check if this looks like an exception type (e.g., "ModuleNotFoundError:", "ValueError:")
+            if ":" in message and message.strip()[0].isupper():
+                # Likely an exception message, keep in traceback mode
+                pass
+            elif message.startswith("    "):
+                # Indented code snippet in traceback, keep in traceback mode  
+                pass
+            else:
+                # Definitely not traceback anymore
+                self.in_traceback = False
 
-        replacement = ""
+        # Don't modify traceback or error messages
+        should_modify = not self.in_traceback and not is_traceback_line and not is_error_line
 
-        message = self.line_number_pattern.sub(replacement, message)
+        if should_modify:
+            replacements = [
+                ("horde_worker_regen.process_management.process_manager", "Worker"),
+                ("horde_worker_regen.", ""),
+                ("receive_and_handle_process_messages", "Process"),
+                ("start_inference_processes", "Starting"),
+                ("_start_inference_process", "Starting"),
+                ("start_inference_process", "Starting"),
+                ("start_safety_process", "Safety"),
+                ("start_inference", "Process"),
+                ("print_status_method", "Status"),
+                ("log_kudos_info", "Kudos"),
+                ("submit_single_generation", "Submit"),
+                ("preload_models", "Loading"),
+                ("api_job_pop", "New Job"),
+                ("_process_control_loop", "Control"),
+                ("_bridge_data_loop", "Config"),
+                ("enable_performance_mode", "Performance"),
+                ("replace_hung_processes", "Recovery"),
+                ("handle_job_fault", "Job Fault"),
+                ("api_submit_job", "Submitting"),
+                ("_end_inference_process", "Stopping"),
+            ]
+
+            for old, new in replacements:
+                message = message.replace(old, new)
+
+            replacement = ""
+
+            message = self.line_number_pattern.sub(replacement, message)
 
         if self.original_iostream is None:
             raise ValueError("self.original_iostream. is None!")
