@@ -3734,8 +3734,9 @@ class HordeWorkerProcessManager:
                 return
             
             # Job has exhausted all retry attempts, proceed with faulting
+            retry_text = "retry attempt" if self.MAX_JOB_RETRIES == 1 else "retry attempts"
             logger.error(
-                f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} retry attempt(s), "
+                f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} {retry_text}, "
                 f"marking as permanently faulted"
             )
             
