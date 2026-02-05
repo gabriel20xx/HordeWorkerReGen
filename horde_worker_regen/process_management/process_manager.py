@@ -163,7 +163,7 @@ class HordeProcessInfo:
     """The number of inference steps that have been completed since the last heartbeat."""
     last_heartbeat_percent_complete: int | None
     """The last percentage reported by the process."""
-    
+
     # Progress tracking for detecting stalled inference jobs
     last_progress_timestamp: float
     """Last time progress (percent_complete) actually advanced."""
@@ -233,7 +233,7 @@ class HordeProcessInfo:
         self.last_heartbeat_type = HordeHeartbeatType.OTHER
         self.heartbeats_inference_steps = 0
         self.last_heartbeat_percent_complete = None
-        
+
         # Initialize progress tracking
         self.last_progress_timestamp = time.time()
         self.last_progress_value = None
@@ -408,7 +408,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             if self[process_id].last_progress_value != percent_complete:
                 self[process_id].last_progress_timestamp = time.time()
                 self[process_id].last_progress_value = percent_complete
-        
+
         self[process_id].last_heartbeat_percent_complete = percent_complete
 
     def on_process_ending(self, process_id: int) -> None:
@@ -553,7 +553,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         self[process_id].last_heartbeat_timestamp = time.time()
         self[process_id].heartbeats_inference_steps = 0
         self[process_id].last_heartbeat_percent_complete = None
-        
+
         # Reset progress tracking for new job
         self[process_id].last_progress_timestamp = time.time()
         self[process_id].last_progress_value = None
@@ -575,7 +575,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         inference_step_timeout: int,
     ) -> bool:
         """Return true if the process is actively doing inference but progress has stalled.
-        
+
         This detects jobs that are stuck in the INFERENCE_STARTING state with:
         1. Progress not advancing for timeout period (stuck at same percentage), OR
         2. No heartbeat received for timeout period (including last step / VAE decode phase)
@@ -596,7 +596,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         # jobs stuck in the last step (VAE decode) which send PIPELINE_STATE_CHANGE heartbeats
         if self[process_id].last_heartbeat_delta > inference_step_timeout:
             return True
-        
+
         return False
 
     def num_inference_processes(self) -> int:
@@ -951,7 +951,7 @@ class HordeJobInfo(BaseModel):  # TODO: Split into a new file
     def images_base64(self) -> list[str]:
         """Return a list containing all base64 images."""
         if self.job_image_results is None:
-            return []    
+            return []
         return [r.image_base64 for r in self.job_image_results]
 
     def fault_job(self) -> None:
@@ -1456,7 +1456,7 @@ class HordeWorkerProcessManager:
 
         self.jobs_pending_inference = deque()
         self._jobs_pending_inference_lock = Lock_Asyncio()
-        
+
         # Cache for megapixelsteps calculation (performance optimization)
         # Initialize as valid with 0 since there are no pending jobs at startup
         self._cached_pending_megapixelsteps: int = 0
@@ -2256,7 +2256,7 @@ class HordeWorkerProcessManager:
                     f"Job {message.job_id} had {num_images_censored} images censored and took "
                     f"{message.time_elapsed:.2f} seconds to check safety",
                 )
-                
+
                 # ! IMPORTANT: Start own code
                 if message.saved_images:
                     first_path = message.saved_images[0].path
@@ -3019,12 +3019,7 @@ class HordeWorkerProcessManager:
 
                 if isinstance(lora, dict):
                     name = lora.get("name") or lora.get("lora_name") or lora.get("model") or lora.get("id")
-                    strength = (
-                        lora.get("strength")
-                        or lora.get("weight")
-                        or lora.get("clip")
-                        or lora.get("alpha")
-                    )
+                    strength = lora.get("strength") or lora.get("weight") or lora.get("clip") or lora.get("alpha")
                 else:
                     name = (
                         getattr(lora, "name", None)
@@ -3741,13 +3736,13 @@ class HordeWorkerProcessManager:
 
     def get_pending_megapixelsteps(self) -> int:
         """Return the number of megapixelsteps that are pending in the job deque.
-        
+
         Uses caching to avoid recalculating on every call.
         """
         # Return cached value if still valid
         if self._megapixelsteps_cache_valid:
             return self._cached_pending_megapixelsteps
-        
+
         # Recalculate and cache
         job_deque_megapixelsteps = 0
         for job in self.jobs_pending_inference:
@@ -3760,7 +3755,7 @@ class HordeWorkerProcessManager:
         self._cached_pending_megapixelsteps = job_deque_megapixelsteps
         self._megapixelsteps_cache_valid = True
         return job_deque_megapixelsteps
-    
+
     def _invalidate_megapixelsteps_cache(self) -> None:
         """Invalidate the megapixelsteps cache when jobs are added or removed."""
         self._megapixelsteps_cache_valid = False
@@ -3986,7 +3981,7 @@ class HordeWorkerProcessManager:
             if self.bridge_data.exit_on_unhandled_faults:
                 logger.error("Exiting due to exit_on_unhandled_faults being enabled")
                 self._shutdown()
-            # Commented out to remove 180 seconds wait delay    
+            # Commented out to remove 180 seconds wait delay
             # self._too_many_consecutive_failed_jobs = True
             # self._too_many_consecutive_failed_jobs_time = cur_time
             # Add this to prevent a loophole
@@ -4442,10 +4437,11 @@ class HordeWorkerProcessManager:
         if self.bridge_data.limited_console_messages:
             log_function = logger.opt(ansi=True).success
 
+        # Combine kudos info and total accumulated into one line
+        combined_msg_parts = []
+
         if self.kudos_generated_this_session > 0:
-            log_function(
-                f"<fg #ffd700>Kudos: {kudos_info_string}</>",
-            )
+            combined_msg_parts.append(f"Kudos: {kudos_info_string}")
 
         logger.debug(f"len(kudos_events): {len(self.kudos_events)}")
         if self.user_info is not None and self.user_info.kudos_details is not None:
@@ -4455,9 +4451,13 @@ class HordeWorkerProcessManager:
             )
             if self.user_info.kudos_details.accumulated is not None and self.user_info.kudos_details.accumulated < 0:
                 total_kudos_msg += " | Negative kudos = more requested than earned"
-            
+
+            combined_msg_parts.append(total_kudos_msg)
+
+        # Log combined message only if there's something to log
+        if combined_msg_parts:
             log_function(
-                f"<fg #ffd700>{total_kudos_msg}</>",
+                f"<fg #ffd700>{' | '.join(combined_msg_parts)}</>",
             )
 
     async def api_get_user_info(self) -> None:
@@ -5155,33 +5155,39 @@ class HordeWorkerProcessManager:
         # Get job queue
         job_queue = []
         for job in list(self.jobs_pending_inference)[:MAX_WEBUI_QUEUE_ITEMS]:  # Limit to first N
-            job_queue.append({
-                "id": str(job.id_.root)[:8] if job.id_ else "N/A",
-                "model": job.model,
-            })
+            job_queue.append(
+                {
+                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                    "model": job.model,
+                }
+            )
 
         # Get process info
         processes = []
         for process_info in self._process_map.values():
-            processes.append({
-                "id": process_info.process_id,
-                "type": process_info.process_type.name,
-                "state": process_info.last_process_state.name,
-                "model": process_info.loaded_horde_model_name,
-                "progress": process_info.last_heartbeat_percent_complete,
-            })
+            processes.append(
+                {
+                    "id": process_info.process_id,
+                    "type": process_info.process_type.name,
+                    "state": process_info.last_process_state.name,
+                    "model": process_info.loaded_horde_model_name,
+                    "progress": process_info.last_heartbeat_percent_complete,
+                }
+            )
 
         # Get loaded models
-        models_loaded = list({
-            process.loaded_horde_model_name
-            for process in self._process_map.values()
-            if process.loaded_horde_model_name is not None
-        })
+        models_loaded = list(
+            {
+                process.loaded_horde_model_name
+                for process in self._process_map.values()
+                if process.loaded_horde_model_name is not None
+            }
+        )
 
         # Calculate total resource usage
         total_ram_mb = sum(p.ram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
         total_vram_mb = sum(p.vram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
-        
+
         # Get max VRAM from devices
         max_vram_mb = 0
         if len(self._device_map.root) > 0:
@@ -5191,7 +5197,8 @@ class HordeWorkerProcessManager:
         kudos_per_hour = 0.0
         if len(self.kudos_events) > 0:
             recent_kudos = sum(
-                kudos for timestamp, kudos in self.kudos_events
+                kudos
+                for timestamp, kudos in self.kudos_events
                 if time.time() - timestamp < KUDOS_CALCULATION_WINDOW_SECONDS
             )
             kudos_per_hour = recent_kudos
@@ -5278,7 +5285,7 @@ class HordeWorkerProcessManager:
 
         if bridge_data_loop is not None:
             tasks.append(bridge_data_loop)
-        
+
         if webui_update_loop is not None:
             tasks.append(webui_update_loop)
 
@@ -5481,7 +5488,11 @@ class HordeWorkerProcessManager:
                 # Enhanced logging for stuck job detection
                 time_since_heartbeat = process_info.last_heartbeat_delta
                 time_since_progress = now - process_info.last_progress_timestamp
-                progress_str = f"{process_info.last_heartbeat_percent_complete}%" if process_info.last_heartbeat_percent_complete is not None else "Not available"
+                progress_str = (
+                    f"{process_info.last_heartbeat_percent_complete}%"
+                    if process_info.last_heartbeat_percent_complete is not None
+                    else "Not available"
+                )
                 logger.error(
                     f"{process_info} seems to be stuck mid inference - "
                     f"Last heartbeat: {time_since_heartbeat:.1f}s ago, "
