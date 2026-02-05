@@ -411,16 +411,16 @@ class HordeSafetyProcess(HordeProcess):
 
                 if metadata is not None:
                     logger.opt(ansi=True).info(
-                        "<fg #00d9ff>"
+                        "<b><fg #FF69B4>"
                         f"Saved 1 image + embedded metadata to disk for job {message.job_id}: {output_path}"
-                        "</>",
+                        "</></>",
                     )
                     saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=True))
                 else:
                     logger.opt(ansi=True).info(
-                        "<fg #00d9ff>"
+                        "<b><fg #FF69B4>"
                         f"Saved 1 image to disk (no metadata) for job {message.job_id}: {output_path}"
-                        "</>",
+                        "</></>",
                     )
                     saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
             except Exception as e:
