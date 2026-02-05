@@ -3714,7 +3714,7 @@ class HordeWorkerProcessManager:
                 # Retry the job once
                 job_info.retry_count += 1
                 logger.warning(
-                    f"Job {faulted_job.id_} faulted, retrying (retry {job_info.retry_count} of {self.MAX_JOB_RETRIES})"
+                    f"Job {faulted_job.id_} faulted, retrying (retry attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})"
                 )
                 
                 # Remove from jobs_in_progress if present
@@ -3733,8 +3733,11 @@ class HordeWorkerProcessManager:
                 
                 return
             
-            # Job has already been retried, proceed with faulting
-            logger.error(f"Job {faulted_job.id_} faulted after retry, marking as faulted")
+            # Job has exhausted all retry attempts, proceed with faulting
+            logger.error(
+                f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} retry attempt(s), "
+                f"marking as permanently faulted"
+            )
             
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
