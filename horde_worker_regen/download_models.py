@@ -51,7 +51,6 @@ def download_all_models(
         exit(1)
 
     # Suppress known warnings from dependencies
-    warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
     warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU.*")
 
     import hordelib
