@@ -46,7 +46,7 @@ def configure_logger_format() -> None:
         "TRACE": "<dim><cyan>{time:YYYY-MM-DD HH:mm:ss.SSS}</cyan></dim> <dim>|</dim> <dim><cyan>{level: <8}</cyan></dim> <dim>|</dim> <dim>{message}</dim>",
         "DEBUG": "<dim><blue>{time:YYYY-MM-DD HH:mm:ss.SSS}</blue></dim> <dim>|</dim> <blue>{level: <8}</blue> <dim>|</dim> {message}",
         "INFO": "<cyan>{time:YYYY-MM-DD HH:mm:ss.SSS}</cyan> <dim>|</dim> <bold><cyan>{level: <8}</cyan></bold> <dim>|</dim> {message}",
-        "SUCCESS": "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> <dim>|</dim> <bold><green>{level: <8}</green></bold> <dim>|</dim> <bold>{message}</bold>",
+        "SUCCESS": "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> <dim>|</dim> <bold><green>{level: <8}</green></bold> <dim>|</dim> <bold><green>{message}</green></bold>",
         "WARNING": "<yellow>{time:YYYY-MM-DD HH:mm:ss.SSS}</yellow> <dim>|</dim> <bold><yellow>{level: <8}</yellow></bold> <dim>|</dim> <yellow>{message}</yellow>",
         "ERROR": "<red>{time:YYYY-MM-DD HH:mm:ss.SSS}</red> <dim>|</dim> <bold><red>{level: <8}</red></bold> <dim>|</dim> <red>{message}</red>",
         "CRITICAL": "<bold><red>{time:YYYY-MM-DD HH:mm:ss.SSS}</red></bold> <dim>|</dim> <bold><red><u>{level: <8}</u></red></bold> <dim>|</dim> <bold><red>{message}</red></bold>",
