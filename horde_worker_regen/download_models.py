@@ -48,6 +48,11 @@ def download_all_models(
         logger.error("Failed to load bridge data")
         exit(1)
 
+    # Suppress known warnings from dependencies
+    import warnings
+    warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
+    warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU.*")
+
     import hordelib
     from horde_safety.deep_danbooru_model import download_deep_danbooru_model
     from horde_safety.interrogate import get_interrogator_no_blip

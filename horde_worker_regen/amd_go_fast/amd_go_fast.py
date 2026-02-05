@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
+
 import torch
 from loguru import logger
 
