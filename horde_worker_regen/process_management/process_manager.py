@@ -4315,7 +4315,7 @@ class HordeWorkerProcessManager:
                     jobs.append(f"<{str(job.id_)[:8]}: {job.model}>")
                 else:
                     jobs.append(f"<{job.model}>")
-            logger.info(f'Job queue: {", ".join(jobs)}')
+            logger.info(f'Pending job queue: {", ".join(jobs)}')
             # self._testing_jobs_added += 1
             self.job_pop_timestamps[job_pop_response] = time.time()
             self.jobs_lookup[job_pop_response] = HordeJobInfo(
@@ -4878,7 +4878,7 @@ class HordeWorkerProcessManager:
                 logging_function(f"<b><fg #00d7ff>Processes:</></b> {num_busy}/{num_total} busy")
                 logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
 
-            logging_function("<b><fg #00ff87>Jobs:</></b>")
+            logging_function("<b><fg #00ff87>Pending Jobs:</></b>")
             jobs = []
             for x in self.jobs_pending_inference:
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
