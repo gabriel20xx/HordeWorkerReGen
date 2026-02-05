@@ -5,7 +5,7 @@ try:
     load_dotenv()
 except ImportError:
     # dotenv is not installed yet, which is fine during initial import
-    # The run_worker.py will catch this and show a helpful error message
+    # Dependency checking is handled elsewhere during startup
     pass
 
 from pathlib import Path  # noqa: E402
