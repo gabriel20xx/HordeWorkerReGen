@@ -479,6 +479,11 @@ class WorkerWebUI:
                             if (!currentStyles.some(s => s.startsWith('font-weight:'))) {
                                 currentStyles.push('font-weight:bold');
                             }
+                        } else if (code === '2') {
+                            // Dim/faint - reduce opacity
+                            if (!currentStyles.some(s => s.startsWith('opacity:'))) {
+                                currentStyles.push('opacity:0.6');
+                            }
                         } else if (code === '3') {
                             // Italic
                             if (!currentStyles.some(s => s.startsWith('font-style:'))) {
