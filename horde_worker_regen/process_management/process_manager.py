@@ -1123,6 +1123,9 @@ class HordeWorkerProcessManager:
     # Constants for worker config display
     WORKER_CONFIG_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
     
+    # Constants for job retry logic
+    MAX_JOB_RETRIES = 1  # Number of retries for faulted jobs
+    
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
     ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -3707,11 +3710,11 @@ class HordeWorkerProcessManager:
             logger.error(f"Job {faulted_job.id_} not found in jobs_lookup")
         else:
             # Check if the job should be retried
-            if job_info.retry_count < 1:
+            if job_info.retry_count < self.MAX_JOB_RETRIES:
                 # Retry the job once
                 job_info.retry_count += 1
                 logger.warning(
-                    f"Job {faulted_job.id_} faulted, retrying (retry {job_info.retry_count} of 1)"
+                    f"Job {faulted_job.id_} faulted, retrying (retry {job_info.retry_count} of {self.MAX_JOB_RETRIES})"
                 )
                 
                 # Remove from jobs_in_progress if present
