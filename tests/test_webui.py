@@ -111,6 +111,7 @@ def test_webui_faulted_jobs_history() -> None:
             "controlnet": "canny",
             "workflow": "qr_code",
             "batch_size": 4,
+            "fault_phase": "During Inference",
         },
         {
             "job_id": "job456",
@@ -124,6 +125,7 @@ def test_webui_faulted_jobs_history() -> None:
             "controlnet": None,
             "workflow": None,
             "batch_size": 1,
+            "fault_phase": "Post Processing",
         },
     ]
     webui.update_status(faulted_jobs_history=test_faulted_jobs)
@@ -131,7 +133,9 @@ def test_webui_faulted_jobs_history() -> None:
     assert len(webui.status_data["faulted_jobs_history"]) == 2
     assert webui.status_data["faulted_jobs_history"][0]["job_id"] == "job123"
     assert webui.status_data["faulted_jobs_history"][0]["batch_size"] == 4
+    assert webui.status_data["faulted_jobs_history"][0]["fault_phase"] == "During Inference"
     assert webui.status_data["faulted_jobs_history"][1]["model"] == "TestModel2"
+    assert webui.status_data["faulted_jobs_history"][1]["fault_phase"] == "Post Processing"
 
 
 def test_webui_batch_size_display() -> None:
