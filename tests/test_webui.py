@@ -93,6 +93,45 @@ def test_webui_new_features() -> None:
     assert webui.status_data["current_job"]["is_complete"] is True
 
 
+def test_webui_faulted_jobs_history() -> None:
+    """Test that WorkerWebUI handles faulted jobs history."""
+    webui = WorkerWebUI(port=0)
+
+    # Test faulted jobs history update
+    test_faulted_jobs = [
+        {
+            "job_id": "job123",
+            "model": "TestModel1",
+            "time_faulted": 1234567890.0,
+            "width": 512,
+            "height": 512,
+            "steps": 30,
+            "sampler": "euler_a",
+            "loras": [{"name": "test_lora", "model": 1.0, "clip": 1.0}],
+            "controlnet": "canny",
+            "workflow": "qr_code",
+        },
+        {
+            "job_id": "job456",
+            "model": "TestModel2",
+            "time_faulted": 1234567891.0,
+            "width": 768,
+            "height": 768,
+            "steps": 50,
+            "sampler": "dpm_2",
+            "loras": [],
+            "controlnet": None,
+            "workflow": None,
+        },
+    ]
+    webui.update_status(faulted_jobs_history=test_faulted_jobs)
+    assert webui.status_data["faulted_jobs_history"] == test_faulted_jobs
+    assert len(webui.status_data["faulted_jobs_history"]) == 2
+    assert webui.status_data["faulted_jobs_history"][0]["job_id"] == "job123"
+    assert webui.status_data["faulted_jobs_history"][0]["model"] == "TestModel1"
+    assert webui.status_data["faulted_jobs_history"][1]["job_id"] == "job456"
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
@@ -133,6 +172,9 @@ if __name__ == "__main__":
 
     test_webui_new_features()
     print("✓ WebUI new features test passed")
+
+    test_webui_faulted_jobs_history()
+    print("✓ WebUI faulted jobs history test passed")
 
     # Run async test
     asyncio.run(test_webui_start_stop())
