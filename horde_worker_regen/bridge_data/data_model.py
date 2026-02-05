@@ -120,6 +120,15 @@ class reGenBridgeData(CombinedHordeBridgeData):
     Set stats_output_frequency (in seconds) for control over the status message.
     """
 
+    enable_webui: bool = Field(default=True)
+    """If true, the worker will start a web UI to display status and progress."""
+
+    webui_port: int = Field(default=3000, ge=1024, le=65535)
+    """The port to run the web UI on."""
+
+    webui_update_interval: float = Field(default=2.0, ge=0.5, le=10.0)
+    """The interval in seconds between web UI backend updates. Valid range: 0.5 to 10 seconds."""
+
     @model_validator(mode="after")
     def validate_performance_modes(self) -> reGenBridgeData:
         """Validate the performance modes and set the appropriate values.

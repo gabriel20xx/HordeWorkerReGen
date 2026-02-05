@@ -21,6 +21,7 @@ from io import BytesIO
 from multiprocessing.context import BaseContext
 from multiprocessing.synchronize import Lock as Lock_MultiProcessing
 from multiprocessing.synchronize import Semaphore
+from typing import TYPE_CHECKING
 
 import aiohttp
 import aiohttp.client_exceptions
@@ -91,7 +92,20 @@ from horde_worker_regen.process_management.messages import (
 )
 from horde_worker_regen.process_management.worker_entry_points import start_inference_process, start_safety_process
 
+if TYPE_CHECKING:
+    from horde_worker_regen.webui.server import WorkerWebUI
+
 sslcontext = ssl.create_default_context(cafile=certifi.where())
+
+# Constants
+BYTES_TO_MEGABYTES = 1024 * 1024
+"""Conversion factor from bytes to megabytes."""
+
+MAX_WEBUI_QUEUE_ITEMS = 10
+"""Maximum number of queued jobs to display in the web UI."""
+
+KUDOS_CALCULATION_WINDOW_SECONDS = 3600
+"""Time window (1 hour) for calculating kudos per hour."""
 
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
@@ -1479,6 +1493,17 @@ class HordeWorkerProcessManager:
             except Exception as e:
                 logger.error(e)
                 time.sleep(5)
+
+        # Initialize web UI if enabled
+        self.webui: WorkerWebUI | None = None
+        if self.bridge_data.enable_webui:
+            from horde_worker_regen.webui.server import WorkerWebUI
+
+            self.webui = WorkerWebUI(
+                port=self.bridge_data.webui_port,
+                update_interval=self.bridge_data.webui_update_interval,
+            )
+            logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -4419,23 +4444,21 @@ class HordeWorkerProcessManager:
 
         if self.kudos_generated_this_session > 0:
             log_function(
-                f"<fg #7dcea0>{kudos_info_string}</>",
+                f"<fg #ffd700>Kudos: {kudos_info_string}</>",
             )
 
         logger.debug(f"len(kudos_events): {len(self.kudos_events)}")
         if self.user_info is not None and self.user_info.kudos_details is not None:
-            log_function(
-                "<fg #7dcea0>"
-                f"Total Kudos Accumulated: {self.user_info.kudos_details.accumulated:,.2f} "
+            total_kudos_msg = (
+                f"Total Accumulated: {self.user_info.kudos_details.accumulated:,.2f} "
                 f"(all workers for {self.user_info.username})"
-                "</>",
             )
             if self.user_info.kudos_details.accumulated is not None and self.user_info.kudos_details.accumulated < 0:
-                log_function(
-                    "<fg #7dcea0>"
-                    "Negative kudos means you've requested more than you've earned. This can be normal."
-                    "</>",
-                )
+                total_kudos_msg += " | Negative kudos = more requested than earned"
+            
+            log_function(
+                f"<fg #ffd700>{total_kudos_msg}</>",
+            )
 
     async def api_get_user_info(self) -> None:
         """Get the information associated with this API key from the API."""
@@ -4817,10 +4840,10 @@ class HordeWorkerProcessManager:
 
             process_info_strings = self._process_map.get_process_info_strings()
 
-            logging_function("<fg #dddddd>" + str("^" * 80) + "</>")
+            logging_function("<fg #00d7ff>" + "=" * 80 + "</>")
 
             if len(self._api_messages_received) > 0:
-                logging_function("<b>API Messages:</b>")
+                logging_function("<b><fg #ffd700>API Messages:</></b>")
                 for message_id, message in self._api_messages_received.items():
                     try:
                         message_text = message.message_text or ""
@@ -4843,25 +4866,25 @@ class HordeWorkerProcessManager:
 
             # Only show detailed process info if not in limited console mode
             if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
-                logging_function("<b>Process info:</b>")
+                logging_function("<b><fg #00d7ff>Processes:</></b>")
                 for process_info_string in process_info_strings:
                     logging_function("  " + process_info_string)
 
-                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+                logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
             else:
                 # In limited mode, just show a brief summary
                 num_busy = self._process_map.num_busy_processes()
                 num_total = len(self._process_map)
-                logging_function(f"<b>Processes:</b> {num_busy}/{num_total} busy")
-                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+                logging_function(f"<b><fg #00d7ff>Processes:</></b> {num_busy}/{num_total} busy")
+                logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
 
-            logging_function("<b>Job Info:</b>")
+            logging_function("<b><fg #00ff87>Jobs:</></b>")
             jobs = []
             for x in self.jobs_pending_inference:
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
                 jobs.append(f"<{shortened_id}: <u>{x.model}></u>")
 
-            logging_function(f'  Jobs: {", ".join(jobs)}')
+            logging_function(f'  {", ".join(jobs) if jobs else "No pending jobs"}')
 
             active_models = {
                 process.loaded_horde_model_name
@@ -4871,20 +4894,20 @@ class HordeWorkerProcessManager:
 
             logger.debug(f"Active models: {active_models}")
 
-            job_info_message = "  Session job info: " + " | ".join(
+            job_info_message = "  " + " | ".join(
                 [
-                    f"pending start: {len(self.jobs_pending_inference)} (eMPS: {self.get_pending_megapixelsteps()})",
-                    f"jobs popped: {self.num_jobs_total}",
-                    f"submitted: {self.total_num_completed_jobs}",
+                    f"pending: {len(self.jobs_pending_inference)} ({self.get_pending_megapixelsteps()} eMPS)",
+                    f"popped: {self.num_jobs_total}",
+                    f"done: {self.total_num_completed_jobs}",
                     f"faulted: {self._num_jobs_faulted}",
-                    f"slow_jobs: {self._num_job_slowdowns}",
-                    f"process_recoveries: {self._num_process_recoveries}",
-                    f"{self._time_spent_no_jobs_available:.2f} seconds without jobs",
+                    f"slow: {self._num_job_slowdowns}",
+                    f"recoveries: {self._num_process_recoveries}",
+                    f"no jobs: {self._time_spent_no_jobs_available:.1f}s",
                 ],
             )
 
             logging_function(
-                f"<fg #7dcea0>{job_info_message}</>",
+                f"<fg #00ff87>{job_info_message}</>",
             )
 
             # Print failing models periodically
@@ -4892,62 +4915,51 @@ class HordeWorkerProcessManager:
                 self._failed_models
                 and cur_time - self._last_failed_models_print_time > self.FAILED_MODELS_REPORT_INTERVAL_SECONDS
             ):
-                logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
-                logging_function("<b>Failing Models Summary:</b>")
+                logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
+                logging_function("<b><fg #ff5f5f>Failing Models:</></b>")
                 # Sort by failure count descending
                 sorted_failures = sorted(self._failed_models.items(), key=lambda x: x[1], reverse=True)
                 for model_name, count in sorted_failures[: self.MAX_FAILING_MODELS_TO_DISPLAY]:
                     logging_function(f"  <fg #ff6b6b>{model_name}: {count} failures</>")
                 self._last_failed_models_print_time = cur_time
 
-            logging_function("<fg #7b7d7d>" + str("-" * 40) + "</>")
+            logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
 
             # Only show detailed process info if not in limited console mode
             if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
-                logging_function("<b>Worker Info:</b>")
+                logging_function("<b><fg #5fd7ff>Worker Config:</></b>")
 
                 max_power_dimension = int(math.sqrt(self.bridge_data.max_power * 8 * 64 * 64))
-                logger.info(
-                    "  "
-                    + " | ".join(
-                        [
-                            f"dreamer_name: {self.bridge_data.dreamer_worker_name}",
-                            f"(v{horde_worker_regen.__version__})",
-                            f"horde user: {self.user_info.username if self.user_info is not None else 'Unknown'}",
-                            f"num_models: {len(self.bridge_data.image_models_to_load)}",
-                            f"custom_models: {bool(self.bridge_data.custom_models)}",
-                            f"max_power: {self.bridge_data.max_power} ({max_power_dimension}x{max_power_dimension})",
-                            f"max_threads: {self.max_concurrent_inference_processes}",
-                            f"queue_size: {self.bridge_data.queue_size}",
-                            f"safety_on_gpu: {self.bridge_data.safety_on_gpu}",
-                        ],
-                    ),
+                worker_info = " | ".join(
+                    [
+                        f"name: {self.bridge_data.dreamer_worker_name}",
+                        f"v{horde_worker_regen.__version__}",
+                        f"user: {self.user_info.username if self.user_info is not None else 'Unknown'}",
+                        f"models: {len(self.bridge_data.image_models_to_load)}",
+                        f"custom: {bool(self.bridge_data.custom_models)}",
+                        f"power: {self.bridge_data.max_power} ({max_power_dimension}x{max_power_dimension})",
+                        f"threads: {self.max_concurrent_inference_processes}",
+                        f"queue: {self.bridge_data.queue_size}",
+                        f"safety_gpu: {self.bridge_data.safety_on_gpu}",
+                        f"img2img: {self.bridge_data.allow_img2img}",
+                        f"lora: {self.bridge_data.allow_lora}",
+                        f"cn: {self.bridge_data.allow_controlnet}",
+                        f"sdxl_cn: {self.bridge_data.allow_sdxl_controlnet}",
+                        f"pp: {self.bridge_data.allow_post_processing}",
+                        f"pp_overlap: {self.bridge_data.post_process_job_overlap}",
+                    ]
                 )
-                logger.info(
-                    "  "
-                    + " | ".join(
-                        [
-                            f"allow_img2img: {self.bridge_data.allow_img2img}",
-                            f"allow_lora: {self.bridge_data.allow_lora}",
-                            f"allow_controlnet: {self.bridge_data.allow_controlnet}",
-                            f"allow_sdxl_controlnet: {self.bridge_data.allow_sdxl_controlnet}",
-                            f"allow_post_processing: {self.bridge_data.allow_post_processing}",
-                            f"post_process_job_overlap: {self.bridge_data.post_process_job_overlap}",
-                        ],
-                    ),
-                )
+                logger.info(f"  {worker_info}")
 
-                logger.info(
-                    "  "
-                    + " | ".join(
-                        [
-                            f"unload_models_from_vram_often: {self.bridge_data.unload_models_from_vram_often}",
-                            f"high_performance_mode: {self.bridge_data.high_performance_mode}",
-                            f"moderate_performance_mode: {self.bridge_data.moderate_performance_mode}",
-                            f"high_memory_mode: {self.bridge_data.high_memory_mode}",
-                        ],
-                    ),
+                memory_info = " | ".join(
+                    [
+                        f"unload_vram: {self.bridge_data.unload_models_from_vram_often}",
+                        f"high_perf: {self.bridge_data.high_performance_mode}",
+                        f"med_perf: {self.bridge_data.moderate_performance_mode}",
+                        f"high_mem: {self.bridge_data.high_memory_mode}",
+                    ]
                 )
+                logger.info(f"  {memory_info}")
 
             logger.debug(
                 " | ".join(
@@ -5048,13 +5060,13 @@ class HordeWorkerProcessManager:
                     )
 
             if self._shutting_down:
-                logger.warning("*" * 80)
-                logger.warning("Shutting down after current jobs are finished...")
+                logger.warning("<fg #ff5f5f>" + "=" * 80 + "</>")
+                logger.warning("<fg #ff5f5f>SHUTTING DOWN - Finishing current jobs...</>")
+                logger.warning("<fg #ff5f5f>" + "=" * 80 + "</>")
                 self._status_message_frequency = 5.0
-                logger.warning("*" * 80)
 
             self._last_status_message_time = cur_time
-            logging_function("<fg #dddddd>" + str("v" * 80) + "</>")
+            logging_function("<fg #00d7ff>" + "=" * 80 + "</>")
 
     _bridge_data_loop_interval = 1.0
     """The interval between bridge data loop iterations."""
@@ -5113,6 +5125,101 @@ class HordeWorkerProcessManager:
                 self._shutdown()
                 logger.debug(f"CancelledError: {e}")
 
+    def update_webui_status(self) -> None:
+        """Update the web UI with current worker status."""
+        if self.webui is None:
+            return
+
+        # Get current job info
+        current_job = None
+        if len(self.jobs_in_progress) > 0:
+            job = self.jobs_in_progress[0]
+            job_info = self.jobs_lookup.get(job)
+            if job_info:
+                # Find the process handling this job
+                progress = None
+                state = None
+                for process in self._process_map.values():
+                    if process.last_job_referenced == job:
+                        progress = process.last_heartbeat_percent_complete
+                        state = process.last_process_state.name if process.last_process_state else None
+                        break
+
+                current_job = {
+                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                    "model": job.model,
+                    "progress": progress,
+                    "state": state or "Processing",
+                }
+
+        # Get job queue
+        job_queue = []
+        for job in list(self.jobs_pending_inference)[:MAX_WEBUI_QUEUE_ITEMS]:  # Limit to first N
+            job_queue.append({
+                "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                "model": job.model,
+            })
+
+        # Get process info
+        processes = []
+        for process_info in self._process_map.values():
+            processes.append({
+                "id": process_info.process_id,
+                "type": process_info.process_type.name,
+                "state": process_info.last_process_state.name,
+                "model": process_info.loaded_horde_model_name,
+                "progress": process_info.last_heartbeat_percent_complete,
+            })
+
+        # Get loaded models
+        models_loaded = list({
+            process.loaded_horde_model_name
+            for process in self._process_map.values()
+            if process.loaded_horde_model_name is not None
+        })
+
+        # Calculate total resource usage
+        total_ram_mb = sum(p.ram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
+        total_vram_mb = sum(p.vram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
+        
+        # Get max VRAM from devices
+        max_vram_mb = 0
+        if len(self._device_map.root) > 0:
+            max_vram_mb = max(device.total_memory for device in self._device_map.root.values()) / BYTES_TO_MEGABYTES
+
+        # Calculate kudos per hour
+        kudos_per_hour = 0.0
+        if len(self.kudos_events) > 0:
+            recent_kudos = sum(
+                kudos for timestamp, kudos in self.kudos_events
+                if time.time() - timestamp < KUDOS_CALCULATION_WINDOW_SECONDS
+            )
+            kudos_per_hour = recent_kudos
+
+        # Get user kudos total
+        user_kudos_total = None
+        if self.user_info and self.user_info.kudos_details:
+            user_kudos_total = self.user_info.kudos_details.accumulated
+
+        # Update the web UI
+        self.webui.update_status(
+            worker_name=self.bridge_data.dreamer_worker_name,
+            jobs_popped=self.num_jobs_total,
+            jobs_completed=self.total_num_completed_jobs,
+            jobs_faulted=self._num_jobs_faulted,
+            kudos_earned_session=self.kudos_generated_this_session,
+            kudos_per_hour=kudos_per_hour,
+            current_job=current_job,
+            job_queue=job_queue,
+            processes=processes,
+            models_loaded=models_loaded,
+            ram_usage_mb=total_ram_mb,
+            vram_usage_mb=total_vram_mb,
+            total_vram_mb=max_vram_mb,
+            maintenance_mode=self._last_pop_maintenance_mode,
+            user_kudos_total=user_kudos_total,
+        )
+
     def _handle_exception(self, future: asyncio.Future) -> None:
         """Logs exceptions from asyncio tasks.
 
@@ -5126,6 +5233,21 @@ class HordeWorkerProcessManager:
             else:
                 logger.error(f"exception thrown by a main loop task: {ex}")
                 logger.exception(ex)
+
+    async def _webui_update_loop(self) -> None:
+        """Update the web UI periodically with current worker status."""
+        while True:
+            try:
+                if self._shutting_down:
+                    break
+
+                self.update_webui_status()
+                await asyncio.sleep(self.bridge_data.webui_update_interval)
+            except CancelledError:
+                self._shutdown()
+                break
+            except Exception as e:
+                logger.error(f"Error in webui update loop: {e}")
 
     async def _main_loop(self) -> None:
         process_control_loop = asyncio.create_task(self._process_control_loop(), name="process_control_loop")
@@ -5145,10 +5267,20 @@ class HordeWorkerProcessManager:
             bridge_data_loop = asyncio.create_task(self._bridge_data_loop(), name="bridge_data_loop")
             bridge_data_loop.add_done_callback(self._handle_exception)
 
+        # Start web UI if enabled
+        webui_update_loop = None
+        if self.webui is not None:
+            await self.webui.start()
+            webui_update_loop = asyncio.create_task(self._webui_update_loop(), name="webui_update_loop")
+            webui_update_loop.add_done_callback(self._handle_exception)
+
         tasks = [process_control_loop, api_call_loop, api_get_user_info_loop, job_submit_loop]
 
         if bridge_data_loop is not None:
             tasks.append(bridge_data_loop)
+        
+        if webui_update_loop is not None:
+            tasks.append(webui_update_loop)
 
         self._aiohttp_client_session = ClientSession(requote_redirect_url=False)
         self.horde_client_session = AIHordeAPIAsyncClientSession(
@@ -5156,8 +5288,13 @@ class HordeWorkerProcessManager:
             apikey=self.bridge_data.api_key,
         )
 
-        async with self._aiohttp_client_session, self.horde_client_session:
-            await asyncio.gather(*tasks)
+        try:
+            async with self._aiohttp_client_session, self.horde_client_session:
+                await asyncio.gather(*tasks)
+        finally:
+            # Stop web UI when shutting down
+            if self.webui is not None:
+                await self.webui.stop()
 
     _caught_sigints = 0
     """The number of SIGINTs or SIGTERMs caught."""

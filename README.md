@@ -182,7 +182,65 @@ Tailor settings to your GPU, following these pointers:
 
 ### Monitoring
 
+#### Web UI
+
+The worker includes a built-in web interface for monitoring status and progress:
+
+- **Access**: Open `http://localhost:3000` in your browser (default port)
+- **Real-time updates**: Status refreshes automatically every 2 seconds
+- **Information displayed**:
+  - Worker name and status (Active/Maintenance)
+  - Session uptime and statistics
+  - Current job progress with live percentage
+  - Jobs queued, completed, and faulted
+  - Kudos earned (session and total)
+  - Active models loaded
+  - Process states
+  - System resources (RAM/VRAM usage)
+
+To enable/disable or configure the web UI, edit `bridgeData.yaml`:
+
+```yaml
+enable_webui: true  # Set to false to disable
+webui_port: 3000    # Change if you have a port conflict
+```
+
+#### Terminal and Logs
+
 Watch the terminal for progress, completed jobs, kudos earned, stats, and errors.
+
+The terminal output now features:
+- 🎨 **Colorful log levels** - Color-coded messages (INFO=cyan, SUCCESS=green, WARNING=yellow, ERROR=red)
+- 📝 **Compact format** - Worker info, kudos, and memory on single lines
+- 🔇 **Clean output** - DEBUG messages hidden by default
+
+**Log Level Control:**
+
+Set log level using the `AIWORKER_LOG_LEVEL` environment variable (default: `INFO`):
+
+```bash
+# For Docker
+docker run -e AIWORKER_LOG_LEVEL=INFO ...
+
+# For direct execution
+export AIWORKER_LOG_LEVEL=INFO  # Default - shows INFO, SUCCESS, WARNING, ERROR, CRITICAL
+export AIWORKER_LOG_LEVEL=DEBUG # Verbose - shows all messages including debug
+export AIWORKER_LOG_LEVEL=WARNING # Quiet - only warnings and errors
+./horde-bridge.sh
+```
+
+Valid levels: `TRACE`, `DEBUG`, `INFO`, `SUCCESS`, `WARNING`, `ERROR`, `CRITICAL`
+
+**Legacy debug flag:**
+```bash
+export AIWORKER_DEBUG=1  # Equivalent to AIWORKER_LOG_LEVEL=DEBUG
+./horde-bridge.sh
+```
+
+**Or use the `-v` flag for verbose output:**
+```bash
+./horde-bridge.sh -vvv  # Maximum verbosity
+```
 
 Detailed logs are in the `logs` directory:
 
