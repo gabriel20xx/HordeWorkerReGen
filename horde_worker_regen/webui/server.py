@@ -386,7 +386,7 @@ class WorkerWebUI:
             <div class="grid">
                 <div class="card">
                     <h2>Last Generated Image</h2>
-                    <div id="last-image-container">
+                    <div id="last-image-container" style="min-height: 512px; display: flex; align-items: center; justify-content: center;">
                         <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
                     </div>
                 </div>
@@ -562,7 +562,7 @@ class WorkerWebUI:
                     if (data.last_image_base64) {
                         lastImageContainer.innerHTML = `
                             <img src="data:image/png;base64,${data.last_image_base64}" 
-                                 style="width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" 
+                                 style="width: 512px; height: 512px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: block; margin: 0 auto;" 
                                  alt="Last generated image" />
                         `;
                     } else {
