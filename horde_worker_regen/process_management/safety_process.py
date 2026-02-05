@@ -2,9 +2,10 @@
 
 import base64
 import enum
-import time
-import os
 import json
+import os
+import time
+import warnings
 from datetime import datetime
 from enum import auto
 from io import BytesIO
@@ -109,7 +110,6 @@ class HordeSafetyProcess(HordeProcess):
 
         try:
             # Suppress known warnings from dependencies
-            import warnings
             warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
             warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU.*")
 

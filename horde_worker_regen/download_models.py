@@ -1,5 +1,7 @@
 """Contains the code to download all models specified in the config file. Executable as a standalone script."""
 
+import warnings
+
 
 def download_all_models(
     *,
@@ -49,7 +51,6 @@ def download_all_models(
         exit(1)
 
     # Suppress known warnings from dependencies
-    import warnings
     warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
     warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU.*")
 
