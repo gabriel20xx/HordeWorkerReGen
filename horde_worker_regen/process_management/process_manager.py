@@ -943,6 +943,9 @@ class HordeJobInfo(BaseModel):  # TODO: Split into a new file
     """The sanitized negative prompt used for inference, if any."""
     # ! IMPORTANT: End own code
 
+    retry_count: int = 0
+    """The number of times this job has been retried after faulting."""
+
     @property
     def is_job_checked_for_safety(self) -> bool:
         """Return true if the job has been checked for safety."""
@@ -3692,6 +3695,8 @@ class HordeWorkerProcessManager:
     ) -> None:
         """Mark a job as faulted and add it to the completed jobs list to report it faulted.
 
+        If the job has not been retried yet, it will be retried once before being marked as faulted.
+
         Args:
             faulted_job (ImageGenerateJobPopResponse): The job that faulted.
             process_info (HordeProcessInfo | None, optional): The process that faulted the job. Defaults to None.
@@ -3701,6 +3706,30 @@ class HordeWorkerProcessManager:
         if job_info is None:
             logger.error(f"Job {faulted_job.id_} not found in jobs_lookup")
         else:
+            # Check if the job should be retried
+            if job_info.retry_count < 1:
+                # Retry the job once
+                job_info.retry_count += 1
+                logger.warning(
+                    f"Job {faulted_job.id_} faulted, retrying (attempt {job_info.retry_count}/1)"
+                )
+                
+                # Remove from jobs_in_progress if present
+                if faulted_job in self.jobs_in_progress:
+                    logger.debug(f"Removing job {faulted_job.id_} from jobs_in_progress for retry")
+                    self.jobs_in_progress.remove(faulted_job)
+                
+                # Re-queue the job for another attempt
+                if faulted_job not in self.jobs_pending_inference:
+                    self.jobs_pending_inference.append(faulted_job)
+                    self._invalidate_megapixelsteps_cache()
+                    logger.info(f"Job {faulted_job.id_} re-queued for retry")
+                
+                return
+            
+            # Job has already been retried, proceed with faulting
+            logger.error(f"Job {faulted_job.id_} faulted after retry, marking as faulted")
+            
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
                 self._invalidate_megapixelsteps_cache()
