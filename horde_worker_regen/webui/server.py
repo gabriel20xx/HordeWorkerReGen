@@ -309,6 +309,15 @@ class WorkerWebUI:
             font-weight: 600;
         }
         
+        .faulted-job-section {
+            margin-top: 8px;
+        }
+        
+        .faulted-job-section-label {
+            display: block;
+            margin-bottom: 4px;
+        }
+        
         .status-badge {
             display: inline-block;
             padding: 4px 12px;
@@ -818,8 +827,8 @@ class WorkerWebUI:
                             // LoRAs
                             let lorasHtml = '';
                             if (job.loras && job.loras.length > 0) {
-                                lorasHtml = '<div style="margin-top: 8px;">';
-                                lorasHtml += '<span class="faulted-job-label" style="display: block; margin-bottom: 4px;">LoRAs:</span>';
+                                lorasHtml = '<div class="faulted-job-section">';
+                                lorasHtml += '<span class="faulted-job-label faulted-job-section-label">LoRAs:</span>';
                                 job.loras.forEach(lora => {
                                     const loraName = lora.name || 'Unknown';
                                     lorasHtml += `<span class="faulted-job-lora">${escapeHtml(loraName)}</span>`;
@@ -831,8 +840,8 @@ class WorkerWebUI:
                             let controlnetHtml = '';
                             if (job.controlnet) {
                                 controlnetHtml = `
-                                    <div style="margin-top: 8px;">
-                                        <span class="faulted-job-label" style="display: block; margin-bottom: 4px;">ControlNet:</span>
+                                    <div class="faulted-job-section">
+                                        <span class="faulted-job-label faulted-job-section-label">ControlNet:</span>
                                         <span class="faulted-job-controlnet">${escapeHtml(job.controlnet)}</span>
                                     </div>
                                 `;
