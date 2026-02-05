@@ -5522,16 +5522,30 @@ class HordeWorkerProcessManager:
         responding, they will spend much longer in the queue than they should while the server waits for the worker
         to respond (and ultimately times out).
         """
+        # Remember which jobs were pending before we start faulting jobs in progress
+        # This allows us to preserve jobs that are re-queued for retry
+        jobs_pending_before_fault = set(self.jobs_pending_inference)
+        
         # Mark all jobs currently in progress as faulted before clearing them
+        # Note: handle_job_fault may re-queue some jobs to jobs_pending_inference for retry
         if len(self.jobs_in_progress) > 0:
             for job in list(self.jobs_in_progress):
                 self.handle_job_fault(faulted_job=job, process_info=None)
             logger.error("Cleared jobs in progress")
 
+        # Clear only the jobs that were already pending, not the ones added for retry
         if len(self.jobs_pending_inference) > 0:
-            self.jobs_pending_inference.clear()
+            jobs_to_clear = [job for job in self.jobs_pending_inference if job in jobs_pending_before_fault]
+            for job in jobs_to_clear:
+                self.jobs_pending_inference.remove(job)
             self._last_job_submitted_time = time.time()
-            logger.error("Cleared jobs pending inference")
+            
+            # Log how many jobs were kept for retry
+            jobs_kept_for_retry = len(self.jobs_pending_inference)
+            if jobs_kept_for_retry > 0:
+                logger.warning(f"Cleared jobs pending inference (kept {jobs_kept_for_retry} job(s) for retry)")
+            else:
+                logger.error("Cleared jobs pending inference")
 
         if len(self.jobs_being_safety_checked) > 0:
             self.jobs_being_safety_checked.clear()
@@ -5541,9 +5555,9 @@ class HordeWorkerProcessManager:
             self.jobs_pending_safety_check.clear()
             logger.error("Cleared jobs pending safety check")
 
-        if len(self.jobs_lookup) > 0:
-            self.jobs_lookup.clear()
-            logger.error("Cleared jobs lookup")
+        # Note: We do NOT clear jobs_lookup here because it contains job_info for jobs that were re-queued
+        # for retry. If we cleared it, the retry_count would be lost and jobs would retry indefinitely.
+        # Jobs are removed from jobs_lookup when they are completed or permanently faulted.
 
         if len(self.jobs_pending_submit) > 0:
             self.jobs_pending_submit.clear()
