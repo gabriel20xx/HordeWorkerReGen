@@ -400,9 +400,7 @@ class WorkerWebUI:
                         </div>
                     </div>
                 </div>
-            </div>
-            
-            <div class="grid">
+                
                 <div class="card">
                     <h2>Processes (<span id="process-count">0</span>)</h2>
                     <div id="processes" class="process-list">
