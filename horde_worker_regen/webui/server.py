@@ -559,7 +559,8 @@ class WorkerWebUI:
                     // Console Logs
                     const consoleLogsDiv = document.getElementById('console-logs');
                     if (data.console_logs && data.console_logs.length > 0) {
-                        const wasScrolledToBottom = consoleLogsDiv.scrollHeight - consoleLogsDiv.clientHeight <= consoleLogsDiv.scrollTop + 1;
+                        const SCROLL_TOLERANCE = 1; // Pixel tolerance for scroll position detection
+                        const wasScrolledToBottom = consoleLogsDiv.scrollHeight - consoleLogsDiv.clientHeight <= consoleLogsDiv.scrollTop + SCROLL_TOLERANCE;
                         consoleLogsDiv.innerHTML = data.console_logs.map(log => {
                             // Escape HTML to prevent XSS
                             const escapedLog = log.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

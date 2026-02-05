@@ -9,6 +9,7 @@ import multiprocessing
 import os
 import queue
 import random
+import re
 import ssl
 import sys
 import time
@@ -1115,6 +1116,12 @@ class HordeWorkerProcessManager:
     # Constants for failing models tracking
     FAILED_MODELS_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
     MAX_FAILING_MODELS_TO_DISPLAY = 10
+    
+    # Constants for webui log capture
+    _ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    """Compiled regex pattern for removing ANSI escape codes from logs."""
+    _WEBUI_CONSOLE_LOGS_LIMIT = 50
+    """Number of recent logs to send to webui (kept in memory: 100)."""
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1528,10 +1535,8 @@ class HordeWorkerProcessManager:
         Args:
             message: The formatted log message
         """
-        # Strip ANSI color codes if any
-        import re
-        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-        clean_message = ansi_escape.sub('', message).strip()
+        # Strip ANSI color codes using compiled pattern
+        clean_message = self._ANSI_ESCAPE_PATTERN.sub('', message).strip()
         
         if clean_message:
             self._console_logs.append(clean_message)
@@ -5258,7 +5263,7 @@ class HordeWorkerProcessManager:
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
-            console_logs=self._console_logs[-50:] if self._console_logs else [],
+            console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT:] if self._console_logs else [],
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
@@ -5485,6 +5490,14 @@ class HordeWorkerProcessManager:
         if not self._shutting_down:
             self._shutting_down = True
             self._shutting_down_time = time.time()
+            
+            # Cleanup webui log handler
+            if self._log_handler_id is not None:
+                try:
+                    logger.remove(self._log_handler_id)
+                    self._log_handler_id = None
+                except Exception as e:
+                    logger.debug(f"Failed to remove log handler during shutdown: {e}")
 
     def _abort(self) -> None:
         """Exit as soon as possible, aborting all processes and jobs immediately."""
