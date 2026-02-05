@@ -3711,7 +3711,7 @@ class HordeWorkerProcessManager:
                 # Retry the job once
                 job_info.retry_count += 1
                 logger.warning(
-                    f"Job {faulted_job.id_} faulted, retrying (attempt {job_info.retry_count}/1)"
+                    f"Job {faulted_job.id_} faulted, retrying (retry {job_info.retry_count} of 1)"
                 )
                 
                 # Remove from jobs_in_progress if present
@@ -3720,6 +3720,7 @@ class HordeWorkerProcessManager:
                     self.jobs_in_progress.remove(faulted_job)
                 
                 # Re-queue the job for another attempt
+                # Check to avoid duplicates in case the job is still in the queue
                 if faulted_job not in self.jobs_pending_inference:
                     self.jobs_pending_inference.append(faulted_job)
                     self._invalidate_megapixelsteps_cache()
