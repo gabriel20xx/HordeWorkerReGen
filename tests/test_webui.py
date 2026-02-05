@@ -39,6 +39,33 @@ def test_webui_status_update():
     assert webui.status_data["kudos_per_hour"] == 50.25
 
 
+def test_webui_new_features():
+    """Test that WorkerWebUI handles new features (image preview and console logs)."""
+    webui = WorkerWebUI(port=0)
+    
+    # Test last image update
+    test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    webui.update_status(last_image_base64=test_image_base64)
+    assert webui.status_data["last_image_base64"] == test_image_base64
+    
+    # Test console logs update
+    test_logs = ["Log line 1", "Log line 2", "Log line 3"]
+    webui.update_status(console_logs=test_logs)
+    assert webui.status_data["console_logs"] == test_logs
+    
+    # Test current job with is_complete flag
+    current_job = {
+        "id": "test123",
+        "model": "TestModel",
+        "state": "INFERENCE_COMPLETE",
+        "progress": 100,
+        "is_complete": True,
+    }
+    webui.update_status(current_job=current_job)
+    assert webui.status_data["current_job"] == current_job
+    assert webui.status_data["current_job"]["is_complete"] is True
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop():
     """Test that WorkerWebUI can be started and stopped."""
@@ -72,6 +99,9 @@ if __name__ == "__main__":
     
     test_webui_status_update()
     print("✓ WebUI status update test passed")
+    
+    test_webui_new_features()
+    print("✓ WebUI new features test passed")
     
     # Run async test
     asyncio.run(test_webui_start_stop())

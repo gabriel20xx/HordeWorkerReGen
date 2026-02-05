@@ -11,12 +11,12 @@ from loguru import logger
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
 
-    def __init__(self, port: int = 3000, update_interval: float = 2.0) -> None:
+    def __init__(self, port: int = 3000, update_interval: float = 1.0) -> None:
         """Initialize the web UI server.
 
         Args:
             port: The port to run the web server on (default: 3000)
-            update_interval: How often to update status in seconds (default: 2.0)
+            update_interval: How often to update status in seconds (default: 1.0)
         """
         self.port = port
         self.update_interval = update_interval
@@ -43,6 +43,8 @@ class WorkerWebUI:
             "total_vram_mb": 0,
             "maintenance_mode": False,
             "user_kudos_total": 0.0,
+            "last_image_base64": None,
+            "console_logs": [],
         }
         
         self._setup_routes()
@@ -380,6 +382,22 @@ class WorkerWebUI:
                     </div>
                 </div>
             </div>
+            
+            <div class="grid">
+                <div class="card">
+                    <h2>Last Generated Image</h2>
+                    <div id="last-image-container">
+                        <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>Console Output</h2>
+                    <div id="console-logs" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.85em; background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 6px;">
+                        <div style="text-align: center; color: #999; padding: 20px;">No logs available</div>
+                    </div>
+                </div>
+            </div>
         </div>
         <div class="update-time" id="update-time">Last updated: Never</div>
     </div>
@@ -396,6 +414,19 @@ class WorkerWebUI:
             if (bytes === 0) return '0 MB';
             const mb = bytes / (1024 * 1024);
             return mb.toFixed(1) + ' MB';
+        }
+        
+        // Constants for UI behavior
+        const SCROLL_TOLERANCE_PX = 1; // Pixel tolerance for scroll position detection
+        
+        // Helper function to check if element is scrolled to bottom
+        function isScrolledToBottom(element, tolerance) {
+            return element.scrollHeight - element.clientHeight <= element.scrollTop + tolerance;
+        }
+        
+        // Helper function to escape HTML to prevent XSS
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
         
         function updateStatus() {
@@ -441,6 +472,21 @@ class WorkerWebUI:
                     const currentJobDiv = document.getElementById('current-job');
                     if (data.current_job) {
                         const job = data.current_job;
+                        // Format state to be more readable
+                        let stateDisplay = job.state || 'N/A';
+                        if (job.state === 'INFERENCE_POST_PROCESSING') {
+                            stateDisplay = 'Post Processing';
+                        } else if (job.state === 'INFERENCE_COMPLETE') {
+                            stateDisplay = 'Finished';
+                        } else if (job.state === 'INFERENCE_STARTING') {
+                            stateDisplay = 'Starting';
+                        } else if (job.state) {
+                            // Convert snake_case to Title Case
+                            stateDisplay = job.state.split('_').map(word => 
+                                word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                            ).join(' ');
+                        }
+                        
                         currentJobDiv.innerHTML = `
                             <div class="stat">
                                 <span class="stat-label">Job ID:</span>
@@ -452,7 +498,7 @@ class WorkerWebUI:
                             </div>
                             <div class="stat">
                                 <span class="stat-label">State:</span>
-                                <span class="stat-value">${job.state || 'N/A'}</span>
+                                <span class="stat-value">${stateDisplay}</span>
                             </div>
                             ${job.progress !== null && job.progress !== undefined ? `
                             <div style="margin-top: 10px;">
@@ -511,6 +557,34 @@ class WorkerWebUI:
                         processesDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No process info</div>';
                     }
                     
+                    // Last Generated Image
+                    const lastImageContainer = document.getElementById('last-image-container');
+                    if (data.last_image_base64) {
+                        lastImageContainer.innerHTML = `
+                            <img src="data:image/png;base64,${data.last_image_base64}" 
+                                 style="width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" 
+                                 alt="Last generated image" />
+                        `;
+                    } else {
+                        lastImageContainer.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>';
+                    }
+                    
+                    // Console Logs
+                    const consoleLogsDiv = document.getElementById('console-logs');
+                    if (data.console_logs && data.console_logs.length > 0) {
+                        const wasScrolledToBottom = isScrolledToBottom(consoleLogsDiv, SCROLL_TOLERANCE_PX);
+                        consoleLogsDiv.innerHTML = data.console_logs.map(log => {
+                            const escapedLog = escapeHtml(log);
+                            return `<div style="margin: 2px 0; white-space: pre-wrap; word-break: break-word;">${escapedLog}</div>`;
+                        }).join('');
+                        // Auto-scroll to bottom if was already at bottom
+                        if (wasScrolledToBottom) {
+                            consoleLogsDiv.scrollTop = consoleLogsDiv.scrollHeight;
+                        }
+                    } else {
+                        consoleLogsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No logs available</div>';
+                    }
+                    
                     // Update time
                     document.getElementById('update-time').textContent = 
                         'Last updated: ' + new Date().toLocaleTimeString();
@@ -521,7 +595,7 @@ class WorkerWebUI:
         }
         
         // Constants
-        const DEFAULT_UPDATE_INTERVAL_MS = 2000;
+        const DEFAULT_UPDATE_INTERVAL_MS = 1000;
         
         // Fetch config and start updates
         async function initializeUpdates() {
@@ -575,6 +649,8 @@ class WorkerWebUI:
         total_vram_mb: float | None = None,
         maintenance_mode: bool | None = None,
         user_kudos_total: float | None = None,
+        last_image_base64: str | None = None,
+        console_logs: list[str] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -594,6 +670,8 @@ class WorkerWebUI:
             total_vram_mb: Total VRAM in MB
             maintenance_mode: Whether worker is in maintenance mode
             user_kudos_total: Total kudos accumulated by the user
+            last_image_base64: Base64 encoded last generated image
+            console_logs: Recent console log messages
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -625,6 +703,10 @@ class WorkerWebUI:
             self.status_data["maintenance_mode"] = maintenance_mode
         if user_kudos_total is not None:
             self.status_data["user_kudos_total"] = user_kudos_total
+        if last_image_base64 is not None:
+            self.status_data["last_image_base64"] = last_image_base64
+        if console_logs is not None:
+            self.status_data["console_logs"] = console_logs
         
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]

@@ -9,6 +9,7 @@ import multiprocessing
 import os
 import queue
 import random
+import re
 import ssl
 import sys
 import time
@@ -1115,6 +1116,12 @@ class HordeWorkerProcessManager:
     # Constants for failing models tracking
     FAILED_MODELS_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
     MAX_FAILING_MODELS_TO_DISPLAY = 10
+    
+    # Constants for webui log capture
+    # Compiled regex pattern for removing ANSI escape codes from logs
+    ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
+    _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1496,6 +1503,13 @@ class HordeWorkerProcessManager:
 
         # Initialize web UI if enabled
         self.webui: WorkerWebUI | None = None
+        self._last_image_base64: str | None = None
+        """The last generated image in base64 format for webui preview."""
+        self._console_logs: list[str] = []
+        """Recent console logs for webui display."""
+        self._log_handler_id: int | None = None
+        """ID of the logger handler for capturing console logs."""
+        
         if self.bridge_data.enable_webui:
             from horde_worker_regen.webui.server import WorkerWebUI
 
@@ -1504,6 +1518,29 @@ class HordeWorkerProcessManager:
                 update_interval=self.bridge_data.webui_update_interval,
             )
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
+            
+            # Add a log handler to capture logs for webui
+            self._log_handler_id = logger.add(
+                self._capture_log_for_webui,
+                format="{time:HH:mm:ss} | {level: <8} | {message}",
+                level="INFO",
+                colorize=False,
+            )
+
+    def _capture_log_for_webui(self, message: str) -> None:
+        """Capture log messages for webui display.
+        
+        Args:
+            message: The formatted log message
+        """
+        # Strip ANSI color codes using compiled pattern
+        clean_message = self.ANSI_ESCAPE_PATTERN.sub('', message).strip()
+        
+        if clean_message:
+            self._console_logs.append(clean_message)
+            # Keep only the last N logs
+            if len(self._console_logs) > self._MAX_CONSOLE_LOGS_BUFFER:
+                self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER:]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -2184,6 +2221,10 @@ class HordeWorkerProcessManager:
                     job_info.time_to_generate = message.time_elapsed
                     job_info.job_image_results = message.job_image_results
                     job_info.sanitized_negative_prompt = message.sanitized_negative_prompt
+                    
+                    # Capture last image for webui preview
+                    if self.webui and message.job_image_results and len(message.job_image_results) > 0:
+                        self._last_image_base64 = message.job_image_results[0].image_base64
 
                     self.jobs_pending_safety_check.append(job_info)
                 else:
@@ -5150,6 +5191,7 @@ class HordeWorkerProcessManager:
                     "model": job.model,
                     "progress": progress,
                     "state": state or "Processing",
+                    "is_complete": state == "INFERENCE_COMPLETE" if state else False,
                 }
 
         # Get job queue
@@ -5225,6 +5267,8 @@ class HordeWorkerProcessManager:
             total_vram_mb=max_vram_mb,
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
+            last_image_base64=self._last_image_base64,
+            console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT:] if self._console_logs else [],
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
@@ -5451,6 +5495,14 @@ class HordeWorkerProcessManager:
         if not self._shutting_down:
             self._shutting_down = True
             self._shutting_down_time = time.time()
+            
+            # Cleanup webui log handler
+            if self._log_handler_id is not None:
+                try:
+                    logger.remove(self._log_handler_id)
+                    self._log_handler_id = None
+                except Exception as e:
+                    logger.debug(f"Failed to remove log handler during shutdown: {e}")
 
     def _abort(self) -> None:
         """Exit as soon as possible, aborting all processes and jobs immediately."""
