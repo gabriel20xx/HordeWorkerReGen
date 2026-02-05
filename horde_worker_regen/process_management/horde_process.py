@@ -86,13 +86,15 @@ class HordeProcess(abc.ABC):
         """Return the number of bytes of VRAM used by the GPU."""
         from hordelib.comfy_horde import get_torch_free_vram_mb, get_torch_total_vram_mb
 
-        return get_torch_total_vram_mb() - get_torch_free_vram_mb()
+        vram_usage_mb = get_torch_total_vram_mb() - get_torch_free_vram_mb()
+        return int(vram_usage_mb * 1024 * 1024)  # Convert MB to bytes
 
     def get_vram_total_bytes(self) -> int:
         """Return the total number of bytes of VRAM available on the GPU."""
         from hordelib.comfy_horde import get_torch_total_vram_mb
 
-        return get_torch_total_vram_mb()
+        total_vram_mb = get_torch_total_vram_mb()
+        return int(total_vram_mb * 1024 * 1024)  # Convert MB to bytes
 
     def __init__(
         self,

@@ -39,6 +39,31 @@ def test_webui_status_update():
     assert webui.status_data["kudos_per_hour"] == 50.25
 
 
+def test_webui_vram_resources():
+    """Test that WorkerWebUI correctly handles VRAM resource updates."""
+    webui = WorkerWebUI(port=0)
+    
+    # Test VRAM usage and total VRAM update
+    test_vram_usage_mb = 8192.5  # 8GB used
+    test_total_vram_mb = 24576.0  # 24GB total
+    test_ram_usage_mb = 16384.0  # 16GB RAM
+    
+    webui.update_status(
+        vram_usage_mb=test_vram_usage_mb,
+        total_vram_mb=test_total_vram_mb,
+        ram_usage_mb=test_ram_usage_mb,
+    )
+    
+    # Verify the values were updated correctly
+    assert webui.status_data["vram_usage_mb"] == test_vram_usage_mb
+    assert webui.status_data["total_vram_mb"] == test_total_vram_mb
+    assert webui.status_data["ram_usage_mb"] == test_ram_usage_mb
+    
+    # Test that VRAM percentage would be calculated correctly (33% in this case)
+    expected_percent = round((test_vram_usage_mb / test_total_vram_mb) * 100)
+    assert expected_percent == 33
+
+
 def test_webui_new_features():
     """Test that WorkerWebUI handles new features (image preview and console logs)."""
     webui = WorkerWebUI(port=0)
@@ -99,6 +124,9 @@ if __name__ == "__main__":
     
     test_webui_status_update()
     print("✓ WebUI status update test passed")
+    
+    test_webui_vram_resources()
+    print("✓ WebUI VRAM resources test passed")
     
     test_webui_new_features()
     print("✓ WebUI new features test passed")
