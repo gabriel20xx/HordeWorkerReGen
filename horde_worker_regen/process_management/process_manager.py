@@ -1213,6 +1213,11 @@ class HordeWorkerProcessManager:
     _num_jobs_faulted: int = 0
     """The number of jobs which were marked as faulted. This may not include jobs which failed for unknown reasons."""
 
+    _faulted_jobs_history: list[dict[str, Any]]
+    """A list of faulted jobs with their details for display in the webui."""
+    _max_faulted_jobs_history: int = 20
+    """Maximum number of faulted jobs to keep in history."""
+
     jobs_pending_submit: list[HordeJobInfo]
     """A list of HordeJobInfo objects containing the job, the state, and whether or not the job was censored."""
 
@@ -1409,6 +1414,7 @@ class HordeWorkerProcessManager:
         self.jobs_pending_safety_check = []
         self.jobs_being_safety_checked = []
         self.job_faults = {}
+        self._faulted_jobs_history = []
 
         self._jobs_safety_check_lock = Lock_Asyncio()
 
@@ -3713,6 +3719,62 @@ class HordeWorkerProcessManager:
                 model_name = faulted_job.model
                 self._failed_models[model_name] = self._failed_models.get(model_name, 0) + 1
 
+            # Add faulted job details to history for webui display
+            # Determine the phase during which the job faulted
+            fault_phase = None
+            if process_info is not None:
+                # Get a human-readable description of the process state
+                state = process_info.last_process_state
+                if state == HordeProcessState.DOWNLOADING_MODEL:
+                    fault_phase = "Downloading Model"
+                elif state == HordeProcessState.DOWNLOADING_AUX_MODEL:
+                    fault_phase = "Downloading LoRAs/Aux Models"
+                elif state == HordeProcessState.PRELOADING_MODEL:
+                    fault_phase = "Preloading Model"
+                elif state == HordeProcessState.INFERENCE_STARTING:
+                    fault_phase = "During Inference"
+                elif state == HordeProcessState.INFERENCE_POST_PROCESSING:
+                    fault_phase = "Post Processing"
+                elif state == HordeProcessState.EVALUATING_SAFETY:
+                    fault_phase = "Safety Check"
+                elif state == HordeProcessState.PROCESS_STARTING:
+                    fault_phase = "Process Starting"
+                else:
+                    fault_phase = state.name.replace("_", " ").title()
+            
+            faulted_job_details = {
+                "job_id": str(faulted_job.id_),
+                "model": faulted_job.model or "Unknown",
+                "time_faulted": time.time(),
+                "width": faulted_job.payload.width if faulted_job.payload else None,
+                "height": faulted_job.payload.height if faulted_job.payload else None,
+                "steps": faulted_job.payload.ddim_steps if faulted_job.payload else None,
+                "sampler": faulted_job.payload.sampler_name if faulted_job.payload else None,
+                "batch_size": faulted_job.payload.n_iter if faulted_job.payload else None,
+                "fault_phase": fault_phase,
+                "loras": [],
+                "controlnet": None,
+                "workflow": faulted_job.payload.workflow if faulted_job.payload else None,
+            }
+            
+            # Extract LoRA information
+            if faulted_job.payload and faulted_job.payload.loras:
+                for lora in faulted_job.payload.loras:
+                    faulted_job_details["loras"].append({
+                        "name": lora.name if hasattr(lora, "name") else str(lora),
+                        "model": lora.model if hasattr(lora, "model") else None,
+                        "clip": lora.clip if hasattr(lora, "clip") else None,
+                    })
+            
+            # Check for controlnet (via workflow)
+            if faulted_job.payload and faulted_job.payload.workflow in KNOWN_CONTROLNET_WORKFLOWS:
+                faulted_job_details["controlnet"] = faulted_job.payload.workflow
+            
+            # Add to history (keep only the last N)
+            self._faulted_jobs_history.insert(0, faulted_job_details)
+            if len(self._faulted_jobs_history) > self._max_faulted_jobs_history:
+                self._faulted_jobs_history = self._faulted_jobs_history[:self._max_faulted_jobs_history]
+
             if process_info is not None:
                 logger.error(f"Job {faulted_job.id_} faulted due to process {process_info.process_id} crashing")
 
@@ -5205,6 +5267,7 @@ class HordeWorkerProcessManager:
                     "progress": progress,
                     "state": state or "Processing",
                     "is_complete": state == "INFERENCE_COMPLETE" if state else False,
+                    "batch_size": job.payload.n_iter if job.payload else None,
                 }
 
         # Get job queue
@@ -5214,6 +5277,7 @@ class HordeWorkerProcessManager:
                 {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
+                    "batch_size": job.payload.n_iter if job.payload else None,
                 }
             )
 
@@ -5282,6 +5346,7 @@ class HordeWorkerProcessManager:
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT:] if self._console_logs else [],
+            faulted_jobs_history=self._faulted_jobs_history,
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:

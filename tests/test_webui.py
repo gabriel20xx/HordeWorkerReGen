@@ -93,6 +93,94 @@ def test_webui_new_features() -> None:
     assert webui.status_data["current_job"]["is_complete"] is True
 
 
+def test_webui_faulted_jobs_history() -> None:
+    """Test that WorkerWebUI handles faulted jobs history."""
+    webui = WorkerWebUI(port=0)
+
+    # Test faulted jobs history update
+    test_faulted_jobs = [
+        {
+            "job_id": "job123",
+            "model": "TestModel1",
+            "time_faulted": 1234567890.0,
+            "width": 512,
+            "height": 512,
+            "steps": 30,
+            "sampler": "euler_a",
+            "loras": [{"name": "test_lora", "model": 1.0, "clip": 1.0}],
+            "controlnet": "canny",
+            "workflow": "qr_code",
+            "batch_size": 4,
+            "fault_phase": "During Inference",
+        },
+        {
+            "job_id": "job456",
+            "model": "TestModel2",
+            "time_faulted": 1234567891.0,
+            "width": 768,
+            "height": 768,
+            "steps": 50,
+            "sampler": "dpm_2",
+            "loras": [],
+            "controlnet": None,
+            "workflow": None,
+            "batch_size": 1,
+            "fault_phase": "Post Processing",
+        },
+    ]
+    webui.update_status(faulted_jobs_history=test_faulted_jobs)
+    assert webui.status_data["faulted_jobs_history"] == test_faulted_jobs
+    assert len(webui.status_data["faulted_jobs_history"]) == 2
+    assert webui.status_data["faulted_jobs_history"][0]["job_id"] == "job123"
+    assert webui.status_data["faulted_jobs_history"][0]["model"] == "TestModel1"
+    assert webui.status_data["faulted_jobs_history"][0]["batch_size"] == 4
+    assert webui.status_data["faulted_jobs_history"][0]["fault_phase"] == "During Inference"
+    assert webui.status_data["faulted_jobs_history"][1]["model"] == "TestModel2"
+    assert webui.status_data["faulted_jobs_history"][1]["fault_phase"] == "Post Processing"
+
+
+def test_webui_batch_size_display() -> None:
+    """Test that WorkerWebUI handles batch size in current job and job queue."""
+    webui = WorkerWebUI(port=0)
+
+    # Test current job with batch size
+    current_job_batch = {
+        "id": "test789",
+        "model": "TestModel",
+        "state": "INFERENCE_STARTING",
+        "progress": 50,
+        "is_complete": False,
+        "batch_size": 3,
+    }
+    webui.update_status(current_job=current_job_batch)
+    assert webui.status_data["current_job"] == current_job_batch
+    assert webui.status_data["current_job"]["batch_size"] == 3
+
+    # Test current job without batch size (batch_size = 1)
+    current_job_single = {
+        "id": "test790",
+        "model": "TestModel2",
+        "state": "PROCESSING",
+        "progress": 25,
+        "is_complete": False,
+        "batch_size": 1,
+    }
+    webui.update_status(current_job=current_job_single)
+    assert webui.status_data["current_job"]["batch_size"] == 1
+
+    # Test job queue with various batch sizes
+    job_queue_with_batches = [
+        {"id": "queue1", "model": "Model1", "batch_size": 2},
+        {"id": "queue2", "model": "Model2", "batch_size": 1},
+        {"id": "queue3", "model": "Model3", "batch_size": 5},
+    ]
+    webui.update_status(job_queue=job_queue_with_batches)
+    assert webui.status_data["job_queue"] == job_queue_with_batches
+    assert webui.status_data["job_queue"][0]["batch_size"] == 2
+    assert webui.status_data["job_queue"][1]["batch_size"] == 1
+    assert webui.status_data["job_queue"][2]["batch_size"] == 5
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
@@ -133,6 +221,12 @@ if __name__ == "__main__":
 
     test_webui_new_features()
     print("✓ WebUI new features test passed")
+
+    test_webui_faulted_jobs_history()
+    print("✓ WebUI faulted jobs history test passed")
+
+    test_webui_batch_size_display()
+    print("✓ WebUI batch size display test passed")
 
     # Run async test
     asyncio.run(test_webui_start_stop())
