@@ -471,6 +471,10 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             or new_state == HordeProcessState.WAITING_FOR_JOB
         ):
             self.reset_heartbeat_state(process_id)
+            
+            # Set progress to 100% after reset when inference completes
+            if new_state == HordeProcessState.INFERENCE_COMPLETE:
+                self[process_id].last_heartbeat_percent_complete = 100
 
     def on_last_job_reference_change(
         self,
