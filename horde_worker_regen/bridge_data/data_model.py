@@ -123,7 +123,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
     enable_webui: bool = Field(default=True)
     """If true, the worker will start a web UI to display status and progress."""
 
-    webui_port: int = Field(default=7861, ge=1024, le=65535)
+    webui_port: int = Field(default=3000, ge=1024, le=65535)
     """The port to run the web UI on."""
 
     webui_update_interval: float = Field(default=2.0, ge=0.5, le=10.0)

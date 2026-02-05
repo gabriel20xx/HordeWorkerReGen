@@ -11,11 +11,11 @@ from loguru import logger
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
 
-    def __init__(self, port: int = 7861, update_interval: float = 2.0) -> None:
+    def __init__(self, port: int = 3000, update_interval: float = 2.0) -> None:
         """Initialize the web UI server.
 
         Args:
-            port: The port to run the web server on (default: 7861)
+            port: The port to run the web server on (default: 3000)
             update_interval: How often to update status in seconds (default: 2.0)
         """
         self.port = port

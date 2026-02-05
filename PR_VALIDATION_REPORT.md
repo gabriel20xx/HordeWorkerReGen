@@ -60,7 +60,7 @@ All modified files have valid Python syntax:
 
 **Bridge Data Model:**
 - ✅ enable_webui field (default: true)
-- ✅ webui_port field (default: 7861)
+- ✅ webui_port field (default: 3000)
 - ✅ webui_update_interval field (default: 2.0)
 
 **Process Manager:**
@@ -142,13 +142,13 @@ docker run -e AIWORKER_LOG_LEVEL=WARNING your-image  # Quiet
 
 ### Web UI Access:
 ```
-http://localhost:7861  # Default port
+http://localhost:3000  # Default port
 ```
 
 ### Configuration (bridgeData.yaml):
 ```yaml
 enable_webui: true
-webui_port: 7861
+webui_port: 3000
 webui_update_interval: 2.0
 ```
 

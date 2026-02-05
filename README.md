@@ -186,7 +186,7 @@ Tailor settings to your GPU, following these pointers:
 
 The worker includes a built-in web interface for monitoring status and progress:
 
-- **Access**: Open `http://localhost:7861` in your browser (default port)
+- **Access**: Open `http://localhost:3000` in your browser (default port)
 - **Real-time updates**: Status refreshes automatically every 2 seconds
 - **Information displayed**:
   - Worker name and status (Active/Maintenance)
@@ -202,7 +202,7 @@ To enable/disable or configure the web UI, edit `bridgeData.yaml`:
 
 ```yaml
 enable_webui: true  # Set to false to disable
-webui_port: 7861    # Change if you have a port conflict
+webui_port: 3000    # Change if you have a port conflict
 ```
 
 #### Terminal and Logs

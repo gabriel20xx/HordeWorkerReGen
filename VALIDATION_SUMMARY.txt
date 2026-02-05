@@ -69,11 +69,11 @@ Docker:
   docker run -e AIWORKER_LOG_LEVEL=INFO your-image
 
 Web UI:
-  http://localhost:7861
+  http://localhost:3000
 
 Configuration (bridgeData.yaml):
   enable_webui: true
-  webui_port: 7861
+  webui_port: 3000
   webui_update_interval: 2.0
 
 ╔════════════════════════════════════════════════════════════════════════════╗
