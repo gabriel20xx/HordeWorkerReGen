@@ -2,9 +2,10 @@
 
 import base64
 import enum
-import time
-import os
 import json
+import os
+import time
+import warnings
 from datetime import datetime
 from enum import auto
 from io import BytesIO
@@ -19,9 +20,8 @@ except (ImportError, AttributeError):
 # ! IMPORTANT: End of own code
 from multiprocessing.synchronize import Lock
 
-import PIL
-from PIL import Image
 from loguru import logger
+from PIL import Image
 from typing_extensions import override
 
 from horde_worker_regen import ASSETS_FOLDER_PATH
@@ -31,12 +31,12 @@ from horde_worker_regen.process_management.messages import (
     HordeControlFlag,
     HordeControlMessage,
     HordeProcessState,
-    # ! IMPORTANT: Start own code
-    HordeSavedImageInfo,
     # ! IMPORTANT: End own code
     HordeSafetyControlMessage,
     HordeSafetyEvaluation,
     HordeSafetyResultMessage,
+    # ! IMPORTANT: Start own code
+    HordeSavedImageInfo,
 )
 
 if TYPE_CHECKING:
@@ -108,6 +108,10 @@ class HordeSafetyProcess(HordeProcess):
         )
 
         try:
+            # Suppress known warnings from dependencies
+            warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
+            warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU.*")
+
             from horde_safety.deep_danbooru_model import get_deep_danbooru_model
             from horde_safety.interrogate import get_interrogator_no_blip
         except Exception as e:
@@ -199,36 +203,36 @@ class HordeSafetyProcess(HordeProcess):
 
         # Set base output directory
         base_output_directory = "/output"
-        
+
         # Pre-calculate the date-based output directory parts
         now = datetime.now()
         year = now.strftime("%Y")
         year_month = now.strftime("%Y-%m")
         year_month_day = now.strftime("%Y-%m-%d")
-        
+
         # Construct the full output directory path: /output/YYYY/YYYY-MM/YYYY-MM-DD/
         output_directory = os.path.join(base_output_directory, year, year_month, year_month_day)
-        
+
         # Build directories
         year_dir = os.path.join(base_output_directory, year)
         year_month_dir = os.path.join(year_dir, year_month)
         year_month_day_dir = os.path.join(year_month_dir, year_month_day)
-        
+
         # Create all directories
         os.makedirs(year_month_day_dir, exist_ok=True)
-        
+
         # Apply permissions only to the three relevant ones
         for d in [year_dir, year_month_dir, year_month_day_dir]:
             os.chmod(d, 0o777)
-        
+
         for image_base64 in message.images_base64:
             # Decode the image from base64
             image_bytes = BytesIO(base64.b64decode(image_base64))
-        
+
             # Generate a timestamp with milliseconds only once per image
             timestamp = now.strftime("%Y-%m-%d_%H-%M-%S.%f")[:-3]
             output_path = os.path.join(output_directory, f"{timestamp}.png")
-        
+
             # Open the image using PIL
             image_as_pil_0 = Image.open(image_bytes)
 

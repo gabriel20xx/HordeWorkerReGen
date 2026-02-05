@@ -1,3 +1,9 @@
+# Suppress pynvml deprecation warning from torch.cuda before importing torch
+# This warning filter must be set at module level before torch is imported
+# because torch.cuda initialization happens immediately upon import
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
+
 import torch
 from loguru import logger
 
