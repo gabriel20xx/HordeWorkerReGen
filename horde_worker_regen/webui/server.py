@@ -801,6 +801,16 @@ class WorkerWebUI:
                                 </div>
                             `;
                             
+                            // Fault Phase
+                            if (job.fault_phase) {
+                                detailsHtml += `
+                                    <div class="faulted-job-detail">
+                                        <span class="faulted-job-label">Fault Phase</span>
+                                        <span class="faulted-job-value" style="color: #dc2626; font-weight: 600;">${escapeHtml(job.fault_phase)}</span>
+                                    </div>
+                                `;
+                            }
+                            
                             // Size
                             if (job.width && job.height) {
                                 detailsHtml += `

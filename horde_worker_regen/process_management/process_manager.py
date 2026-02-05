@@ -3720,6 +3720,28 @@ class HordeWorkerProcessManager:
                 self._failed_models[model_name] = self._failed_models.get(model_name, 0) + 1
 
             # Add faulted job details to history for webui display
+            # Determine the phase during which the job faulted
+            fault_phase = None
+            if process_info is not None:
+                # Get a human-readable description of the process state
+                state = process_info.last_process_state
+                if state == HordeProcessState.DOWNLOADING_MODEL:
+                    fault_phase = "Downloading Model"
+                elif state == HordeProcessState.DOWNLOADING_AUX_MODEL:
+                    fault_phase = "Downloading LoRAs/Aux Models"
+                elif state == HordeProcessState.PRELOADING_MODEL:
+                    fault_phase = "Preloading Model"
+                elif state == HordeProcessState.INFERENCE_STARTING:
+                    fault_phase = "During Inference"
+                elif state == HordeProcessState.INFERENCE_POST_PROCESSING:
+                    fault_phase = "Post Processing"
+                elif state == HordeProcessState.EVALUATING_SAFETY:
+                    fault_phase = "Safety Check"
+                elif state == HordeProcessState.PROCESS_STARTING:
+                    fault_phase = "Process Starting"
+                else:
+                    fault_phase = state.name.replace("_", " ").title()
+            
             faulted_job_details = {
                 "job_id": str(faulted_job.id_),
                 "model": faulted_job.model or "Unknown",
@@ -3729,6 +3751,7 @@ class HordeWorkerProcessManager:
                 "steps": faulted_job.payload.ddim_steps if faulted_job.payload else None,
                 "sampler": faulted_job.payload.sampler_name if faulted_job.payload else None,
                 "batch_size": faulted_job.payload.n_iter if faulted_job.payload else None,
+                "fault_phase": fault_phase,
                 "loras": [],
                 "controlnet": None,
                 "workflow": faulted_job.payload.workflow if faulted_job.payload else None,
