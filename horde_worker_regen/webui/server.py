@@ -379,8 +379,10 @@ class WorkerWebUI:
         }
         
         .last-image-container img {
-            width: 768px;
-            height: 432px;
+            max-width: 100%;
+            max-height: 432px;
+            width: auto;
+            height: auto;
             object-fit: contain;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -497,15 +499,6 @@ class WorkerWebUI:
             
             <div class="grid">
                 <div class="card">
-                    <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
-                    <div id="faulted-jobs" class="faulted-jobs-list">
-                        <div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="grid">
-                <div class="card">
                     <h2>Last Generated Image</h2>
                     <div id="last-image-container" class="last-image-container">
                         <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
@@ -516,6 +509,15 @@ class WorkerWebUI:
                     <h2>Console Output</h2>
                     <div id="console-logs" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.85em; background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 6px;">
                         <div style="text-align: center; color: #999; padding: 20px;">No logs available</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="grid">
+                <div class="card">
+                    <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
+                    <div id="faulted-jobs" class="faulted-jobs-list">
+                        <div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>
                     </div>
                 </div>
             </div>
