@@ -284,6 +284,14 @@ class WorkerWebUI:
         .wide-card {
             grid-column: 1 / -1;
         }
+        
+        .subsection-heading {
+            color: #667eea;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #e0e7ff;
+            padding-bottom: 5px;
+        }
     </style>
 </head>
 <body>
@@ -360,21 +368,27 @@ class WorkerWebUI:
                 </div>
                 
                 <div class="card">
-                    <h2>Job Queue (<span id="queue-count">0</span>)</h2>
-                    <div id="job-queue" class="job-queue">
-                        <div style="text-align: center; color: #999; padding: 20px;">Queue is empty</div>
+                    <h2>Job Queue & Active Models</h2>
+                    <div style="margin-bottom: 20px;">
+                        <h3 class="subsection-heading">
+                            Job Queue (<span id="queue-count">0</span>)
+                        </h3>
+                        <div id="job-queue" class="job-queue">
+                            <div style="text-align: center; color: #999; padding: 20px;">Queue is empty</div>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="subsection-heading">
+                            Active Models
+                        </h3>
+                        <div id="models-loaded" class="model-list">
+                            <div style="color: #999;">No models loaded</div>
+                        </div>
                     </div>
                 </div>
             </div>
             
             <div class="grid">
-                <div class="card">
-                    <h2>Active Models</h2>
-                    <div id="models-loaded" class="model-list">
-                        <div style="color: #999;">No models loaded</div>
-                    </div>
-                </div>
-                
                 <div class="card">
                     <h2>Processes (<span id="process-count">0</span>)</h2>
                     <div id="processes" class="process-list">
