@@ -286,15 +286,15 @@ class WorkerWebUI:
         }
         
         .last-image-container {
-            min-height: 512px;
+            min-height: 432px;
             display: flex;
             align-items: center;
             justify-content: center;
         }
         
         .last-image-container img {
-            width: 512px;
-            height: 512px;
+            width: 768px;
+            height: 432px;
             object-fit: contain;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
