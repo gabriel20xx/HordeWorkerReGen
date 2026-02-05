@@ -1117,6 +1117,9 @@ class HordeWorkerProcessManager:
     FAILED_MODELS_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
     MAX_FAILING_MODELS_TO_DISPLAY = 10
     
+    # Constants for worker config display
+    WORKER_CONFIG_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
+    
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
     ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -1481,6 +1484,9 @@ class HordeWorkerProcessManager:
         # Track models that have failed
         self._failed_models: dict[str, int] = {}
         self._last_failed_models_print_time: float = 0.0
+        
+        # Track last worker config print time
+        self._last_worker_config_print_time: float = 0.0
 
         self.stable_diffusion_reference = None
 
@@ -4966,8 +4972,11 @@ class HordeWorkerProcessManager:
 
             logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
 
-            # Only show detailed process info if not in limited console mode
-            if not AIWORKER_LIMITED_CONSOLE_MESSAGES:
+            # Only show worker config periodically (not every status update)
+            if (
+                not AIWORKER_LIMITED_CONSOLE_MESSAGES
+                and cur_time - self._last_worker_config_print_time > self.WORKER_CONFIG_REPORT_INTERVAL_SECONDS
+            ):
                 logging_function("<b><fg #5fd7ff>Worker Config:</></b>")
 
                 max_power_dimension = int(math.sqrt(self.bridge_data.max_power * 8 * 64 * 64))
@@ -5001,6 +5010,8 @@ class HordeWorkerProcessManager:
                     ]
                 )
                 logger.info(f"  {memory_info}")
+                
+                self._last_worker_config_print_time = cur_time
 
             logger.debug(
                 " | ".join(
