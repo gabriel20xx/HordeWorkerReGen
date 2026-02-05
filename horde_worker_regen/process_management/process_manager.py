@@ -3725,6 +3725,8 @@ class HordeWorkerProcessManager:
                     self.jobs_pending_inference.append(faulted_job)
                     self._invalidate_megapixelsteps_cache()
                     logger.info(f"Job {faulted_job.id_} re-queued for retry")
+                else:
+                    logger.debug(f"Job {faulted_job.id_} already in jobs_pending_inference, not re-queuing")
                 
                 return
             
