@@ -1556,8 +1556,8 @@ class HordeWorkerProcessManager:
             # Use a format function to apply colors based on log level, matching the normal console
             def webui_format_record(record):
                 level_name = record["level"].name
-                if level_name in HordeProcessManager._WEBUI_LOG_LEVEL_FORMATS:
-                    return HordeProcessManager._WEBUI_LOG_LEVEL_FORMATS[level_name] + "\n{exception}"
+                if level_name in HordeWorkerProcessManager._WEBUI_LOG_LEVEL_FORMATS:
+                    return HordeWorkerProcessManager._WEBUI_LOG_LEVEL_FORMATS[level_name] + "\n{exception}"
                 # Fallback for unknown levels
                 return "{time:HH:mm:ss} <dim>|</dim> <bold>{level: <8}</bold> <dim>|</dim> {message}\n{exception}"
             
