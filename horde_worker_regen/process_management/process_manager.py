@@ -2383,7 +2383,7 @@ class HordeWorkerProcessManager:
                             if completed_job_info.state != GENERATION_STATE.csam:
                                 completed_job_info.state = GENERATION_STATE.censored
 
-                # Update webui preview with the final (potentially censored) image
+                # Update webui preview with the saved disk image (not the submitted image)
                 # Only update if this job's inference completed more recently than the currently displayed job
                 if (
                     self.webui 
@@ -2392,8 +2392,24 @@ class HordeWorkerProcessManager:
                     and completed_job_info.inference_completed_timestamp is not None
                     and completed_job_info.inference_completed_timestamp >= self._last_image_job_timestamp
                 ):
-                    self._last_image_base64 = completed_job_info.job_image_results[0].image_base64
-                    self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                    # Use the saved disk image instead of the submitted image
+                    if message.saved_images and len(message.saved_images) > 0:
+                        try:
+                            # Read the saved image from disk and convert to base64
+                            saved_image_path = message.saved_images[0].path
+                            with open(saved_image_path, "rb") as image_file:
+                                image_data = image_file.read()
+                                self._last_image_base64 = base64.b64encode(image_data).decode("utf-8")
+                                self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                        except Exception as e:
+                            logger.warning(f"Failed to read saved image for webui preview: {e}")
+                            # Fallback to the submitted image if reading from disk fails
+                            self._last_image_base64 = completed_job_info.job_image_results[0].image_base64
+                            self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                    else:
+                        # Fallback to the submitted image if no saved images available
+                        self._last_image_base64 = completed_job_info.job_image_results[0].image_base64
+                        self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
 
                 # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
                 self.jobs_pending_submit.append(completed_job_info)
