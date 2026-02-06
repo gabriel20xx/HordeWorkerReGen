@@ -506,7 +506,11 @@ class HordeInferenceProcess(HordeProcess):
                     logger.error(f"Failed to release inference semaphore: {type(e).__name__} {e}")
 
             # Check if hordelib provides granular post-processing progress
-            if progress_report.comfyui_progress is not None and progress_report.comfyui_progress.current_step >= 0:
+            if (
+                progress_report.comfyui_progress is not None
+                and progress_report.comfyui_progress.current_step >= 0
+                and progress_report.comfyui_progress.total_steps > 0
+            ):
                 # Use actual progress if available during post-processing
                 percent = int(progress_report.comfyui_progress.percent)
                 self.send_heartbeat_message(
