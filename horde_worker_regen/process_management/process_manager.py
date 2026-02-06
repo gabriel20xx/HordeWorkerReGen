@@ -5397,10 +5397,10 @@ class HordeWorkerProcessManager:
         total_ram_mb = sum(p.ram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
         total_vram_mb = sum(p.vram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
 
-        # Get max VRAM from devices
+        # Get total VRAM from all devices
         max_vram_mb = 0
         if len(self._device_map.root) > 0:
-            max_vram_mb = max(device.total_memory for device in self._device_map.root.values()) / BYTES_TO_MEGABYTES
+            max_vram_mb = sum(device.total_memory for device in self._device_map.root.values()) / BYTES_TO_MEGABYTES
 
         # Calculate kudos per hour
         kudos_per_hour = 0.0
