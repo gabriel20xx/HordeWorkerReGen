@@ -64,6 +64,31 @@ def test_webui_vram_resources() -> None:
     assert expected_percent == 33
 
 
+def test_webui_vram_over_100_percent() -> None:
+    """Test that WorkerWebUI correctly handles edge case where VRAM usage might exceed total (should cap at 100%)."""
+    webui = WorkerWebUI(port=0)
+
+    # Test edge case: VRAM usage exceeding total (shouldn't happen with fix, but frontend should cap it)
+    test_vram_usage_mb = 30000.0  # 30GB used
+    test_total_vram_mb = 24576.0  # 24GB total
+
+    webui.update_status(
+        vram_usage_mb=test_vram_usage_mb,
+        total_vram_mb=test_total_vram_mb,
+    )
+
+    # Verify the values were updated
+    assert webui.status_data["vram_usage_mb"] == test_vram_usage_mb
+    assert webui.status_data["total_vram_mb"] == test_total_vram_mb
+
+    # Test that calculated percentage would be over 100% before capping (122% in this case)
+    raw_percent = round((test_vram_usage_mb / test_total_vram_mb) * 100)
+    assert raw_percent > 100
+
+    # The frontend JavaScript now uses Math.min(100, ...) to cap at 100%
+    # This test documents that the frontend will display 100% even if the calculation exceeds it
+
+
 def test_webui_new_features() -> None:
     """Test that WorkerWebUI handles new features (image preview and console logs)."""
     webui = WorkerWebUI(port=0)

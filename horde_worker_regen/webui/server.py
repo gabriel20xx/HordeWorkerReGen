@@ -666,7 +666,7 @@ class WorkerWebUI:
                     document.getElementById('vram-usage').textContent = formatBytes(data.vram_usage_mb * 1024 * 1024);
                     
                     const vramPercent = data.total_vram_mb > 0 
-                        ? Math.round((data.vram_usage_mb / data.total_vram_mb) * 100) 
+                        ? Math.min(100, Math.round((data.vram_usage_mb / data.total_vram_mb) * 100))
                         : 0;
                     const vramProgress = document.getElementById('vram-progress');
                     vramProgress.style.width = vramPercent + '%';
