@@ -800,6 +800,8 @@ class WorkerWebUI:
                         let stateDisplay = job.state || 'N/A';
                         if (job.state === 'INFERENCE_POST_PROCESSING' || job.state === 'POST_PROCESSING_STARTING') {
                             stateDisplay = 'Post Processing';
+                        } else if (job.state === 'POST_PROCESSING_COMPLETE') {
+                            stateDisplay = 'Post Processing Complete';
                         } else if (job.state === 'INFERENCE_COMPLETE') {
                             stateDisplay = 'Finished';
                         } else if (job.state === 'INFERENCE_STARTING' || job.state === 'INFERENCE_PROCESSING') {
@@ -810,6 +812,14 @@ class WorkerWebUI:
                             stateDisplay = 'Safety Check';
                         } else if (job.state === 'SAFETY_COMPLETE') {
                             stateDisplay = 'Safety Check Complete';
+                        } else if (job.state === 'IMAGE_SAVING') {
+                            stateDisplay = 'Saving Image';
+                        } else if (job.state === 'IMAGE_SAVED') {
+                            stateDisplay = 'Image Saved';
+                        } else if (job.state === 'IMAGE_SUBMITTING') {
+                            stateDisplay = 'Submitting';
+                        } else if (job.state === 'IMAGE_SUBMITTED') {
+                            stateDisplay = 'Submitted';
                         } else if (job.state) {
                             // Convert snake_case to Title Case
                             stateDisplay = job.state.split('_').map(word =>

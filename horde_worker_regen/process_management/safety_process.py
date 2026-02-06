@@ -405,6 +405,12 @@ class HordeSafetyProcess(HordeProcess):
                 logger.info(f"Censor list detected NSFW in image {message.job_id}.")
 
             # ! IMPORTANT: Start own code
+            # Emit IMAGE_SAVING state before saving
+            self.send_process_state_change_message(
+                process_state=HordeProcessState.IMAGE_SAVING,
+                info=f"Saving image for job {message.job_id}",
+            )
+            
             if metadata is not None:
                 if nsfw_result.is_csam:
                     metadata.add_text("Safety", "csam")
@@ -443,6 +449,12 @@ class HordeSafetyProcess(HordeProcess):
                     f"saved without metadata instead: {type(e).__name__} {e}. Path: {output_path}",
                 )
                 saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
+            
+            # Emit IMAGE_SAVED state after successful save
+            self.send_process_state_change_message(
+                process_state=HordeProcessState.IMAGE_SAVED,
+                info=f"Image saved for job {message.job_id}",
+            )
             # ! IMPORTANT: End own code
 
             safety_evaluations.append(

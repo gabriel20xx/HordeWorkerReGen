@@ -272,6 +272,8 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.JOB_RECEIVED
             or self.last_process_state == HordeProcessState.SAFETY_EVALUATING
             or self.last_process_state == HordeProcessState.SAFETY_STARTING
+            or self.last_process_state == HordeProcessState.IMAGE_SAVING
+            or self.last_process_state == HordeProcessState.IMAGE_SUBMITTING
             or self.last_process_state == HordeProcessState.PROCESS_STARTING
         )
 
@@ -315,6 +317,7 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.MODEL_PRELOADED
             or self.last_process_state == HordeProcessState.MODEL_LOADED
             or self.last_process_state == HordeProcessState.INFERENCE_COMPLETE
+            or self.last_process_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or self.last_process_state == HordeProcessState.ALCHEMY_COMPLETE
         )
 
@@ -474,16 +477,22 @@ class ProcessMap(dict[int, HordeProcessInfo]):
 
         if (
             new_state == HordeProcessState.INFERENCE_COMPLETE
+            or new_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or new_state == HordeProcessState.INFERENCE_FAILED
             or new_state == HordeProcessState.MODEL_PRELOADED
             or new_state == HordeProcessState.MODEL_LOADED
             or new_state == HordeProcessState.SAFETY_COMPLETE
+            or new_state == HordeProcessState.IMAGE_SAVED
+            or new_state == HordeProcessState.IMAGE_SUBMITTED
             or new_state == HordeProcessState.WAITING_FOR_JOB
         ):
             self.reset_heartbeat_state(process_id)
 
             # Set progress to 100% after reset when inference completes
-            if new_state == HordeProcessState.INFERENCE_COMPLETE:
+            if (
+                new_state == HordeProcessState.INFERENCE_COMPLETE
+                or new_state == HordeProcessState.POST_PROCESSING_COMPLETE
+            ):
                 self[process_id].last_heartbeat_percent_complete = 100
 
     def on_last_job_reference_change(
@@ -3381,6 +3390,16 @@ class HordeWorkerProcessManager:
             gen_metadata=metadata,
         )
         logger.debug(f"Submitting job {new_submit.job_id}")
+        
+        # Update state to IMAGE_SUBMITTING for the process that handled this job
+        for process_id, process_info in self._process_map.items():
+            if process_info.last_job_referenced == new_submit.completed_job_info.sdk_api_job_info:
+                self._process_map.on_process_state_change(
+                    process_id=process_id,
+                    new_state=HordeProcessState.IMAGE_SUBMITTING,
+                )
+                break
+        
         job_submit_response = None
         try:
             job_submit_response = await asyncio.wait_for(
@@ -3494,6 +3513,16 @@ class HordeWorkerProcessManager:
         self.kudos_generated_this_session += job_submit_response.reward
         self.kudos_events.append((time.time(), job_submit_response.reward))
         new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
+        
+        # Update state to IMAGE_SUBMITTED for the process that handled this job
+        for process_id, process_info in self._process_map.items():
+            if process_info.last_job_referenced == new_submit.completed_job_info.sdk_api_job_info:
+                self._process_map.on_process_state_change(
+                    process_id=process_id,
+                    new_state=HordeProcessState.IMAGE_SUBMITTED,
+                )
+                break
+        
         return new_submit
 
     @logger.catch(reraise=True)
