@@ -1911,10 +1911,8 @@ class HordeWorkerProcessManager:
         logger.debug(f"Replacing {process_info}")
         # job = next(((job, pid) for job, pid in self.jobs_in_progress if pid == process_info.process_id), None)
         job_to_remove = None
-        for process in self._process_map.values():
-            if process.last_job_referenced is not None and process.last_job_referenced in self.jobs_lookup:
-                job_to_remove = process.last_job_referenced
-                break
+        if process_info.last_job_referenced is not None and process_info.last_job_referenced in self.jobs_lookup:
+            job_to_remove = process_info.last_job_referenced
 
         if process_info.last_process_state == HordeProcessState.INFERENCE_STARTING:
             try:
