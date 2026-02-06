@@ -3390,7 +3390,7 @@ class HordeWorkerProcessManager:
             gen_metadata=metadata,
         )
         logger.debug(f"Submitting job {new_submit.job_id}")
-        
+
         # Update state to IMAGE_SUBMITTING for the process that handled this job
         for process_id, process_info in self._process_map.items():
             if process_info.last_job_referenced == new_submit.completed_job_info.sdk_api_job_info:
@@ -3399,7 +3399,7 @@ class HordeWorkerProcessManager:
                     new_state=HordeProcessState.IMAGE_SUBMITTING,
                 )
                 break
-        
+
         job_submit_response = None
         try:
             job_submit_response = await asyncio.wait_for(
@@ -3513,7 +3513,7 @@ class HordeWorkerProcessManager:
         self.kudos_generated_this_session += job_submit_response.reward
         self.kudos_events.append((time.time(), job_submit_response.reward))
         new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
-        
+
         # Update state to IMAGE_SUBMITTED for the process that handled this job
         for process_id, process_info in self._process_map.items():
             if process_info.last_job_referenced == new_submit.completed_job_info.sdk_api_job_info:
@@ -3522,7 +3522,7 @@ class HordeWorkerProcessManager:
                     new_state=HordeProcessState.IMAGE_SUBMITTED,
                 )
                 break
-        
+
         return new_submit
 
     @logger.catch(reraise=True)

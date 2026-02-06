@@ -410,7 +410,7 @@ class HordeSafetyProcess(HordeProcess):
                 process_state=HordeProcessState.IMAGE_SAVING,
                 info=f"Saving image for job {message.job_id}",
             )
-            
+
             if metadata is not None:
                 if nsfw_result.is_csam:
                     metadata.add_text("Safety", "csam")
@@ -449,7 +449,7 @@ class HordeSafetyProcess(HordeProcess):
                     f"saved without metadata instead: {type(e).__name__} {e}. Path: {output_path}",
                 )
                 saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
-            
+
             # Emit IMAGE_SAVED state after successful save
             self.send_process_state_change_message(
                 process_state=HordeProcessState.IMAGE_SAVED,
