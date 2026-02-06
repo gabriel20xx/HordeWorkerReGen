@@ -677,13 +677,13 @@ class HordeInferenceProcess(HordeProcess):
                 self._start_inference_time = time.time()
                 results = self._horde.basic_inference(job_info, progress_callback=self.progress_callback)
 
-            # Emit POST_PROCESSING_COMPLETE state if post-processing was done
-            if self._in_post_processing:
-                self.send_process_state_change_message(
-                    process_state=HordeProcessState.POST_PROCESSING_COMPLETE,
-                    info="Post processing complete",
-                    time_elapsed=time.time() - self._start_inference_time,
-                )
+                # Emit POST_PROCESSING_COMPLETE state if post-processing was done
+                if self._in_post_processing:
+                    self.send_process_state_change_message(
+                        process_state=HordeProcessState.POST_PROCESSING_COMPLETE,
+                        info="Post processing complete",
+                        time_elapsed=time.time() - self._start_inference_time,
+                    )
         except Exception as e:
             logger.critical(f"Inference failed: {type(e).__name__} {e}")
             return None
