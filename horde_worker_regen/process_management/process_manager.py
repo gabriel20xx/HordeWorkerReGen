@@ -488,7 +488,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             or new_state == HordeProcessState.WAITING_FOR_JOB
         ):
             self.reset_heartbeat_state(process_id)
-            
+
             # Set progress to 100% after reset when inference completes
             if new_state == HordeProcessState.INFERENCE_COMPLETE or new_state == HordeProcessState.INFERENCE_FINISHED:
                 self[process_id].last_heartbeat_percent_complete = 100
@@ -990,7 +990,7 @@ class HordeJobInfo(BaseModel):  # TODO: Split into a new file
     # ! IMPORTANT: Start own code
     sanitized_negative_prompt: str | None = None
     """The sanitized negative prompt used for inference, if any."""
-    
+
     inference_completed_timestamp: float | None = None
     """Timestamp when inference completed, used to track the order of job completions for preview display."""
     # ! IMPORTANT: End own code
@@ -1171,13 +1171,13 @@ class HordeWorkerProcessManager:
     # Constants for failing models tracking
     FAILED_MODELS_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
     MAX_FAILING_MODELS_TO_DISPLAY = 10
-    
+
     # Constants for worker config display
     WORKER_CONFIG_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
-    
+
     # Constants for job retry logic
     MAX_JOB_RETRIES = 1  # Number of retries for faulted jobs
-    
+
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
     ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -1551,7 +1551,7 @@ class HordeWorkerProcessManager:
         # Track models that have failed
         self._failed_models: dict[str, int] = {}
         self._last_failed_models_print_time: float = 0.0
-        
+
         # Track last worker config print time
         self._last_worker_config_print_time: float = 0.0
 
@@ -1584,7 +1584,7 @@ class HordeWorkerProcessManager:
         """Recent console logs for webui display."""
         self._log_handler_id: int | None = None
         """ID of the logger handler for capturing console logs."""
-        
+
         if self.bridge_data.enable_webui:
             from horde_worker_regen.webui.server import WorkerWebUI
 
@@ -1593,12 +1593,12 @@ class HordeWorkerProcessManager:
                 update_interval=self.bridge_data.webui_update_interval,
             )
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
-            
+
             # Add a log handler to capture logs for webui with colored output
             # Use the same format function as the normal console for consistent coloring
             # but with a shorter timestamp format (HH:mm:ss instead of full date)
             webui_format_record = create_level_format_function(time_format="HH:mm:ss")
-            
+
             self._log_handler_id = logger.add(
                 self._capture_log_for_webui,
                 format=webui_format_record,
@@ -1608,13 +1608,13 @@ class HordeWorkerProcessManager:
 
     def _capture_log_for_webui(self, message: str) -> None:
         """Capture log messages for webui display.
-        
+
         Args:
             message: The formatted log message (may contain ANSI color codes)
         """
         # Strip ANSI color codes only for checking if message is empty
         clean_message = self.ANSI_ESCAPE_PATTERN.sub('', message).strip()
-        
+
         if clean_message:
             # Store the original message with ANSI codes for colored display in webui
             self._console_logs.append(message.strip())
@@ -2308,7 +2308,7 @@ class HordeWorkerProcessManager:
                     job_info.time_to_generate = message.time_elapsed
                     job_info.job_image_results = message.job_image_results
                     job_info.sanitized_negative_prompt = message.sanitized_negative_prompt
-                    
+
                     # Capture last image for webui preview
                     if self.webui and message.job_image_results and len(message.job_image_results) > 0:
                         current_time = time.time()
@@ -2438,8 +2438,8 @@ class HordeWorkerProcessManager:
                 # Update webui preview with the saved disk image (not the submitted image)
                 # Only update if this job's inference completed more recently than the currently displayed job
                 if (
-                    self.webui 
-                    and completed_job_info.job_image_results 
+                    self.webui
+                    and completed_job_info.job_image_results
                     and len(completed_job_info.job_image_results) > 0
                     and completed_job_info.inference_completed_timestamp is not None
                     and completed_job_info.inference_completed_timestamp >= self._last_image_job_timestamp
@@ -3828,12 +3828,12 @@ class HordeWorkerProcessManager:
                 logger.warning(
                     f"Job {faulted_job.id_} faulted, retrying (retry attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})"
                 )
-                
+
                 # Remove from jobs_in_progress if present
                 if faulted_job in self.jobs_in_progress:
                     logger.debug(f"Removing job {faulted_job.id_} from jobs_in_progress for retry")
                     self.jobs_in_progress.remove(faulted_job)
-                
+
                 # Re-queue the job for another attempt
                 # Check to avoid duplicates in case the job is still in the queue
                 if faulted_job not in self.jobs_pending_inference:
@@ -3842,16 +3842,16 @@ class HordeWorkerProcessManager:
                     logger.info(f"Job {faulted_job.id_} re-queued for retry")
                 else:
                     logger.debug(f"Job {faulted_job.id_} already in jobs_pending_inference, not re-queuing")
-                
+
                 return
-            
+
             # Job has exhausted all retry attempts, proceed with faulting
             retry_text = "retry attempt" if self.MAX_JOB_RETRIES == 1 else "retry attempts"
             logger.error(
                 f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} {retry_text}, "
                 f"marking as permanently faulted"
             )
-            
+
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
                 self._invalidate_megapixelsteps_cache()
@@ -3904,7 +3904,7 @@ class HordeWorkerProcessManager:
                     fault_phase = "Process Starting"
                 else:
                     fault_phase = state.name.replace("_", " ").title()
-            
+
             faulted_job_details = {
                 "job_id": str(faulted_job.id_),
                 "model": faulted_job.model or "Unknown",
@@ -3919,7 +3919,7 @@ class HordeWorkerProcessManager:
                 "controlnet": None,
                 "workflow": faulted_job.payload.workflow if faulted_job.payload else None,
             }
-            
+
             # Extract LoRA information
             if faulted_job.payload and faulted_job.payload.loras:
                 for lora in faulted_job.payload.loras:
@@ -3928,11 +3928,11 @@ class HordeWorkerProcessManager:
                         "model": lora.model if hasattr(lora, "model") else None,
                         "clip": lora.clip if hasattr(lora, "clip") else None,
                     })
-            
+
             # Check for controlnet (via workflow)
             if faulted_job.payload and faulted_job.payload.workflow in KNOWN_CONTROLNET_WORKFLOWS:
                 faulted_job_details["controlnet"] = faulted_job.payload.workflow
-            
+
             # Add to history (keep only the last N)
             self._faulted_jobs_history.insert(0, faulted_job_details)
             if len(self._faulted_jobs_history) > self._max_faulted_jobs_history:
@@ -5259,7 +5259,7 @@ class HordeWorkerProcessManager:
                     ]
                 )
                 logger.info(f"  {memory_info}")
-                
+
                 self._last_worker_config_print_time = cur_time
 
             logger.debug(
@@ -5683,7 +5683,7 @@ class HordeWorkerProcessManager:
         # Remember which jobs were pending before we start faulting jobs in progress
         # This allows us to preserve jobs that are re-queued for retry
         jobs_pending_before_fault = set(self.jobs_pending_inference)
-        
+
         # Mark all jobs currently in progress as faulted before clearing them
         # Note: handle_job_fault may re-queue some jobs to jobs_pending_inference for retry
         if len(self.jobs_in_progress) > 0:
@@ -5697,7 +5697,7 @@ class HordeWorkerProcessManager:
             # Convert back to deque to maintain the original data structure
             self.jobs_pending_inference = deque([job for job in self.jobs_pending_inference if job not in jobs_pending_before_fault])
             self._last_job_submitted_time = time.time()
-            
+
             # Log how many jobs were kept for retry
             jobs_kept_for_retry = len(self.jobs_pending_inference)
             if jobs_kept_for_retry > 0:
@@ -5790,7 +5790,7 @@ class HordeWorkerProcessManager:
         if not self._shutting_down:
             self._shutting_down = True
             self._shutting_down_time = time.time()
-            
+
             # Cleanup webui log handler
             if self._log_handler_id is not None:
                 try:

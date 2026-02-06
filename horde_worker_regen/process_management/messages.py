@@ -84,7 +84,7 @@ class HordeProcessState(enum.Enum):
     """The process is loading a model."""
     MODEL_LOADED = auto()
     """The process has loaded a model."""
-    
+
     DOWNLOADING_MODEL = auto()
     """The process is downloading a model."""
     DOWNLOAD_COMPLETE = auto()
@@ -112,7 +112,7 @@ class HordeProcessState(enum.Enum):
     """The process is running inference."""
     INFERENCE_FINISHED = auto()
     """The process has finished inference."""
-    
+
     INFERENCE_STARTING = auto()
     """The process is starting inference (deprecated, use STARTING_INFERENCE)."""
     INFERENCE_POST_PROCESSING = auto()
@@ -149,7 +149,7 @@ class HordeProcessState(enum.Enum):
     """The process is performing a safety check."""
     SAFETY_CHECK_FINISHED = auto()
     """The process has finished a safety check."""
-    
+
     EVALUATING_SAFETY = auto()
     """The process is evaluating safety (deprecated, use SAFETY_CHECK_IN_PROGRESS)."""
     SAFETY_FAILED = auto()
@@ -300,6 +300,7 @@ class HordeSafetyEvaluation(BaseModel):
     failed: bool = False
     """If the safety evaluation failed."""
 
+
 # ! IMPORTANT: Start own code
 class HordeSavedImageInfo(BaseModel):
     """Information about an image saved to disk by a child process."""
@@ -309,7 +310,10 @@ class HordeSavedImageInfo(BaseModel):
 
     metadata_embedded: bool = False
     """Whether generation metadata was embedded in the saved image (e.g., PNG text chunks)."""
+
+
 # ! IMPORTANT: End own code
+
 
 class HordeSafetyResultMessage(HordeProcessMessage):
     """Safety result messages that are sent from the child processes to the main process."""
@@ -323,6 +327,7 @@ class HordeSafetyResultMessage(HordeProcessMessage):
     saved_images: list[HordeSavedImageInfo] = Field(default_factory=list)
     """Images saved to disk during safety evaluation (e.g., debug/archival outputs)."""
     # ! IMPORTANT: End own code
+
 
 class HordeControlFlag(enum.Enum):
     """Control flags are sent from the main process to the child processes."""

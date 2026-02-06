@@ -302,9 +302,11 @@ class HordeSafetyProcess(HordeProcess):
                 _add_metadata_text("Denoising strength", generation_metadata.get("denoising_strength"))
                 _add_metadata_text(
                     "Steps",
-                    generation_metadata.get("steps")
-                    if generation_metadata.get("steps") is not None
-                    else generation_metadata.get("ddim_steps"),
+                    (
+                        generation_metadata.get("steps")
+                        if generation_metadata.get("steps") is not None
+                        else generation_metadata.get("ddim_steps")
+                    ),
                 )
                 _add_metadata_text("Version", generation_metadata.get("version"))
                 post_processing = generation_metadata.get("post_processing")
@@ -367,7 +369,7 @@ class HordeSafetyProcess(HordeProcess):
             except (OSError, ValueError) as e:
                 # Handle PIL image open errors (corrupted images, unsupported formats)
                 logger.error(f"Failed to open image: {type(e).__name__} {e}")
-            # ! IMPORTANT: End of own code
+                # ! IMPORTANT: End of own code
                 safety_evaluations.append(
                     HordeSafetyEvaluation(
                         is_nsfw=True,
@@ -381,7 +383,7 @@ class HordeSafetyProcess(HordeProcess):
 
             nsfw_result: NSFWResult | None = self._nsfw_checker.check_for_nsfw(
                 image=image_as_pil,
-                prompt=original_prompt, # ! IMPORTANT: Changed "message.prompt" to "original_prompt"
+                prompt=original_prompt,  # ! IMPORTANT: Changed "message.prompt" to "original_prompt"
                 model_info=message.horde_model_info,
             )
 
