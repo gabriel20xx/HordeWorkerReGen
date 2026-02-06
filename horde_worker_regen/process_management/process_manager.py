@@ -1282,7 +1282,7 @@ class HordeWorkerProcessManager:
 
         return self.stable_diffusion_reference.root[model_name].baseline
 
-    horde_client_session: AIHordeAPIAsyncClientSession
+    horde_client_session: AIHordeAPIAsyncClientSession | None
     """The context manager for the horde sdk client."""
 
     user_info: UserDetailsResponse | None = None
@@ -1394,6 +1394,9 @@ class HordeWorkerProcessManager:
         logger.debug(f"Custom Models to load: {bridge_data.custom_models}")
 
         self.horde_model_reference_manager = horde_model_reference_manager
+
+        # Initialize HTTP client session as None - will be set in _main_loop
+        self.horde_client_session = None
 
         self._process_map = ProcessMap({})
         self._horde_model_map = HordeModelMap(root={})
@@ -4150,6 +4153,10 @@ class HordeWorkerProcessManager:
             self._last_pop_no_jobs_available = False
             return
 
+        # Skip if the client session is not initialized yet (during startup)
+        if self.horde_client_session is None:
+            return
+
         cur_time = time.time()
 
         if self._too_many_consecutive_failed_jobs:
@@ -4668,6 +4675,10 @@ class HordeWorkerProcessManager:
     async def api_get_user_info(self) -> None:
         """Get the information associated with this API key from the API."""
         if self._shutting_down or self._last_pop_maintenance_mode:
+            return
+
+        # Skip if the client session is not initialized yet (during startup)
+        if self.horde_client_session is None:
             return
 
         request = FindUserRequest(apikey=self.bridge_data.api_key)
