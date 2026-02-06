@@ -387,12 +387,97 @@ class WorkerWebUI:
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             display: block;
+        }
+        
         .subsection-heading {
             color: #667eea;
             font-size: 1.1em;
             margin-bottom: 10px;
             border-bottom: 1px solid #e0e7ff;
             padding-bottom: 5px;
+        }
+        
+        /* Image and console layout with specific widths */
+        .image-console-grid {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        @media (max-width: 900px) {
+            .image-console-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        /* Full resolution image overlay */
+        .image-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .image-overlay.active {
+            display: flex;
+        }
+        
+        .image-overlay-content {
+            position: relative;
+            max-width: 95%;
+            max-height: 95%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .image-overlay img {
+            max-width: 100%;
+            max-height: 90vh;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        
+        .image-overlay-close {
+            position: absolute;
+            top: -40px;
+            right: 0;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 1.1em;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        
+        .image-overlay-close:hover {
+            background: #764ba2;
+        }
+        
+        /* Make image clickable */
+        .last-image-container img {
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .last-image-container img:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
     </style>
 </head>
@@ -497,7 +582,7 @@ class WorkerWebUI:
                 </div>
             </div>
             
-            <div class="grid">
+            <div class="image-console-grid">
                 <div class="card">
                     <h2>Last Generated Image</h2>
                     <div id="last-image-container" class="last-image-container">
@@ -525,7 +610,42 @@ class WorkerWebUI:
         <div class="update-time" id="update-time">Last updated: Never</div>
     </div>
     
+    <!-- Full resolution image overlay -->
+    <div id="image-overlay" class="image-overlay">
+        <div class="image-overlay-content">
+            <button class="image-overlay-close" onclick="closeImageOverlay()">✕ Close</button>
+            <img id="overlay-image" src="" alt="Full resolution image" />
+        </div>
+    </div>
+    
     <script>
+        // Image overlay functions
+        function openImageOverlay(imageSrc) {
+            const overlay = document.getElementById('image-overlay');
+            const overlayImage = document.getElementById('overlay-image');
+            overlayImage.src = imageSrc;
+            overlay.classList.add('active');
+        }
+        
+        function closeImageOverlay() {
+            const overlay = document.getElementById('image-overlay');
+            overlay.classList.remove('active');
+        }
+        
+        // Close overlay when clicking outside the image
+        document.getElementById('image-overlay').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeImageOverlay();
+            }
+        });
+        
+        // Close overlay with Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeImageOverlay();
+            }
+        });
+        
         function formatUptime(seconds) {
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
@@ -579,7 +699,7 @@ class WorkerWebUI:
             let currentStyles = [];
             
             // Split by ANSI escape sequences
-            const parts = text.split(/\x1b\[([0-9;]+)m/);
+            const parts = text.split(/\\x1b\\[([0-9;]+)m/);
             
             for (let i = 0; i < parts.length; i++) {
                 if (i % 2 === 0) {
@@ -890,9 +1010,11 @@ class WorkerWebUI:
                     // Last Generated Image
                     const lastImageContainer = document.getElementById('last-image-container');
                     if (data.last_image_base64) {
+                        const imageSrc = `data:image/png;base64,${data.last_image_base64}`;
                         lastImageContainer.innerHTML = `
-                            <img src="data:image/png;base64,${data.last_image_base64}" 
-                                 alt="Last generated image" />
+                            <img src="${imageSrc}" 
+                                 alt="Last generated image"
+                                 onclick="openImageOverlay('${imageSrc}')" />
                         `;
                     } else {
                         lastImageContainer.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>';
