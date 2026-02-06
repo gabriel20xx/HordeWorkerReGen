@@ -435,7 +435,7 @@ class HordeInferenceProcess(HordeProcess):
             )
 
         self.on_horde_model_state_change(
-            process_state=HordeProcessState.MODEL_LOADING,
+            process_state=HordeProcessState.MODEL_PRELOADING,
             horde_model_name=horde_model_name,
             horde_model_state=ModelLoadState.LOADING,
         )
@@ -453,7 +453,7 @@ class HordeInferenceProcess(HordeProcess):
         logger.info(f"Preloaded model {horde_model_name}")
         self._active_model_name = horde_model_name
         self.on_horde_model_state_change(
-            process_state=HordeProcessState.MODEL_LOADED,
+            process_state=HordeProcessState.MODEL_PRELOADED,
             horde_model_name=horde_model_name,
             horde_model_state=ModelLoadState.LOADED_IN_RAM,
             time_elapsed=time.time() - time_start,

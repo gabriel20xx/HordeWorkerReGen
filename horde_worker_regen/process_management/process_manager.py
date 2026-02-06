@@ -272,8 +272,6 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.JOB_RECEIVED
             or self.last_process_state == HordeProcessState.SAFETY_EVALUATING
             or self.last_process_state == HordeProcessState.SAFETY_STARTING
-            or self.last_process_state == HordeProcessState.IMAGE_SAVING
-            or self.last_process_state == HordeProcessState.IMAGE_SUBMITTING
             or self.last_process_state == HordeProcessState.PROCESS_STARTING
         )
 
@@ -317,7 +315,6 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.MODEL_PRELOADED
             or self.last_process_state == HordeProcessState.MODEL_LOADED
             or self.last_process_state == HordeProcessState.INFERENCE_COMPLETE
-            or self.last_process_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or self.last_process_state == HordeProcessState.ALCHEMY_COMPLETE
         )
 
@@ -477,22 +474,16 @@ class ProcessMap(dict[int, HordeProcessInfo]):
 
         if (
             new_state == HordeProcessState.INFERENCE_COMPLETE
-            or new_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or new_state == HordeProcessState.INFERENCE_FAILED
             or new_state == HordeProcessState.MODEL_PRELOADED
             or new_state == HordeProcessState.MODEL_LOADED
             or new_state == HordeProcessState.SAFETY_COMPLETE
-            or new_state == HordeProcessState.IMAGE_SAVED
-            or new_state == HordeProcessState.IMAGE_SUBMITTED
             or new_state == HordeProcessState.WAITING_FOR_JOB
         ):
             self.reset_heartbeat_state(process_id)
 
             # Set progress to 100% after reset when inference completes
-            if (
-                new_state == HordeProcessState.INFERENCE_COMPLETE
-                or new_state == HordeProcessState.POST_PROCESSING_COMPLETE
-            ):
+            if new_state == HordeProcessState.INFERENCE_COMPLETE:
                 self[process_id].last_heartbeat_percent_complete = 100
 
     def on_last_job_reference_change(
@@ -846,10 +837,9 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """Return the number of processes that are actively engaged in an inference task."""
         count = 0
         for p in self.values():
-            if (
-                p.last_process_state == HordeProcessState.INFERENCE_STARTING
-                or p.last_process_state == HordeProcessState.INFERENCE_STARTING
-                or p.last_process_state == HordeProcessState.INFERENCE_STARTING
+            if p.last_process_state in (
+                HordeProcessState.INFERENCE_STARTING,
+                HordeProcessState.INFERENCE_PROCESSING,
             ):
                 count += 1
         return count
@@ -1705,13 +1695,11 @@ class HordeWorkerProcessManager:
             if process_info.process_type != HordeProcessType.INFERENCE:
                 continue
 
-            if (
-                process_info.last_process_state == HordeProcessState.INFERENCE_STARTING
-                or process_info.last_process_state == HordeProcessState.INFERENCE_STARTING
-                or process_info.last_process_state == HordeProcessState.INFERENCE_STARTING
-            ) or (
-                process_info.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                or process_info.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
+            if process_info.last_process_state in (
+                HordeProcessState.INFERENCE_STARTING,
+                HordeProcessState.INFERENCE_PROCESSING,
+                HordeProcessState.INFERENCE_POST_PROCESSING,
+                HordeProcessState.POST_PROCESSING_STARTING,
             ):
                 any_process_alive = True
                 continue
@@ -1978,10 +1966,9 @@ class HordeWorkerProcessManager:
         if process_info.last_job_referenced is not None and process_info.last_job_referenced in self.jobs_lookup:
             job_to_remove = process_info.last_job_referenced
 
-        if (
-            process_info.last_process_state == HordeProcessState.INFERENCE_STARTING
-            or process_info.last_process_state == HordeProcessState.INFERENCE_STARTING
-            or process_info.last_process_state == HordeProcessState.INFERENCE_STARTING
+        if process_info.last_process_state in (
+            HordeProcessState.INFERENCE_STARTING,
+            HordeProcessState.INFERENCE_PROCESSING,
         ):
             try:
                 self._inference_semaphore.release()
@@ -2471,12 +2458,14 @@ class HordeWorkerProcessManager:
     def get_processes_with_model_for_queued_job(self) -> list[int]:
         """Get the processes that have the model for any queued job."""
         processes_with_model_for_queued_job: list[int] = []
+        
+        # Get set of model names from queued and in-progress jobs
+        queued_model_names = {job.model for job in self.jobs_pending_inference}
+        queued_model_names.update(job.model for job in self.jobs_in_progress)
 
         for p in self._process_map.values():
             if (
-                p.loaded_horde_model_name in self.jobs_pending_inference
-                or p.loaded_horde_model_name in self.jobs_in_progress
-                or p.last_process_state == HordeProcessState.MODEL_PRELOADED
+                p.loaded_horde_model_name in queued_model_names
                 or p.last_process_state == HordeProcessState.MODEL_PRELOADED
             ):
                 processes_with_model_for_queued_job.append(p.process_id)
@@ -3880,22 +3869,15 @@ class HordeWorkerProcessManager:
                 state = process_info.last_process_state
                 if state == HordeProcessState.DOWNLOADING_MODEL:
                     fault_phase = "Downloading Model"
-                elif state == HordeProcessState.START_MODEL_LOAD:
-                    fault_phase = "Starting Model Load"
                 elif state == HordeProcessState.MODEL_PRELOADING:
+                    fault_phase = "Preloading Model"
+                elif state == HordeProcessState.MODEL_LOADING:
                     fault_phase = "Loading Model"
                 elif state == HordeProcessState.DOWNLOADING_AUX_MODEL:
                     fault_phase = "Downloading LoRAs/Aux Models"
-                elif state == HordeProcessState.MODEL_PRELOADING:
-                    fault_phase = "Preloading Model"
-                elif state == HordeProcessState.INFERENCE_STARTING or state == HordeProcessState.INFERENCE_STARTING:
+                elif state in (HordeProcessState.INFERENCE_STARTING, HordeProcessState.INFERENCE_PROCESSING):
                     fault_phase = "During Inference"
-                elif state == HordeProcessState.INFERENCE_STARTING:
-                    fault_phase = "During Inference"
-                elif (
-                    state == HordeProcessState.INFERENCE_POST_PROCESSING
-                    or state == HordeProcessState.INFERENCE_POST_PROCESSING
-                ):
+                elif state == HordeProcessState.INFERENCE_POST_PROCESSING:
                     fault_phase = "Post Processing"
                 elif (
                     state == HordeProcessState.SAFETY_EVALUATING
@@ -5453,7 +5435,7 @@ class HordeWorkerProcessManager:
                     "model": job.model,
                     "progress": progress,
                     "state": state or "Processing",
-                    "is_complete": state == "INFERENCE_COMPLETE" or state == "INFERENCE_COMPLETE" if state else False,
+                    "is_complete": state == "INFERENCE_COMPLETE" if state else False,
                     "batch_size": job.payload.n_iter if job.payload else None,
                 }
         elif self.jobs_pending_safety_check:
