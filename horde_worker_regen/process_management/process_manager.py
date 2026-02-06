@@ -4633,10 +4633,12 @@ class HordeWorkerProcessManager:
 
         # Show current jobs in progress
         if len(self.jobs_in_progress) > 0:
-            job_details = []
-            for job in self.jobs_in_progress:
-                if job.id_ is not None:
-                    job_details.append(f"{str(job.id_)[:8]} ({job.model})")
+            # Filter jobs with valid IDs and format them
+            job_details = [
+                f"{str(job.id_)[:8]} ({job.model})"
+                for job in self.jobs_in_progress
+                if job.id_ is not None
+            ]
             if job_details:
                 jobs_msg = f"Current Jobs: {', '.join(job_details)}"
                 log_function(
