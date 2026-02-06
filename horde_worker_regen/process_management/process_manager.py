@@ -2469,12 +2469,12 @@ class HordeWorkerProcessManager:
         processes_with_model_for_queued_job: list[int] = []
 
         # Get set of model names from queued and in-progress jobs
-        queued_model_names = {job.model for job in self.jobs_pending_inference}
-        queued_model_names.update(job.model for job in self.jobs_in_progress)
+        required_model_names = {job.model for job in self.jobs_pending_inference}
+        required_model_names.update(job.model for job in self.jobs_in_progress)
 
         for p in self._process_map.values():
             if (
-                p.loaded_horde_model_name in queued_model_names
+                p.loaded_horde_model_name in required_model_names
                 or p.last_process_state == HordeProcessState.MODEL_PRELOADED
             ):
                 processes_with_model_for_queued_job.append(p.process_id)
