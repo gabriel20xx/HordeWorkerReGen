@@ -259,14 +259,21 @@ class HordeProcessInfo:
         """
         return (
             self.last_process_state == HordeProcessState.INFERENCE_STARTING
+            or self.last_process_state == HordeProcessState.INFERENCE_PROCESSING
             or self.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
+            or self.last_process_state == HordeProcessState.POST_PROCESSING_STARTING
             or self.last_process_state == HordeProcessState.ALCHEMY_STARTING
             or self.last_process_state == HordeProcessState.DOWNLOADING_MODEL
             or self.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL
             or self.last_process_state == HordeProcessState.PRELOADING_MODEL
             or self.last_process_state == HordeProcessState.PRELOADED_MODEL
+            or self.last_process_state == HordeProcessState.MODEL_LOADING
+            or self.last_process_state == HordeProcessState.MODEL_LOADED
             or self.last_process_state == HordeProcessState.JOB_RECEIVED
             or self.last_process_state == HordeProcessState.EVALUATING_SAFETY
+            or self.last_process_state == HordeProcessState.SAFETY_STARTING
+            or self.last_process_state == HordeProcessState.IMAGE_SAVING
+            or self.last_process_state == HordeProcessState.IMAGE_SUBMITTING
             or self.last_process_state == HordeProcessState.PROCESS_STARTING
         )
 
@@ -308,7 +315,9 @@ class HordeProcessInfo:
         return (
             self.last_process_state == HordeProcessState.WAITING_FOR_JOB
             or self.last_process_state == HordeProcessState.PRELOADED_MODEL
+            or self.last_process_state == HordeProcessState.MODEL_LOADED
             or self.last_process_state == HordeProcessState.INFERENCE_COMPLETE
+            or self.last_process_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or self.last_process_state == HordeProcessState.ALCHEMY_COMPLETE
         )
 
@@ -468,16 +477,22 @@ class ProcessMap(dict[int, HordeProcessInfo]):
 
         if (
             new_state == HordeProcessState.INFERENCE_COMPLETE
-            or new_state == HordeProcessState.INFERENCE_COMPLETE
+            or new_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or new_state == HordeProcessState.INFERENCE_FAILED
             or new_state == HordeProcessState.PRELOADED_MODEL
-            or new_state == HordeProcessState.PRELOADED_MODEL
+            or new_state == HordeProcessState.MODEL_LOADED
+            or new_state == HordeProcessState.SAFETY_COMPLETE
+            or new_state == HordeProcessState.IMAGE_SAVED
+            or new_state == HordeProcessState.IMAGE_SUBMITTED
             or new_state == HordeProcessState.WAITING_FOR_JOB
         ):
             self.reset_heartbeat_state(process_id)
 
             # Set progress to 100% after reset when inference completes
-            if new_state == HordeProcessState.INFERENCE_COMPLETE or new_state == HordeProcessState.INFERENCE_COMPLETE:
+            if (
+                new_state == HordeProcessState.INFERENCE_COMPLETE
+                or new_state == HordeProcessState.POST_PROCESSING_COMPLETE
+            ):
                 self[process_id].last_heartbeat_percent_complete = 100
 
     def on_last_job_reference_change(

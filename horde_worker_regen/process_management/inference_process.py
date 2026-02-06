@@ -435,7 +435,7 @@ class HordeInferenceProcess(HordeProcess):
             )
 
         self.on_horde_model_state_change(
-            process_state=HordeProcessState.PRELOADING_MODEL,
+            process_state=HordeProcessState.MODEL_LOADING,
             horde_model_name=horde_model_name,
             horde_model_state=ModelLoadState.LOADING,
         )
@@ -453,7 +453,7 @@ class HordeInferenceProcess(HordeProcess):
         logger.info(f"Preloaded model {horde_model_name}")
         self._active_model_name = horde_model_name
         self.on_horde_model_state_change(
-            process_state=HordeProcessState.PRELOADED_MODEL,
+            process_state=HordeProcessState.MODEL_LOADED,
             horde_model_name=horde_model_name,
             horde_model_state=ModelLoadState.LOADED_IN_RAM,
             time_elapsed=time.time() - time_start,
@@ -489,21 +489,30 @@ class HordeInferenceProcess(HordeProcess):
         if progress_report.hordelib_progress_state == ProgressState.post_processing or (
             self._in_post_processing and progress_report.hordelib_progress_state == ProgressState.progress
         ):
-            self.send_process_state_change_message(
-                process_state=HordeProcessState.INFERENCE_POST_PROCESSING,
-                info="Post Processing",
-                time_elapsed=time.time() - self._start_inference_time,
-            )
-
             # Release semaphore on first entry to post-processing
             if not self._in_post_processing:
                 self._in_post_processing = True
                 logger.info("Post-processing image(s)...")
+                
+                # Send starting state
+                self.send_process_state_change_message(
+                    process_state=HordeProcessState.POST_PROCESSING_STARTING,
+                    info="Starting Post Processing",
+                    time_elapsed=time.time() - self._start_inference_time,
+                )
+                
                 try:
                     self._inference_semaphore.release()
                     logger.debug("Released inference semaphore")
                 except Exception as e:
                     logger.error(f"Failed to release inference semaphore: {type(e).__name__} {e}")
+            
+            # Send in-progress state
+            self.send_process_state_change_message(
+                process_state=HordeProcessState.INFERENCE_POST_PROCESSING,
+                info="Post Processing",
+                time_elapsed=time.time() - self._start_inference_time,
+            )
 
             # Check if hordelib provides granular post-processing progress
             if (
@@ -626,6 +635,12 @@ class HordeInferenceProcess(HordeProcess):
         self._is_busy = True
         self._current_job_inference_steps_complete = False
         self._last_job_inference_rate = None
+
+        # Send state change to indicate inference is now processing
+        self.send_process_state_change_message(
+            process_state=HordeProcessState.INFERENCE_PROCESSING,
+            info="Processing inference",
+        )
 
         # ! IMPORTANT: Start own code
         original_prompt = job_info.payload.prompt

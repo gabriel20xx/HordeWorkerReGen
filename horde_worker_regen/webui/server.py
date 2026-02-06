@@ -798,16 +798,28 @@ class WorkerWebUI:
                         const job = data.current_job;
                         // Format state to be more readable
                         let stateDisplay = job.state || 'N/A';
-                        if (job.state === 'INFERENCE_POST_PROCESSING') {
+                        if (job.state === 'INFERENCE_POST_PROCESSING' || job.state === 'POST_PROCESSING_STARTING') {
                             stateDisplay = 'Post Processing';
+                        } else if (job.state === 'POST_PROCESSING_COMPLETE') {
+                            stateDisplay = 'Post Processing Complete';
                         } else if (job.state === 'INFERENCE_COMPLETE') {
                             stateDisplay = 'Finished';
-                        } else if (job.state === 'INFERENCE_STARTING') {
+                        } else if (job.state === 'INFERENCE_STARTING' || job.state === 'INFERENCE_PROCESSING') {
                             stateDisplay = 'Inference';
-                        } else if (job.state === 'PRELOADING_MODEL' || job.state === 'PRELOADED_MODEL') {
+                        } else if (job.state === 'PRELOADING_MODEL' || job.state === 'PRELOADED_MODEL' || job.state === 'MODEL_LOADING' || job.state === 'MODEL_LOADED') {
                             stateDisplay = 'Loading Model';
-                        } else if (job.state === 'EVALUATING_SAFETY') {
+                        } else if (job.state === 'EVALUATING_SAFETY' || job.state === 'SAFETY_STARTING') {
                             stateDisplay = 'Safety Check';
+                        } else if (job.state === 'SAFETY_COMPLETE') {
+                            stateDisplay = 'Safety Check Complete';
+                        } else if (job.state === 'IMAGE_SAVING') {
+                            stateDisplay = 'Saving Image';
+                        } else if (job.state === 'IMAGE_SAVED') {
+                            stateDisplay = 'Image Saved';
+                        } else if (job.state === 'IMAGE_SUBMITTING') {
+                            stateDisplay = 'Submitting';
+                        } else if (job.state === 'IMAGE_SUBMITTED') {
+                            stateDisplay = 'Submitted';
                         } else if (job.state) {
                             // Convert snake_case to Title Case
                             stateDisplay = job.state.split('_').map(word =>

@@ -91,6 +91,10 @@ class HordeProcessState(enum.Enum):
     """The process is preloading a model."""
     PRELOADED_MODEL = auto()
     """The process has finished preloading a model."""
+    MODEL_LOADING = auto()
+    """The process is loading a model."""
+    MODEL_LOADED = auto()
+    """The process has loaded a model."""
 
     UNLOADED_MODEL_FROM_VRAM = auto()
     """The process has unloaded a model from VRAM."""
@@ -99,12 +103,28 @@ class HordeProcessState(enum.Enum):
 
     INFERENCE_STARTING = auto()
     """The process is starting inference."""
+    INFERENCE_PROCESSING = auto()
+    """The process is actively running inference."""
     INFERENCE_POST_PROCESSING = auto()
     """The process is post-processing as a part of an inference job."""
     INFERENCE_COMPLETE = auto()
     """The process has finished inference."""
     INFERENCE_FAILED = auto()
     """The process has failed inference."""
+
+    POST_PROCESSING_STARTING = auto()
+    """The process is starting post-processing."""
+    POST_PROCESSING_COMPLETE = auto()
+    """The process has finished post-processing."""
+
+    IMAGE_SAVING = auto()
+    """The process is saving an image."""
+    IMAGE_SAVED = auto()
+    """The process has saved an image."""
+    IMAGE_SUBMITTING = auto()
+    """The process is submitting an image."""
+    IMAGE_SUBMITTED = auto()
+    """The process has submitted an image."""
 
     ALCHEMY_STARTING = auto()
     """The process is starting performing alchemy jobs."""
@@ -115,6 +135,10 @@ class HordeProcessState(enum.Enum):
 
     EVALUATING_SAFETY = auto()
     """The process is evaluating safety."""
+    SAFETY_STARTING = auto()
+    """The process is starting safety evaluation."""
+    SAFETY_COMPLETE = auto()
+    """The process has completed safety evaluation."""
     SAFETY_FAILED = auto()
     """The process has failed evaluating safety."""
 
