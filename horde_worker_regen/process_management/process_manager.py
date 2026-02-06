@@ -2401,7 +2401,7 @@ class HordeWorkerProcessManager:
                                 image_data = image_file.read()
                                 self._last_image_base64 = base64.b64encode(image_data).decode("utf-8")
                                 self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
-                        except Exception as e:
+                        except (FileNotFoundError, IOError, OSError) as e:
                             logger.warning(f"Failed to read saved image for webui preview: {e}")
                             # Fallback to the submitted image if reading from disk fails
                             self._last_image_base64 = completed_job_info.job_image_results[0].image_base64
