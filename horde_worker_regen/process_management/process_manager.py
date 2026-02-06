@@ -265,12 +265,12 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.ALCHEMY_STARTING
             or self.last_process_state == HordeProcessState.DOWNLOADING_MODEL
             or self.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL
-            or self.last_process_state == HordeProcessState.PRELOADING_MODEL
-            or self.last_process_state == HordeProcessState.PRELOADED_MODEL
+            or self.last_process_state == HordeProcessState.MODEL_PRELOADING
+            or self.last_process_state == HordeProcessState.MODEL_PRELOADED
             or self.last_process_state == HordeProcessState.MODEL_LOADING
             or self.last_process_state == HordeProcessState.MODEL_LOADED
             or self.last_process_state == HordeProcessState.JOB_RECEIVED
-            or self.last_process_state == HordeProcessState.EVALUATING_SAFETY
+            or self.last_process_state == HordeProcessState.SAFETY_EVALUATING
             or self.last_process_state == HordeProcessState.SAFETY_STARTING
             or self.last_process_state == HordeProcessState.IMAGE_SAVING
             or self.last_process_state == HordeProcessState.IMAGE_SUBMITTING
@@ -314,7 +314,7 @@ class HordeProcessInfo:
         """Return true if the process can accept a job."""
         return (
             self.last_process_state == HordeProcessState.WAITING_FOR_JOB
-            or self.last_process_state == HordeProcessState.PRELOADED_MODEL
+            or self.last_process_state == HordeProcessState.MODEL_PRELOADED
             or self.last_process_state == HordeProcessState.MODEL_LOADED
             or self.last_process_state == HordeProcessState.INFERENCE_COMPLETE
             or self.last_process_state == HordeProcessState.POST_PROCESSING_COMPLETE
@@ -479,7 +479,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             new_state == HordeProcessState.INFERENCE_COMPLETE
             or new_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or new_state == HordeProcessState.INFERENCE_FAILED
-            or new_state == HordeProcessState.PRELOADED_MODEL
+            or new_state == HordeProcessState.MODEL_PRELOADED
             or new_state == HordeProcessState.MODEL_LOADED
             or new_state == HordeProcessState.SAFETY_COMPLETE
             or new_state == HordeProcessState.IMAGE_SAVED
@@ -748,7 +748,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                 p.process_type == HordeProcessType.INFERENCE
                 and (
                     p.last_process_state == HordeProcessState.WAITING_FOR_JOB
-                    or p.last_process_state == HordeProcessState.PRELOADED_MODEL
+                    or p.last_process_state == HordeProcessState.MODEL_PRELOADED
                 )
                 and p.loaded_horde_model_name is None
                 and p.process_id not in disallowed_processes
@@ -871,8 +871,8 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         count = 0
         for p in self.values():
             if (
-                p.last_process_state == HordeProcessState.PRELOADING_MODEL
-                or p.last_process_state == HordeProcessState.PRELOADING_MODEL
+                p.last_process_state == HordeProcessState.MODEL_PRELOADING
+                or p.last_process_state == HordeProcessState.MODEL_PRELOADING
             ):
                 count += 1
         return count
@@ -882,8 +882,8 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         count = 0
         for p in self.values():
             if (
-                p.last_process_state == HordeProcessState.PRELOADED_MODEL
-                or p.last_process_state == HordeProcessState.PRELOADED_MODEL
+                p.last_process_state == HordeProcessState.MODEL_PRELOADED
+                or p.last_process_state == HordeProcessState.MODEL_PRELOADED
             ):
                 count += 1
         return count
@@ -948,7 +948,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
     def all_waiting_for_job(self) -> bool:
         """Return true if all processes are waiting for a job."""
         return all(
-            p.last_process_state in [HordeProcessState.WAITING_FOR_JOB, HordeProcessState.PRELOADED_MODEL]
+            p.last_process_state in [HordeProcessState.WAITING_FOR_JOB, HordeProcessState.MODEL_PRELOADED]
             for p in self.values()
         )
 
@@ -2476,8 +2476,8 @@ class HordeWorkerProcessManager:
             if (
                 p.loaded_horde_model_name in self.jobs_pending_inference
                 or p.loaded_horde_model_name in self.jobs_in_progress
-                or p.last_process_state == HordeProcessState.PRELOADED_MODEL
-                or p.last_process_state == HordeProcessState.PRELOADED_MODEL
+                or p.last_process_state == HordeProcessState.MODEL_PRELOADED
+                or p.last_process_state == HordeProcessState.MODEL_PRELOADED
             ):
                 processes_with_model_for_queued_job.append(p.process_id)
 
@@ -2502,8 +2502,8 @@ class HordeWorkerProcessManager:
         for process in self._process_map.values():
             if (
                 (
-                    process.last_process_state == HordeProcessState.PRELOADED_MODEL
-                    or process.last_process_state == HordeProcessState.PRELOADED_MODEL
+                    process.last_process_state == HordeProcessState.MODEL_PRELOADED
+                    or process.last_process_state == HordeProcessState.MODEL_PRELOADED
                 )
                 and process.loaded_horde_model_name not in pending_models
             ):
@@ -3098,8 +3098,8 @@ class HordeWorkerProcessManager:
 
             if (
                 process_info.is_process_busy()
-                or process_info.last_process_state == HordeProcessState.PRELOADED_MODEL
-                or process_info.last_process_state == HordeProcessState.PRELOADED_MODEL
+                or process_info.last_process_state == HordeProcessState.MODEL_PRELOADED
+                or process_info.last_process_state == HordeProcessState.MODEL_PRELOADED
             ):
                 continue
 
@@ -3882,11 +3882,11 @@ class HordeWorkerProcessManager:
                     fault_phase = "Downloading Model"
                 elif state == HordeProcessState.START_MODEL_LOAD:
                     fault_phase = "Starting Model Load"
-                elif state == HordeProcessState.PRELOADING_MODEL:
+                elif state == HordeProcessState.MODEL_PRELOADING:
                     fault_phase = "Loading Model"
                 elif state == HordeProcessState.DOWNLOADING_AUX_MODEL:
                     fault_phase = "Downloading LoRAs/Aux Models"
-                elif state == HordeProcessState.PRELOADING_MODEL:
+                elif state == HordeProcessState.MODEL_PRELOADING:
                     fault_phase = "Preloading Model"
                 elif state == HordeProcessState.INFERENCE_STARTING or state == HordeProcessState.INFERENCE_STARTING:
                     fault_phase = "During Inference"
@@ -3898,8 +3898,8 @@ class HordeWorkerProcessManager:
                 ):
                     fault_phase = "Post Processing"
                 elif (
-                    state == HordeProcessState.EVALUATING_SAFETY
-                    or state == HordeProcessState.EVALUATING_SAFETY
+                    state == HordeProcessState.SAFETY_EVALUATING
+                    or state == HordeProcessState.SAFETY_EVALUATING
                 ):
                     fault_phase = "Safety Check"
                 elif state == HordeProcessState.PROCESS_STARTING:
@@ -5857,7 +5857,7 @@ class HordeWorkerProcessManager:
                 conditions: list[tuple[float, HordeProcessState, str]] = [
                     (
                         self.bridge_data.preload_timeout,
-                        HordeProcessState.PRELOADING_MODEL,
+                        HordeProcessState.MODEL_PRELOADING,
                         "seems to be stuck preloading a model",
                     ),
                     (

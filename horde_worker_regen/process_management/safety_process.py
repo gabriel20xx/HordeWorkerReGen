@@ -203,7 +203,7 @@ class HordeSafetyProcess(HordeProcess):
 
         # Send evaluating state
         self.send_process_state_change_message(
-            process_state=HordeProcessState.EVALUATING_SAFETY,
+            process_state=HordeProcessState.SAFETY_EVALUATING,
             info="Evaluating safety",
         )
 

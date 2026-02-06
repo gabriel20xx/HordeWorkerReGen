@@ -806,9 +806,9 @@ class WorkerWebUI:
                             stateDisplay = 'Finished';
                         } else if (job.state === 'INFERENCE_STARTING' || job.state === 'INFERENCE_PROCESSING') {
                             stateDisplay = 'Inference';
-                        } else if (job.state === 'PRELOADING_MODEL' || job.state === 'PRELOADED_MODEL' || job.state === 'MODEL_LOADING' || job.state === 'MODEL_LOADED') {
+                        } else if (job.state === 'MODEL_PRELOADING' || job.state === 'MODEL_PRELOADED' || job.state === 'MODEL_LOADING' || job.state === 'MODEL_LOADED') {
                             stateDisplay = 'Loading Model';
-                        } else if (job.state === 'EVALUATING_SAFETY' || job.state === 'SAFETY_STARTING') {
+                        } else if (job.state === 'SAFETY_EVALUATING' || job.state === 'SAFETY_STARTING') {
                             stateDisplay = 'Safety Check';
                         } else if (job.state === 'SAFETY_COMPLETE') {
                             stateDisplay = 'Safety Check Complete';

@@ -87,9 +87,9 @@ class HordeProcessState(enum.Enum):
     DOWNLOAD_AUX_COMPLETE = auto()
     """The process has finished downloading an auxiliary model. (e.g., LORA)"""
 
-    PRELOADING_MODEL = auto()
+    MODEL_PRELOADING = auto()
     """The process is preloading a model."""
-    PRELOADED_MODEL = auto()
+    MODEL_PRELOADED = auto()
     """The process has finished preloading a model."""
     MODEL_LOADING = auto()
     """The process is loading a model."""
@@ -133,7 +133,7 @@ class HordeProcessState(enum.Enum):
     ALCHEMY_FAILED = auto()
     """The process has failed performing alchemy jobs."""
 
-    EVALUATING_SAFETY = auto()
+    SAFETY_EVALUATING = auto()
     """The process is evaluating safety."""
     SAFETY_STARTING = auto()
     """The process is starting safety evaluation."""
