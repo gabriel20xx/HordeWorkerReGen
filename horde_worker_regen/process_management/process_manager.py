@@ -628,7 +628,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """Return the number of inference processes that are available to accept jobs."""
         count = 0
         for p in self.values():
-            if p.process_type != HordeProcessType.INFERENCE and not p.is_process_busy():
+            if p.process_type == HordeProcessType.INFERENCE and not p.is_process_busy():
                 count += 1
         return count
 
