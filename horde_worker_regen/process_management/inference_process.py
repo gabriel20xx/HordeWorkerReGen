@@ -494,12 +494,40 @@ class HordeInferenceProcess(HordeProcess):
                 info="Post Processing",
                 time_elapsed=time.time() - self._start_inference_time,
             )
-            self._in_post_processing = True
-            try:
-                self._inference_semaphore.release()
-                logger.debug("Released inference semaphore")
-            except Exception as e:
-                logger.error(f"Failed to release inference semaphore: {type(e).__name__} {e}")
+
+            # Release semaphore on first entry to post-processing
+            if not self._in_post_processing:
+                self._in_post_processing = True
+                logger.info("Post-processing image(s)...")
+                try:
+                    self._inference_semaphore.release()
+                    logger.debug("Released inference semaphore")
+                except Exception as e:
+                    logger.error(f"Failed to release inference semaphore: {type(e).__name__} {e}")
+
+            # Check if hordelib provides granular post-processing progress
+            if (
+                progress_report.comfyui_progress is not None
+                and progress_report.comfyui_progress.current_step >= 0
+                and progress_report.comfyui_progress.total_steps > 0
+            ):
+                # Use actual progress if available during post-processing
+                percent = int(progress_report.comfyui_progress.percent)
+                self.send_heartbeat_message(
+                    heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                    percent_complete=percent,
+                )
+                logger.info(
+                    f"Post-processing: {percent}% (Step {progress_report.comfyui_progress.current_step}/"
+                    f"{progress_report.comfyui_progress.total_steps})"
+                )
+            else:
+                # Fallback to 100% if no detailed progress available
+                self.send_heartbeat_message(
+                    heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                    percent_complete=100,
+                )
+            return
 
         if self._current_job_inference_steps_complete:
             if not self._vae_lock_was_acquired:
