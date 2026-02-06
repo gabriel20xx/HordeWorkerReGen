@@ -23,7 +23,7 @@ class WorkerWebUI:
         self.app = web.Application()
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
-        
+
         # Status data that will be updated by the worker
         self.status_data: dict[str, Any] = {
             "worker_name": "Unknown",
@@ -47,7 +47,7 @@ class WorkerWebUI:
             "console_logs": [],
             "faulted_jobs_history": [],
         }
-        
+
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -77,7 +77,7 @@ class WorkerWebUI:
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -85,12 +85,12 @@ class WorkerWebUI:
             padding: 20px;
             min-height: 100vh;
         }
-        
+
         .container {
             max-width: 1400px;
             margin: 0 auto;
         }
-        
+
         h1 {
             color: white;
             text-align: center;
@@ -98,21 +98,21 @@ class WorkerWebUI:
             font-size: 2.5em;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
         }
-        
+
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 20px;
             margin-bottom: 20px;
         }
-        
+
         .card {
             background: white;
             border-radius: 12px;
             padding: 20px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        
+
         .card h2 {
             color: #667eea;
             margin-bottom: 15px;
@@ -120,7 +120,7 @@ class WorkerWebUI:
             border-bottom: 2px solid #667eea;
             padding-bottom: 8px;
         }
-        
+
         .stat {
             display: flex;
             justify-content: space-between;
@@ -128,34 +128,34 @@ class WorkerWebUI:
             padding: 10px 0;
             border-bottom: 1px solid #f0f0f0;
         }
-        
+
         .stat:last-child {
             border-bottom: none;
         }
-        
+
         .stat-label {
             color: #666;
             font-weight: 500;
         }
-        
+
         .stat-value {
             color: #333;
             font-weight: 600;
             font-size: 1.1em;
         }
-        
+
         .stat-value.success {
             color: #10b981;
         }
-        
+
         .stat-value.warning {
             color: #f59e0b;
         }
-        
+
         .stat-value.error {
             color: #ef4444;
         }
-        
+
         .progress-bar-container {
             width: 100%;
             height: 30px;
@@ -165,7 +165,7 @@ class WorkerWebUI:
             margin: 10px 0;
             position: relative;
         }
-        
+
         .progress-bar {
             height: 100%;
             background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
@@ -177,12 +177,12 @@ class WorkerWebUI:
             font-weight: 600;
             font-size: 0.9em;
         }
-        
+
         .process-list {
             max-height: 300px;
             overflow-y: auto;
         }
-        
+
         .process-item {
             background: #f8f9fa;
             padding: 10px;
@@ -190,23 +190,23 @@ class WorkerWebUI:
             border-radius: 8px;
             border-left: 4px solid #667eea;
         }
-        
+
         .process-id {
             font-weight: 600;
             color: #667eea;
         }
-        
+
         .process-state {
             color: #666;
             font-size: 0.9em;
             margin-top: 5px;
         }
-        
+
         .job-queue {
             max-height: 200px;
             overflow-y: auto;
         }
-        
+
         .job-item {
             background: #f8f9fa;
             padding: 8px 12px;
@@ -214,13 +214,13 @@ class WorkerWebUI:
             border-radius: 6px;
             font-size: 0.9em;
         }
-        
+
         .job-id {
             font-family: monospace;
             color: #667eea;
             font-weight: 600;
         }
-        
+
         .faulted-jobs-list {
             display: flex;
             flex-direction: column;
@@ -228,7 +228,7 @@ class WorkerWebUI:
             max-height: 400px;
             overflow-y: auto;
         }
-        
+
         .faulted-job-item {
             background: #fff5f5;
             border: 1px solid #fecaca;
@@ -237,7 +237,7 @@ class WorkerWebUI:
             border-radius: 6px;
             font-size: 0.9em;
         }
-        
+
         .faulted-job-header {
             display: flex;
             justify-content: space-between;
@@ -246,31 +246,31 @@ class WorkerWebUI:
             padding-bottom: 8px;
             border-bottom: 1px solid #fecaca;
         }
-        
+
         .faulted-job-id {
             font-family: monospace;
             color: #dc2626;
             font-weight: 700;
             font-size: 0.95em;
         }
-        
+
         .faulted-job-time {
             color: #666;
             font-size: 0.85em;
         }
-        
+
         .faulted-job-details {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
             gap: 8px;
             margin-top: 8px;
         }
-        
+
         .faulted-job-detail {
             display: flex;
             flex-direction: column;
         }
-        
+
         .faulted-job-label {
             color: #666;
             font-size: 0.8em;
@@ -278,12 +278,12 @@ class WorkerWebUI:
             text-transform: uppercase;
             margin-bottom: 2px;
         }
-        
+
         .faulted-job-value {
             color: #333;
             font-weight: 500;
         }
-        
+
         .faulted-job-lora {
             background: #fef3c7;
             padding: 4px 8px;
@@ -292,7 +292,7 @@ class WorkerWebUI:
             display: inline-block;
             margin: 2px;
         }
-        
+
         .faulted-job-controlnet {
             background: #dbeafe;
             padding: 4px 8px;
@@ -302,16 +302,16 @@ class WorkerWebUI:
             color: #1e40af;
             font-weight: 600;
         }
-        
+
         .faulted-job-section {
             margin-top: 8px;
         }
-        
+
         .faulted-job-section-label {
             display: block;
             margin-bottom: 4px;
         }
-        
+
         .status-badge {
             display: inline-block;
             padding: 4px 12px;
@@ -320,17 +320,17 @@ class WorkerWebUI:
             font-weight: 600;
             text-transform: uppercase;
         }
-        
+
         .status-active {
             background: #d1fae5;
             color: #065f46;
         }
-        
+
         .status-maintenance {
             background: #fef3c7;
             color: #92400e;
         }
-        
+
         .update-time {
             text-align: center;
             color: white;
@@ -338,13 +338,13 @@ class WorkerWebUI:
             font-size: 0.9em;
             opacity: 0.9;
         }
-        
+
         .model-list {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
         }
-        
+
         .model-badge {
             background: #e0e7ff;
             color: #4338ca;
@@ -353,7 +353,7 @@ class WorkerWebUI:
             font-size: 0.85em;
             font-weight: 500;
         }
-        
+
         .loading {
             text-align: center;
             color: white;
@@ -361,23 +361,23 @@ class WorkerWebUI:
             margin-top: 50px;
             animation: pulse 2s ease-in-out infinite;
         }
-        
+
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
-        
+
         .wide-card {
             grid-column: 1 / -1;
         }
-        
+
         .last-image-container {
             min-height: 432px;
             display: flex;
             align-items: center;
             justify-content: center;
         }
-        
+
         .last-image-container img {
             max-width: 100%;
             max-height: 432px;
@@ -388,7 +388,7 @@ class WorkerWebUI:
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             display: block;
         }
-        
+
         .subsection-heading {
             color: #667eea;
             font-size: 1.1em;
@@ -396,7 +396,7 @@ class WorkerWebUI:
             border-bottom: 1px solid #e0e7ff;
             padding-bottom: 5px;
         }
-        
+
         /* Image and console layout with specific widths */
         .image-console-grid {
             display: grid;
@@ -404,13 +404,13 @@ class WorkerWebUI:
             gap: 20px;
             margin-bottom: 20px;
         }
-        
+
         @media (max-width: 900px) {
             .image-console-grid {
                 grid-template-columns: 1fr;
             }
         }
-        
+
         /* Full resolution image overlay */
         .image-overlay {
             display: none;
@@ -425,11 +425,11 @@ class WorkerWebUI:
             align-items: center;
             padding: 20px;
         }
-        
+
         .image-overlay.active {
             display: flex;
         }
-        
+
         .image-overlay-content {
             position: relative;
             max-width: 95%;
@@ -438,7 +438,7 @@ class WorkerWebUI:
             justify-content: center;
             align-items: center;
         }
-        
+
         .image-overlay img {
             max-width: 100%;
             max-height: 90vh;
@@ -448,7 +448,7 @@ class WorkerWebUI:
             border-radius: 8px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.5);
         }
-        
+
         .image-overlay-close {
             position: absolute;
             top: -40px;
@@ -464,17 +464,17 @@ class WorkerWebUI:
             transition: background 0.3s ease;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
         }
-        
+
         .image-overlay-close:hover {
             background: #764ba2;
         }
-        
+
         /* Make image clickable */
         .last-image-container img {
             cursor: pointer;
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
-        
+
         .last-image-container img:hover {
             transform: scale(1.02);
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
@@ -506,7 +506,7 @@ class WorkerWebUI:
                         <span class="stat-value success" id="user-kudos-total">-</span>
                     </div>
                 </div>
-                
+
                 <div class="card">
                     <h2>Session Stats</h2>
                     <div class="stat">
@@ -526,7 +526,7 @@ class WorkerWebUI:
                         <span class="stat-value success" id="kudos-per-hour">0</span>
                     </div>
                 </div>
-                
+
                 <div class="card">
                     <h2>Resources</h2>
                     <div class="stat">
@@ -545,7 +545,7 @@ class WorkerWebUI:
                     </div>
                 </div>
             </div>
-            
+
             <div class="grid">
                 <div class="card">
                     <h2>Current Job</h2>
@@ -553,7 +553,7 @@ class WorkerWebUI:
                         <div style="text-align: center; color: #999; padding: 20px;">No job in progress</div>
                     </div>
                 </div>
-                
+
                 <div class="card">
                     <h2>Job Queue & Active Models</h2>
                     <div style="margin-bottom: 20px;">
@@ -573,7 +573,7 @@ class WorkerWebUI:
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="card">
                     <h2>Processes (<span id="process-count">0</span>)</h2>
                     <div id="processes" class="process-list">
@@ -581,7 +581,7 @@ class WorkerWebUI:
                     </div>
                 </div>
             </div>
-            
+
             <div class="image-console-grid">
                 <div class="card">
                     <h2>Last Generated Image</h2>
@@ -589,7 +589,7 @@ class WorkerWebUI:
                         <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
                     </div>
                 </div>
-                
+
                 <div class="card">
                     <h2>Console Output</h2>
                     <div id="console-logs" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.85em; background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 6px;">
@@ -597,7 +597,7 @@ class WorkerWebUI:
                     </div>
                 </div>
             </div>
-            
+
             <div class="grid">
                 <div class="card">
                     <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
@@ -609,7 +609,7 @@ class WorkerWebUI:
         </div>
         <div class="update-time" id="update-time">Last updated: Never</div>
     </div>
-    
+
     <!-- Full resolution image overlay -->
     <div id="image-overlay" class="image-overlay">
         <div class="image-overlay-content">
@@ -617,7 +617,7 @@ class WorkerWebUI:
             <img id="overlay-image" src="" alt="Full resolution image" />
         </div>
     </div>
-    
+
     <script>
         // Image overlay functions
         function openImageOverlay(imageSrc) {
@@ -626,57 +626,57 @@ class WorkerWebUI:
             overlayImage.src = imageSrc;
             overlay.classList.add('active');
         }
-        
+
         function closeImageOverlay() {
             const overlay = document.getElementById('image-overlay');
             overlay.classList.remove('active');
         }
-        
+
         // Close overlay when clicking outside the image
         document.getElementById('image-overlay').addEventListener('click', function(e) {
             if (e.target === this) {
                 closeImageOverlay();
             }
         });
-        
+
         // Close overlay with Escape key
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeImageOverlay();
             }
         });
-        
+
         function formatUptime(seconds) {
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
             const secs = Math.floor(seconds % 60);
             return `${hours}h ${minutes}m ${secs}s`;
         }
-        
+
         function formatBytes(bytes) {
             if (bytes === 0) return '0 MB';
             const mb = bytes / (1024 * 1024);
             return mb.toFixed(1) + ' MB';
         }
-        
+
         // Constants for UI behavior
         const SCROLL_TOLERANCE_PX = 1; // Pixel tolerance for scroll position detection
-        
+
         // Helper function to check if element is scrolled to bottom
         function isScrolledToBottom(element, tolerance) {
             return element.scrollHeight - element.clientHeight <= element.scrollTop + tolerance;
         }
-        
+
         // Helper function to escape HTML to prevent XSS
         function escapeHtml(str) {
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
-        
+
         // ANSI color code to HTML converter
         function ansiToHtml(text) {
             // Escape HTML first to prevent XSS
             text = escapeHtml(text);
-            
+
             // ANSI color codes mapping
             const colors = {
                 '30': '#000000', '31': '#cd3131', '32': '#0dbc79', '33': '#e5e510',
@@ -687,20 +687,20 @@ class WorkerWebUI:
                 '1;30': '#666666', '1;31': '#f14c4c', '1;32': '#23d18b', '1;33': '#f5f543',
                 '1;34': '#3b8eea', '1;35': '#d670d6', '1;36': '#29b8db', '1;37': '#ffffff',
             };
-            
+
             const bgColors = {
                 '40': '#000000', '41': '#cd3131', '42': '#0dbc79', '43': '#e5e510',
                 '44': '#2472c8', '45': '#bc3fbc', '46': '#11a8cd', '47': '#e5e5e5',
                 '100': '#666666', '101': '#f14c4c', '102': '#23d18b', '103': '#f5f543',
                 '104': '#3b8eea', '105': '#d670d6', '106': '#29b8db', '107': '#ffffff',
             };
-            
+
             let result = '';
             let currentStyles = [];
-            
+
             // Split by ANSI escape sequences
             const parts = text.split(/\\x1b\\[([0-9;]+)m/);
-            
+
             for (let i = 0; i < parts.length; i++) {
                 if (i % 2 === 0) {
                     // Regular text
@@ -712,7 +712,7 @@ class WorkerWebUI:
                 } else {
                     // ANSI code - process codes cumulatively
                     const codes = parts[i].split(';');
-                    
+
                     for (const code of codes) {
                         if (code === '0' || code === '') {
                             // Reset all styles
@@ -749,68 +749,84 @@ class WorkerWebUI:
                     }
                 }
             }
-            
+
             return result;
         }
-        
+
         function updateStatus() {
             fetch('/api/status')
                 .then(response => response.json())
                 .then(data => {
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('content').style.display = 'block';
-                    
+
                     // Worker Info
                     document.getElementById('worker-name').textContent = data.worker_name;
-                    
+
                     const statusBadge = document.getElementById('worker-status-badge');
                     if (data.maintenance_mode) {
                         statusBadge.innerHTML = '<span class="status-badge status-maintenance">Maintenance</span>';
                     } else {
                         statusBadge.innerHTML = '<span class="status-badge status-active">Active</span>';
                     }
-                    
+
                     document.getElementById('uptime').textContent = formatUptime(data.uptime);
-                    document.getElementById('user-kudos-total').textContent = 
+                    document.getElementById('user-kudos-total').textContent =
                         data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
-                    
+
                     // Session Stats
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
                     document.getElementById('jobs-completed').textContent = data.jobs_completed;
                     document.getElementById('jobs-faulted').textContent = data.jobs_faulted;
-                    document.getElementById('kudos-per-hour').textContent = 
+                    document.getElementById('kudos-per-hour').textContent =
                         data.kudos_per_hour.toLocaleString(undefined, {maximumFractionDigits: 2});
-                    
+
                     // Resources
                     document.getElementById('ram-usage').textContent = formatBytes(data.ram_usage_mb * 1024 * 1024);
                     document.getElementById('vram-usage').textContent = formatBytes(data.vram_usage_mb * 1024 * 1024);
-                    
-                    const vramPercent = data.total_vram_mb > 0 
+
+                    const vramPercent = data.total_vram_mb > 0
                         ? Math.min(100, Math.round((data.vram_usage_mb / data.total_vram_mb) * 100))
                         : 0;
                     const vramProgress = document.getElementById('vram-progress');
                     vramProgress.style.width = vramPercent + '%';
                     vramProgress.textContent = vramPercent + '%';
-                    
+
                     // Current Job
                     const currentJobDiv = document.getElementById('current-job');
                     if (data.current_job) {
                         const job = data.current_job;
                         // Format state to be more readable
                         let stateDisplay = job.state || 'N/A';
-                        if (job.state === 'INFERENCE_POST_PROCESSING') {
+                        if (job.state === 'INFERENCE_POST_PROCESSING' || job.state === 'POST_PROCESSING_STARTING') {
                             stateDisplay = 'Post Processing';
+                        } else if (job.state === 'POST_PROCESSING_COMPLETE') {
+                            stateDisplay = 'Post Processing Complete';
                         } else if (job.state === 'INFERENCE_COMPLETE') {
                             stateDisplay = 'Finished';
-                        } else if (job.state === 'INFERENCE_STARTING') {
+                        } else if (job.state === 'INFERENCE_STARTING' || job.state === 'INFERENCE_PROCESSING') {
                             stateDisplay = 'Inference';
+                        } else if (job.state === 'MODEL_PRELOADING' || job.state === 'MODEL_PRELOADED' || job.state === 'MODEL_LOADING' || job.state === 'MODEL_LOADED') {
+                            stateDisplay = 'Loading Model';
+                        } else if (job.state === 'SAFETY_EVALUATING' || job.state === 'SAFETY_STARTING') {
+                            stateDisplay = 'Safety Check';
+                        } else if (job.state === 'SAFETY_COMPLETE') {
+                            stateDisplay = 'Safety Check Complete';
+                        } else if (job.state === 'IMAGE_SAVING') {
+                            stateDisplay = 'Saving Image';
+                        } else if (job.state === 'IMAGE_SAVED') {
+                            stateDisplay = 'Image Saved';
+                        } else if (job.state === 'IMAGE_SUBMITTING') {
+                            stateDisplay = 'Submitting';
+                        } else if (job.state === 'IMAGE_SUBMITTED') {
+                            stateDisplay = 'Submitted';
                         } else if (job.state) {
                             // Convert snake_case to Title Case
-                            stateDisplay = job.state.split('_').map(word => 
+                            stateDisplay = job.state.split('_').map(word =>
                                 word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
                             ).join(' ');
                         }
-                        
+
                         currentJobDiv.innerHTML = `
                             <div class="stat">
                                 <span class="stat-label">Job ID:</span>
@@ -842,12 +858,12 @@ class WorkerWebUI:
                     } else {
                         currentJobDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No job in progress</div>';
                     }
-                    
+
                     // Job Queue
                     const queueDiv = document.getElementById('job-queue');
                     const queueCount = document.getElementById('queue-count');
                     queueCount.textContent = data.job_queue.length;
-                    
+
                     if (data.job_queue.length > 0) {
                         queueDiv.innerHTML = data.job_queue.map(job => {
                             const batchInfo = job.batch_size && job.batch_size > 1 ? ` (${job.batch_size}x batch)` : '';
@@ -860,36 +876,36 @@ class WorkerWebUI:
                     } else {
                         queueDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">Queue is empty</div>';
                     }
-                    
+
                     // Models
                     const modelsDiv = document.getElementById('models-loaded');
                     if (data.models_loaded.length > 0) {
-                        modelsDiv.innerHTML = data.models_loaded.map(model => 
+                        modelsDiv.innerHTML = data.models_loaded.map(model =>
                             `<div class="model-badge">${model}</div>`
                         ).join('');
                     } else {
                         modelsDiv.innerHTML = '<div style="color: #999;">No models loaded</div>';
                     }
-                    
+
                     // Processes
                     const processesDiv = document.getElementById('processes');
                     const processCount = document.getElementById('process-count');
                     processCount.textContent = data.processes.length;
-                    
+
                     if (data.processes.length > 0) {
                         processesDiv.innerHTML = data.processes.map(proc => `
                             <div class="process-item">
                                 <div class="process-id">Process #${proc.id}: ${proc.type}</div>
                                 <div class="process-state">${proc.state}</div>
                                 ${proc.model ? `<div class="process-state">Model: ${proc.model}</div>` : ''}
-                                ${proc.progress !== null && proc.progress !== undefined ? 
+                                ${proc.progress !== null && proc.progress !== undefined ?
                                     `<div class="process-state">Progress: ${proc.progress}%</div>` : ''}
                             </div>
                         `).join('');
                     } else {
                         processesDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No process info</div>';
                     }
-                    
+
                     // Faulted Jobs
                     const faultedJobsDiv = document.getElementById('faulted-jobs');
                     const faultedJobsCount = document.getElementById('faulted-jobs-count');
@@ -904,9 +920,9 @@ class WorkerWebUI:
                                     timeStr = faultedTime.toLocaleString();
                                 }
                             }
-                            
+
                             let detailsHtml = '<div class="faulted-job-details">';
-                            
+
                             // Model
                             detailsHtml += `
                                 <div class="faulted-job-detail">
@@ -914,7 +930,7 @@ class WorkerWebUI:
                                     <span class="faulted-job-value">${escapeHtml(job.model)}</span>
                                 </div>
                             `;
-                            
+
                             // Fault Phase
                             if (job.fault_phase) {
                                 detailsHtml += `
@@ -924,7 +940,7 @@ class WorkerWebUI:
                                     </div>
                                 `;
                             }
-                            
+
                             // Size
                             if (job.width && job.height) {
                                 detailsHtml += `
@@ -934,7 +950,7 @@ class WorkerWebUI:
                                     </div>
                                 `;
                             }
-                            
+
                             // Steps
                             if (job.steps) {
                                 detailsHtml += `
@@ -944,7 +960,7 @@ class WorkerWebUI:
                                     </div>
                                 `;
                             }
-                            
+
                             // Sampler
                             if (job.sampler) {
                                 detailsHtml += `
@@ -954,7 +970,7 @@ class WorkerWebUI:
                                     </div>
                                 `;
                             }
-                            
+
                             // Batch Size (only if > 1)
                             if (job.batch_size && job.batch_size > 1) {
                                 detailsHtml += `
@@ -964,9 +980,9 @@ class WorkerWebUI:
                                     </div>
                                 `;
                             }
-                            
+
                             detailsHtml += '</div>';
-                            
+
                             // LoRAs
                             let lorasHtml = '';
                             if (job.loras && job.loras.length > 0) {
@@ -978,7 +994,7 @@ class WorkerWebUI:
                                 });
                                 lorasHtml += '</div>';
                             }
-                            
+
                             // ControlNet
                             let controlnetHtml = '';
                             if (job.controlnet) {
@@ -989,7 +1005,7 @@ class WorkerWebUI:
                                     </div>
                                 `;
                             }
-                            
+
                             return `
                                 <div class="faulted-job-item">
                                     <div class="faulted-job-header">
@@ -1006,20 +1022,20 @@ class WorkerWebUI:
                         faultedJobsCount.textContent = '0';
                         faultedJobsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>';
                     }
-                    
+
                     // Last Generated Image
                     const lastImageContainer = document.getElementById('last-image-container');
                     if (data.last_image_base64) {
                         const imageSrc = `data:image/png;base64,${data.last_image_base64}`;
                         lastImageContainer.innerHTML = `
-                            <img src="${imageSrc}" 
+                            <img src="${imageSrc}"
                                  alt="Last generated image"
                                  onclick="openImageOverlay('${imageSrc}')" />
                         `;
                     } else {
                         lastImageContainer.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>';
                     }
-                    
+
                     // Console Logs
                     const consoleLogsDiv = document.getElementById('console-logs');
                     if (data.console_logs && data.console_logs.length > 0) {
@@ -1035,29 +1051,29 @@ class WorkerWebUI:
                     } else {
                         consoleLogsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No logs available</div>';
                     }
-                    
+
                     // Update time
-                    document.getElementById('update-time').textContent = 
+                    document.getElementById('update-time').textContent =
                         'Last updated: ' + new Date().toLocaleTimeString();
                 })
                 .catch(error => {
                     console.error('Error fetching status:', error);
                 });
         }
-        
+
         // Constants
         const DEFAULT_UPDATE_INTERVAL_MS = 1000;
-        
+
         // Fetch config and start updates
         async function initializeUpdates() {
             try {
                 const configResponse = await fetch('/api/config');
                 const config = await configResponse.json();
                 const updateInterval = config.update_interval_ms || DEFAULT_UPDATE_INTERVAL_MS;
-                
+
                 // Update immediately
                 updateStatus();
-                
+
                 // Then set interval based on config
                 setInterval(updateStatus, updateInterval);
             } catch (error) {
@@ -1067,7 +1083,7 @@ class WorkerWebUI:
                 setInterval(updateStatus, DEFAULT_UPDATE_INTERVAL_MS);
             }
         }
-        
+
         initializeUpdates();
     </script>
 </body>
@@ -1162,7 +1178,7 @@ class WorkerWebUI:
             self.status_data["console_logs"] = console_logs
         if faulted_jobs_history is not None:
             self.status_data["faulted_jobs_history"] = faulted_jobs_history
-        
+
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]
 

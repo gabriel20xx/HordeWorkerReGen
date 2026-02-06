@@ -187,12 +187,24 @@ class HordeSafetyProcess(HordeProcess):
         if message.control_flag != HordeControlFlag.EVALUATE_SAFETY:
             raise ValueError(f"Expected {HordeControlFlag.EVALUATE_SAFETY}, got {message.control_flag}")
 
+        # Send starting state
+        self.send_process_state_change_message(
+            process_state=HordeProcessState.SAFETY_STARTING,
+            info="Starting safety evaluation",
+        )
+
         self.send_memory_report_message(include_vram=False)
 
         time_start = time.time()
 
         logger.info(
             f"Horde safety process received job {message.job_id}. Number of images: {len(message.images_base64)}",
+        )
+
+        # Send evaluating state
+        self.send_process_state_change_message(
+            process_state=HordeProcessState.SAFETY_EVALUATING,
+            info="Evaluating safety",
         )
 
         safety_evaluations: list[HordeSafetyEvaluation] = []
@@ -292,9 +304,11 @@ class HordeSafetyProcess(HordeProcess):
                 _add_metadata_text("Denoising strength", generation_metadata.get("denoising_strength"))
                 _add_metadata_text(
                     "Steps",
-                    generation_metadata.get("steps")
-                    if generation_metadata.get("steps") is not None
-                    else generation_metadata.get("ddim_steps"),
+                    (
+                        generation_metadata.get("steps")
+                        if generation_metadata.get("steps") is not None
+                        else generation_metadata.get("ddim_steps")
+                    ),
                 )
                 _add_metadata_text("Version", generation_metadata.get("version"))
                 post_processing = generation_metadata.get("post_processing")
@@ -357,7 +371,7 @@ class HordeSafetyProcess(HordeProcess):
             except (OSError, ValueError) as e:
                 # Handle PIL image open errors (corrupted images, unsupported formats)
                 logger.error(f"Failed to open image: {type(e).__name__} {e}")
-            # ! IMPORTANT: End of own code
+                # ! IMPORTANT: End of own code
                 safety_evaluations.append(
                     HordeSafetyEvaluation(
                         is_nsfw=True,
@@ -371,7 +385,7 @@ class HordeSafetyProcess(HordeProcess):
 
             nsfw_result: NSFWResult | None = self._nsfw_checker.check_for_nsfw(
                 image=image_as_pil,
-                prompt=original_prompt, # ! IMPORTANT: Changed "message.prompt" to "original_prompt"
+                prompt=original_prompt,  # ! IMPORTANT: Changed "message.prompt" to "original_prompt"
                 model_info=message.horde_model_info,
             )
 
@@ -443,6 +457,12 @@ class HordeSafetyProcess(HordeProcess):
 
         info_message = f"Finished evaluating safety for job {message.job_id}"
         logger.info(info_message)
+
+        # Send completion state
+        self.send_process_state_change_message(
+            process_state=HordeProcessState.SAFETY_COMPLETE,
+            info="Safety evaluation complete",
+        )
 
         self.process_message_queue.put(
             HordeSafetyResultMessage(
