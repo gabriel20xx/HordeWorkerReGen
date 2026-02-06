@@ -455,6 +455,12 @@ class HordeSafetyProcess(HordeProcess):
 
         time_elapsed = time.time() - time_start
 
+        # Emit IMAGE_SAVED state after all images are saved
+        self.send_process_state_change_message(
+            process_state=HordeProcessState.IMAGE_SAVED,
+            info=f"All images saved for job {message.job_id}",
+        )
+
         info_message = f"Finished evaluating safety for job {message.job_id}"
         logger.info(info_message)
 

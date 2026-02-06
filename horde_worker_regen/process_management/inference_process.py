@@ -435,7 +435,7 @@ class HordeInferenceProcess(HordeProcess):
             )
 
         self.on_horde_model_state_change(
-            process_state=HordeProcessState.MODEL_LOADING,
+            process_state=HordeProcessState.MODEL_PRELOADING,
             horde_model_name=horde_model_name,
             horde_model_state=ModelLoadState.LOADING,
         )
@@ -453,7 +453,7 @@ class HordeInferenceProcess(HordeProcess):
         logger.info(f"Preloaded model {horde_model_name}")
         self._active_model_name = horde_model_name
         self.on_horde_model_state_change(
-            process_state=HordeProcessState.MODEL_LOADED,
+            process_state=HordeProcessState.MODEL_PRELOADED,
             horde_model_name=horde_model_name,
             horde_model_state=ModelLoadState.LOADED_IN_RAM,
             time_elapsed=time.time() - time_start,
@@ -493,20 +493,20 @@ class HordeInferenceProcess(HordeProcess):
             if not self._in_post_processing:
                 self._in_post_processing = True
                 logger.info("Post-processing image(s)...")
-                
+
                 # Send starting state
                 self.send_process_state_change_message(
                     process_state=HordeProcessState.POST_PROCESSING_STARTING,
                     info="Starting Post Processing",
                     time_elapsed=time.time() - self._start_inference_time,
                 )
-                
+
                 try:
                     self._inference_semaphore.release()
                     logger.debug("Released inference semaphore")
                 except Exception as e:
                     logger.error(f"Failed to release inference semaphore: {type(e).__name__} {e}")
-            
+
             # Send in-progress state
             self.send_process_state_change_message(
                 process_state=HordeProcessState.INFERENCE_POST_PROCESSING,
@@ -676,6 +676,14 @@ class HordeInferenceProcess(HordeProcess):
             with logger.catch(reraise=True):
                 self._start_inference_time = time.time()
                 results = self._horde.basic_inference(job_info, progress_callback=self.progress_callback)
+
+                # Emit POST_PROCESSING_COMPLETE state if post-processing was done
+                if self._in_post_processing:
+                    self.send_process_state_change_message(
+                        process_state=HordeProcessState.POST_PROCESSING_COMPLETE,
+                        info="Post processing complete",
+                        time_elapsed=time.time() - self._start_inference_time,
+                    )
         except Exception as e:
             logger.critical(f"Inference failed: {type(e).__name__} {e}")
             return None
