@@ -945,6 +945,9 @@ class HordeJobInfo(BaseModel):  # TODO: Split into a new file
     # ! IMPORTANT: Start own code
     sanitized_negative_prompt: str | None = None
     """The sanitized negative prompt used for inference, if any."""
+    
+    inference_completed_timestamp: float | None = None
+    """Timestamp when inference completed, used to track the order of job completions for preview display."""
     # ! IMPORTANT: End own code
 
     retry_count: int = 0
@@ -1538,6 +1541,8 @@ class HordeWorkerProcessManager:
         self.webui: WorkerWebUI | None = None
         self._last_image_base64: str | None = None
         """The last generated image in base64 format for webui preview."""
+        self._last_image_job_timestamp: float = 0.0
+        """Timestamp when the last preview image was set, to prevent older jobs from overwriting newer ones."""
         self._console_logs: list[str] = []
         """Recent console logs for webui display."""
         self._log_handler_id: int | None = None
@@ -2264,7 +2269,10 @@ class HordeWorkerProcessManager:
                     
                     # Capture last image for webui preview
                     if self.webui and message.job_image_results and len(message.job_image_results) > 0:
+                        current_time = time.time()
+                        job_info.inference_completed_timestamp = current_time
                         self._last_image_base64 = message.job_image_results[0].image_base64
+                        self._last_image_job_timestamp = current_time
 
                     self.jobs_pending_safety_check.append(job_info)
                 else:
@@ -2384,6 +2392,18 @@ class HordeWorkerProcessManager:
                             completed_job_info.censored = True
                             if completed_job_info.state != GENERATION_STATE.csam:
                                 completed_job_info.state = GENERATION_STATE.censored
+
+                # Update webui preview with the final (potentially censored) image
+                # Only update if this job's inference completed more recently than the currently displayed job
+                if (
+                    self.webui 
+                    and completed_job_info.job_image_results 
+                    and len(completed_job_info.job_image_results) > 0
+                    and completed_job_info.inference_completed_timestamp is not None
+                    and completed_job_info.inference_completed_timestamp >= self._last_image_job_timestamp
+                ):
+                    self._last_image_base64 = completed_job_info.job_image_results[0].image_base64
+                    self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
 
                 # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
                 self.jobs_pending_submit.append(completed_job_info)
