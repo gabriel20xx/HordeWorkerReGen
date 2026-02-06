@@ -24,13 +24,13 @@ def create_level_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS"):
     """
     # Define custom level colors for better visual distinction
     # Note: Timestamp is never colored to ensure it's always clearly visible
-    # Note: Messages are not wrapped in color tags to allow custom loguru color tags
-    #       embedded in messages (like <fg #00d7ff>) to display correctly
+    # Note: SUCCESS messages are wrapped in green to provide clear visual feedback
+    # Note: Custom loguru color tags embedded in messages (like <u> for underline) work correctly within the green wrapper
     level_formats = {
         "TRACE": f"{{time:{time_format}}} <dim>|</dim> <dim><cyan>{{level: <8}}</cyan></dim> <dim>|</dim> <dim>{{message}}</dim>",
         "DEBUG": f"{{time:{time_format}}} <dim>|</dim> <blue>{{level: <8}}</blue> <dim>|</dim> {{message}}",
         "INFO": f"{{time:{time_format}}} <dim>|</dim> <bold><cyan>{{level: <8}}</cyan></bold> <dim>|</dim> {{message}}",
-        "SUCCESS": f"{{time:{time_format}}} <dim>|</dim> <bold><green>{{level: <8}}</green></bold> <dim>|</dim> {{message}}",
+        "SUCCESS": f"{{time:{time_format}}} <dim>|</dim> <bold><green>{{level: <8}}</green></bold> <dim>|</dim> <green>{{message}}</green>",
         "WARNING": f"{{time:{time_format}}} <dim>|</dim> <bold><yellow>{{level: <8}}</yellow></bold> <dim>|</dim> {{message}}",
         "ERROR": f"{{time:{time_format}}} <dim>|</dim> <bold><red>{{level: <8}}</red></bold> <dim>|</dim> {{message}}",
         "CRITICAL": f"{{time:{time_format}}} <dim>|</dim> <bold><red><u>{{level: <8}}</u></red></bold> <dim>|</dim> {{message}}",
