@@ -495,6 +495,16 @@ class HordeInferenceProcess(HordeProcess):
                 time_elapsed=time.time() - self._start_inference_time,
             )
             self._in_post_processing = True
+
+            # Send heartbeat with 100% progress to show post-processing is in progress
+            self.send_heartbeat_message(
+                heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                percent_complete=100,
+            )
+
+            # Log post-processing to console
+            logger.info("Post-processing image(s)...")
+
             try:
                 self._inference_semaphore.release()
                 logger.debug("Released inference semaphore")
