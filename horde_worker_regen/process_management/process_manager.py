@@ -1141,10 +1141,10 @@ class HordeWorkerProcessManager:
         "TRACE": "{time:HH:mm:ss} <dim>|</dim> <dim><cyan>{level: <8}</cyan></dim> <dim>|</dim> <dim>{message}</dim>",
         "DEBUG": "{time:HH:mm:ss} <dim>|</dim> <blue>{level: <8}</blue> <dim>|</dim> {message}",
         "INFO": "{time:HH:mm:ss} <dim>|</dim> <bold><cyan>{level: <8}</cyan></bold> <dim>|</dim> {message}",
-        "SUCCESS": "{time:HH:mm:ss} <dim>|</dim> <bold><green>{level: <8}</green></bold> <dim>|</dim> {message}",
-        "WARNING": "{time:HH:mm:ss} <dim>|</dim> <bold><yellow>{level: <8}</yellow></bold> <dim>|</dim> {message}",
-        "ERROR": "{time:HH:mm:ss} <dim>|</dim> <bold><red>{level: <8}</red></bold> <dim>|</dim> {message}",
-        "CRITICAL": "{time:HH:mm:ss} <dim>|</dim> <bold><red><u>{level: <8}</u></red></bold> <dim>|</dim> {message}",
+        "SUCCESS": "{time:HH:mm:ss} <dim>|</dim> <bold><green>{level: <8}</green></bold> <dim>|</dim> <bold><green>{message}</green></bold>",
+        "WARNING": "{time:HH:mm:ss} <dim>|</dim> <bold><yellow>{level: <8}</yellow></bold> <dim>|</dim> <yellow>{message}</yellow>",
+        "ERROR": "{time:HH:mm:ss} <dim>|</dim> <bold><red>{level: <8}</red></bold> <dim>|</dim> <red>{message}</red>",
+        "CRITICAL": "{time:HH:mm:ss} <dim>|</dim> <bold><red><u>{level: <8}</u></red></bold> <dim>|</dim> <bold><red>{message}</red></bold>",
     }
 
     bridge_data: reGenBridgeData
