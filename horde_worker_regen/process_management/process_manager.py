@@ -2458,7 +2458,7 @@ class HordeWorkerProcessManager:
     def get_processes_with_model_for_queued_job(self) -> list[int]:
         """Get the processes that have the model for any queued job."""
         processes_with_model_for_queued_job: list[int] = []
-        
+
         # Get set of model names from queued and in-progress jobs
         queued_model_names = {job.model for job in self.jobs_pending_inference}
         queued_model_names.update(job.model for job in self.jobs_in_progress)
