@@ -4130,6 +4130,10 @@ class HordeWorkerProcessManager:
             self._last_pop_no_jobs_available = False
             return
 
+        # Skip if the client session is not initialized yet (during startup)
+        if not hasattr(self, 'horde_client_session') or self.horde_client_session is None:
+            return
+
         cur_time = time.time()
 
         if self._too_many_consecutive_failed_jobs:
