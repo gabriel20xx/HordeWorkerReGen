@@ -4632,7 +4632,7 @@ class HordeWorkerProcessManager:
             )
 
         # Show current jobs in progress
-        if len(self.jobs_in_progress) > 0:
+        if self.jobs_in_progress:
             # Filter jobs with valid IDs and format them
             job_details = [
                 f"{str(job.id_)[:8]} ({job.model})"
