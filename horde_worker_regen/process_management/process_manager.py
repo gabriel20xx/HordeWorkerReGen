@@ -3391,9 +3391,11 @@ class HordeWorkerProcessManager:
         )
         logger.debug(f"Submitting job {new_submit.job_id}")
 
-        # Update state to IMAGE_SUBMITTING for the process that handled this job
+        # Find and update state to IMAGE_SUBMITTING for the process that handled this job
+        handling_process_id = None
         for process_id, process_info in self._process_map.items():
             if process_info.last_job_referenced == new_submit.completed_job_info.sdk_api_job_info:
+                handling_process_id = process_id
                 self._process_map.on_process_state_change(
                     process_id=process_id,
                     new_state=HordeProcessState.IMAGE_SUBMITTING,
@@ -3514,14 +3516,12 @@ class HordeWorkerProcessManager:
         self.kudos_events.append((time.time(), job_submit_response.reward))
         new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
 
-        # Update state to IMAGE_SUBMITTED for the process that handled this job
-        for process_id, process_info in self._process_map.items():
-            if process_info.last_job_referenced == new_submit.completed_job_info.sdk_api_job_info:
-                self._process_map.on_process_state_change(
-                    process_id=process_id,
-                    new_state=HordeProcessState.IMAGE_SUBMITTED,
-                )
-                break
+        # Update state to IMAGE_SUBMITTED for the process that handled this job (reuse process_id from above)
+        if handling_process_id is not None:
+            self._process_map.on_process_state_change(
+                process_id=handling_process_id,
+                new_state=HordeProcessState.IMAGE_SUBMITTED,
+            )
 
         return new_submit
 
