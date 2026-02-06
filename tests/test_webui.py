@@ -88,6 +88,7 @@ def test_webui_vram_over_100_percent() -> None:
     # The frontend JavaScript now uses Math.min(100, ...) to cap at 100%
     # This test documents that the frontend will display 100% even if the calculation exceeds it
 
+
 def test_webui_new_features() -> None:
     """Test that WorkerWebUI handles new features (image preview and console logs)."""
     webui = WorkerWebUI(port=0)
