@@ -1393,7 +1393,7 @@ class HordeWorkerProcessManager:
         self.horde_model_reference_manager = horde_model_reference_manager
 
         # Initialize HTTP client session as None - will be set in _main_loop
-        self.horde_client_session: AIHordeAPIAsyncClientSession | None = None
+        self.horde_client_session = None
 
         self._process_map = ProcessMap({})
         self._horde_model_map = HordeModelMap(root={})
