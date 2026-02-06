@@ -435,7 +435,7 @@ class HordeInferenceProcess(HordeProcess):
             )
 
         self.on_horde_model_state_change(
-            process_state=HordeProcessState.MODEL_LOADING,
+            process_state=HordeProcessState.PRELOADING_MODEL,
             horde_model_name=horde_model_name,
             horde_model_state=ModelLoadState.LOADING,
         )
@@ -453,7 +453,7 @@ class HordeInferenceProcess(HordeProcess):
         logger.info(f"Preloaded model {horde_model_name}")
         self._active_model_name = horde_model_name
         self.on_horde_model_state_change(
-            process_state=HordeProcessState.MODEL_LOADED,
+            process_state=HordeProcessState.PRELOADED_MODEL,
             horde_model_name=horde_model_name,
             horde_model_state=ModelLoadState.LOADED_IN_RAM,
             time_elapsed=time.time() - time_start,
@@ -490,7 +490,7 @@ class HordeInferenceProcess(HordeProcess):
             self._in_post_processing and progress_report.hordelib_progress_state == ProgressState.progress
         ):
             self.send_process_state_change_message(
-                process_state=HordeProcessState.POST_PROCESS_IN_PROGRESS,
+                process_state=HordeProcessState.INFERENCE_POST_PROCESSING,
                 info="Post Processing",
                 time_elapsed=time.time() - self._start_inference_time,
             )
@@ -891,7 +891,7 @@ class HordeInferenceProcess(HordeProcess):
 
                 self.on_horde_model_state_change(
                     horde_model_name=message.horde_model_name,
-                    process_state=HordeProcessState.STARTING_INFERENCE,
+                    process_state=HordeProcessState.INFERENCE_STARTING,
                     horde_model_state=ModelLoadState.IN_USE,
                 )
 
@@ -933,7 +933,7 @@ class HordeInferenceProcess(HordeProcess):
                     )
                     return
 
-                process_state = HordeProcessState.INFERENCE_FINISHED if results else HordeProcessState.INFERENCE_FAILED
+                process_state = HordeProcessState.INFERENCE_COMPLETE if results else HordeProcessState.INFERENCE_FAILED
                 logger.debug(f"Finished inference with process state {process_state}")
                 self.send_inference_result_message(
                     process_state=process_state,

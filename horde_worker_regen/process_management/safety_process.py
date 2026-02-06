@@ -187,11 +187,6 @@ class HordeSafetyProcess(HordeProcess):
         if message.control_flag != HordeControlFlag.EVALUATE_SAFETY:
             raise ValueError(f"Expected {HordeControlFlag.EVALUATE_SAFETY}, got {message.control_flag}")
 
-        self.send_process_state_change_message(
-            process_state=HordeProcessState.STARTING_SAFETY_CHECK,
-            info="Starting safety check",
-        )
-
         self.send_memory_report_message(include_vram=False)
 
         time_start = time.time()
@@ -201,7 +196,7 @@ class HordeSafetyProcess(HordeProcess):
         )
 
         self.send_process_state_change_message(
-            process_state=HordeProcessState.SAFETY_CHECK_IN_PROGRESS,
+            process_state=HordeProcessState.EVALUATING_SAFETY,
             info="Evaluating safety",
         )
 
@@ -455,11 +450,6 @@ class HordeSafetyProcess(HordeProcess):
 
         info_message = f"Finished evaluating safety for job {message.job_id}"
         logger.info(info_message)
-
-        self.send_process_state_change_message(
-            process_state=HordeProcessState.SAFETY_CHECK_FINISHED,
-            info="Safety check finished",
-        )
 
         self.process_message_queue.put(
             HordeSafetyResultMessage(

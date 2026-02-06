@@ -798,20 +798,16 @@ class WorkerWebUI:
                         const job = data.current_job;
                         // Format state to be more readable
                         let stateDisplay = job.state || 'N/A';
-                        if (job.state === 'INFERENCE_POST_PROCESSING' || job.state === 'POST_PROCESS_IN_PROGRESS') {
+                        if (job.state === 'INFERENCE_POST_PROCESSING') {
                             stateDisplay = 'Post Processing';
-                        } else if (job.state === 'INFERENCE_COMPLETE' || job.state === 'INFERENCE_FINISHED') {
+                        } else if (job.state === 'INFERENCE_COMPLETE') {
                             stateDisplay = 'Finished';
-                        } else if (job.state === 'INFERENCE_STARTING' || job.state === 'STARTING_INFERENCE' || job.state === 'INFERENCE_IN_PROGRESS') {
+                        } else if (job.state === 'INFERENCE_STARTING') {
                             stateDisplay = 'Inference';
-                        } else if (job.state === 'MODEL_LOADING' || job.state === 'START_MODEL_LOAD') {
+                        } else if (job.state === 'PRELOADING_MODEL' || job.state === 'PRELOADED_MODEL') {
                             stateDisplay = 'Loading Model';
-                        } else if (job.state === 'SAFETY_CHECK_IN_PROGRESS' || job.state === 'STARTING_SAFETY_CHECK') {
+                        } else if (job.state === 'EVALUATING_SAFETY') {
                             stateDisplay = 'Safety Check';
-                        } else if (job.state === 'SAVING_IMAGE') {
-                            stateDisplay = 'Saving Image';
-                        } else if (job.state === 'SUBMITTING_IMAGE') {
-                            stateDisplay = 'Submitting';
                         } else if (job.state) {
                             // Convert snake_case to Title Case
                             stateDisplay = job.state.split('_').map(word =>

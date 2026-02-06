@@ -77,14 +77,6 @@ class HordeProcessState(enum.Enum):
     JOB_RECEIVED = auto()
     """The process has received a job."""
 
-    # Model loading states
-    START_MODEL_LOAD = auto()
-    """The process is starting to load a model."""
-    MODEL_LOADING = auto()
-    """The process is loading a model."""
-    MODEL_LOADED = auto()
-    """The process has loaded a model."""
-
     DOWNLOADING_MODEL = auto()
     """The process is downloading a model."""
     DOWNLOAD_COMPLETE = auto()
@@ -105,55 +97,14 @@ class HordeProcessState(enum.Enum):
     UNLOADED_MODEL_FROM_RAM = auto()
     """The process has unloaded a model from RAM."""
 
-    # Inference states
-    STARTING_INFERENCE = auto()
-    """The process is starting inference."""
-    INFERENCE_IN_PROGRESS = auto()
-    """The process is running inference."""
-    INFERENCE_FINISHED = auto()
-    """The process has finished inference."""
-
     INFERENCE_STARTING = auto()
-    """The process is starting inference (deprecated, use STARTING_INFERENCE)."""
+    """The process is starting inference."""
     INFERENCE_POST_PROCESSING = auto()
-    """The process is post-processing as a part of an inference job (deprecated, use POST_PROCESS_IN_PROGRESS)."""
+    """The process is post-processing as a part of an inference job."""
     INFERENCE_COMPLETE = auto()
-    """The process has finished inference (deprecated, use INFERENCE_FINISHED)."""
+    """The process has finished inference."""
     INFERENCE_FAILED = auto()
     """The process has failed inference."""
-
-    # Post-processing states
-    STARTING_POST_PROCESS = auto()
-    """The process is starting post-processing."""
-    POST_PROCESS_IN_PROGRESS = auto()
-    """The process is post-processing the inference results."""
-    POST_PROCESS_FINISHED = auto()
-    """The process has finished post-processing."""
-
-    # Image saving states
-    SAVING_IMAGE = auto()
-    """The process is saving an image."""
-    IMAGE_SAVED = auto()
-    """The process has saved an image."""
-
-    # Image submission states
-    SUBMITTING_IMAGE = auto()
-    """The process is submitting an image."""
-    IMAGE_SUBMITTED = auto()
-    """The process has submitted an image."""
-
-    # Safety check states
-    STARTING_SAFETY_CHECK = auto()
-    """The process is starting a safety check."""
-    SAFETY_CHECK_IN_PROGRESS = auto()
-    """The process is performing a safety check."""
-    SAFETY_CHECK_FINISHED = auto()
-    """The process has finished a safety check."""
-
-    EVALUATING_SAFETY = auto()
-    """The process is evaluating safety (deprecated, use SAFETY_CHECK_IN_PROGRESS)."""
-    SAFETY_FAILED = auto()
-    """The process has failed evaluating safety."""
 
     ALCHEMY_STARTING = auto()
     """The process is starting performing alchemy jobs."""
@@ -161,6 +112,11 @@ class HordeProcessState(enum.Enum):
     """The process has finished performing alchemy jobs."""
     ALCHEMY_FAILED = auto()
     """The process has failed performing alchemy jobs."""
+
+    EVALUATING_SAFETY = auto()
+    """The process is evaluating safety."""
+    SAFETY_FAILED = auto()
+    """The process has failed evaluating safety."""
 
 
 class HordeProcessMessage(BaseModel):
