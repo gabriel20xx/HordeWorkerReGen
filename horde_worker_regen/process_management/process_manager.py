@@ -57,6 +57,8 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, RootModel, ValidationError
 from typing_extensions import override
 
+from horde_worker_regen.logger_config import create_level_format_function
+
 import horde_worker_regen
 from horde_worker_regen.bridge_data.data_model import reGenBridgeData
 from horde_worker_regen.bridge_data.load_config import BridgeDataLoader
@@ -1138,17 +1140,6 @@ class HordeWorkerProcessManager:
     ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
-    
-    # Format strings for webui log handler with colors matching the normal console
-    _WEBUI_LOG_LEVEL_FORMATS = {
-        "TRACE": "{time:HH:mm:ss} <dim>|</dim> <dim><cyan>{level: <8}</cyan></dim> <dim>|</dim> <dim>{message}</dim>",
-        "DEBUG": "{time:HH:mm:ss} <dim>|</dim> <blue>{level: <8}</blue> <dim>|</dim> {message}",
-        "INFO": "{time:HH:mm:ss} <dim>|</dim> <bold><cyan>{level: <8}</cyan></bold> <dim>|</dim> {message}",
-        "SUCCESS": "{time:HH:mm:ss} <dim>|</dim> <bold><green>{level: <8}</green></bold> <dim>|</dim> <bold><green>{message}</green></bold>",
-        "WARNING": "{time:HH:mm:ss} <dim>|</dim> <bold><yellow>{level: <8}</yellow></bold> <dim>|</dim> <yellow>{message}</yellow>",
-        "ERROR": "{time:HH:mm:ss} <dim>|</dim> <bold><red>{level: <8}</red></bold> <dim>|</dim> <red>{message}</red>",
-        "CRITICAL": "{time:HH:mm:ss} <dim>|</dim> <bold><red><u>{level: <8}</u></red></bold> <dim>|</dim> <bold><red>{message}</red></bold>",
-    }
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1561,13 +1552,9 @@ class HordeWorkerProcessManager:
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
             
             # Add a log handler to capture logs for webui with colored output
-            # Use a format function to apply colors based on log level, matching the normal console
-            def webui_format_record(record):
-                level_name = record["level"].name
-                if level_name in HordeWorkerProcessManager._WEBUI_LOG_LEVEL_FORMATS:
-                    return HordeWorkerProcessManager._WEBUI_LOG_LEVEL_FORMATS[level_name] + "\n{exception}"
-                # Fallback for unknown levels
-                return "{time:HH:mm:ss} <dim>|</dim> <bold>{level: <8}</bold> <dim>|</dim> {message}\n{exception}"
+            # Use the same format function as the normal console for consistent coloring
+            # but with a shorter timestamp format (HH:mm:ss instead of full date)
+            webui_format_record = create_level_format_function(time_format="HH:mm:ss")
             
             self._log_handler_id = logger.add(
                 self._capture_log_for_webui,
