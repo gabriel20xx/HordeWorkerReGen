@@ -4650,6 +4650,10 @@ class HordeWorkerProcessManager:
         if self._shutting_down or self._last_pop_maintenance_mode:
             return
 
+        # Skip if the client session is not initialized yet (during startup)
+        if not hasattr(self, 'horde_client_session') or self.horde_client_session is None:
+            return
+
         request = FindUserRequest(apikey=self.bridge_data.api_key)
         try:
             response = await self.horde_client_session.submit_request(request, UserDetailsResponse)
