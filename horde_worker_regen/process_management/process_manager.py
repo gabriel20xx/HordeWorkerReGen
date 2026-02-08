@@ -319,6 +319,7 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.INFERENCE_COMPLETE
             or self.last_process_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or self.last_process_state == HordeProcessState.ALCHEMY_COMPLETE
+            or self.last_process_state == HordeProcessState.IMAGE_SUBMITTED
         )
 
 
