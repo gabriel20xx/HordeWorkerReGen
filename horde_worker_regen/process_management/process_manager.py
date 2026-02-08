@@ -5569,7 +5569,19 @@ class HordeWorkerProcessManager:
         :param future: asyncio task to monitor
         :return: None
         """
-        ex = future.exception()
+        # Check if future was cancelled before attempting to get exception
+        if future.cancelled():
+            logger.debug("A main loop task was cancelled")
+            return
+        
+        # Even after checking cancelled(), future.exception() can still raise CancelledError
+        # in some edge cases, so we wrap it in a try-except for defense-in-depth
+        try:
+            ex = future.exception()
+        except CancelledError:
+            logger.debug("A main loop task was cancelled (CancelledError)")
+            return
+        
         if ex is not None:
             if self._shutting_down:
                 logger.debug(f"exception thrown by a main loop task: {ex}")
