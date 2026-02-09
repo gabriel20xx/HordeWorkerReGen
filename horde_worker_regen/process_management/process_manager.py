@@ -2314,7 +2314,9 @@ class HordeWorkerProcessManager:
                         job_info.inference_completed_timestamp = current_time
                         # Capture all images from the batch job
                         self._last_image_base64 = [
-                            job_result.image_base64 for job_result in message.job_image_results
+                            job_result.image_base64
+                            for job_result in message.job_image_results
+                            if job_result.image_base64 is not None
                         ]
                         self._last_image_job_timestamp = current_time
 
@@ -2457,13 +2459,17 @@ class HordeWorkerProcessManager:
                             logger.warning(f"Failed to read saved images for webui preview: {e}")
                             # Fallback to the submitted images if reading from disk fails
                             self._last_image_base64 = [
-                                job_result.image_base64 for job_result in completed_job_info.job_image_results
+                                job_result.image_base64
+                                for job_result in completed_job_info.job_image_results
+                                if job_result.image_base64 is not None
                             ]
                             self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
                     else:
                         # Fallback to the submitted images if no saved images available
                         self._last_image_base64 = [
-                            job_result.image_base64 for job_result in completed_job_info.job_image_results
+                            job_result.image_base64
+                            for job_result in completed_job_info.job_image_results
+                            if job_result.image_base64 is not None
                         ]
                         self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
 
