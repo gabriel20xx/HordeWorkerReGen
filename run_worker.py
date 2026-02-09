@@ -27,7 +27,8 @@ except ImportError as e:
 
 if __name__ == "__main__":
     try:
-        init()
+        exit_code = init()
+        sys.exit(exit_code)
     except Exception as e:
         print("=" * 80)
         print("ERROR: Worker initialization failed")

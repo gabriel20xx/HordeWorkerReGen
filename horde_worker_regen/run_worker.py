@@ -212,8 +212,12 @@ class LogConsoleRewriter(io.StringIO):
         self.original_iostream.flush()
 
 
-def init() -> None:
-    """Initialise the worker, including logging, environment variables, and other housekeeping."""
+def init() -> int:
+    """Initialise the worker, including logging, environment variables, and other housekeeping.
+    
+    Returns:
+        int: Exit code (0 for success, non-zero for failure)
+    """
     # ! IMPORTANT: Start of own code
     # Try to set spawn method, ignore if already set
     try:
@@ -328,8 +332,10 @@ def init() -> None:
         amd_gpu=args.amd,
         directml=args.directml,
     )
+    
+    return 0
 
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    init()
+    sys.exit(init())
