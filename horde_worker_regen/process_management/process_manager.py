@@ -3600,18 +3600,20 @@ class HordeWorkerProcessManager:
                 )
                 time_popped = time.time()
         time_taken = round(time.time() - time_popped, 2)
-        
+
         # Log submission results for all successfully submitted jobs
         successful_submits = [job for job in finished_submit_jobs if not job.is_faulted]
         faulted_submits = [job for job in finished_submit_jobs if job.is_faulted]
-        
+
+        # Extract shared values
+        time_to_generate = completed_job_info.time_to_generate or 0.0
+
         if successful_submits:
             total_kudos = sum(job.kudos_reward for job in successful_submits)
             batch_size = len(successful_submits)
             model_name = completed_job_info.sdk_api_job_info.model
-            time_to_generate = completed_job_info.time_to_generate or 0.0
             kudos_per_second_batch = highest_kudos_per_second * batch_size
-            
+
             if batch_size == 1:
                 # Single job - show the one job ID
                 job_id_short = str(successful_submits[0].job_id)[:8]
@@ -3634,24 +3636,24 @@ class HordeWorkerProcessManager:
                     f"and took {time_to_generate:.2f} to generate. "
                     f"({kudos_per_second_batch:.2f} kudos/second for the whole batch. 0.4 or greater is ideal)",
                 )
-            
+
             # If slower than 0.4 kudos per second, log a warning
             if kudos_per_second_batch < 0.4:
+                job_ref = f"Batch job {completed_job_info.sdk_api_job_info.id_}" if batch_size > 1 else f"Job {completed_job_info.sdk_api_job_info.id_}"
                 logger.warning(
-                    f"Job {completed_job_info.sdk_api_job_info.id_} took longer than is ideal; if this persists "
+                    f"{job_ref} took longer than is ideal; if this persists "
                     "consider lowering your max_power, using less threads, disabling post processing and/or controlnets.",
                 )
                 logger.warning("Be sure your models are on an SSD. Freeing up RAM or VRAM may also help.")
-        
+
         # Log faulted jobs
         for faulted_job in faulted_submits:
-            time_to_generate = completed_job_info.time_to_generate or 0.0
             logger.error(
                 f"{faulted_job.job_id} faulted. Reported fault to the horde. "
                 f"Job popped {time_taken} seconds ago and took "
                 f"{time_to_generate:.2f} to generate.",
             )
-        
+
         # If the job took a long time to generate, log a warning (unless speed warnings are suppressed)
         if not self.bridge_data.suppress_speed_warnings:
             if highest_reward > 0 and (highest_reward / time_taken) < 0.1:
