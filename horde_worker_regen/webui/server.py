@@ -527,6 +527,48 @@ class WorkerWebUI:
         <div id="content" style="display: none;">
             <div class="grid">
                 <div class="card">
+                    <h2>Current Job</h2>
+                    <div id="current-job">
+                        <div style="text-align: center; color: #999; padding: 20px;">No job in progress</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Last Generated Image(s)</h2>
+                    <div id="last-image-container" class="last-image-container">
+                        <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Resources</h2>
+                    <div class="stat">
+                        <span class="stat-label">RAM:</span>
+                        <span class="stat-value" id="ram-usage">-</span>
+                    </div>
+                    <div>
+                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">CPU:</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="cpu-progress" style="width: 0%">0%</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">GPU:</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="gpu-progress" style="width: 0%">0%</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;" id="vram-label">VRAM:</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="vram-progress" style="width: 0%">0%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="card">
                     <h2>Horde Info</h2>
                     <div class="stat">
                         <span class="stat-label">Worker Name:</span>
@@ -579,41 +621,6 @@ class WorkerWebUI:
                 </div>
 
                 <div class="card">
-                    <h2>Resources</h2>
-                    <div class="stat">
-                        <span class="stat-label">RAM:</span>
-                        <span class="stat-value" id="ram-usage">-</span>
-                    </div>
-                    <div>
-                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">CPU:</div>
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" id="cpu-progress" style="width: 0%">0%</div>
-                        </div>
-                    </div>
-                    <div>
-                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">GPU:</div>
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" id="gpu-progress" style="width: 0%">0%</div>
-                        </div>
-                    </div>
-                    <div>
-                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;" id="vram-label">VRAM:</div>
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" id="vram-progress" style="width: 0%">0%</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="card">
-                    <h2>Current Job</h2>
-                    <div id="current-job">
-                        <div style="text-align: center; color: #999; padding: 20px;">No job in progress</div>
-                    </div>
-                </div>
-
-                <div class="card">
                     <h2>Job Queue & Active Models</h2>
                     <div style="margin-bottom: 20px;">
                         <h3 class="subsection-heading">
@@ -632,20 +639,13 @@ class WorkerWebUI:
                         </div>
                     </div>
                 </div>
+            </div>
 
+            <div class="grid">
                 <div class="card">
                     <h2>Processes (<span id="process-count">0</span>)</h2>
                     <div id="processes" class="process-list">
                         <div style="text-align: center; color: #999; padding: 20px;">No process info</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="card span-1">
-                    <h2>Last Generated Image(s)</h2>
-                    <div id="last-image-container" class="last-image-container">
-                        <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
                     </div>
                 </div>
 
