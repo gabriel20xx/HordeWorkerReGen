@@ -93,12 +93,18 @@ def test_webui_new_features() -> None:
     """Test that WorkerWebUI handles new features (image preview and console logs)."""
     webui = WorkerWebUI(port=0)
 
-    # Test last image update
+    # Test last image update (single image)
     test_image_base64 = (
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
     )
-    webui.update_status(last_image_base64=test_image_base64)
-    assert webui.status_data["last_image_base64"] == test_image_base64
+    webui.update_status(last_image_base64=[test_image_base64])
+    assert webui.status_data["last_image_base64"] == [test_image_base64]
+
+    # Test last image update (multiple images for batch jobs)
+    test_images_base64 = [test_image_base64, test_image_base64, test_image_base64]
+    webui.update_status(last_image_base64=test_images_base64)
+    assert webui.status_data["last_image_base64"] == test_images_base64
+    assert len(webui.status_data["last_image_base64"]) == 3
 
     # Test console logs update
     test_logs = ["Log line 1", "Log line 2", "Log line 3"]

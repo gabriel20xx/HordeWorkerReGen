@@ -43,7 +43,7 @@ class WorkerWebUI:
             "total_vram_mb": 0,
             "maintenance_mode": False,
             "user_kudos_total": 0.0,
-            "last_image_base64": None,
+            "last_image_base64": [],
             "console_logs": [],
             "faulted_jobs_history": [],
         }
@@ -378,7 +378,45 @@ class WorkerWebUI:
             justify-content: center;
         }
 
-        .last-image-container img {
+        /* Image grid for batch jobs */
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+            gap: 15px;
+            width: 100%;
+        }
+
+        .image-grid-item {
+            position: relative;
+            overflow: hidden;
+            border-radius: 8px;
+            background: #f8f9fa;
+            aspect-ratio: 1 / 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .image-grid-item img {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: block;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .image-grid-item img:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        /* Single image display (for non-batch jobs) */
+        .last-image-container .single-image {
             max-width: 100%;
             max-height: 432px;
             width: auto;
@@ -387,6 +425,13 @@ class WorkerWebUI:
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             display: block;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .last-image-container .single-image:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
 
         .subsection-heading {
@@ -467,17 +512,6 @@ class WorkerWebUI:
 
         .image-overlay-close:hover {
             background: #764ba2;
-        }
-
-        /* Make image clickable */
-        .last-image-container img {
-            cursor: pointer;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .last-image-container img:hover {
-            transform: scale(1.02);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
     </style>
 </head>
@@ -584,7 +618,7 @@ class WorkerWebUI:
 
             <div class="image-console-grid">
                 <div class="card">
-                    <h2>Last Generated Image</h2>
+                    <h2>Last Generated Image(s)</h2>
                     <div id="last-image-container" class="last-image-container">
                         <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
                     </div>
@@ -1023,15 +1057,39 @@ class WorkerWebUI:
                         faultedJobsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>';
                     }
 
-                    // Last Generated Image
+                    // Last Generated Images
                     const lastImageContainer = document.getElementById('last-image-container');
-                    if (data.last_image_base64) {
-                        const imageSrc = `data:image/png;base64,${data.last_image_base64}`;
-                        lastImageContainer.innerHTML = `
-                            <img src="${imageSrc}"
-                                 alt="Last generated image"
-                                 onclick="openImageOverlay('${imageSrc}')" />
-                        `;
+                    if (data.last_image_base64 && data.last_image_base64.length > 0) {
+                        if (data.last_image_base64.length === 1) {
+                            // Single image - display in centered layout
+                            const imageSrc = `data:image/png;base64,${data.last_image_base64[0]}`;
+                            lastImageContainer.innerHTML = `
+                                <img src="${imageSrc}"
+                                     class="single-image"
+                                     alt="Last generated image"
+                                     data-fullsize="${imageSrc}" />
+                            `;
+                        } else {
+                            // Multiple images (batch job) - display in grid
+                            const gridHtml = data.last_image_base64.map((imageBase64, index) => {
+                                const imageSrc = `data:image/png;base64,${imageBase64}`;
+                                return `
+                                    <div class="image-grid-item">
+                                        <img src="${imageSrc}"
+                                             alt="Generated image ${index + 1}"
+                                             data-fullsize="${imageSrc}" />
+                                    </div>
+                                `;
+                            }).join('');
+                            lastImageContainer.innerHTML = `<div class="image-grid">${gridHtml}</div>`;
+                        }
+                        
+                        // Add click handlers to all images
+                        lastImageContainer.querySelectorAll('img[data-fullsize]').forEach(img => {
+                            img.onclick = function() {
+                                openImageOverlay(this.getAttribute('data-fullsize'));
+                            };
+                        });
                     } else {
                         lastImageContainer.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>';
                     }
