@@ -758,7 +758,7 @@ class WorkerWebUI:
             let currentStyles = [];
 
             // Split by ANSI escape sequences
-            const parts = text.split(/\\x1b\\[([0-9;]+)m/);
+            const parts = text.split(/\x1b\[([0-9;]+)m/);
 
             for (let i = 0; i < parts.length; i++) {
                 if (i % 2 === 0) {
