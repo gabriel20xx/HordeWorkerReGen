@@ -4661,13 +4661,6 @@ class HordeWorkerProcessManager:
             self.jobs_pending_inference.append(job_pop_response)
             self.total_num_jobs_queued += 1
             self._invalidate_megapixelsteps_cache()
-            jobs = []
-            for job in self.jobs_pending_inference:
-                if job.id_ is not None:
-                    jobs.append(f"<{str(job.id_)[:8]}: {job.model}>")
-                else:
-                    jobs.append(f"<{job.model}>")
-            logger.info(f'Job queue: {", ".join(jobs)}')
             # self._testing_jobs_added += 1
             self.job_pop_timestamps[job_pop_response] = time.time()
             self.jobs_lookup[job_pop_response] = HordeJobInfo(
