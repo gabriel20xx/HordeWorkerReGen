@@ -37,7 +37,7 @@ Jobs:
 ```
 Jobs:
   In Progress: <abc12345: Nova Anime XL>
-  Pending: <def67890: WAI-NSFW-illustrious-SDXL>, <ghi09876: Pony Diffusion>
+  Queued: <def67890: WAI-NSFW-illustrious-SDXL>, <ghi09876: Pony Diffusion>
 ```
 
 Or when there are no jobs:
@@ -127,7 +127,7 @@ WARNING | Job abc12345 faulted on process 3, retrying (attempt 1 of 1)
 SUCCESS | ✓ Job abc12345 successfully re-queued for retry
 INFO | Replacing inference process 3
 INFO | Jobs:
-INFO |   Pending: <abc12345: Nova Anime XL>
+INFO |   Queued: <abc12345: Nova Anime XL>
 ```
 
 **What's happening:**
@@ -195,7 +195,7 @@ For your specific log snippet showing Process 3 stuck at 209 seconds:
 
 **After this fix:**
 - You'll see "In Progress: <job_id: model_name>" if a job is being worked on
-- You'll see "Pending: <job_id: model_name>" if the job was re-queued for retry
+- You'll see "Queued: <job_id: model_name>" if the job was re-queued for retry
 - You'll see SUCCESS messages with ✓ when retries happen
 - You'll see "in progress: X" in the statistics line
 
