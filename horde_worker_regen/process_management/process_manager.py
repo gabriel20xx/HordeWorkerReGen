@@ -5218,20 +5218,6 @@ class HordeWorkerProcessManager:
                 f"<fg #00ff87>{job_info_message}</>",
             )
 
-            # Show current jobs in progress (jobs being processed right now)
-            if self.jobs_in_progress:
-                # Filter jobs with valid IDs and format them
-                job_details = [
-                    f"{str(job.id_)[:8]} ({job.model})"
-                    for job in self.jobs_in_progress
-                    if job.id_ is not None
-                ]
-                if job_details:
-                    jobs_msg = f"Current Jobs: {', '.join(job_details)}"
-                    logging_function(
-                        f"  <fg #00d7ff>{jobs_msg}</>",
-                    )
-
             # Print failing models periodically
             if (
                 self._failed_models
