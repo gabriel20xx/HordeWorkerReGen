@@ -372,6 +372,14 @@ class WorkerWebUI:
             grid-column: 1 / -1;
         }
 
+        .span-1 {
+            grid-column: span 1;
+        }
+
+        .span-2 {
+            grid-column: span 2;
+        }
+
         .last-image-container {
             min-height: 432px;
             display: flex;
@@ -443,17 +451,10 @@ class WorkerWebUI:
             padding-bottom: 5px;
         }
 
-        /* Image and console layout with specific widths */
-        .image-console-grid {
-            display: grid;
-            grid-template-columns: 1fr 2fr;
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-
+        /* Responsive column spanning for smaller screens */
         @media (max-width: 900px) {
-            .image-console-grid {
-                grid-template-columns: 1fr;
+            .span-1, .span-2 {
+                grid-column: span 1;
             }
         }
 
@@ -637,15 +638,15 @@ class WorkerWebUI:
                 </div>
             </div>
 
-            <div class="image-console-grid">
-                <div class="card">
+            <div class="grid">
+                <div class="card span-1">
                     <h2>Last Generated Image(s)</h2>
                     <div id="last-image-container" class="last-image-container">
                         <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
                     </div>
                 </div>
 
-                <div class="card">
+                <div class="card span-2">
                     <h2>Console Output</h2>
                     <div id="console-logs" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.85em; background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 6px;">
                         <div style="text-align: center; color: #999; padding: 20px;">No logs available</div>
@@ -654,7 +655,7 @@ class WorkerWebUI:
             </div>
 
             <div class="grid">
-                <div class="card">
+                <div class="card wide-card">
                     <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
                     <div id="faulted-jobs" class="faulted-jobs-list">
                         <div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>
