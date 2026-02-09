@@ -3847,7 +3847,8 @@ class HordeWorkerProcessManager:
                 # Retry the job once
                 job_info.retry_count += 1
                 logger.warning(
-                    f"Job {faulted_job.id_} faulted, retrying (retry attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})"
+                    f"Job {faulted_job.id_} faulted on process {process_info.process_id if process_info else 'unknown'}, "
+                    f"retrying (attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})"
                 )
 
                 # Remove from jobs_in_progress if present
@@ -3860,7 +3861,7 @@ class HordeWorkerProcessManager:
                 if faulted_job not in self.jobs_pending_inference:
                     self.jobs_pending_inference.append(faulted_job)
                     self._invalidate_megapixelsteps_cache()
-                    logger.info(f"Job {faulted_job.id_} re-queued for retry")
+                    logger.success(f"✓ Job {faulted_job.id_} successfully re-queued for retry")
                 else:
                     logger.debug(f"Job {faulted_job.id_} already in jobs_pending_inference, not re-queuing")
 
@@ -5189,12 +5190,27 @@ class HordeWorkerProcessManager:
                 logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
 
             logging_function("<b><fg #00ff87>Jobs:</></b>")
-            jobs = []
+            
+            # Show jobs in progress
+            jobs_in_progress_list = []
+            for x in self.jobs_in_progress:
+                shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
+                jobs_in_progress_list.append(f"<{shortened_id}: <u>{x.model}></u>")
+            
+            if jobs_in_progress_list:
+                logging_function(f'  In Progress: {", ".join(jobs_in_progress_list)}')
+            
+            # Show pending jobs
+            jobs_pending_list = []
             for x in self.jobs_pending_inference:
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
-                jobs.append(f"<{shortened_id}: <u>{x.model}></u>")
+                jobs_pending_list.append(f"<{shortened_id}: <u>{x.model}></u>")
 
-            logging_function(f'  {", ".join(jobs) if jobs else "No pending jobs"}')
+            if jobs_pending_list:
+                logging_function(f'  Pending: {", ".join(jobs_pending_list)}')
+            
+            if not jobs_in_progress_list and not jobs_pending_list:
+                logging_function("  No active jobs")
 
             active_models = {
                 process.loaded_horde_model_name
@@ -5206,6 +5222,7 @@ class HordeWorkerProcessManager:
 
             job_info_message = "  " + " | ".join(
                 [
+                    f"in progress: {len(self.jobs_in_progress)}",
                     f"pending: {len(self.jobs_pending_inference)} ({self.get_pending_megapixelsteps()} eMPS)",
                     f"popped: {self.num_jobs_total}",
                     f"done: {self.total_num_completed_jobs}",
