@@ -381,7 +381,7 @@ class WorkerWebUI:
         /* Image grid for batch jobs */
         .image-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
             gap: 15px;
             width: 100%;
         }
@@ -1067,7 +1067,7 @@ class WorkerWebUI:
                                 <img src="${imageSrc}"
                                      class="single-image"
                                      alt="Last generated image"
-                                     onclick="openImageOverlay('${imageSrc}')" />
+                                     data-fullsize="${imageSrc}" />
                             `;
                         } else {
                             // Multiple images (batch job) - display in grid
@@ -1077,12 +1077,20 @@ class WorkerWebUI:
                                     <div class="image-grid-item">
                                         <img src="${imageSrc}"
                                              alt="Generated image ${index + 1}"
-                                             onclick="openImageOverlay('${imageSrc}')" />
+                                             data-fullsize="${imageSrc}" />
                                     </div>
                                 `;
                             }).join('');
                             lastImageContainer.innerHTML = `<div class="image-grid">${gridHtml}</div>`;
                         }
+                        
+                        // Add click handlers to all images using event delegation
+                        lastImageContainer.querySelectorAll('img[data-fullsize]').forEach(img => {
+                            img.style.cursor = 'pointer';
+                            img.onclick = function() {
+                                openImageOverlay(this.getAttribute('data-fullsize'));
+                            };
+                        });
                     } else {
                         lastImageContainer.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>';
                     }
