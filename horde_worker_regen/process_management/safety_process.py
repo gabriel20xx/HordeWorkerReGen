@@ -236,13 +236,14 @@ class HordeSafetyProcess(HordeProcess):
         for d in [year_dir, year_month_dir, year_month_day_dir]:
             os.chmod(d, 0o777)
 
-        for image_base64 in message.images_base64:
+        for image_index, image_base64 in enumerate(message.images_base64):
             # Decode the image from base64
             image_bytes = BytesIO(base64.b64decode(image_base64))
 
-            # Generate a timestamp with milliseconds only once per image
-            timestamp = now.strftime("%Y-%m-%d_%H-%M-%S.%f")[:-3]
-            output_path = os.path.join(output_directory, f"{timestamp}.png")
+            # Generate a unique timestamp for each image in the batch
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")[:-3]
+            # Include image index to ensure unique filenames for batch jobs
+            output_path = os.path.join(output_directory, f"{timestamp}_{image_index}.png")
 
             # Open the image using PIL
             image_as_pil_0 = Image.open(image_bytes)
