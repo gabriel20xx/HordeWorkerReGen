@@ -1084,9 +1084,8 @@ class WorkerWebUI:
                             lastImageContainer.innerHTML = `<div class="image-grid">${gridHtml}</div>`;
                         }
                         
-                        // Add click handlers to all images using event delegation
+                        // Add click handlers to all images
                         lastImageContainer.querySelectorAll('img[data-fullsize]').forEach(img => {
-                            img.style.cursor = 'pointer';
                             img.onclick = function() {
                                 openImageOverlay(this.getAttribute('data-fullsize'));
                             };
