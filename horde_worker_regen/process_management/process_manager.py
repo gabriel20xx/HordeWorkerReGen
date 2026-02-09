@@ -2308,17 +2308,11 @@ class HordeWorkerProcessManager:
                     job_info.job_image_results = message.job_image_results
                     job_info.sanitized_negative_prompt = message.sanitized_negative_prompt
 
-                    # Capture last image for webui preview
+                    # Set inference completion timestamp for webui preview after safety check
                     if self.webui and message.job_image_results and len(message.job_image_results) > 0:
                         current_time = time.time()
                         job_info.inference_completed_timestamp = current_time
-                        # Capture all images from the batch job
-                        self._last_image_base64 = [
-                            job_result.image_base64
-                            for job_result in message.job_image_results
-                            if job_result.image_base64 is not None
-                        ]
-                        self._last_image_job_timestamp = current_time
+                        # Note: Images will be updated from disk after safety check (not here to avoid flickering)
 
                     self.jobs_pending_safety_check.append(job_info)
                 else:
@@ -2458,10 +2452,8 @@ class HordeWorkerProcessManager:
                         except (FileNotFoundError, OSError) as e:
                             logger.warning(f"Failed to read saved images for webui preview: {e}")
                             # Don't fallback to job_image_results here as they may contain censored replacement images
-                            # The original images were already captured at inference completion (line 2316-2320)
-                            logger.debug("WebUI preview will continue showing images from inference completion")
+                            logger.debug("WebUI preview will not be updated for this job")
                     # Note: We intentionally don't update WebUI if no saved images are available
-                    # The original images were already captured at inference completion (line 2316-2320)
                     # We don't want to show potentially censored images from job_image_results
 
                 # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
