@@ -3623,7 +3623,7 @@ class HordeWorkerProcessManager:
                     f"for {total_kudos:,.2f} kudos. "
                     f"Job popped {time_taken} seconds ago "
                     f"and took {time_to_generate:.2f} to generate. "
-                    f"({kudos_per_second_batch:.2f} kudos/second. 0.4 or greater is ideal)",
+                    f"({kudos_per_second_batch:.2f} kudos/second for the whole batch. 0.4 or greater is ideal)",
                 )
             else:
                 # Batch job - show all job IDs and combined stats
