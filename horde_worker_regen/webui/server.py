@@ -569,10 +569,6 @@ class WorkerWebUI:
                         <span class="stat-label">RAM:</span>
                         <span class="stat-value" id="ram-usage">-</span>
                     </div>
-                    <div class="stat">
-                        <span class="stat-label">VRAM:</span>
-                        <span class="stat-value" id="vram-usage">-</span>
-                    </div>
                     <div>
                         <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">CPU:</div>
                         <div class="progress-bar-container">
@@ -586,7 +582,7 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div>
-                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">VRAM:</div>
+                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;" id="vram-label">VRAM:</div>
                         <div class="progress-bar-container">
                             <div class="progress-bar" id="vram-progress" style="width: 0%">0%</div>
                         </div>
@@ -831,7 +827,6 @@ class WorkerWebUI:
 
                     // Resources
                     document.getElementById('ram-usage').textContent = formatBytes(data.ram_usage_mb * 1024 * 1024);
-                    document.getElementById('vram-usage').textContent = formatBytes(data.vram_usage_mb * 1024 * 1024);
 
                     const cpuPercent = Math.min(100, Math.round(data.cpu_usage_percent));
                     const cpuProgress = document.getElementById('cpu-progress');
@@ -849,6 +844,12 @@ class WorkerWebUI:
                     const vramProgress = document.getElementById('vram-progress');
                     vramProgress.style.width = vramPercent + '%';
                     vramProgress.textContent = vramPercent + '%';
+                    
+                    // Update VRAM label with absolute usage
+                    const vramLabel = document.getElementById('vram-label');
+                    const vramUsed = formatBytes(data.vram_usage_mb * 1024 * 1024);
+                    const vramTotal = formatBytes(data.total_vram_mb * 1024 * 1024);
+                    vramLabel.textContent = `VRAM: ${vramUsed} / ${vramTotal}`;
 
                     // Current Job
                     const currentJobDiv = document.getElementById('current-job');
