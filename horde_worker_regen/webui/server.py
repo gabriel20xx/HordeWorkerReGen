@@ -384,18 +384,19 @@ class WorkerWebUI:
         }
 
         .last-image-container {
-            min-height: 432px;
             display: flex;
             align-items: center;
             justify-content: center;
+            min-height: 200px;
         }
 
         /* Image grid for batch jobs */
         .image-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
-            gap: 15px;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
             width: 100%;
+            max-height: 400px;
         }
 
         .image-grid-item {
@@ -430,7 +431,7 @@ class WorkerWebUI:
         /* Single image display (for non-batch jobs) */
         .last-image-container .single-image {
             max-width: 100%;
-            max-height: 432px;
+            max-height: 400px;
             width: auto;
             height: auto;
             object-fit: contain;
