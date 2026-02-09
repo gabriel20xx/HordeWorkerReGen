@@ -318,7 +318,6 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.INFERENCE_COMPLETE
             or self.last_process_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or self.last_process_state == HordeProcessState.ALCHEMY_COMPLETE
-            or self.last_process_state == HordeProcessState.IMAGE_SUBMITTED
         )
 
 
@@ -483,7 +482,6 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             or new_state == HordeProcessState.MODEL_LOADED
             or new_state == HordeProcessState.SAFETY_COMPLETE
             or new_state == HordeProcessState.IMAGE_SAVED
-            or new_state == HordeProcessState.IMAGE_SUBMITTED
             or new_state == HordeProcessState.WAITING_FOR_JOB
         ):
             self.reset_heartbeat_state(process_id)
@@ -3508,11 +3506,11 @@ class HordeWorkerProcessManager:
         self.kudos_events.append((time.time(), job_submit_response.reward))
         new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
 
-        # Update state to IMAGE_SUBMITTED for the process that handled this job (reuse process_id from above)
+        # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
         if handling_process_id is not None:
             self._process_map.on_process_state_change(
                 process_id=handling_process_id,
-                new_state=HordeProcessState.IMAGE_SUBMITTED,
+                new_state=HordeProcessState.WAITING_FOR_JOB,
             )
 
         return new_submit
@@ -4405,6 +4403,11 @@ class HordeWorkerProcessManager:
             logger.debug(
                 f"Pending megapixelsteps decreased below {self._max_pending_megapixelsteps}, continuing with job pops",
             )
+        else:
+            # Resume job pop pausing if there are no pending jobs
+            if self._triggered_max_pending_megapixelsteps:
+                self._triggered_max_pending_megapixelsteps = False
+                logger.debug("No pending jobs remaining, resuming job pops")
 
         self._triggered_max_pending_megapixelsteps = False
 

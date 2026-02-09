@@ -885,8 +885,6 @@ class WorkerWebUI:
                             stateDisplay = 'Image Saved';
                         } else if (job.state === 'IMAGE_SUBMITTING') {
                             stateDisplay = 'Submitting';
-                        } else if (job.state === 'IMAGE_SUBMITTED') {
-                            stateDisplay = 'Submitted';
                         } else if (job.state) {
                             // Convert snake_case to Title Case
                             stateDisplay = job.state.split('_').map(word =>
