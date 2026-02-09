@@ -1578,8 +1578,8 @@ class HordeWorkerProcessManager:
 
         # Initialize web UI if enabled
         self.webui: WorkerWebUI | None = None
-        self._last_image_base64: str | None = None
-        """The last generated image in base64 format for webui preview."""
+        self._last_image_base64: list[str] = []
+        """The last generated images in base64 format for webui preview (supports batch jobs)."""
         self._last_image_job_timestamp: float = 0.0
         """Timestamp when the last preview image was set, to prevent older jobs from overwriting newer ones."""
         self._console_logs: list[str] = []
@@ -2312,7 +2312,10 @@ class HordeWorkerProcessManager:
                     if self.webui and message.job_image_results and len(message.job_image_results) > 0:
                         current_time = time.time()
                         job_info.inference_completed_timestamp = current_time
-                        self._last_image_base64 = message.job_image_results[0].image_base64
+                        # Capture all images from the batch job
+                        self._last_image_base64 = [
+                            job_result.image_base64 for job_result in message.job_image_results
+                        ]
                         self._last_image_job_timestamp = current_time
 
                     self.jobs_pending_safety_check.append(job_info)
@@ -2439,23 +2442,29 @@ class HordeWorkerProcessManager:
                     and completed_job_info.inference_completed_timestamp is not None
                     and completed_job_info.inference_completed_timestamp >= self._last_image_job_timestamp
                 ):
-                    # Use the saved disk image instead of the submitted image
+                    # Use the saved disk images instead of the submitted images
                     if message.saved_images and len(message.saved_images) > 0:
                         try:
-                            # Read the saved image from disk and convert to base64
-                            saved_image_path = message.saved_images[0].path
-                            with open(saved_image_path, "rb") as image_file:
-                                image_data = image_file.read()
-                                self._last_image_base64 = base64.b64encode(image_data).decode("utf-8")
-                                self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                            # Read all saved images from disk and convert to base64
+                            images_base64 = []
+                            for saved_image in message.saved_images:
+                                with open(saved_image.path, "rb") as image_file:
+                                    image_data = image_file.read()
+                                    images_base64.append(base64.b64encode(image_data).decode("utf-8"))
+                            self._last_image_base64 = images_base64
+                            self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
                         except (FileNotFoundError, OSError) as e:
-                            logger.warning(f"Failed to read saved image for webui preview: {e}")
-                            # Fallback to the submitted image if reading from disk fails
-                            self._last_image_base64 = completed_job_info.job_image_results[0].image_base64
+                            logger.warning(f"Failed to read saved images for webui preview: {e}")
+                            # Fallback to the submitted images if reading from disk fails
+                            self._last_image_base64 = [
+                                job_result.image_base64 for job_result in completed_job_info.job_image_results
+                            ]
                             self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
                     else:
-                        # Fallback to the submitted image if no saved images available
-                        self._last_image_base64 = completed_job_info.job_image_results[0].image_base64
+                        # Fallback to the submitted images if no saved images available
+                        self._last_image_base64 = [
+                            job_result.image_base64 for job_result in completed_job_info.job_image_results
+                        ]
                         self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
 
                 # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
