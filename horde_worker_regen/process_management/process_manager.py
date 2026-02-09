@@ -2308,8 +2308,9 @@ class HordeWorkerProcessManager:
                     job_info.job_image_results = message.job_image_results
                     job_info.sanitized_negative_prompt = message.sanitized_negative_prompt
 
-                    # Set inference completion timestamp for webui preview after safety check
-                    if self.webui and message.job_image_results and len(message.job_image_results) > 0:
+                    # Set inference completion timestamp for webui preview ordering after safety check
+                    # Always set timestamp regardless of webui state to ensure jobs can be displayed later
+                    if message.job_image_results and len(message.job_image_results) > 0:
                         current_time = time.time()
                         job_info.inference_completed_timestamp = current_time
                         # Note: Images will be displayed after safety check using disk-saved versions (not here to avoid flickering)
