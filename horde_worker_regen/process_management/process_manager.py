@@ -5618,10 +5618,10 @@ class HordeWorkerProcessManager:
         # Get user kudos total and username
         user_kudos_total = None
         horde_username = None
-        if self.user_info and self.user_info.kudos_details:
-            user_kudos_total = self.user_info.kudos_details.accumulated
         if self.user_info:
             horde_username = self.user_info.username
+            if self.user_info.kudos_details:
+                user_kudos_total = self.user_info.kudos_details.accumulated
 
         # Update the web UI
         self.webui.update_status(
