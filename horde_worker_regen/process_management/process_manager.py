@@ -4409,8 +4409,6 @@ class HordeWorkerProcessManager:
                 self._triggered_max_pending_megapixelsteps = False
                 logger.debug("No pending jobs remaining, resuming job pops")
 
-        self._triggered_max_pending_megapixelsteps = False
-
         # We don't want to pop jobs too frequently, so we wait a bit between each pop
         if time.time() - self._last_job_pop_time < self._job_pop_frequency:
             return
