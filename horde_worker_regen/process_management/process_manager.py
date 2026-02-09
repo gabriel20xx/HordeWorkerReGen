@@ -2907,7 +2907,7 @@ class HordeWorkerProcessManager:
             ),
         ):
             self.jobs_in_progress.append(next_job)
-            
+
             # Remove from pending queue to avoid duplicate display
             if next_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(next_job)
