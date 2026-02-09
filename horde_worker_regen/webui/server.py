@@ -29,8 +29,10 @@ class WorkerWebUI:
             "uptime": 0,
             "session_start_time": time.time(),
             "jobs_popped": 0,
+            "jobs_queued": 0,
             "jobs_completed": 0,
             "jobs_faulted": 0,
+            "processes_recovered": 0,
             "kudos_earned_session": 0.0,
             "kudos_per_hour": 0.0,
             "current_job": None,
@@ -550,12 +552,20 @@ class WorkerWebUI:
                         <span class="stat-value" id="jobs-popped">0</span>
                     </div>
                     <div class="stat">
+                        <span class="stat-label">Jobs Queued:</span>
+                        <span class="stat-value" id="jobs-queued">0</span>
+                    </div>
+                    <div class="stat">
                         <span class="stat-label">Jobs Completed:</span>
                         <span class="stat-value success" id="jobs-completed">0</span>
                     </div>
                     <div class="stat">
                         <span class="stat-label">Jobs Faulted:</span>
                         <span class="stat-value error" id="jobs-faulted">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Processes Recovered:</span>
+                        <span class="stat-value" id="processes-recovered">0</span>
                     </div>
                     <div class="stat">
                         <span class="stat-label">Kudos/Hour:</span>
@@ -832,8 +842,10 @@ class WorkerWebUI:
 
                     // Session Stats
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
+                    document.getElementById('jobs-queued').textContent = data.jobs_queued;
                     document.getElementById('jobs-completed').textContent = data.jobs_completed;
                     document.getElementById('jobs-faulted').textContent = data.jobs_faulted;
+                    document.getElementById('processes-recovered').textContent = data.processes_recovered;
                     document.getElementById('kudos-per-hour').textContent =
                         data.kudos_per_hour.toLocaleString(undefined, {maximumFractionDigits: 2});
 
@@ -1202,8 +1214,10 @@ class WorkerWebUI:
         self,
         worker_name: str | None = None,
         jobs_popped: int | None = None,
+        jobs_queued: int | None = None,
         jobs_completed: int | None = None,
         jobs_faulted: int | None = None,
+        processes_recovered: int | None = None,
         kudos_earned_session: float | None = None,
         kudos_per_hour: float | None = None,
         current_job: dict[str, Any] | None = None,
@@ -1226,8 +1240,10 @@ class WorkerWebUI:
         Args:
             worker_name: The name of the worker
             jobs_popped: Total number of jobs popped this session
+            jobs_queued: Total number of jobs queued (popped from API) this session
             jobs_completed: Total number of jobs completed this session
             jobs_faulted: Total number of jobs faulted this session
+            processes_recovered: Total number of process recoveries this session
             kudos_earned_session: Total kudos earned this session
             kudos_per_hour: Current kudos per hour rate
             current_job: Information about the current job being processed
@@ -1249,10 +1265,14 @@ class WorkerWebUI:
             self.status_data["worker_name"] = worker_name
         if jobs_popped is not None:
             self.status_data["jobs_popped"] = jobs_popped
+        if jobs_queued is not None:
+            self.status_data["jobs_queued"] = jobs_queued
         if jobs_completed is not None:
             self.status_data["jobs_completed"] = jobs_completed
         if jobs_faulted is not None:
             self.status_data["jobs_faulted"] = jobs_faulted
+        if processes_recovered is not None:
+            self.status_data["processes_recovered"] = processes_recovered
         if kudos_earned_session is not None:
             self.status_data["kudos_earned_session"] = kudos_earned_session
         if kudos_per_hour is not None:

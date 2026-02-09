@@ -2013,6 +2013,9 @@ class HordeWorkerProcessManager:
     total_num_completed_jobs: int = 0
     """The total number of jobs that have been completed."""
 
+    total_num_jobs_queued: int = 0
+    """The total number of jobs that have been queued (popped from API) during this session."""
+
     def end_safety_processes(self) -> None:
         """End any safety processes above the configured limit, or all of them if shutting down."""
         process_info = self._process_map.get_first_available_safety_process()
@@ -4647,6 +4650,7 @@ class HordeWorkerProcessManager:
 
         async with self._jobs_pending_inference_lock, self._job_pop_timestamps_lock:
             self.jobs_pending_inference.append(job_pop_response)
+            self.total_num_jobs_queued += 1
             self._invalidate_megapixelsteps_cache()
             jobs = []
             for job in self.jobs_pending_inference:
@@ -5624,8 +5628,10 @@ class HordeWorkerProcessManager:
         self.webui.update_status(
             worker_name=self.bridge_data.dreamer_worker_name,
             jobs_popped=self.num_jobs_total,
+            jobs_queued=self.total_num_jobs_queued,
             jobs_completed=self.total_num_completed_jobs,
             jobs_faulted=self._num_jobs_faulted,
+            processes_recovered=self._num_process_recoveries,
             kudos_earned_session=self.kudos_generated_this_session,
             kudos_per_hour=kudos_per_hour,
             current_job=current_job,
