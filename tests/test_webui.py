@@ -25,8 +25,10 @@ def test_webui_status_update() -> None:
         worker_name="TestWorker",
         horde_username="TestUser#123",
         jobs_popped=10,
+        jobs_queued=15,
         jobs_completed=8,
         jobs_faulted=1,
+        processes_recovered=2,
         kudos_earned_session=100.5,
         kudos_per_hour=50.25,
     )
@@ -35,8 +37,10 @@ def test_webui_status_update() -> None:
     assert webui.status_data["worker_name"] == "TestWorker"
     assert webui.status_data["horde_username"] == "TestUser#123"
     assert webui.status_data["jobs_popped"] == 10
+    assert webui.status_data["jobs_queued"] == 15
     assert webui.status_data["jobs_completed"] == 8
     assert webui.status_data["jobs_faulted"] == 1
+    assert webui.status_data["processes_recovered"] == 2
     assert webui.status_data["kudos_earned_session"] == 100.5
     assert webui.status_data["kudos_per_hour"] == 50.25
 
