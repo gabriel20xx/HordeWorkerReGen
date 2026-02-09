@@ -3995,9 +3995,18 @@ class HordeWorkerProcessManager:
                 faulted_job_details["controlnet"] = faulted_job.payload.workflow
 
             # Add to history (keep only the last N)
-            self._faulted_jobs_history.insert(0, faulted_job_details)
-            if len(self._faulted_jobs_history) > self._max_faulted_jobs_history:
-                self._faulted_jobs_history = self._faulted_jobs_history[:self._max_faulted_jobs_history]
+            # Check if this job_id already exists in the history to prevent duplicates
+            job_id_str = str(faulted_job.id_)
+            job_already_in_history = any(entry["job_id"] == job_id_str for entry in self._faulted_jobs_history)
+
+            if job_already_in_history:
+                # Job already exists in history, don't add duplicate
+                logger.debug(f"Job {job_id_str} already in faulted_jobs_history, skipping duplicate entry")
+            else:
+                # Add new entry to history
+                self._faulted_jobs_history.insert(0, faulted_job_details)
+                if len(self._faulted_jobs_history) > self._max_faulted_jobs_history:
+                    self._faulted_jobs_history = self._faulted_jobs_history[:self._max_faulted_jobs_history]
 
             if process_info is not None:
                 logger.error(f"Job {faulted_job.id_} faulted due to process {process_info.process_id} crashing")
