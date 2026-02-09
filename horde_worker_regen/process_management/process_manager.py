@@ -5578,7 +5578,8 @@ class HordeWorkerProcessManager:
 
         # Calculate total resource usage
         total_ram_mb = sum(p.ram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
-        total_vram_mb = sum(p.vram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
+        # Use max() for VRAM because each process reports the total GPU VRAM usage, not per-process usage
+        total_vram_mb = max((p.vram_usage_bytes for p in self._process_map.values()), default=0) / BYTES_TO_MEGABYTES
 
         # Get total VRAM from all devices
         total_device_vram_mb = 0
