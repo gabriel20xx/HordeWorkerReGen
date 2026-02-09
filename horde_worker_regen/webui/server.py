@@ -1302,7 +1302,7 @@ class WorkerWebUI:
         if user_kudos_total is not None:
             self.status_data["user_kudos_total"] = user_kudos_total
         if last_image_base64 is not None:
-            self.status_data["last_image_base64"] = last_image_base64
+            self.status_data["last_image_base64"] = list(last_image_base64)
         if console_logs is not None:
             self.status_data["console_logs"] = console_logs
         if faulted_jobs_history is not None:
