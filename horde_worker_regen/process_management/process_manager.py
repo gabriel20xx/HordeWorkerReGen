@@ -5615,14 +5615,18 @@ class HordeWorkerProcessManager:
             )
             kudos_per_hour = recent_kudos
 
-        # Get user kudos total
+        # Get user kudos total and username
         user_kudos_total = None
+        horde_username = None
         if self.user_info and self.user_info.kudos_details:
             user_kudos_total = self.user_info.kudos_details.accumulated
+        if self.user_info:
+            horde_username = self.user_info.username
 
         # Update the web UI
         self.webui.update_status(
             worker_name=self.bridge_data.dreamer_worker_name,
+            horde_username=horde_username,
             jobs_popped=self.num_jobs_total,
             jobs_completed=self.total_num_completed_jobs,
             jobs_faulted=self._num_jobs_faulted,

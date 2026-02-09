@@ -26,6 +26,7 @@ class WorkerWebUI:
         # Status data that will be updated by the worker
         self.status_data: dict[str, Any] = {
             "worker_name": "Unknown",
+            "horde_username": "Unknown",
             "uptime": 0,
             "session_start_time": time.time(),
             "jobs_popped": 0,
@@ -524,10 +525,14 @@ class WorkerWebUI:
         <div id="content" style="display: none;">
             <div class="grid">
                 <div class="card">
-                    <h2>Worker Info</h2>
+                    <h2>Horde Info</h2>
                     <div class="stat">
                         <span class="stat-label">Worker Name:</span>
                         <span class="stat-value" id="worker-name">-</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Horde Username:</span>
+                        <span class="stat-value" id="horde-username">-</span>
                     </div>
                     <div class="stat">
                         <span class="stat-label">Status:</span>
@@ -816,8 +821,9 @@ class WorkerWebUI:
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('content').style.display = 'block';
 
-                    // Worker Info
+                    // Horde Info
                     document.getElementById('worker-name').textContent = data.worker_name;
+                    document.getElementById('horde-username').textContent = data.horde_username;
 
                     const statusBadge = document.getElementById('worker-status-badge');
                     if (data.maintenance_mode) {
@@ -1201,6 +1207,7 @@ class WorkerWebUI:
     def update_status(
         self,
         worker_name: str | None = None,
+        horde_username: str | None = None,
         jobs_popped: int | None = None,
         jobs_completed: int | None = None,
         jobs_faulted: int | None = None,
@@ -1225,6 +1232,7 @@ class WorkerWebUI:
 
         Args:
             worker_name: The name of the worker
+            horde_username: The horde username
             jobs_popped: Total number of jobs popped this session
             jobs_completed: Total number of jobs completed this session
             jobs_faulted: Total number of jobs faulted this session
@@ -1247,6 +1255,8 @@ class WorkerWebUI:
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
+        if horde_username is not None:
+            self.status_data["horde_username"] = horde_username
         if jobs_popped is not None:
             self.status_data["jobs_popped"] = jobs_popped
         if jobs_completed is not None:
