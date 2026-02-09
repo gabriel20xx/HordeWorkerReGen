@@ -5577,12 +5577,13 @@ class HordeWorkerProcessManager:
             )
 
         # Get CPU usage percentage
-        cpu_usage_percent = psutil.cpu_percent(interval=0)
+        cpu_usage_percent = psutil.cpu_percent(interval=0.1)
 
         # Get GPU utilization percentage
         gpu_usage_percent = 0.0
         try:
             import torch
+
             if torch.cuda.is_available():
                 # Average utilization across all GPUs
                 total_util = 0.0
@@ -5597,7 +5598,7 @@ class HordeWorkerProcessManager:
                         pass
                 if device_count > 0 and total_util > 0:
                     gpu_usage_percent = total_util / device_count
-        except (ImportError, Exception):
+        except Exception:
             # If torch is not available or CUDA is not available, GPU usage will be 0
             pass
 
