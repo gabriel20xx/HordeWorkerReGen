@@ -159,11 +159,11 @@ class WorkerWebUI:
 
         .progress-bar-container {
             width: 100%;
-            height: 30px;
+            height: 24px;
             background: #f0f0f0;
-            border-radius: 15px;
+            border-radius: 12px;
             overflow: hidden;
-            margin: 10px 0;
+            margin: 5px 0;
             position: relative;
         }
 
@@ -566,35 +566,27 @@ class WorkerWebUI:
                 <div class="card">
                     <h2>Resources</h2>
                     <div class="stat">
-                        <span class="stat-label">RAM Usage:</span>
+                        <span class="stat-label">RAM:</span>
                         <span class="stat-value" id="ram-usage">-</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-label">VRAM Usage:</span>
+                        <span class="stat-label">VRAM:</span>
                         <span class="stat-value" id="vram-usage">-</span>
                     </div>
-                    <div class="stat">
-                        <span class="stat-label">CPU Usage:</span>
-                        <span class="stat-value" id="cpu-usage">-</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">GPU Usage:</span>
-                        <span class="stat-value" id="gpu-usage">-</span>
-                    </div>
                     <div>
-                        <div style="margin-top: 15px; margin-bottom: 5px; color: #666; font-weight: 500;">CPU:</div>
+                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">CPU:</div>
                         <div class="progress-bar-container">
                             <div class="progress-bar" id="cpu-progress" style="width: 0%">0%</div>
                         </div>
                     </div>
                     <div>
-                        <div style="margin-top: 15px; margin-bottom: 5px; color: #666; font-weight: 500;">GPU:</div>
+                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">GPU:</div>
                         <div class="progress-bar-container">
                             <div class="progress-bar" id="gpu-progress" style="width: 0%">0%</div>
                         </div>
                     </div>
                     <div>
-                        <div style="margin-top: 15px; margin-bottom: 5px; color: #666; font-weight: 500;">VRAM:</div>
+                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">VRAM:</div>
                         <div class="progress-bar-container">
                             <div class="progress-bar" id="vram-progress" style="width: 0%">0%</div>
                         </div>
@@ -840,8 +832,6 @@ class WorkerWebUI:
                     // Resources
                     document.getElementById('ram-usage').textContent = formatBytes(data.ram_usage_mb * 1024 * 1024);
                     document.getElementById('vram-usage').textContent = formatBytes(data.vram_usage_mb * 1024 * 1024);
-                    document.getElementById('cpu-usage').textContent = data.cpu_usage_percent.toFixed(1) + '%';
-                    document.getElementById('gpu-usage').textContent = data.gpu_usage_percent.toFixed(1) + '%';
 
                     const cpuPercent = Math.min(100, Math.round(data.cpu_usage_percent));
                     const cpuProgress = document.getElementById('cpu-progress');
