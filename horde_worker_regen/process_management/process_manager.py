@@ -5235,9 +5235,11 @@ class HordeWorkerProcessManager:
             if jobs_in_progress_list:
                 logging_function(f'  In Progress: {", ".join(jobs_in_progress_list)}')
 
-            # Show queued jobs
+            # Show queued jobs (exclude jobs already in progress)
             jobs_pending_list = []
             for x in self.jobs_pending_inference:
+                if x in self.jobs_in_progress:
+                    continue
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
                 jobs_pending_list.append(f"<{shortened_id}: <u>{x.model}></u>")
 
