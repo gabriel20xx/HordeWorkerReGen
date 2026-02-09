@@ -1,6 +1,5 @@
 """Web server for the Horde Worker status UI."""
 
-import json
 import time
 from typing import Any
 
@@ -41,6 +40,8 @@ class WorkerWebUI:
             "ram_usage_mb": 0,
             "vram_usage_mb": 0,
             "total_vram_mb": 0,
+            "cpu_usage_percent": 0,
+            "gpu_usage_percent": 0,
             "maintenance_mode": False,
             "user_kudos_total": 0.0,
             "last_image_base64": [],
@@ -571,6 +572,26 @@ class WorkerWebUI:
                         <span class="stat-label">VRAM Usage:</span>
                         <span class="stat-value" id="vram-usage">-</span>
                     </div>
+                    <div class="stat">
+                        <span class="stat-label">CPU Usage:</span>
+                        <span class="stat-value" id="cpu-usage">-</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">GPU Usage:</span>
+                        <span class="stat-value" id="gpu-usage">-</span>
+                    </div>
+                    <div>
+                        <div style="margin-top: 15px; margin-bottom: 5px; color: #666; font-weight: 500;">CPU:</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="cpu-progress" style="width: 0%">0%</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="margin-top: 15px; margin-bottom: 5px; color: #666; font-weight: 500;">GPU:</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="gpu-progress" style="width: 0%">0%</div>
+                        </div>
+                    </div>
                     <div>
                         <div style="margin-top: 15px; margin-bottom: 5px; color: #666; font-weight: 500;">VRAM:</div>
                         <div class="progress-bar-container">
@@ -818,6 +839,18 @@ class WorkerWebUI:
                     // Resources
                     document.getElementById('ram-usage').textContent = formatBytes(data.ram_usage_mb * 1024 * 1024);
                     document.getElementById('vram-usage').textContent = formatBytes(data.vram_usage_mb * 1024 * 1024);
+                    document.getElementById('cpu-usage').textContent = data.cpu_usage_percent.toFixed(1) + '%';
+                    document.getElementById('gpu-usage').textContent = data.gpu_usage_percent.toFixed(1) + '%';
+
+                    const cpuPercent = Math.min(100, Math.round(data.cpu_usage_percent));
+                    const cpuProgress = document.getElementById('cpu-progress');
+                    cpuProgress.style.width = cpuPercent + '%';
+                    cpuProgress.textContent = cpuPercent + '%';
+
+                    const gpuPercent = Math.min(100, Math.round(data.gpu_usage_percent));
+                    const gpuProgress = document.getElementById('gpu-progress');
+                    gpuProgress.style.width = gpuPercent + '%';
+                    gpuProgress.textContent = gpuPercent + '%';
 
                     const vramPercent = data.total_vram_mb > 0
                         ? Math.min(100, Math.round((data.vram_usage_mb / data.total_vram_mb) * 100))
@@ -1172,6 +1205,8 @@ class WorkerWebUI:
         ram_usage_mb: float | None = None,
         vram_usage_mb: float | None = None,
         total_vram_mb: float | None = None,
+        cpu_usage_percent: float | None = None,
+        gpu_usage_percent: float | None = None,
         maintenance_mode: bool | None = None,
         user_kudos_total: float | None = None,
         last_image_base64: str | None = None,
@@ -1194,6 +1229,8 @@ class WorkerWebUI:
             ram_usage_mb: RAM usage in MB
             vram_usage_mb: VRAM usage in MB
             total_vram_mb: Total VRAM in MB
+            cpu_usage_percent: CPU usage percentage
+            gpu_usage_percent: GPU usage percentage
             maintenance_mode: Whether worker is in maintenance mode
             user_kudos_total: Total kudos accumulated by the user
             last_image_base64: Base64 encoded last generated image
@@ -1226,6 +1263,10 @@ class WorkerWebUI:
             self.status_data["vram_usage_mb"] = vram_usage_mb
         if total_vram_mb is not None:
             self.status_data["total_vram_mb"] = total_vram_mb
+        if cpu_usage_percent is not None:
+            self.status_data["cpu_usage_percent"] = cpu_usage_percent
+        if gpu_usage_percent is not None:
+            self.status_data["gpu_usage_percent"] = gpu_usage_percent
         if maintenance_mode is not None:
             self.status_data["maintenance_mode"] = maintenance_mode
         if user_kudos_total is not None:

@@ -57,8 +57,6 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, RootModel, ValidationError
 from typing_extensions import override
 
-from horde_worker_regen.logger_config import create_level_format_function
-
 import horde_worker_regen
 from horde_worker_regen.bridge_data.data_model import reGenBridgeData
 from horde_worker_regen.bridge_data.load_config import BridgeDataLoader
@@ -70,6 +68,7 @@ from horde_worker_regen.consts import (
     MAX_SOURCE_IMAGE_RETRIES,
     VRAM_HEAVY_MODELS,
 )
+from horde_worker_regen.logger_config import create_level_format_function
 from horde_worker_regen.process_management._aliased_types import ProcessQueue
 from horde_worker_regen.process_management.horde_process import HordeProcessType
 from horde_worker_regen.process_management.messages import (
@@ -295,7 +294,7 @@ class HordeProcessInfo:
         try:
             self.pipe_connection.send(message)
             return True
-        except Exception as e:
+        except Exception:
             global _caught_signal
             if not _caught_signal:
                 # Prevent the log/console to get spammed
@@ -3894,7 +3893,7 @@ class HordeWorkerProcessManager:
                 job_info.retry_count += 1
                 logger.warning(
                     f"Job {faulted_job.id_} faulted on process {process_info.process_id if process_info else 'unknown'}, "
-                    f"retrying (attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})"
+                    f"retrying (attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})",
                 )
 
                 # Remove from jobs_in_progress if present
@@ -3917,7 +3916,7 @@ class HordeWorkerProcessManager:
             retry_text = "retry attempt" if self.MAX_JOB_RETRIES == 1 else "retry attempts"
             logger.error(
                 f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} {retry_text}, "
-                f"marking as permanently faulted"
+                f"marking as permanently faulted",
             )
 
             if faulted_job in self.jobs_pending_inference:
@@ -4537,9 +4536,9 @@ class HordeWorkerProcessManager:
                         self._last_pop_maintenance_mode = True
                         try:
                             self.remove_maintenance()
-                            logger.success(f"Maintenance mode automatically deactivated")
-                        except Exception as e:
-                            logger.error(f"Maintenance mode couldn't been deactivated automatically")
+                            logger.success("Maintenance mode automatically deactivated")
+                        except Exception:
+                            logger.error("Maintenance mode couldn't been deactivated automatically")
                 elif "we cannot accept workers serving" in job_pop_response.message.lower():
                     logger.warning(f"Failed to pop job (Unrecognized Model): {job_pop_response}")
                     logger.error(
@@ -5221,16 +5220,16 @@ class HordeWorkerProcessManager:
                 logging_function("<fg #00d7ff>" + "-" * 80 + "</>")
 
             logging_function("<b><fg #00ff87>Jobs:</></b>")
-            
+
             # Show jobs in progress
             jobs_in_progress_list = []
             for x in self.jobs_in_progress:
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
                 jobs_in_progress_list.append(f"<{shortened_id}: <u>{x.model}></u>")
-            
+
             if jobs_in_progress_list:
                 logging_function(f'  In Progress: {", ".join(jobs_in_progress_list)}')
-            
+
             # Show pending jobs
             jobs_pending_list = []
             for x in self.jobs_pending_inference:
@@ -5239,7 +5238,7 @@ class HordeWorkerProcessManager:
 
             if jobs_pending_list:
                 logging_function(f'  Pending: {", ".join(jobs_pending_list)}')
-            
+
             if not jobs_in_progress_list and not jobs_pending_list:
                 logging_function("  No active jobs")
 
@@ -5308,7 +5307,7 @@ class HordeWorkerProcessManager:
                         f"sdxl_cn: {self.bridge_data.allow_sdxl_controlnet}",
                         f"pp: {self.bridge_data.allow_post_processing}",
                         f"pp_overlap: {self.bridge_data.post_process_job_overlap}",
-                    ]
+                    ],
                 )
                 logger.info(f"  {worker_info}")
 
@@ -5318,7 +5317,7 @@ class HordeWorkerProcessManager:
                         f"high_perf: {self.bridge_data.high_performance_mode}",
                         f"med_perf: {self.bridge_data.moderate_performance_mode}",
                         f"high_mem: {self.bridge_data.high_memory_mode}",
-                    ]
+                    ],
                 )
                 logger.info(f"  {memory_info}")
 
@@ -5541,7 +5540,7 @@ class HordeWorkerProcessManager:
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
                     "batch_size": job.payload.n_iter if job.payload else None,
-                }
+                },
             )
 
         # Get process info
@@ -5554,7 +5553,7 @@ class HordeWorkerProcessManager:
                     "state": process_info.last_process_state.name,
                     "model": process_info.loaded_horde_model_name,
                     "progress": process_info.last_heartbeat_percent_complete,
-                }
+                },
             )
 
         # Get loaded models
@@ -5563,7 +5562,7 @@ class HordeWorkerProcessManager:
                 process.loaded_horde_model_name
                 for process in self._process_map.values()
                 if process.loaded_horde_model_name is not None
-            }
+            },
         )
 
         # Calculate total resource usage
@@ -5573,7 +5572,35 @@ class HordeWorkerProcessManager:
         # Get total VRAM from all devices
         total_device_vram_mb = 0
         if len(self._device_map.root) > 0:
-            total_device_vram_mb = sum(device.total_memory for device in self._device_map.root.values()) / BYTES_TO_MEGABYTES
+            total_device_vram_mb = (
+                sum(device.total_memory for device in self._device_map.root.values()) / BYTES_TO_MEGABYTES
+            )
+
+        # Get CPU usage percentage
+        cpu_usage_percent = psutil.cpu_percent(interval=0.1)
+
+        # Get GPU utilization percentage
+        gpu_usage_percent = 0.0
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                # Average utilization across all GPUs
+                total_util = 0.0
+                device_count = torch.cuda.device_count()
+                for i in range(device_count):
+                    # Get GPU utilization using nvidia-smi via torch
+                    # Note: torch.cuda.utilization() returns GPU utilization percentage
+                    try:
+                        total_util += torch.cuda.utilization(i)
+                    except Exception:
+                        # If utilization() is not available, we skip
+                        pass
+                if device_count > 0 and total_util > 0:
+                    gpu_usage_percent = total_util / device_count
+        except Exception:
+            # If torch is not available or CUDA is not available, GPU usage will be 0
+            pass
 
         # Calculate kudos per hour
         kudos_per_hour = 0.0
@@ -5605,6 +5632,8 @@ class HordeWorkerProcessManager:
             ram_usage_mb=total_ram_mb,
             vram_usage_mb=total_vram_mb,
             total_vram_mb=total_device_vram_mb,
+            cpu_usage_percent=cpu_usage_percent,
+            gpu_usage_percent=gpu_usage_percent,
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
@@ -5622,7 +5651,7 @@ class HordeWorkerProcessManager:
         if future.cancelled():
             logger.debug("A main loop task was cancelled")
             return
-        
+
         # Even after checking cancelled(), future.exception() can still raise CancelledError
         # in some edge cases, so we wrap it in a try-except for defense-in-depth
         try:
@@ -5630,7 +5659,7 @@ class HordeWorkerProcessManager:
         except CancelledError:
             logger.debug("A main loop task was cancelled (CancelledError)")
             return
-        
+
         if ex is not None:
             if self._shutting_down:
                 logger.debug(f"exception thrown by a main loop task: {ex}")
@@ -5919,7 +5948,7 @@ class HordeWorkerProcessManager:
                     f"Last heartbeat: {time_since_heartbeat:.1f}s ago, "
                     f"Last progress change: {time_since_progress:.1f}s ago, "
                     f"Progress: {progress_str}, "
-                    f"Job: {process_info.last_job_referenced.id_ if process_info.last_job_referenced else 'None'}"
+                    f"Job: {process_info.last_job_referenced.id_ if process_info.last_job_referenced else 'None'}",
                 )
                 self._replace_inference_process(process_info)
                 any_replaced = True

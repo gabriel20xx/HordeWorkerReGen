@@ -64,6 +64,40 @@ def test_webui_vram_resources() -> None:
     assert expected_percent == 33
 
 
+def test_webui_cpu_gpu_usage() -> None:
+    """Test that WorkerWebUI correctly handles CPU and GPU usage updates."""
+    webui = WorkerWebUI(port=0)
+
+    # Test CPU and GPU usage update
+    test_cpu_usage_percent = 45.5
+    test_gpu_usage_percent = 78.2
+
+    webui.update_status(
+        cpu_usage_percent=test_cpu_usage_percent,
+        gpu_usage_percent=test_gpu_usage_percent,
+    )
+
+    # Verify the values were updated correctly
+    assert webui.status_data["cpu_usage_percent"] == test_cpu_usage_percent
+    assert webui.status_data["gpu_usage_percent"] == test_gpu_usage_percent
+
+    # Test edge case: 0% usage
+    webui.update_status(
+        cpu_usage_percent=0.0,
+        gpu_usage_percent=0.0,
+    )
+    assert webui.status_data["cpu_usage_percent"] == 0.0
+    assert webui.status_data["gpu_usage_percent"] == 0.0
+
+    # Test edge case: 100% usage
+    webui.update_status(
+        cpu_usage_percent=100.0,
+        gpu_usage_percent=100.0,
+    )
+    assert webui.status_data["cpu_usage_percent"] == 100.0
+    assert webui.status_data["gpu_usage_percent"] == 100.0
+
+
 def test_webui_vram_over_100_percent() -> None:
     """Test that WorkerWebUI correctly handles edge case where VRAM usage might exceed total (should cap at 100%)."""
     webui = WorkerWebUI(port=0)
@@ -249,6 +283,9 @@ if __name__ == "__main__":
 
     test_webui_vram_resources()
     print("✓ WebUI VRAM resources test passed")
+
+    test_webui_cpu_gpu_usage()
+    print("✓ WebUI CPU/GPU usage test passed")
 
     test_webui_new_features()
     print("✓ WebUI new features test passed")
