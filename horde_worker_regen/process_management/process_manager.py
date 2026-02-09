@@ -1595,8 +1595,8 @@ class HordeWorkerProcessManager:
 
             # Add a log handler to capture logs for webui with colored output
             # Use the same format function as the normal console for consistent coloring
-            # but with a shorter timestamp format (HH:mm:ss instead of full date)
-            webui_format_record = create_level_format_function(time_format="HH:mm:ss")
+            # but with a shorter timestamp format (HH:mm:ss.SSS instead of full date)
+            webui_format_record = create_level_format_function(time_format="HH:mm:ss.SSS")
 
             self._log_handler_id = logger.add(
                 self._capture_log_for_webui,
