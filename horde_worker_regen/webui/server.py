@@ -183,7 +183,6 @@ class WorkerWebUI:
         }
 
         .process-list {
-            max-height: 300px;
             overflow-y: auto;
         }
 
@@ -535,13 +534,6 @@ class WorkerWebUI:
                 </div>
 
                 <div class="card">
-                    <h2>Last Generated Image(s)</h2>
-                    <div id="last-image-container" class="last-image-container">
-                        <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
-                    </div>
-                </div>
-
-                <div class="card">
                     <h2>Resources</h2>
                     <div class="stat">
                         <span class="stat-label">RAM:</span>
@@ -564,6 +556,13 @@ class WorkerWebUI:
                         <div class="progress-bar-container">
                             <div class="progress-bar" id="vram-progress" style="width: 0%">0%</div>
                         </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Last Generated Image(s)</h2>
+                    <div id="last-image-container" class="last-image-container">
+                        <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
                     </div>
                 </div>
             </div>
