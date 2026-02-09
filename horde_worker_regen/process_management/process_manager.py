@@ -4752,20 +4752,6 @@ class HordeWorkerProcessManager:
                 f"<fg #ffd700>{' | '.join(combined_msg_parts)}</>",
             )
 
-        # Show current jobs in progress
-        if self.jobs_in_progress:
-            # Filter jobs with valid IDs and format them
-            job_details = [
-                f"{str(job.id_)[:8]} ({job.model})"
-                for job in self.jobs_in_progress
-                if job.id_ is not None
-            ]
-            if job_details:
-                jobs_msg = f"Current Jobs: {', '.join(job_details)}"
-                log_function(
-                    f"<fg #00d7ff>{jobs_msg}</>",
-                )
-
     async def api_get_user_info(self) -> None:
         """Get the information associated with this API key from the API."""
         if self._shutting_down or self._last_pop_maintenance_mode:
@@ -5219,6 +5205,20 @@ class HordeWorkerProcessManager:
             logging_function(
                 f"<fg #00ff87>{job_info_message}</>",
             )
+
+            # Show current jobs in progress (jobs being processed right now)
+            if self.jobs_in_progress:
+                # Filter jobs with valid IDs and format them
+                job_details = [
+                    f"{str(job.id_)[:8]} ({job.model})"
+                    for job in self.jobs_in_progress
+                    if job.id_ is not None
+                ]
+                if job_details:
+                    jobs_msg = f"Current Jobs: {', '.join(job_details)}"
+                    logging_function(
+                        f"  <fg #00d7ff>{jobs_msg}</>",
+                    )
 
             # Print failing models periodically
             if (
