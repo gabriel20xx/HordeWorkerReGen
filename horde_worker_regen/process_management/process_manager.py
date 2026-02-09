@@ -3496,32 +3496,13 @@ class HordeWorkerProcessManager:
         else:
             kudos_per_second = job_submit_response.reward / new_submit.completed_job_info.time_to_generate
 
-        # If the job was not faulted, log the job submission as a success
+        # Logging is now done at the batch level in api_submit_job()
+        # Track slowdowns and faults
         if new_submit.completed_job_info.state != GENERATION_STATE.faulted:
-            logger.opt(ansi=True).success(
-                f"Submitted generation {str(new_submit.job_id)[:8]} (model: "
-                f"<u>{new_submit.completed_job_info.sdk_api_job_info.model})</u> "
-                f"for {job_submit_response.reward:,.2f} "
-                f"kudos. Job popped {time_taken} seconds ago "
-                f"and took {new_submit.completed_job_info.time_to_generate:.2f} "
-                f"to generate. ({kudos_per_second * new_submit.batch_count:.2f} "
-                "kudos/second for the whole batch. 0.4 or greater is ideal)",
-            )
-            # If slower than 0.4 kudos per second, log a warning
-            if (kudos_per_second * new_submit.batch_count) < 0.4:
-                logger.warning(
-                    f"Job {new_submit.job_id} took longer than is ideal; if this persists consider "
-                    "lowering your max_power, using less threads, disabling post processing and/or controlnets.",
-                )
-                logger.warning("Be sure your models are on an SSD. Freeing up RAM or VRAM may also help.")
+            kudos_per_second_for_batch = kudos_per_second * new_submit.batch_count
+            if kudos_per_second_for_batch < 0.4:
                 self._num_job_slowdowns += 1
-        # If the job was faulted, log an error
         else:
-            logger.error(
-                f"{new_submit.job_id} faulted. Reported fault to the horde. "
-                f"Job popped {time_taken} seconds ago and took "
-                f"{new_submit.completed_job_info.time_to_generate:.2f} to generate.",
-            )
             self._num_jobs_faulted += 1
 
         self.kudos_generated_this_session += job_submit_response.reward
@@ -3619,6 +3600,58 @@ class HordeWorkerProcessManager:
                 )
                 time_popped = time.time()
         time_taken = round(time.time() - time_popped, 2)
+        
+        # Log submission results for all successfully submitted jobs
+        successful_submits = [job for job in finished_submit_jobs if not job.is_faulted]
+        faulted_submits = [job for job in finished_submit_jobs if job.is_faulted]
+        
+        if successful_submits:
+            total_kudos = sum(job.kudos_reward for job in successful_submits)
+            batch_size = len(successful_submits)
+            model_name = completed_job_info.sdk_api_job_info.model
+            time_to_generate = completed_job_info.time_to_generate or 0.0
+            kudos_per_second_batch = highest_kudos_per_second * batch_size
+            
+            if batch_size == 1:
+                # Single job - show the one job ID
+                job_id_short = str(successful_submits[0].job_id)[:8]
+                logger.opt(ansi=True).success(
+                    f"Submitted generation {job_id_short} (model: "
+                    f"<u>{model_name}</u>) "
+                    f"for {total_kudos:,.2f} kudos. "
+                    f"Job popped {time_taken} seconds ago "
+                    f"and took {time_to_generate:.2f} to generate. "
+                    f"({kudos_per_second_batch:.2f} kudos/second. 0.4 or greater is ideal)",
+                )
+            else:
+                # Batch job - show all job IDs and combined stats
+                job_ids_short = ", ".join(str(job.job_id)[:8] for job in successful_submits)
+                logger.opt(ansi=True).success(
+                    f"Submitted {batch_size} generations [{job_ids_short}] (model: "
+                    f"<u>{model_name}</u>) "
+                    f"for {total_kudos:,.2f} kudos. "
+                    f"Job popped {time_taken} seconds ago "
+                    f"and took {time_to_generate:.2f} to generate. "
+                    f"({kudos_per_second_batch:.2f} kudos/second for the whole batch. 0.4 or greater is ideal)",
+                )
+            
+            # If slower than 0.4 kudos per second, log a warning
+            if kudos_per_second_batch < 0.4:
+                logger.warning(
+                    f"Job {completed_job_info.sdk_api_job_info.id_} took longer than is ideal; if this persists "
+                    "consider lowering your max_power, using less threads, disabling post processing and/or controlnets.",
+                )
+                logger.warning("Be sure your models are on an SSD. Freeing up RAM or VRAM may also help.")
+        
+        # Log faulted jobs
+        for faulted_job in faulted_submits:
+            time_to_generate = completed_job_info.time_to_generate or 0.0
+            logger.error(
+                f"{faulted_job.job_id} faulted. Reported fault to the horde. "
+                f"Job popped {time_taken} seconds ago and took "
+                f"{time_to_generate:.2f} to generate.",
+            )
+        
         # If the job took a long time to generate, log a warning (unless speed warnings are suppressed)
         if not self.bridge_data.suppress_speed_warnings:
             if highest_reward > 0 and (highest_reward / time_taken) < 0.1:
