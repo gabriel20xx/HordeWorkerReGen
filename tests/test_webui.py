@@ -23,6 +23,7 @@ def test_webui_status_update() -> None:
     # Update some status values
     webui.update_status(
         worker_name="TestWorker",
+        horde_username="TestUser#123",
         jobs_popped=10,
         jobs_completed=8,
         jobs_faulted=1,
@@ -32,6 +33,7 @@ def test_webui_status_update() -> None:
 
     # Verify the values were updated
     assert webui.status_data["worker_name"] == "TestWorker"
+    assert webui.status_data["horde_username"] == "TestUser#123"
     assert webui.status_data["jobs_popped"] == 10
     assert webui.status_data["jobs_completed"] == 8
     assert webui.status_data["jobs_faulted"] == 1
