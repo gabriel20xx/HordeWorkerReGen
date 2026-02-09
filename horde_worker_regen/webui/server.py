@@ -1,6 +1,5 @@
 """Web server for the Horde Worker status UI."""
 
-import json
 import time
 from typing import Any
 
