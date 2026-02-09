@@ -2907,6 +2907,11 @@ class HordeWorkerProcessManager:
             ),
         ):
             self.jobs_in_progress.append(next_job)
+            
+            # Remove from pending queue to avoid duplicate display
+            if next_job in self.jobs_pending_inference:
+                self.jobs_pending_inference.remove(next_job)
+                self._invalidate_megapixelsteps_cache()
 
             process_with_model.last_control_flag = HordeControlFlag.START_INFERENCE
             process_with_model.last_job_referenced = next_job
