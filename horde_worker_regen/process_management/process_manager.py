@@ -3997,12 +3997,9 @@ class HordeWorkerProcessManager:
             # Add to history (keep only the last N)
             # Check if this job_id already exists in the history to prevent duplicates
             job_id_str = str(faulted_job.id_)
-            existing_entry_index = next(
-                (i for i, entry in enumerate(self._faulted_jobs_history) if entry["job_id"] == job_id_str),
-                None
-            )
+            job_already_in_history = any(entry["job_id"] == job_id_str for entry in self._faulted_jobs_history)
 
-            if existing_entry_index is not None:
+            if job_already_in_history:
                 # Job already exists in history, don't add duplicate
                 logger.debug(f"Job {job_id_str} already in faulted_jobs_history, skipping duplicate entry")
             else:
