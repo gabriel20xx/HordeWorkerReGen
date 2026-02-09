@@ -1229,7 +1229,7 @@ class WorkerWebUI:
         gpu_usage_percent: float | None = None,
         maintenance_mode: bool | None = None,
         user_kudos_total: float | None = None,
-        last_image_base64: str | None = None,
+        last_image_base64: list[str] | None = None,
         console_logs: list[str] | None = None,
         faulted_jobs_history: list[dict[str, Any]] | None = None,
     ) -> None:
@@ -1256,7 +1256,7 @@ class WorkerWebUI:
             gpu_usage_percent: GPU usage percentage
             maintenance_mode: Whether worker is in maintenance mode
             user_kudos_total: Total kudos accumulated by the user
-            last_image_base64: Base64 encoded last generated image
+            last_image_base64: List of base64 encoded last generated images (supports batch jobs)
             console_logs: Recent console log messages
             faulted_jobs_history: List of faulted jobs with details
         """
@@ -1301,7 +1301,7 @@ class WorkerWebUI:
         if user_kudos_total is not None:
             self.status_data["user_kudos_total"] = user_kudos_total
         if last_image_base64 is not None:
-            self.status_data["last_image_base64"] = last_image_base64
+            self.status_data["last_image_base64"] = list(last_image_base64)
         if console_logs is not None:
             self.status_data["console_logs"] = console_logs
         if faulted_jobs_history is not None:
