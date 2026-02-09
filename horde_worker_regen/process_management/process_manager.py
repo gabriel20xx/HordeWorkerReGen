@@ -5532,16 +5532,18 @@ class HordeWorkerProcessManager:
                 # Safety check list may have been modified, ignore and show no current job
                 pass
 
-        # Get job queue
+        # Get job queue (exclude jobs that are currently in progress)
         job_queue = []
         for job in list(self.jobs_pending_inference)[:MAX_WEBUI_QUEUE_ITEMS]:  # Limit to first N
-            job_queue.append(
-                {
-                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
-                    "model": job.model,
-                    "batch_size": job.payload.n_iter if job.payload else None,
-                },
-            )
+            # Skip jobs that are already in progress
+            if job not in self.jobs_in_progress:
+                job_queue.append(
+                    {
+                        "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                        "model": job.model,
+                        "batch_size": job.payload.n_iter if job.payload else None,
+                    },
+                )
 
         # Get process info
         processes = []

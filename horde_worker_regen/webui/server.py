@@ -960,15 +960,24 @@ class WorkerWebUI:
                     processCount.textContent = data.processes.length;
 
                     if (data.processes.length > 0) {
-                        processesDiv.innerHTML = data.processes.map(proc => `
+                        processesDiv.innerHTML = data.processes.map(proc => {
+                            // Build second line with model and progress
+                            let secondLine = [];
+                            if (proc.model) {
+                                secondLine.push(`Model: ${proc.model}`);
+                            }
+                            if (proc.progress !== null && proc.progress !== undefined) {
+                                secondLine.push(`Progress: ${proc.progress}%`);
+                            }
+                            const secondLineText = secondLine.length > 0 ? secondLine.join(' | ') : 'Idle';
+                            
+                            return `
                             <div class="process-item">
-                                <div class="process-id">Process #${proc.id}: ${proc.type}</div>
-                                <div class="process-state">${proc.state}</div>
-                                ${proc.model ? `<div class="process-state">Model: ${proc.model}</div>` : ''}
-                                ${proc.progress !== null && proc.progress !== undefined ?
-                                    `<div class="process-state">Progress: ${proc.progress}%</div>` : ''}
+                                <div class="process-id">Process #${proc.id}: ${proc.type} - ${proc.state}</div>
+                                <div class="process-state">${secondLineText}</div>
                             </div>
-                        `).join('');
+                        `;
+                        }).join('');
                     } else {
                         processesDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No process info</div>';
                     }
