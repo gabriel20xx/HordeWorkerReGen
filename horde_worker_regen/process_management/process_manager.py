@@ -5575,6 +5575,31 @@ class HordeWorkerProcessManager:
         if len(self._device_map.root) > 0:
             total_device_vram_mb = sum(device.total_memory for device in self._device_map.root.values()) / BYTES_TO_MEGABYTES
 
+        # Get CPU usage percentage
+        cpu_usage_percent = psutil.cpu_percent(interval=0)
+
+        # Get GPU utilization percentage
+        gpu_usage_percent = 0.0
+        try:
+            import torch
+            if torch.cuda.is_available():
+                # Average utilization across all GPUs
+                total_util = 0.0
+                device_count = torch.cuda.device_count()
+                for i in range(device_count):
+                    # Get GPU utilization using nvidia-smi via torch
+                    # Note: torch.cuda.utilization() returns GPU utilization percentage
+                    try:
+                        total_util += torch.cuda.utilization(i)
+                    except Exception:
+                        # If utilization() is not available, we skip
+                        pass
+                if device_count > 0 and total_util > 0:
+                    gpu_usage_percent = total_util / device_count
+        except (ImportError, Exception):
+            # If torch is not available or CUDA is not available, GPU usage will be 0
+            pass
+
         # Calculate kudos per hour
         kudos_per_hour = 0.0
         if len(self.kudos_events) > 0:
@@ -5605,6 +5630,8 @@ class HordeWorkerProcessManager:
             ram_usage_mb=total_ram_mb,
             vram_usage_mb=total_vram_mb,
             total_vram_mb=total_device_vram_mb,
+            cpu_usage_percent=cpu_usage_percent,
+            gpu_usage_percent=gpu_usage_percent,
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
