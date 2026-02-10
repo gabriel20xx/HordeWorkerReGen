@@ -60,9 +60,6 @@ def test_calculate_granular_progress() -> None:
         assert (
             result == expected_progress
         ), f"Failed for state {state.name}, inference={inference_progress}: expected {expected_progress}, got {result}"
-        print(f"✓ State: {state.name}, Inference: {inference_progress}, Result: {result}%")
-
-    print("\n✓ All granular progress calculations validated")
 
 
 def test_inference_progress_scaling() -> None:
@@ -83,8 +80,6 @@ def test_inference_progress_scaling() -> None:
     assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 80) == 60
     assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 100) == 70
 
-    print("✓ Inference progress scaling validated")
-
 
 def test_post_processing_progress_scaling() -> None:
     """Test that post-processing progress is correctly scaled to 70-80% range."""
@@ -103,11 +98,20 @@ def test_post_processing_progress_scaling() -> None:
     # At 100%, it should be at INFERENCE_COMPLETE state, but if still in POST_PROCESSING
     assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_POST_PROCESSING, None) == 75
 
-    print("✓ Post-processing progress scaling validated")
-
 
 if __name__ == "__main__":
-    test_calculate_granular_progress()
-    test_inference_progress_scaling()
-    test_post_processing_progress_scaling()
-    print("\n✓ All granular progress tests passed!")
+    # Run tests manually for debugging
+    import sys
+
+    print("Running granular progress tests...")
+    try:
+        test_calculate_granular_progress()
+        print("✓ test_calculate_granular_progress passed")
+        test_inference_progress_scaling()
+        print("✓ test_inference_progress_scaling passed")
+        test_post_processing_progress_scaling()
+        print("✓ test_post_processing_progress_scaling passed")
+        print("\n✓ All granular progress tests passed!")
+    except AssertionError as e:
+        print(f"\n✗ Test failed: {e}")
+        sys.exit(1)
