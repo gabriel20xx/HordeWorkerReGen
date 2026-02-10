@@ -49,6 +49,7 @@ class WorkerWebUI:
             "maintenance_mode": False,
             "user_kudos_total": 0.0,
             "last_image_base64": [],
+            "last_image_submission_timestamp": 0.0,
             "console_logs": [],
             "faulted_jobs_history": [],
         }
@@ -562,6 +563,9 @@ class WorkerWebUI:
 
                 <div class="card">
                     <h2>Last Generated Image(s)</h2>
+                    <div style="margin-bottom: 10px; color: #999; font-size: 14px;">
+                        <span id="last-image-time">No image generated yet</span>
+                    </div>
                     <div id="last-image-container" class="last-image-container">
                         <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
                     </div>
@@ -717,6 +721,27 @@ class WorkerWebUI:
             if (bytes === 0) return '0 MB';
             const mb = bytes / (1024 * 1024);
             return mb.toFixed(1) + ' MB';
+        }
+
+        function formatTimeAgo(timestamp) {
+            if (!timestamp || timestamp === 0) {
+                return 'No image generated yet';
+            }
+            const now = Date.now() / 1000; // Convert to seconds
+            const secondsAgo = Math.floor(now - timestamp);
+            
+            if (secondsAgo < 60) {
+                return `Last submission: ${secondsAgo} second${secondsAgo !== 1 ? 's' : ''} ago`;
+            } else if (secondsAgo < 3600) {
+                const minutes = Math.floor(secondsAgo / 60);
+                return `Last submission: ${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+            } else if (secondsAgo < 86400) {
+                const hours = Math.floor(secondsAgo / 3600);
+                return `Last submission: ${hours} hour${hours !== 1 ? 's' : ''} ago`;
+            } else {
+                const days = Math.floor(secondsAgo / 86400);
+                return `Last submission: ${days} day${days !== 1 ? 's' : ''} ago`;
+            }
         }
 
         // Constants for UI behavior
@@ -1143,6 +1168,11 @@ class WorkerWebUI:
 
                     // Last Generated Images
                     const lastImageContainer = document.getElementById('last-image-container');
+                    const lastImageTime = document.getElementById('last-image-time');
+                    
+                    // Update time display
+                    lastImageTime.textContent = formatTimeAgo(data.last_image_submission_timestamp);
+                    
                     if (data.last_image_base64 && data.last_image_base64.length > 0) {
                         if (data.last_image_base64.length === 1) {
                             // Single image - display in centered layout
@@ -1265,6 +1295,7 @@ class WorkerWebUI:
         maintenance_mode: bool | None = None,
         user_kudos_total: float | None = None,
         last_image_base64: list[str] | None = None,
+        last_image_submission_timestamp: float | None = None,
         console_logs: list[str] | None = None,
         faulted_jobs_history: list[dict[str, Any]] | None = None,
     ) -> None:
@@ -1293,6 +1324,7 @@ class WorkerWebUI:
             maintenance_mode: Whether worker is in maintenance mode
             user_kudos_total: Total kudos accumulated by the user
             last_image_base64: List of base64 encoded last generated images (supports batch jobs)
+            last_image_submission_timestamp: Timestamp when the last image was submitted
             console_logs: Recent console log messages
             faulted_jobs_history: List of faulted jobs with details
         """
@@ -1340,6 +1372,8 @@ class WorkerWebUI:
             self.status_data["user_kudos_total"] = user_kudos_total
         if last_image_base64 is not None:
             self.status_data["last_image_base64"] = list(last_image_base64)
+        if last_image_submission_timestamp is not None:
+            self.status_data["last_image_submission_timestamp"] = last_image_submission_timestamp
         if console_logs is not None:
             self.status_data["console_logs"] = console_logs
         if faulted_jobs_history is not None:

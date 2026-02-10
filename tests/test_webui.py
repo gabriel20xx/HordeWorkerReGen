@@ -325,6 +325,30 @@ def test_webui_current_job_detailed_info() -> None:
     assert webui.status_data["current_job"]["sampler"] == "dpm_2"
 
 
+def test_webui_last_image_submission_timestamp() -> None:
+    """Test that WorkerWebUI handles last image submission timestamp."""
+    import time
+
+    webui = WorkerWebUI(port=0)
+
+    # Test default value (0.0 = no image submitted yet)
+    assert webui.status_data["last_image_submission_timestamp"] == 0.0
+
+    # Test updating with a timestamp
+    test_timestamp = time.time()
+    webui.update_status(last_image_submission_timestamp=test_timestamp)
+    assert webui.status_data["last_image_submission_timestamp"] == test_timestamp
+
+    # Test updating with an older timestamp (simulating submission from past)
+    old_timestamp = time.time() - 3600  # 1 hour ago
+    webui.update_status(last_image_submission_timestamp=old_timestamp)
+    assert webui.status_data["last_image_submission_timestamp"] == old_timestamp
+
+    # Verify timestamp is retained after updating other fields
+    webui.update_status(jobs_completed=5)
+    assert webui.status_data["last_image_submission_timestamp"] == old_timestamp
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
@@ -377,6 +401,9 @@ if __name__ == "__main__":
 
     test_webui_batch_size_display()
     print("✓ WebUI batch size display test passed")
+
+    test_webui_last_image_submission_timestamp()
+    print("✓ WebUI last image submission timestamp test passed")
 
     # Run async test
     asyncio.run(test_webui_start_stop())
