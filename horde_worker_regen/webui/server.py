@@ -915,7 +915,7 @@ class WorkerWebUI:
                                 <span class="stat-label">State:</span>
                                 <span class="stat-value">${stateDisplay}</span>
                             </div>
-                            ${job.batch_size ? `
+                            ${job.batch_size !== null && job.batch_size !== undefined ? `
                             <div class="stat">
                                 <span class="stat-label">Batch Size:</span>
                                 <span class="stat-value">${job.batch_size}x</span>
@@ -974,7 +974,7 @@ class WorkerWebUI:
                             if (proc.model) {
                                 secondLine.push(`Model: ${proc.model}`);
                             }
-                            if (proc.batch_size) {
+                            if (proc.batch_size !== null && proc.batch_size !== undefined) {
                                 secondLine.push(`Batch: ${proc.batch_size}x`);
                             }
                             if (proc.progress !== null && proc.progress !== undefined) {
