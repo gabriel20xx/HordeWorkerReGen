@@ -911,10 +911,6 @@ class WorkerWebUI:
                                 <span class="stat-label">Model:</span>
                                 <span class="stat-value">${job.model || 'N/A'}</span>
                             </div>
-                            <div class="stat">
-                                <span class="stat-label">State:</span>
-                                <span class="stat-value">${stateDisplay}</span>
-                            </div>
                             ${job.batch_size !== null && job.batch_size !== undefined ? `
                             <div class="stat">
                                 <span class="stat-label">Batch Size:</span>
@@ -945,6 +941,10 @@ class WorkerWebUI:
                                 <span class="stat-value">${job.loras.map(lora => lora.name || 'Unknown').join(', ')}</span>
                             </div>
                             ` : ''}
+                            <div class="stat">
+                                <span class="stat-label">State:</span>
+                                <span class="stat-value">${stateDisplay}</span>
+                            </div>
                             ${job.progress !== null && job.progress !== undefined ? `
                             <div style="margin-top: 10px;">
                                 <div style="margin-bottom: 5px; color: #666;">Progress:</div>
