@@ -5507,19 +5507,30 @@ class HordeWorkerProcessManager:
                     "state": state or "Processing",
                     "is_complete": state == "INFERENCE_COMPLETE" if state else False,
                     "batch_size": job.payload.n_iter if job.payload else None,
+                    "steps": job.payload.ddim_steps if job.payload else None,
+                    "width": job.payload.width if job.payload else None,
+                    "height": job.payload.height if job.payload else None,
+                    "sampler": job.payload.sampler_name if job.payload else None,
+                    "loras": job.payload.loras if job.payload and job.payload.loras else None,
                 }
         elif self.jobs_pending_safety_check:
             # Show recently completed job in safety check with 100% progress
             # This ensures users see the job reach 100% before it disappears
             try:
                 job_info = self.jobs_pending_safety_check[0]
+                job = job_info.sdk_api_job_info
                 current_job = {
-                    "id": str(job_info.sdk_api_job_info.id_.root)[:8] if job_info.sdk_api_job_info.id_ else "N/A",
-                    "model": job_info.sdk_api_job_info.model,
+                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                    "model": job.model,
                     "progress": 100,
                     "state": "INFERENCE_COMPLETE",
                     "is_complete": True,
-                    "batch_size": job_info.sdk_api_job_info.payload.n_iter if job_info.sdk_api_job_info.payload else None,
+                    "batch_size": job.payload.n_iter if job.payload else None,
+                    "steps": job.payload.ddim_steps if job.payload else None,
+                    "width": job.payload.width if job.payload else None,
+                    "height": job.payload.height if job.payload else None,
+                    "sampler": job.payload.sampler_name if job.payload else None,
+                    "loras": job.payload.loras if job.payload and job.payload.loras else None,
                 }
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job

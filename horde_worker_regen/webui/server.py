@@ -921,6 +921,30 @@ class WorkerWebUI:
                                 <span class="stat-value">${job.batch_size}x</span>
                             </div>
                             ` : ''}
+                            ${job.steps !== null && job.steps !== undefined ? `
+                            <div class="stat">
+                                <span class="stat-label">Steps:</span>
+                                <span class="stat-value">${job.steps}</span>
+                            </div>
+                            ` : ''}
+                            ${job.width !== null && job.width !== undefined && job.height !== null && job.height !== undefined ? `
+                            <div class="stat">
+                                <span class="stat-label">Image Size:</span>
+                                <span class="stat-value">${job.width}x${job.height}</span>
+                            </div>
+                            ` : ''}
+                            ${job.sampler !== null && job.sampler !== undefined ? `
+                            <div class="stat">
+                                <span class="stat-label">Sampler:</span>
+                                <span class="stat-value">${job.sampler}</span>
+                            </div>
+                            ` : ''}
+                            ${job.loras !== null && job.loras !== undefined && job.loras.length > 0 ? `
+                            <div class="stat">
+                                <span class="stat-label">LoRAs:</span>
+                                <span class="stat-value">${job.loras.map(lora => lora.name || 'Unknown').join(', ')}</span>
+                            </div>
+                            ` : ''}
                             ${job.progress !== null && job.progress !== undefined ? `
                             <div style="margin-top: 10px;">
                                 <div style="margin-bottom: 5px; color: #666;">Progress:</div>
