@@ -5586,6 +5586,9 @@ class HordeWorkerProcessManager:
 
         # Get CPU usage percentage
         cpu_usage_percent = psutil.cpu_percent(interval=0.1)
+        
+        # Get CPU cores count (logical cores/threads)
+        cpu_cores_count = psutil.cpu_count(logical=True) or 0
 
         # Get GPU utilization percentage
         gpu_usage_percent = 0.0
@@ -5647,6 +5650,7 @@ class HordeWorkerProcessManager:
             vram_usage_mb=total_vram_mb,
             total_vram_mb=total_device_vram_mb,
             cpu_usage_percent=cpu_usage_percent,
+            cpu_cores_count=cpu_cores_count,
             gpu_usage_percent=gpu_usage_percent,
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,

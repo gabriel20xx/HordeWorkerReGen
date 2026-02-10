@@ -44,6 +44,7 @@ class WorkerWebUI:
             "vram_usage_mb": 0,
             "total_vram_mb": 0,
             "cpu_usage_percent": 0,
+            "cpu_cores_count": 0,
             "gpu_usage_percent": 0,
             "maintenance_mode": False,
             "user_kudos_total": 0.0,
@@ -540,7 +541,7 @@ class WorkerWebUI:
                         <span class="stat-value" id="ram-usage">-</span>
                     </div>
                     <div>
-                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">CPU:</div>
+                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;" id="cpu-label">CPU:</div>
                         <div class="progress-bar-container">
                             <div class="progress-bar" id="cpu-progress" style="width: 0%">0%</div>
                         </div>
@@ -850,6 +851,11 @@ class WorkerWebUI:
                     const cpuProgress = document.getElementById('cpu-progress');
                     cpuProgress.style.width = cpuPercent + '%';
                     cpuProgress.textContent = cpuPercent + '%';
+                    
+                    // Update CPU label with cores count
+                    const cpuLabel = document.getElementById('cpu-label');
+                    const cpuCoresText = data.cpu_cores_count > 0 ? ` (${data.cpu_cores_count} cores)` : '';
+                    cpuLabel.textContent = `CPU:${cpuCoresText}`;
 
                     const gpuPercent = Math.min(100, Math.round(data.gpu_usage_percent));
                     const gpuProgress = document.getElementById('gpu-progress');
@@ -1254,6 +1260,7 @@ class WorkerWebUI:
         vram_usage_mb: float | None = None,
         total_vram_mb: float | None = None,
         cpu_usage_percent: float | None = None,
+        cpu_cores_count: int | None = None,
         gpu_usage_percent: float | None = None,
         maintenance_mode: bool | None = None,
         user_kudos_total: float | None = None,
@@ -1281,6 +1288,7 @@ class WorkerWebUI:
             vram_usage_mb: VRAM usage in MB
             total_vram_mb: Total VRAM in MB
             cpu_usage_percent: CPU usage percentage
+            cpu_cores_count: Number of CPU cores
             gpu_usage_percent: GPU usage percentage
             maintenance_mode: Whether worker is in maintenance mode
             user_kudos_total: Total kudos accumulated by the user
@@ -1322,6 +1330,8 @@ class WorkerWebUI:
             self.status_data["total_vram_mb"] = total_vram_mb
         if cpu_usage_percent is not None:
             self.status_data["cpu_usage_percent"] = cpu_usage_percent
+        if cpu_cores_count is not None:
+            self.status_data["cpu_cores_count"] = cpu_cores_count
         if gpu_usage_percent is not None:
             self.status_data["gpu_usage_percent"] = gpu_usage_percent
         if maintenance_mode is not None:
