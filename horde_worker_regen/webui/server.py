@@ -945,14 +945,12 @@ class WorkerWebUI:
                                 <span class="stat-label">State:</span>
                                 <span class="stat-value">${stateDisplay}</span>
                             </div>
-                            ${job.progress !== null && job.progress !== undefined ? `
                             <div style="margin-top: 10px;">
                                 <div style="margin-bottom: 5px; color: #666;">Progress:</div>
                                 <div class="progress-bar-container">
-                                    <div class="progress-bar" style="width: ${job.progress}%">${job.progress}%</div>
+                                    <div class="progress-bar" style="width: ${job.progress !== null && job.progress !== undefined ? job.progress : 0}%">${job.progress !== null && job.progress !== undefined ? job.progress : 0}%</div>
                                 </div>
                             </div>
-                            ` : ''}
                         `;
                     } else {
                         currentJobDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No job in progress</div>';
