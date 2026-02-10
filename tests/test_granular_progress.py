@@ -1,5 +1,9 @@
 """Test granular progress calculation for job progress bar."""
 
+from unittest.mock import MagicMock
+
+import pytest
+
 from horde_worker_regen.process_management.messages import HordeProcessState
 
 
@@ -8,12 +12,20 @@ def test_calculate_granular_progress() -> None:
     # Import here to avoid circular dependencies
     from horde_worker_regen.process_management.process_manager import HordeProcessManager
 
-    # Create a minimal process manager instance to access the method
-    # We can't fully instantiate it, but we can test the static calculation logic
-    # Instead, we'll create a mock or just test the logic
+    # Create a mock ProcessManager instance to test the method
+    # We only need to test the _calculate_granular_progress method
+    mock_manager = MagicMock(spec=HordeProcessManager)
 
-    # Define the expected progress ranges for each stage
+    # Bind the actual method to the mock
+    mock_manager._calculate_granular_progress = HordeProcessManager._calculate_granular_progress.__get__(
+        mock_manager, HordeProcessManager
+    )
+
+    # Define test cases: (state, inference_progress, expected_progress)
     test_cases = [
+        # Job received (0%)
+        (HordeProcessState.JOB_RECEIVED, None, 0),
+        (HordeProcessState.WAITING_FOR_JOB, None, 0),
         # Model loading stages (0-20%)
         (HordeProcessState.DOWNLOADING_MODEL, None, 10),
         (HordeProcessState.MODEL_LOADING, None, 10),
@@ -36,32 +48,66 @@ def test_calculate_granular_progress() -> None:
         (HordeProcessState.IMAGE_SAVING, None, 92),
         (HordeProcessState.IMAGE_SAVED, None, 95),
         (HordeProcessState.IMAGE_SUBMITTING, None, 97),
+        (HordeProcessState.IMAGE_SUBMITTED, None, 100),
+        # Failed states
+        (HordeProcessState.INFERENCE_FAILED, 30, 35),  # Failed at 30% inference
+        (HordeProcessState.SAFETY_FAILED, None, 85),
     ]
 
     # Test each case
     for state, inference_progress, expected_progress in test_cases:
-        # We'll need to create a minimal mock of the ProcessManager to test this
-        # For now, document the expected behavior
-        print(
-            f"State: {state.name}, Inference: {inference_progress}, Expected: {expected_progress}%"
-        )
+        result = mock_manager._calculate_granular_progress(state, inference_progress)
+        assert (
+            result == expected_progress
+        ), f"Failed for state {state.name}, inference={inference_progress}: expected {expected_progress}, got {result}"
+        print(f"✓ State: {state.name}, Inference: {inference_progress}, Result: {result}%")
 
-    # Test boundary conditions
-    # At start of inference (0%), overall should be 20%
-    assert True  # Placeholder - actual test would call the method
+    print("\n✓ All granular progress calculations validated")
 
-    # At 50% inference, overall should be around 45%
-    assert True  # Placeholder
 
-    # At end of inference (100%), overall should be 70%
-    assert True  # Placeholder
+def test_inference_progress_scaling() -> None:
+    """Test that inference progress is correctly scaled to 20-70% range."""
+    from horde_worker_regen.process_management.process_manager import HordeProcessManager
 
-    # During safety check, should be 80-90%
-    assert True  # Placeholder
+    mock_manager = MagicMock(spec=HordeProcessManager)
+    mock_manager._calculate_granular_progress = HordeProcessManager._calculate_granular_progress.__get__(
+        mock_manager, HordeProcessManager
+    )
 
-    print("✓ Granular progress calculation logic validated")
+    # Test boundary conditions for inference scaling
+    # Formula: 20 + (inference_progress * 0.5)
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 0) == 20
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 10) == 25
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 20) == 30
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 50) == 45
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 80) == 60
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 100) == 70
+
+    print("✓ Inference progress scaling validated")
+
+
+def test_post_processing_progress_scaling() -> None:
+    """Test that post-processing progress is correctly scaled to 70-80% range."""
+    from horde_worker_regen.process_management.process_manager import HordeProcessManager
+
+    mock_manager = MagicMock(spec=HordeProcessManager)
+    mock_manager._calculate_granular_progress = HordeProcessManager._calculate_granular_progress.__get__(
+        mock_manager, HordeProcessManager
+    )
+
+    # Test post-processing scaling
+    # Formula: 70 + (progress * 0.1) for progress < 100
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_POST_PROCESSING, 0) == 70
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_POST_PROCESSING, 50) == 75
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_POST_PROCESSING, 99) == 79
+    # At 100%, it should be at INFERENCE_COMPLETE state, but if still in POST_PROCESSING
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_POST_PROCESSING, None) == 75
+
+    print("✓ Post-processing progress scaling validated")
 
 
 if __name__ == "__main__":
     test_calculate_granular_progress()
-    print("\nGranular progress test passed!")
+    test_inference_progress_scaling()
+    test_post_processing_progress_scaling()
+    print("\n✓ All granular progress tests passed!")
