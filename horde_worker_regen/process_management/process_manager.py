@@ -5502,7 +5502,11 @@ class HordeWorkerProcessManager:
             Overall progress percentage (0-100)
         """
         # Job received but not yet started (0%)
-        if process_state == HordeProcessState.JOB_RECEIVED:
+        if process_state in (
+            HordeProcessState.JOB_RECEIVED,
+            HordeProcessState.WAITING_FOR_JOB,
+            HordeProcessState.PROCESS_STARTING,
+        ):
             return 0
 
         # Model loading stages (0-20%)
@@ -5532,7 +5536,10 @@ class HordeWorkerProcessManager:
             return 20  # Start of inference
 
         # Post-processing stage (70-80%)
-        if process_state == HordeProcessState.INFERENCE_POST_PROCESSING:
+        if process_state in (
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+        ):
             if inference_progress is not None and inference_progress < 100:
                 # Map 0-100% post-processing to 70-80% overall
                 return 70 + int(inference_progress * 0.1)
@@ -5563,6 +5570,15 @@ class HordeWorkerProcessManager:
             return 97  # Submitting to API
         if process_state == HordeProcessState.IMAGE_SUBMITTED:
             return 100  # Submission complete
+
+        # Failed states - show progress at the stage where failure occurred
+        if process_state == HordeProcessState.INFERENCE_FAILED:
+            # Failed during inference, show whatever progress was made
+            if inference_progress is not None:
+                return 20 + int(inference_progress * 0.5)
+            return 20
+        if process_state == HordeProcessState.SAFETY_FAILED:
+            return 85  # Failed during safety check
 
         # Default fallback
         if inference_progress is not None:
