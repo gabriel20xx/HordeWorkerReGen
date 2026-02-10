@@ -915,7 +915,7 @@ class WorkerWebUI:
                                 <span class="stat-label">State:</span>
                                 <span class="stat-value">${stateDisplay}</span>
                             </div>
-                            ${job.batch_size && job.batch_size > 1 ? `
+                            ${job.batch_size ? `
                             <div class="stat">
                                 <span class="stat-label">Batch Size:</span>
                                 <span class="stat-value">${job.batch_size}x</span>
@@ -969,10 +969,13 @@ class WorkerWebUI:
 
                     if (data.processes.length > 0) {
                         processesDiv.innerHTML = data.processes.map(proc => {
-                            // Build second line with model and progress
+                            // Build second line with model, batch size, and progress
                             let secondLine = [];
                             if (proc.model) {
                                 secondLine.push(`Model: ${proc.model}`);
+                            }
+                            if (proc.batch_size) {
+                                secondLine.push(`Batch: ${proc.batch_size}x`);
                             }
                             if (proc.progress !== null && proc.progress !== undefined) {
                                 secondLine.push(`Progress: ${proc.progress}%`);
