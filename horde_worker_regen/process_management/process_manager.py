@@ -5501,6 +5501,10 @@ class HordeWorkerProcessManager:
         Returns:
             Overall progress percentage (0-100)
         """
+        # Job received but not yet started (0%)
+        if process_state == HordeProcessState.JOB_RECEIVED:
+            return 0
+
         # Model loading stages (0-20%)
         if process_state in (
             HordeProcessState.DOWNLOADING_MODEL,
@@ -5557,6 +5561,8 @@ class HordeWorkerProcessManager:
             return 95  # Images saved
         if process_state == HordeProcessState.IMAGE_SUBMITTING:
             return 97  # Submitting to API
+        if process_state == HordeProcessState.IMAGE_SUBMITTED:
+            return 100  # Submission complete
 
         # Default fallback
         if inference_progress is not None:
