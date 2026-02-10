@@ -252,6 +252,57 @@ def test_webui_batch_size_display() -> None:
     assert webui.status_data["job_queue"][2]["batch_size"] == 5
 
 
+def test_webui_current_job_detailed_info() -> None:
+    """Test that WorkerWebUI handles detailed job info (steps, size, sampler, loras) in current job."""
+    webui = WorkerWebUI(port=0)
+
+    # Test current job with all new fields
+    current_job_detailed = {
+        "id": "test999",
+        "model": "TestModel",
+        "state": "INFERENCE_PROCESSING",
+        "progress": 75,
+        "is_complete": False,
+        "batch_size": 2,
+        "steps": 30,
+        "width": 512,
+        "height": 768,
+        "sampler": "euler_a",
+        "loras": [
+            {"name": "test_lora_1", "model": 1.0, "clip": 1.0},
+            {"name": "test_lora_2", "model": 0.8, "clip": 0.8},
+        ],
+    }
+    webui.update_status(current_job=current_job_detailed)
+    assert webui.status_data["current_job"] == current_job_detailed
+    assert webui.status_data["current_job"]["steps"] == 30
+    assert webui.status_data["current_job"]["width"] == 512
+    assert webui.status_data["current_job"]["height"] == 768
+    assert webui.status_data["current_job"]["sampler"] == "euler_a"
+    assert len(webui.status_data["current_job"]["loras"]) == 2
+    assert webui.status_data["current_job"]["loras"][0]["name"] == "test_lora_1"
+
+    # Test current job without loras
+    current_job_no_loras = {
+        "id": "test998",
+        "model": "TestModel2",
+        "state": "INFERENCE_STARTING",
+        "progress": 10,
+        "is_complete": False,
+        "batch_size": 1,
+        "steps": 20,
+        "width": 1024,
+        "height": 1024,
+        "sampler": "dpm_2",
+        "loras": None,
+    }
+    webui.update_status(current_job=current_job_no_loras)
+    assert webui.status_data["current_job"]["loras"] is None
+    assert webui.status_data["current_job"]["steps"] == 20
+    assert webui.status_data["current_job"]["width"] == 1024
+    assert webui.status_data["current_job"]["sampler"] == "dpm_2"
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
