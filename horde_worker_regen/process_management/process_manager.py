@@ -5548,6 +5548,7 @@ class HordeWorkerProcessManager:
                     "state": process_info.last_process_state.name,
                     "model": process_info.loaded_horde_model_name,
                     "progress": process_info.last_heartbeat_percent_complete,
+                    "batch_size": process_info.batch_amount,
                 },
             )
 
