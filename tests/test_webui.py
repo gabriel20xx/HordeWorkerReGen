@@ -104,6 +104,28 @@ def test_webui_cpu_gpu_usage() -> None:
     assert webui.status_data["gpu_usage_percent"] == 100.0
 
 
+def test_webui_cpu_cores_count() -> None:
+    """Test that WorkerWebUI correctly handles CPU cores count updates."""
+    webui = WorkerWebUI(port=0)
+
+    # Test CPU cores count update
+    test_cpu_cores_count = 16
+
+    webui.update_status(
+        cpu_cores_count=test_cpu_cores_count,
+    )
+
+    # Verify the value was updated correctly
+    assert webui.status_data["cpu_cores_count"] == test_cpu_cores_count
+
+    # Test different core counts
+    webui.update_status(cpu_cores_count=8)
+    assert webui.status_data["cpu_cores_count"] == 8
+
+    webui.update_status(cpu_cores_count=32)
+    assert webui.status_data["cpu_cores_count"] == 32
+
+
 def test_webui_vram_over_100_percent() -> None:
     """Test that WorkerWebUI correctly handles edge case where VRAM usage might exceed total (should cap at 100%)."""
     webui = WorkerWebUI(port=0)
@@ -343,6 +365,9 @@ if __name__ == "__main__":
 
     test_webui_cpu_gpu_usage()
     print("✓ WebUI CPU/GPU usage test passed")
+
+    test_webui_cpu_cores_count()
+    print("✓ WebUI CPU cores count test passed")
 
     test_webui_new_features()
     print("✓ WebUI new features test passed")
