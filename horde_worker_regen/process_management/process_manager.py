@@ -5655,6 +5655,7 @@ class HordeWorkerProcessManager:
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
+            last_image_submission_timestamp=self._last_image_job_timestamp,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT:] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
         )
