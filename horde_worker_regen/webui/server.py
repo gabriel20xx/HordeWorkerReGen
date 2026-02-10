@@ -904,34 +904,8 @@ class WorkerWebUI:
                     const currentJobDiv = document.getElementById('current-job');
                     if (data.current_job) {
                         const job = data.current_job;
-                        // Format state to be more readable
-                        let stateDisplay = job.state || 'N/A';
-                        if (job.state === 'INFERENCE_POST_PROCESSING' || job.state === 'POST_PROCESSING_STARTING') {
-                            stateDisplay = 'Post Processing';
-                        } else if (job.state === 'POST_PROCESSING_COMPLETE') {
-                            stateDisplay = 'Post Processing Complete';
-                        } else if (job.state === 'INFERENCE_COMPLETE') {
-                            stateDisplay = 'Finished';
-                        } else if (job.state === 'INFERENCE_STARTING' || job.state === 'INFERENCE_PROCESSING') {
-                            stateDisplay = 'Inference';
-                        } else if (job.state === 'MODEL_PRELOADING' || job.state === 'MODEL_PRELOADED' || job.state === 'MODEL_LOADING' || job.state === 'MODEL_LOADED') {
-                            stateDisplay = 'Loading Model';
-                        } else if (job.state === 'SAFETY_EVALUATING' || job.state === 'SAFETY_STARTING') {
-                            stateDisplay = 'Safety Check';
-                        } else if (job.state === 'SAFETY_COMPLETE') {
-                            stateDisplay = 'Safety Check Complete';
-                        } else if (job.state === 'IMAGE_SAVING') {
-                            stateDisplay = 'Saving Image';
-                        } else if (job.state === 'IMAGE_SAVED') {
-                            stateDisplay = 'Image Saved';
-                        } else if (job.state === 'IMAGE_SUBMITTING') {
-                            stateDisplay = 'Submitting';
-                        } else if (job.state) {
-                            // Convert snake_case to Title Case
-                            stateDisplay = job.state.split('_').map(word =>
-                                word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-                            ).join(' ');
-                        }
+                        // Use raw state value to match process state display
+                        const stateDisplay = job.state || 'N/A';
 
                         // Ensure progress is always a valid number (default to 0 if null/undefined)
                         const progressValue = job.progress !== null && job.progress !== undefined ? job.progress : 0;
