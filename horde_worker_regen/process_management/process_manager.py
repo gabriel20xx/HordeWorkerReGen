@@ -1179,7 +1179,7 @@ class HordeWorkerProcessManager:
 
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
-    ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
 
@@ -1612,14 +1612,14 @@ class HordeWorkerProcessManager:
             message: The formatted log message (may contain ANSI color codes)
         """
         # Strip ANSI color codes only for checking if message is empty
-        clean_message = self.ANSI_ESCAPE_PATTERN.sub('', message).strip()
+        clean_message = self.ANSI_ESCAPE_PATTERN.sub("", message).strip()
 
         if clean_message:
             # Store the original message with ANSI codes for colored display in webui
             self._console_logs.append(message.strip())
             # Keep only the last N logs
             if len(self._console_logs) > self._MAX_CONSOLE_LOGS_BUFFER:
-                self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER:]
+                self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER :]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -2495,12 +2495,9 @@ class HordeWorkerProcessManager:
         pending_models = {job.model for job in self.jobs_pending_inference}
         for process in self._process_map.values():
             if (
-                (
-                    process.last_process_state == HordeProcessState.MODEL_PRELOADED
-                    or process.last_process_state == HordeProcessState.MODEL_PRELOADED
-                )
-                and process.loaded_horde_model_name not in pending_models
-            ):
+                process.last_process_state == HordeProcessState.MODEL_PRELOADED
+                or process.last_process_state == HordeProcessState.MODEL_PRELOADED
+            ) and process.loaded_horde_model_name not in pending_models:
                 logger.debug(
                     f"Clearing preloaded model {process.loaded_horde_model_name} "
                     f"from process {process.process_id} as it is no longer needed",
@@ -2732,9 +2729,7 @@ class HordeWorkerProcessManager:
             candidate_job_size = 50
 
         if not process_with_model.can_accept_job():
-            if (
-                process_with_model.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL
-            ) or (
+            if (process_with_model.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL) or (
                 self.post_process_job_overlap_allowed
                 and (
                     process_with_model.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
@@ -3623,7 +3618,11 @@ class HordeWorkerProcessManager:
 
             # If slower than 0.4 kudos per second, log a warning
             if kudos_per_second_batch < 0.4:
-                job_ref = f"Batch job {completed_job_info.sdk_api_job_info.id_}" if batch_size > 1 else f"Job {completed_job_info.sdk_api_job_info.id_}"
+                job_ref = (
+                    f"Batch job {completed_job_info.sdk_api_job_info.id_}"
+                    if batch_size > 1
+                    else f"Job {completed_job_info.sdk_api_job_info.id_}"
+                )
                 logger.warning(
                     f"{job_ref} took longer than is ideal; if this persists "
                     "consider lowering your max_power, using less threads, disabling post processing and/or controlnets.",
@@ -3940,10 +3939,7 @@ class HordeWorkerProcessManager:
                     fault_phase = "During Inference"
                 elif state == HordeProcessState.INFERENCE_POST_PROCESSING:
                     fault_phase = "Post Processing"
-                elif (
-                    state == HordeProcessState.SAFETY_EVALUATING
-                    or state == HordeProcessState.SAFETY_EVALUATING
-                ):
+                elif state == HordeProcessState.SAFETY_EVALUATING or state == HordeProcessState.SAFETY_EVALUATING:
                     fault_phase = "Safety Check"
                 elif state == HordeProcessState.PROCESS_STARTING:
                     fault_phase = "Process Starting"
@@ -3968,11 +3964,13 @@ class HordeWorkerProcessManager:
             # Extract LoRA information
             if faulted_job.payload and faulted_job.payload.loras:
                 for lora in faulted_job.payload.loras:
-                    faulted_job_details["loras"].append({
-                        "name": lora.name if hasattr(lora, "name") else str(lora),
-                        "model": lora.model if hasattr(lora, "model") else None,
-                        "clip": lora.clip if hasattr(lora, "clip") else None,
-                    })
+                    faulted_job_details["loras"].append(
+                        {
+                            "name": lora.name if hasattr(lora, "name") else str(lora),
+                            "model": lora.model if hasattr(lora, "model") else None,
+                            "clip": lora.clip if hasattr(lora, "clip") else None,
+                        },
+                    )
 
             # Check for controlnet (via workflow)
             if faulted_job.payload and faulted_job.payload.workflow in KNOWN_CONTROLNET_WORKFLOWS:
@@ -3990,7 +3988,7 @@ class HordeWorkerProcessManager:
                 # Add new entry to history
                 self._faulted_jobs_history.insert(0, faulted_job_details)
                 if len(self._faulted_jobs_history) > self._max_faulted_jobs_history:
-                    self._faulted_jobs_history = self._faulted_jobs_history[:self._max_faulted_jobs_history]
+                    self._faulted_jobs_history = self._faulted_jobs_history[: self._max_faulted_jobs_history]
 
             if process_info is not None:
                 logger.error(f"Job {faulted_job.id_} faulted due to process {process_info.process_id} crashing")
@@ -4724,13 +4722,11 @@ class HordeWorkerProcessManager:
         kudos_info_string_elements = []
         if time_since_session_start < 3600:
             kudos_info_string_elements = [
-                f"Session: {self.kudos_generated_this_session:,.1f} / "
-                f"{time_since_session_start / 60:.1f}m",
+                f"Session: {self.kudos_generated_this_session:,.1f} / " f"{time_since_session_start / 60:.1f}m",
             ]
         else:
             kudos_info_string_elements = [
-                f"Session: {self.kudos_generated_this_session:,.1f} / "
-                f"{time_since_session_start / 3600:.1f}h",
+                f"Session: {self.kudos_generated_this_session:,.1f} / " f"{time_since_session_start / 3600:.1f}h",
             ]
 
         if time_since_session_start > 3600:
@@ -4774,10 +4770,7 @@ class HordeWorkerProcessManager:
 
         logger.debug(f"len(kudos_events): {len(self.kudos_events)}")
         if self.user_info is not None and self.user_info.kudos_details is not None:
-            total_kudos_msg = (
-                f"Total: {self.user_info.kudos_details.accumulated:,.0f} "
-                f"({self.user_info.username})"
-            )
+            total_kudos_msg = f"Total: {self.user_info.kudos_details.accumulated:,.0f} " f"({self.user_info.username})"
             if self.user_info.kudos_details.accumulated is not None and self.user_info.kudos_details.accumulated < 0:
                 total_kudos_msg += " | Negative kudos = more requested than earned"
 
@@ -5585,6 +5578,29 @@ class HordeWorkerProcessManager:
             return inference_progress
         return 0
 
+    def _serialize_loras_for_webui(self, loras: list | None) -> list[dict] | None:
+        """Convert LorasPayloadEntry objects to JSON-serializable dictionaries.
+
+        Args:
+            loras: List of LorasPayloadEntry objects or None
+
+        Returns:
+            List of dictionaries with lora properties, or None if input is None
+        """
+        if not loras:
+            return None
+
+        serialized_loras = []
+        for lora in loras:
+            serialized_loras.append(
+                {
+                    "name": lora.name if hasattr(lora, "name") else str(lora),
+                    "model": lora.model if hasattr(lora, "model") else None,
+                    "clip": lora.clip if hasattr(lora, "clip") else None,
+                },
+            )
+        return serialized_loras
+
     def update_webui_status(self) -> None:
         """Update the web UI with current worker status."""
         if self.webui is None:
@@ -5621,7 +5637,11 @@ class HordeWorkerProcessManager:
                     "width": job.payload.width if job.payload else None,
                     "height": job.payload.height if job.payload else None,
                     "sampler": job.payload.sampler_name if job.payload else None,
-                    "loras": job.payload.loras if job.payload and job.payload.loras else None,
+                    "loras": (
+                        self._serialize_loras_for_webui(job.payload.loras)
+                        if job.payload and job.payload.loras
+                        else None
+                    ),
                 }
         elif self.jobs_being_safety_checked:
             # Show job currently being safety checked (80-90%)
@@ -5655,7 +5675,11 @@ class HordeWorkerProcessManager:
                     "width": job.payload.width if job.payload else None,
                     "height": job.payload.height if job.payload else None,
                     "sampler": job.payload.sampler_name if job.payload else None,
-                    "loras": job.payload.loras if job.payload and job.payload.loras else None,
+                    "loras": (
+                        self._serialize_loras_for_webui(job.payload.loras)
+                        if job.payload and job.payload.loras
+                        else None
+                    ),
                 }
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
@@ -5677,7 +5701,11 @@ class HordeWorkerProcessManager:
                     "width": job.payload.width if job.payload else None,
                     "height": job.payload.height if job.payload else None,
                     "sampler": job.payload.sampler_name if job.payload else None,
-                    "loras": job.payload.loras if job.payload and job.payload.loras else None,
+                    "loras": (
+                        self._serialize_loras_for_webui(job.payload.loras)
+                        if job.payload and job.payload.loras
+                        else None
+                    ),
                 }
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
@@ -5733,7 +5761,7 @@ class HordeWorkerProcessManager:
 
         # Get CPU usage percentage
         cpu_usage_percent = psutil.cpu_percent(interval=0.1)
-        
+
         # Get CPU cores count (logical cores/threads)
         cpu_cores_count = psutil.cpu_count(logical=True) or 0
 
@@ -5803,7 +5831,7 @@ class HordeWorkerProcessManager:
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
             last_image_submission_timestamp=self._last_image_job_timestamp,
-            console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT:] if self._console_logs else [],
+            console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
         )
 
@@ -5964,7 +5992,9 @@ class HordeWorkerProcessManager:
         if len(self.jobs_pending_inference) > 0:
             # Filter out old pending jobs, keep only retry jobs
             # Convert back to deque to maintain the original data structure
-            self.jobs_pending_inference = deque([job for job in self.jobs_pending_inference if job not in jobs_pending_before_fault])
+            self.jobs_pending_inference = deque(
+                [job for job in self.jobs_pending_inference if job not in jobs_pending_before_fault],
+            )
             self._last_job_submitted_time = time.time()
 
             # Log how many jobs were kept for retry
