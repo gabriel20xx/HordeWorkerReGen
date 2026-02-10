@@ -5480,6 +5480,111 @@ class HordeWorkerProcessManager:
                 self._shutdown()
                 logger.debug(f"CancelledError: {e}")
 
+    def _calculate_granular_progress(
+        self,
+        process_state: HordeProcessState,
+        inference_progress: int | None,
+    ) -> int:
+        """Calculate overall job progress based on current stage and inference progress.
+
+        The progress bar is divided into stages:
+        - Model Loading: 0-20%
+        - Inference: 20-70%
+        - Post-Processing: 70-80%
+        - Safety Check: 80-90%
+        - Submission: 90-100%
+
+        Args:
+            process_state: Current process state
+            inference_progress: Progress percentage from inference (0-100), if applicable
+
+        Returns:
+            Overall progress percentage (0-100)
+        """
+        # Job received but not yet started (0%)
+        if process_state in (
+            HordeProcessState.JOB_RECEIVED,
+            HordeProcessState.WAITING_FOR_JOB,
+            HordeProcessState.PROCESS_STARTING,
+        ):
+            return 0
+
+        # Model loading stages (0-20%)
+        if process_state in (
+            HordeProcessState.DOWNLOADING_MODEL,
+            HordeProcessState.DOWNLOADING_AUX_MODEL,
+            HordeProcessState.MODEL_PRELOADING,
+            HordeProcessState.MODEL_LOADING,
+        ):
+            return 10  # Mid-point of model loading stage
+        if process_state in (
+            HordeProcessState.DOWNLOAD_COMPLETE,
+            HordeProcessState.DOWNLOAD_AUX_COMPLETE,
+            HordeProcessState.MODEL_PRELOADED,
+            HordeProcessState.MODEL_LOADED,
+        ):
+            return 20  # Model loading complete
+
+        # Inference stages (20-70%)
+        if process_state in (
+            HordeProcessState.INFERENCE_STARTING,
+            HordeProcessState.INFERENCE_PROCESSING,
+        ):
+            if inference_progress is not None:
+                # Map 0-100% inference progress to 20-70% overall
+                return 20 + int(inference_progress * 0.5)
+            return 20  # Start of inference
+
+        # Post-processing stage (70-80%)
+        if process_state in (
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+        ):
+            if inference_progress is not None and inference_progress < 100:
+                # Map 0-100% post-processing to 70-80% overall
+                return 70 + int(inference_progress * 0.1)
+            return 75  # Mid-point of post-processing
+
+        if process_state in (
+            HordeProcessState.INFERENCE_COMPLETE,
+            HordeProcessState.POST_PROCESSING_COMPLETE,
+        ):
+            return 80  # Post-processing complete
+
+        # Safety check stage (80-90%)
+        if process_state in (
+            HordeProcessState.SAFETY_STARTING,
+            HordeProcessState.SAFETY_EVALUATING,
+        ):
+            return 85  # Mid-point of safety check
+
+        if process_state == HordeProcessState.SAFETY_COMPLETE:
+            return 90  # Safety check complete
+
+        # Submission stage (90-100%)
+        if process_state == HordeProcessState.IMAGE_SAVING:
+            return 92  # Saving images
+        if process_state == HordeProcessState.IMAGE_SAVED:
+            return 95  # Images saved
+        if process_state == HordeProcessState.IMAGE_SUBMITTING:
+            return 97  # Submitting to API
+        if process_state == HordeProcessState.IMAGE_SUBMITTED:
+            return 100  # Submission complete
+
+        # Failed states - show progress at the stage where failure occurred
+        if process_state == HordeProcessState.INFERENCE_FAILED:
+            # Failed during inference, show whatever progress was made
+            if inference_progress is not None:
+                return 20 + int(inference_progress * 0.5)
+            return 20
+        if process_state == HordeProcessState.SAFETY_FAILED:
+            return 85  # Failed during safety check
+
+        # Default fallback
+        if inference_progress is not None:
+            return inference_progress
+        return 0
+
     def update_webui_status(self) -> None:
         """Update the web UI with current worker status."""
         if self.webui is None:
@@ -5496,7 +5601,12 @@ class HordeWorkerProcessManager:
                 state = None
                 for process in self._process_map.values():
                     if process.last_job_referenced == job:
-                        progress = process.last_heartbeat_percent_complete
+                        # Calculate granular progress based on stage
+                        inference_progress = process.last_heartbeat_percent_complete
+                        progress = self._calculate_granular_progress(
+                            process.last_process_state,
+                            inference_progress,
+                        )
                         state = process.last_process_state.name if process.last_process_state else None
                         break
 
@@ -5513,18 +5623,55 @@ class HordeWorkerProcessManager:
                     "sampler": job.payload.sampler_name if job.payload else None,
                     "loras": job.payload.loras if job.payload and job.payload.loras else None,
                 }
+        elif self.jobs_being_safety_checked:
+            # Show job currently being safety checked (80-90%)
+            try:
+                job_info = self.jobs_being_safety_checked[0]
+                job = job_info.sdk_api_job_info
+                # Find the safety process state to determine exact progress
+                safety_progress = 85  # Default mid-point
+                state = "SAFETY_EVALUATING"
+                for process in self._process_map.values():
+                    if process.last_process_state in (
+                        HordeProcessState.SAFETY_STARTING,
+                        HordeProcessState.SAFETY_EVALUATING,
+                        HordeProcessState.SAFETY_COMPLETE,
+                    ):
+                        safety_progress = self._calculate_granular_progress(
+                            process.last_process_state,
+                            None,
+                        )
+                        state = process.last_process_state.name
+                        break
+
+                current_job = {
+                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                    "model": job.model,
+                    "progress": safety_progress,
+                    "state": state,
+                    "is_complete": False,
+                    "batch_size": job.payload.n_iter if job.payload else None,
+                    "steps": job.payload.ddim_steps if job.payload else None,
+                    "width": job.payload.width if job.payload else None,
+                    "height": job.payload.height if job.payload else None,
+                    "sampler": job.payload.sampler_name if job.payload else None,
+                    "loras": job.payload.loras if job.payload and job.payload.loras else None,
+                }
+            except (IndexError, AttributeError):
+                # Safety check list may have been modified, ignore and show no current job
+                pass
         elif self.jobs_pending_safety_check:
-            # Show recently completed job in safety check with 100% progress
-            # This ensures users see the job reach 100% before it disappears
+            # Show recently completed job in safety check awaiting submission (90%+)
+            # This ensures users see the job progress through final stages
             try:
                 job_info = self.jobs_pending_safety_check[0]
                 job = job_info.sdk_api_job_info
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": 100,
-                    "state": "INFERENCE_COMPLETE",
-                    "is_complete": True,
+                    "progress": 90,  # Safety complete, ready for submission
+                    "state": "SAFETY_COMPLETE",
+                    "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
                     "steps": job.payload.ddim_steps if job.payload else None,
                     "width": job.payload.width if job.payload else None,
