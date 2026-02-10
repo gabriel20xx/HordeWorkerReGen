@@ -599,10 +599,6 @@ class WorkerWebUI:
                         <span class="stat-value" id="jobs-popped">0</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-label">Jobs Queued:</span>
-                        <span class="stat-value" id="jobs-queued">0</span>
-                    </div>
-                    <div class="stat">
                         <span class="stat-label">Jobs Completed:</span>
                         <span class="stat-value success" id="jobs-completed">0</span>
                     </div>
@@ -611,8 +607,12 @@ class WorkerWebUI:
                         <span class="stat-value error" id="jobs-faulted">0</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-label">Processes Recovered:</span>
+                        <span class="stat-label">Jobs Recovered:</span>
                         <span class="stat-value" id="processes-recovered">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Jobs Total:</span>
+                        <span class="stat-value" id="jobs-queued">0</span>
                     </div>
                     <div class="stat">
                         <span class="stat-label">Kudos/Hour:</span>
@@ -1239,10 +1239,10 @@ class WorkerWebUI:
             worker_name: The name of the worker
             horde_username: The horde username
             jobs_popped: Total number of jobs popped this session
-            jobs_queued: Total number of jobs queued (popped from API) this session
+            jobs_queued: Total number of jobs (jobs total) this session
             jobs_completed: Total number of jobs completed this session
             jobs_faulted: Total number of jobs faulted this session
-            processes_recovered: Total number of process recoveries this session
+            processes_recovered: Total number of jobs recovered this session
             kudos_earned_session: Total kudos earned this session
             kudos_per_hour: Current kudos per hour rate
             current_job: Information about the current job being processed

@@ -192,7 +192,7 @@ The worker includes a built-in web interface for monitoring status and progress:
   - Worker name and status (Active/Maintenance)
   - Session uptime and statistics
   - Current job progress with live percentage
-  - Jobs queued, completed, and faulted
+  - Jobs total, completed, faulted, and recovered
   - Kudos earned (session and total)
   - Active models loaded
   - Process states
