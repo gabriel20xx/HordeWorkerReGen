@@ -6114,6 +6114,7 @@ class HordeWorkerProcessManager:
 
     def replace_hung_processes(self) -> bool:
         """Replaces processes that haven't checked in since `process_timeout` seconds in bridgeData."""
+        # Guard: Prevent cascading recoveries - only one timer thread can be active at a time
         if self._recently_recovered:
             return False
 
