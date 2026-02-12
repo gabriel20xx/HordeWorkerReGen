@@ -6148,8 +6148,6 @@ class HordeWorkerProcessManager:
                 )
                 self._replace_inference_process(process_info)
                 any_replaced = True
-                self._recently_recovered = True
-                threading.Thread(target=timed_unset_recently_recovered).start()
             else:
                 # Check PROCESS_STARTING first - this should always be checked regardless of job availability
                 # since processes should complete initialization even when no jobs are available
@@ -6160,7 +6158,6 @@ class HordeWorkerProcessManager:
                     "seems to be stuck starting",
                 ):
                     any_replaced = True
-                    self._recently_recovered = True
 
                 # Skip other state checks if no jobs are available since those states are job-related
                 if self._last_pop_no_jobs_available:
@@ -6188,7 +6185,11 @@ class HordeWorkerProcessManager:
                 for timeout, state, error_message in conditions:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
                         any_replaced = True
-                        self._recently_recovered = True
+
+        # If any processes were replaced, set the recently recovered flag and start timer
+        if any_replaced:
+            self._recently_recovered = True
+            threading.Thread(target=timed_unset_recently_recovered).start()
 
         if self._last_pop_no_jobs_available:
             return any_replaced
