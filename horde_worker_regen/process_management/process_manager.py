@@ -6114,6 +6114,7 @@ class HordeWorkerProcessManager:
 
     def replace_hung_processes(self) -> bool:
         """Replaces processes that haven't checked in since `process_timeout` seconds in bridgeData."""
+        # Guard: Prevent cascading recoveries - only one timer thread can be active at a time
         if self._recently_recovered:
             return False
 
@@ -6148,9 +6149,22 @@ class HordeWorkerProcessManager:
                 )
                 self._replace_inference_process(process_info)
                 any_replaced = True
-                self._recently_recovered = True
-                threading.Thread(target=timed_unset_recently_recovered).start()
             else:
+                # Check PROCESS_STARTING first - this should always be checked regardless of job availability
+                # since processes should complete initialization even when no jobs are available
+                if self._check_and_replace_process(
+                    process_info,
+                    self.bridge_data.preload_timeout,
+                    HordeProcessState.PROCESS_STARTING,
+                    "seems to be stuck starting",
+                ):
+                    any_replaced = True
+
+                # Skip other state checks if no jobs are available since those states are job-related
+                if self._last_pop_no_jobs_available:
+                    continue
+
+                # Check job-related states that only matter when jobs are being processed
                 conditions: list[tuple[float, HordeProcessState, str]] = [
                     (
                         self.bridge_data.preload_timeout,
@@ -6163,23 +6177,20 @@ class HordeWorkerProcessManager:
                         "seems to be stuck downloading an auxiliary model (LoRa, etc)",
                     ),
                     (
-                        self.bridge_data.preload_timeout,
-                        HordeProcessState.PROCESS_STARTING,
-                        "seems to be stuck starting",
-                    ),
-                    (
                         self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
                         HordeProcessState.INFERENCE_POST_PROCESSING,
                         "seems to be stuck post processing",
                     ),
                 ]
-                if self._last_pop_no_jobs_available:
-                    continue
 
                 for timeout, state, error_message in conditions:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
                         any_replaced = True
-                        self._recently_recovered = True
+
+        # If any processes were replaced, set the recently recovered flag and start timer
+        if any_replaced:
+            self._recently_recovered = True
+            threading.Thread(target=timed_unset_recently_recovered).start()
 
         if self._last_pop_no_jobs_available:
             return any_replaced
