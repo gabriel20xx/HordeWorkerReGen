@@ -6151,6 +6151,22 @@ class HordeWorkerProcessManager:
                 self._recently_recovered = True
                 threading.Thread(target=timed_unset_recently_recovered).start()
             else:
+                # Check PROCESS_STARTING first - this should always be checked regardless of job availability
+                # since processes should complete initialization even when no jobs are available
+                if self._check_and_replace_process(
+                    process_info,
+                    self.bridge_data.preload_timeout,
+                    HordeProcessState.PROCESS_STARTING,
+                    "seems to be stuck starting",
+                ):
+                    any_replaced = True
+                    self._recently_recovered = True
+
+                # Skip other state checks if no jobs are available since those states are job-related
+                if self._last_pop_no_jobs_available:
+                    continue
+
+                # Check job-related states that only matter when jobs are being processed
                 conditions: list[tuple[float, HordeProcessState, str]] = [
                     (
                         self.bridge_data.preload_timeout,
@@ -6163,18 +6179,11 @@ class HordeWorkerProcessManager:
                         "seems to be stuck downloading an auxiliary model (LoRa, etc)",
                     ),
                     (
-                        self.bridge_data.preload_timeout,
-                        HordeProcessState.PROCESS_STARTING,
-                        "seems to be stuck starting",
-                    ),
-                    (
                         self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
                         HordeProcessState.INFERENCE_POST_PROCESSING,
                         "seems to be stuck post processing",
                     ),
                 ]
-                if self._last_pop_no_jobs_available:
-                    continue
 
                 for timeout, state, error_message in conditions:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
