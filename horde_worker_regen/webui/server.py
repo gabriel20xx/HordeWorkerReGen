@@ -70,7 +70,7 @@ class WorkerWebUI:
 
     async def _handle_index(self, request: web.Request) -> web.Response:
         """Serve the main HTML page."""
-        html = """
+        html = r"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -729,7 +729,7 @@ class WorkerWebUI:
             }
             const now = Date.now() / 1000; // Convert to seconds
             const secondsAgo = Math.floor(now - timestamp);
-            
+
             if (secondsAgo < 60) {
                 return `Last submission: ${secondsAgo} second${secondsAgo !== 1 ? 's' : ''} ago`;
             } else if (secondsAgo < 3600) {
@@ -838,10 +838,38 @@ class WorkerWebUI:
             return result;
         }
 
+        // AbortController for cancelling in-flight requests
+        let statusAbortController = null;
+        let statusFetchInProgress = false;
+        let consecutiveErrors = 0;
+        const MAX_CONSECUTIVE_ERRORS = 5;
+
         function updateStatus() {
-            fetch('/api/status')
-                .then(response => response.json())
+            // Prevent multiple simultaneous requests
+            if (statusFetchInProgress) {
+                return;
+            }
+
+            // Cancel any pending request
+            if (statusAbortController) {
+                statusAbortController.abort();
+            }
+
+            // Create new abort controller for this request
+            statusAbortController = new AbortController();
+            statusFetchInProgress = true;
+
+            fetch('/api/status', { signal: statusAbortController.signal })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
+                    // Reset error counter on success
+                    consecutiveErrors = 0;
+
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('content').style.display = 'block';
 
@@ -876,7 +904,7 @@ class WorkerWebUI:
                     const cpuProgress = document.getElementById('cpu-progress');
                     cpuProgress.style.width = cpuPercent + '%';
                     cpuProgress.textContent = cpuPercent + '%';
-                    
+
                     // Update CPU label with cores count
                     const cpuLabel = document.getElementById('cpu-label');
                     const cpuCoresText = data.cpu_cores_count > 0 ? ` (${data.cpu_cores_count} cores)` : '';
@@ -893,7 +921,7 @@ class WorkerWebUI:
                     const vramProgress = document.getElementById('vram-progress');
                     vramProgress.style.width = vramPercent + '%';
                     vramProgress.textContent = vramPercent + '%';
-                    
+
                     // Update VRAM label with absolute usage
                     const vramLabel = document.getElementById('vram-label');
                     const vramUsed = formatBytes(data.vram_usage_mb * 1024 * 1024);
@@ -1011,7 +1039,7 @@ class WorkerWebUI:
                                 secondLine.push(`Progress: ${proc.progress}%`);
                             }
                             const secondLineText = secondLine.length > 0 ? secondLine.join(' | ') : 'Idle';
-                            
+
                             return `
                             <div class="process-item">
                                 <div class="process-id">Process #${proc.id}: ${proc.type} - ${proc.state}</div>
@@ -1143,10 +1171,10 @@ class WorkerWebUI:
                     // Last Generated Images
                     const lastImageContainer = document.getElementById('last-image-container');
                     const lastImageTime = document.getElementById('last-image-time');
-                    
+
                     // Update time display
                     lastImageTime.textContent = formatTimeAgo(data.last_image_submission_timestamp);
-                    
+
                     if (data.last_image_base64 && data.last_image_base64.length > 0) {
                         if (data.last_image_base64.length === 1) {
                             // Single image - display in centered layout
@@ -1171,7 +1199,7 @@ class WorkerWebUI:
                             }).join('');
                             lastImageContainer.innerHTML = `<div class="image-grid">${gridHtml}</div>`;
                         }
-                        
+
                         // Add click handlers to all images
                         lastImageContainer.querySelectorAll('img[data-fullsize]').forEach(img => {
                             img.onclick = function() {
@@ -1203,7 +1231,25 @@ class WorkerWebUI:
                         'Last updated: ' + new Date().toLocaleTimeString();
                 })
                 .catch(error => {
+                    // Ignore aborted requests (these are intentional cancellations)
+                    if (error.name === 'AbortError') {
+                        return;
+                    }
+
+                    consecutiveErrors++;
                     console.error('Error fetching status:', error);
+
+                    // If too many consecutive errors, show warning
+                    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                        console.warn(
+                            `Failed to fetch status ${consecutiveErrors} times in a row. Check server connection.`,
+                        );
+                    }
+                })
+                .finally(() => {
+                    // Always reset the in-progress flag and controller reference
+                    statusFetchInProgress = false;
+                    statusAbortController = null;
                 });
         }
 
