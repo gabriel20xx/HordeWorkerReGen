@@ -1247,8 +1247,9 @@ class WorkerWebUI:
                     }
                 })
                 .finally(() => {
-                    // Always reset the in-progress flag
+                    // Always reset the in-progress flag and controller reference
                     statusFetchInProgress = false;
+                    statusAbortController = null;
                 });
         }
 
