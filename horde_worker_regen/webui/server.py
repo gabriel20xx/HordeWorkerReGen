@@ -1241,7 +1241,9 @@ class WorkerWebUI:
 
                     // If too many consecutive errors, show warning
                     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                        console.warn(`Failed to fetch status ${consecutiveErrors} times in a row. Check server connection.`);
+                        console.warn(
+                            `Failed to fetch status ${consecutiveErrors} times in a row. Check server connection.`,
+                        );
                     }
                 })
                 .finally(() => {
