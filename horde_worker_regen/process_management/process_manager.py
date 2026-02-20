@@ -3096,6 +3096,9 @@ class HordeWorkerProcessManager:
                 if self._horde_model_map.is_model_loading(process_info.loaded_horde_model_name):
                     continue
 
+                if process_info.loaded_horde_model_name not in self._horde_model_map.root:
+                    continue
+
                 if (
                     self._horde_model_map.root[process_info.loaded_horde_model_name].horde_model_load_state
                     == ModelLoadState.IN_USE
