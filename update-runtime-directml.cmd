@@ -69,6 +69,9 @@ call "%MAMBA_ROOT_PREFIX%\condabin\mamba.bat" activate windows
 
 python -s -m pip install torch-directml torchvision==0.19.1
 
+REM Uninstall deprecated pynvml package to ensure nvidia-ml-py is used instead
+python -s -m pip uninstall -y pynvml
+
 if defined hordelib (
   python -s -m pip uninstall -y hordelib horde_engine horde_model_reference
   python -s -m pip install horde_engine horde_model_reference
