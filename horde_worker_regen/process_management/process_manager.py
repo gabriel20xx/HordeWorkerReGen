@@ -4242,6 +4242,11 @@ class HordeWorkerProcessManager:
     _too_many_consecutive_failed_jobs_wait_time = 180
     """The time to wait after too many consecutive failed jobs before resuming job pops."""
 
+    _consecutive_pop_failures: int = 0
+    """The number of consecutive job pop failures (network/API errors)."""
+    _consecutive_pop_failure_warn_threshold: int = 3
+    """Number of consecutive pop failures before logging a prominent warning."""
+
     def print_maint_mode_messages(self) -> None:
         """Print the information about maintenance mode to the user."""
 
@@ -4547,19 +4552,57 @@ class HordeWorkerProcessManager:
                     )
                 else:
                     logger.error(f"Failed to pop job (API Error): {job_pop_response}")
+                self._consecutive_pop_failures = 0  # API responded successfully (even if with an error)
                 self._job_pop_frequency = self._error_job_pop_frequency
                 self._last_pop_no_jobs_available = True
                 return
 
-        except Exception as e:
-            if self._job_pop_frequency == self._error_job_pop_frequency:
-                logger.error(f"Failed to pop job (Unexpected Error): {e}")
+        except aiohttp.ContentTypeError as e:
+            # The API returned a non-JSON response (e.g. an HTML error page from Cloudflare).
+            # HTTP 524 means the upstream server timed out — this is a transient condition.
+            # ContentTypeError inherits `status` from ClientResponseError.
+            status_code = e.status
+            self._consecutive_pop_failures += 1
+            if status_code == 524:
+                message = (
+                    f"Failed to pop job (API Gateway Timeout - HTTP 524): "
+                    f"The Horde API returned an HTML page instead of JSON. "
+                    f"This is a transient Cloudflare/server timeout. "
+                    f"Retrying in {self._error_job_pop_frequency:.0f}s. "
+                    f"(consecutive failures: {self._consecutive_pop_failures})"
+                )
             else:
-                logger.warning(f"Failed to pop job (Unexpected Error): {e}")
+                message = (
+                    f"Failed to pop job (Unexpected Content-Type): "
+                    f"The API returned a non-JSON response (HTTP {status_code}). "
+                    f"This may be a temporary server issue. "
+                    f"Retrying in {self._error_job_pop_frequency:.0f}s. "
+                    f"(consecutive failures: {self._consecutive_pop_failures})"
+                )
+            if self._consecutive_pop_failures >= self._consecutive_pop_failure_warn_threshold:
+                logger.error(message)
+            else:
+                logger.warning(message)
+            self._job_pop_frequency = self._error_job_pop_frequency
+            return
+
+        except Exception as e:
+            self._consecutive_pop_failures += 1
+            if self._job_pop_frequency == self._error_job_pop_frequency:
+                logger.error(
+                    f"Failed to pop job (Unexpected Error): {e} "
+                    f"(consecutive failures: {self._consecutive_pop_failures})",
+                )
+            else:
+                logger.warning(
+                    f"Failed to pop job (Unexpected Error): {e} "
+                    f"(consecutive failures: {self._consecutive_pop_failures})",
+                )
 
             self._job_pop_frequency = self._error_job_pop_frequency
             return
 
+        self._consecutive_pop_failures = 0
         self._last_pop_maintenance_mode = False
         self._replaced_due_to_maintenance = False
 
@@ -5226,6 +5269,29 @@ class HordeWorkerProcessManager:
             if not jobs_in_progress_list and not jobs_pending_list:
                 logging_function("  No active jobs")
 
+            # Warn when inference processes have been idle in WAITING_FOR_JOB for a suspiciously long time
+            # and the worker is not simply waiting because no jobs are available.
+            _idle_warn_threshold = 120  # seconds before flagging a process as unexpectedly idle
+            if not self._last_pop_no_jobs_available:
+                idle_inference_processes = [
+                    (pid, pinfo)
+                    for pid, pinfo in self._process_map.items()
+                    if pinfo.process_type == HordeProcessType.INFERENCE
+                    and pinfo.last_process_state == HordeProcessState.WAITING_FOR_JOB
+                    and (cur_time - pinfo.last_heartbeat_timestamp) > _idle_warn_threshold
+                ]
+                if idle_inference_processes:
+                    idle_deltas = ", ".join(
+                        f"Process {pid}: {cur_time - pinfo.last_heartbeat_timestamp:.0f}s"
+                        for pid, pinfo in idle_inference_processes
+                    )
+                    logger.warning(
+                        f"Inference process(es) have been idle in WAITING_FOR_JOB for over "
+                        f"{_idle_warn_threshold}s with no active jobs dispatched: {idle_deltas}. "
+                        f"If this persists past {self.bridge_data.process_timeout}s, "
+                        f"processes will be automatically recovered.",
+                    )
+
             active_models = {
                 process.loaded_horde_model_name
                 for process in self._process_map.values()
@@ -5243,6 +5309,7 @@ class HordeWorkerProcessManager:
                     f"faulted: {self._num_jobs_faulted}",
                     f"slow: {self._num_job_slowdowns}",
                     f"recoveries: {self._num_process_recoveries}",
+                    f"pop errors: {self._consecutive_pop_failures}",
                     f"no jobs: {self._time_spent_no_jobs_available:.1f}s",
                 ],
             )
