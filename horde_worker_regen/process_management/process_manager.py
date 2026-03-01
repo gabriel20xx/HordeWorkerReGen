@@ -2619,7 +2619,12 @@ class HordeWorkerProcessManager:
 
                 # Immediately update the process state so the status display reflects the
                 # correct state without waiting for the child process to report back.
-                available_process.last_process_state = HordeProcessState.MODEL_PRELOADING
+                # Use on_process_state_change to also refresh last_received_timestamp so that
+                # hung-process detection does not trigger prematurely.
+                self._process_map.on_process_state_change(
+                    process_id=available_process.process_id,
+                    new_state=HordeProcessState.MODEL_PRELOADING,
+                )
 
             # Even if the message fails to send, we still want to return True so that we can let the main loop
             # catch up and potentially replace the process.
@@ -2910,7 +2915,12 @@ class HordeWorkerProcessManager:
 
             # Immediately update the process state so the status display reflects the
             # correct state without waiting for the child process to report back.
-            process_with_model.last_process_state = HordeProcessState.INFERENCE_STARTING
+            # Use on_process_state_change to also refresh last_received_timestamp so that
+            # hung-process detection does not trigger prematurely.
+            self._process_map.on_process_state_change(
+                process_id=process_with_model.process_id,
+                new_state=HordeProcessState.INFERENCE_STARTING,
+            )
             # Also update the model map to IN_USE here, because the INFERENCE_STARTING
             # state-change message from the child will be skipped (duplicate state).
             self._horde_model_map.update_entry(
