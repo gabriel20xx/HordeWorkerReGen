@@ -2617,6 +2617,15 @@ class HordeWorkerProcessManager:
                     last_job_referenced=job,
                 )
 
+                # Immediately update the process state so the status display reflects the
+                # correct state without waiting for the child process to report back.
+                # Use on_process_state_change to also refresh last_received_timestamp so that
+                # hung-process detection does not trigger prematurely.
+                self._process_map.on_process_state_change(
+                    process_id=available_process.process_id,
+                    new_state=HordeProcessState.MODEL_PRELOADING,
+                )
+
             # Even if the message fails to send, we still want to return True so that we can let the main loop
             # catch up and potentially replace the process.
             return True
@@ -2903,6 +2912,22 @@ class HordeWorkerProcessManager:
             process_with_model.loaded_horde_model_name = next_job.model
             horde_model_baseline = self.get_model_baseline(next_job.model)
             process_with_model.loaded_horde_model_baseline = horde_model_baseline
+
+            # Immediately update the process state so the status display reflects the
+            # correct state without waiting for the child process to report back.
+            # Use on_process_state_change to also refresh last_received_timestamp so that
+            # hung-process detection does not trigger prematurely.
+            self._process_map.on_process_state_change(
+                process_id=process_with_model.process_id,
+                new_state=HordeProcessState.INFERENCE_STARTING,
+            )
+            # Also update the model map to IN_USE here, because the INFERENCE_STARTING
+            # state-change message from the child will be skipped (duplicate state).
+            self._horde_model_map.update_entry(
+                horde_model_name=next_job.model,
+                load_state=ModelLoadState.IN_USE,
+                process_id=process_with_model.process_id,
+            )
 
         else:
             logger.error(
