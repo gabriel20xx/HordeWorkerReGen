@@ -689,18 +689,34 @@ class HordeInferenceProcess(HordeProcess):
             return None
         finally:
             self._is_busy = False
+            # Capture flags before resetting them — we need them to decide what needs releasing.
+            inference_semaphore_already_released = self._in_post_processing
+            vae_semaphore_was_acquired = self._vae_lock_was_acquired
             self._in_post_processing = False
             self._current_job_inference_steps_complete = False
             self._vae_lock_was_acquired = False
 
             # ! IMPORTANT: Start own code
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError):
                 job_info.payload.prompt = original_prompt
             # ! IMPORTANT: End own code
 
-            with contextlib.suppress(Exception):
-                self._inference_semaphore.release()
-                self._vae_decode_semaphore.release()
+            # The inference semaphore is released during progress_callback when post-processing
+            # starts (_in_post_processing becomes True).  Only release it here if that path was
+            # never taken, to avoid inflating the semaphore count.
+            if not inference_semaphore_already_released:
+                try:
+                    self._inference_semaphore.release()
+                except ValueError:
+                    logger.warning("Unexpected ValueError releasing inference semaphore")
+
+            # Release the VAE decode semaphore only if it was actually acquired, in a separate
+            # block so this attempt always runs regardless of the inference semaphore outcome.
+            if vae_semaphore_was_acquired:
+                try:
+                    self._vae_decode_semaphore.release()
+                except ValueError:
+                    logger.warning("Unexpected ValueError releasing VAE decode semaphore")
         return results
 
     @staticmethod

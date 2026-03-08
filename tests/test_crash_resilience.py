@@ -357,3 +357,187 @@ class TestApiSubmitJobBrokenDataHandling:
         assert job_info not in in_progress
         assert "test-id" not in faults
 
+
+class TestJobSubmitLoopExceptionHandling:
+    """Tests that _job_submit_loop discards the head job when api_submit_job raises unexpectedly."""
+
+    def test_unexpected_exception_discards_head_job(self) -> None:
+        """When api_submit_job raises unexpectedly, the head job must be removed so the queue unblocks."""
+        import asyncio
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        # Build a minimal completed-job mock
+        job_info = MagicMock()
+        job_info.id_ = "stuck-job"
+        job_info.ids = ["stuck-job"]
+
+        completed = MagicMock()
+        completed.sdk_api_job_info = job_info
+
+        mock_manager = MagicMock()
+        mock_manager.jobs_pending_submit = [completed]
+        mock_manager._shutting_down = False
+
+        # Bind real _discard_broken_job so the queue is actually modified
+        mock_manager._discard_broken_job = types.MethodType(
+            HordeWorkerProcessManager._discard_broken_job, mock_manager
+        )
+        mock_manager.jobs_lookup = {job_info: completed}
+        mock_manager.job_pop_timestamps = {job_info: 0.0}
+        mock_manager.jobs_in_progress = [job_info]
+        mock_manager.job_faults = {}
+
+        call_count = 0
+
+        async def failing_api_submit_job() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Simulated unexpected failure in api_submit_job")
+            # After the broken job is discarded the queue is empty; shut down
+            mock_manager._shutting_down = True
+
+        mock_manager.api_submit_job = failing_api_submit_job
+        mock_manager.is_time_for_shutdown = lambda: mock_manager._shutting_down
+        mock_manager._job_submit_loop_interval = 0.01
+
+        bound_loop = HordeWorkerProcessManager._job_submit_loop.__get__(mock_manager, HordeWorkerProcessManager)
+
+        asyncio.run(asyncio.wait_for(bound_loop(), timeout=2.0))
+
+        # The broken job must have been removed from the queue
+        assert len(mock_manager.jobs_pending_submit) == 0
+        assert job_info not in mock_manager.jobs_lookup
+        assert job_info not in mock_manager.jobs_in_progress
+
+    def test_job_removed_by_api_submit_job_is_not_double_discarded(self) -> None:
+        """If api_submit_job already removed the head job before raising, the next job is not discarded."""
+        import asyncio
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job_info_head = MagicMock()
+        job_info_head.id_ = "head-job"
+        job_info_head.ids = ["head-job"]
+        completed_head = MagicMock()
+        completed_head.sdk_api_job_info = job_info_head
+
+        job_info_next = MagicMock()
+        job_info_next.id_ = "next-job"
+        job_info_next.ids = ["next-job"]
+        completed_next = MagicMock()
+        completed_next.sdk_api_job_info = job_info_next
+
+        mock_manager = MagicMock()
+        mock_manager._shutting_down = False
+        # Start with two jobs in the queue
+        mock_manager.jobs_pending_submit = [completed_head, completed_next]
+        mock_manager.jobs_lookup = {job_info_head: completed_head, job_info_next: completed_next}
+        mock_manager.job_pop_timestamps = {}
+        mock_manager.jobs_in_progress = []
+        mock_manager.job_faults = {}
+
+        mock_manager._discard_broken_job = types.MethodType(
+            HordeWorkerProcessManager._discard_broken_job, mock_manager
+        )
+
+        async def api_submit_job_removes_head_then_raises() -> None:
+            # Simulate api_submit_job removing the head job internally (e.g. normal cleanup path
+            # partially ran), then raising an unexpected error.
+            mock_manager.jobs_pending_submit.pop(0)
+            raise RuntimeError("Partial failure after head was already removed")
+
+        call_count = 0
+
+        original_submit = api_submit_job_removes_head_then_raises
+
+        async def controlled_submit() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                await original_submit()
+            # Second call: succeed and shut down
+            mock_manager._shutting_down = True
+
+        mock_manager.api_submit_job = controlled_submit
+        mock_manager.is_time_for_shutdown = lambda: mock_manager._shutting_down
+        mock_manager._job_submit_loop_interval = 0.01
+
+        bound_loop = HordeWorkerProcessManager._job_submit_loop.__get__(mock_manager, HordeWorkerProcessManager)
+        asyncio.run(asyncio.wait_for(bound_loop(), timeout=2.0))
+
+        # The next job must NOT have been discarded (it was not the job that failed)
+        assert completed_next in mock_manager.jobs_pending_submit
+        assert job_info_next in mock_manager.jobs_lookup
+
+
+class TestReceiveAndHandleProcessMessagesResilience:
+    """Tests that receive_and_handle_process_messages does not crash on INFERENCE_STARTING edge cases."""
+
+    def _make_message(
+        self,
+        process_state: HordeProcessState,
+        process_id: int = 0,
+        launch_id: int = 1,
+    ) -> object:
+        """Return a real HordeProcessStateChangeMessage so isinstance() checks pass."""
+        from horde_worker_regen.process_management.messages import HordeProcessStateChangeMessage
+
+        return HordeProcessStateChangeMessage(
+            process_id=process_id,
+            process_launch_identifier=launch_id,
+            process_state=process_state,
+            info="test",
+            time_elapsed=None,
+        )
+
+    def _run_receive(self, msg: object, process_info: MagicMock) -> None:
+        """Run receive_and_handle_process_messages with a single queued message."""
+        import queue as queue_mod
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        # Configure the process_map so `process_id in process_map` and `process_map[process_id]` work
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()  # must not raise
+
+    def test_inference_starting_with_no_model_does_not_raise(self) -> None:
+        """INFERENCE_STARTING with no model loaded should log an error and continue, not raise."""
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.loaded_horde_model_name = None  # trigger the guard
+        process_info.batch_amount = None
+
+        msg = self._make_message(HordeProcessState.INFERENCE_STARTING)
+        self._run_receive(msg, process_info)
+
+    def test_inference_starting_with_no_batch_amount_does_not_raise(self) -> None:
+        """INFERENCE_STARTING with batch_amount=None should log an error and continue, not raise."""
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.loaded_horde_model_name = "some_model"
+        process_info.batch_amount = None  # trigger the guard
+
+        msg = self._make_message(HordeProcessState.INFERENCE_STARTING)
+        self._run_receive(msg, process_info)
+

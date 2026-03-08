@@ -2145,14 +2145,18 @@ class HordeWorkerProcessManager:
 
                     loaded_model_name = self._process_map[message.process_id].loaded_horde_model_name
                     if loaded_model_name is None:
-                        raise ValueError(
-                            f"Process {message.process_id} has no model loaded, but is starting inference",
+                        logger.error(
+                            f"Process {message.process_id} has no model loaded, but is starting inference; "
+                            "skipping model map update for this message",
                         )
+                        continue
                     batch_amount = self._process_map[message.process_id].batch_amount
                     if batch_amount is None:
-                        raise ValueError(
-                            f"Process {message.process_id} has batch_amount, but is starting inference",
+                        logger.error(
+                            f"Process {message.process_id} has no batch_amount, but is starting inference; "
+                            "skipping model map update for this message",
                         )
+                        continue
                     self._horde_model_map.update_entry(
                         horde_model_name=loaded_model_name,
                         load_state=ModelLoadState.IN_USE,
@@ -4916,14 +4920,26 @@ class HordeWorkerProcessManager:
         """Run the job submit loop."""
         logger.debug("In _job_submit_loop")
         while True:
-            with logger.catch():
-                try:
-                    await self.api_submit_job()
-                    if self.is_time_for_shutdown():
-                        break
-                except CancelledError as e:
-                    self._shutdown()
-                    logger.debug(f"CancelledError: {e}")
+            # Snapshot the head job before awaiting so we discard the right job on exception,
+            # even if api_submit_job internally reorders or removes it.
+            head_job = self.jobs_pending_submit[0] if self.jobs_pending_submit else None
+            try:
+                await self.api_submit_job()
+                if self.is_time_for_shutdown():
+                    break
+            except CancelledError as e:
+                self._shutdown()
+                logger.debug(f"CancelledError: {e}")
+            except Exception:
+                # api_submit_job raised unexpectedly (already logged by its @logger.catch decorator).
+                # Discard the snapshotted head job if it is still in the queue so the submit queue
+                # cannot be permanently blocked by a single broken job.
+                if head_job is not None and head_job in self.jobs_pending_submit:
+                    logger.error(
+                        f"Discarding job {head_job.sdk_api_job_info.id_} from submit queue "
+                        "after unexpected exception to prevent queue blockage",
+                    )
+                    self._discard_broken_job(head_job)
 
             await asyncio.sleep(self._job_submit_loop_interval)
 
