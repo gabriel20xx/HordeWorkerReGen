@@ -10,15 +10,15 @@ from horde_worker_regen.process_management.messages import HordeProcessState
 def test_calculate_granular_progress() -> None:
     """Test the granular progress calculation method."""
     # Import here to avoid circular dependencies
-    from horde_worker_regen.process_management.process_manager import HordeProcessManager
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
     # Create a mock ProcessManager instance to test the method
     # We only need to test the _calculate_granular_progress method
-    mock_manager = MagicMock(spec=HordeProcessManager)
+    mock_manager = MagicMock(spec=HordeWorkerProcessManager)
 
     # Bind the actual method to the mock
-    mock_manager._calculate_granular_progress = HordeProcessManager._calculate_granular_progress.__get__(
-        mock_manager, HordeProcessManager
+    mock_manager._calculate_granular_progress = HordeWorkerProcessManager._calculate_granular_progress.__get__(
+        mock_manager, HordeWorkerProcessManager
     )
 
     # Define test cases: (state, inference_progress, expected_progress)
@@ -64,11 +64,11 @@ def test_calculate_granular_progress() -> None:
 
 def test_inference_progress_scaling() -> None:
     """Test that inference progress is correctly scaled to 20-70% range."""
-    from horde_worker_regen.process_management.process_manager import HordeProcessManager
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-    mock_manager = MagicMock(spec=HordeProcessManager)
-    mock_manager._calculate_granular_progress = HordeProcessManager._calculate_granular_progress.__get__(
-        mock_manager, HordeProcessManager
+    mock_manager = MagicMock(spec=HordeWorkerProcessManager)
+    mock_manager._calculate_granular_progress = HordeWorkerProcessManager._calculate_granular_progress.__get__(
+        mock_manager, HordeWorkerProcessManager
     )
 
     # Test boundary conditions for inference scaling
@@ -83,11 +83,11 @@ def test_inference_progress_scaling() -> None:
 
 def test_post_processing_progress_scaling() -> None:
     """Test that post-processing progress is correctly scaled to 70-80% range."""
-    from horde_worker_regen.process_management.process_manager import HordeProcessManager
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-    mock_manager = MagicMock(spec=HordeProcessManager)
-    mock_manager._calculate_granular_progress = HordeProcessManager._calculate_granular_progress.__get__(
-        mock_manager, HordeProcessManager
+    mock_manager = MagicMock(spec=HordeWorkerProcessManager)
+    mock_manager._calculate_granular_progress = HordeWorkerProcessManager._calculate_granular_progress.__get__(
+        mock_manager, HordeWorkerProcessManager
     )
 
     # Test post-processing scaling
