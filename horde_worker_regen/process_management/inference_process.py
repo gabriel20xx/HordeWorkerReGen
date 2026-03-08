@@ -694,11 +694,11 @@ class HordeInferenceProcess(HordeProcess):
             self._vae_lock_was_acquired = False
 
             # ! IMPORTANT: Start own code
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError):
                 job_info.payload.prompt = original_prompt
             # ! IMPORTANT: End own code
 
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(ValueError):
                 self._inference_semaphore.release()
                 self._vae_decode_semaphore.release()
         return results
