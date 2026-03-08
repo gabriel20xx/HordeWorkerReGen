@@ -412,6 +412,67 @@ class TestJobSubmitLoopExceptionHandling:
         assert job_info not in mock_manager.jobs_lookup
         assert job_info not in mock_manager.jobs_in_progress
 
+    def test_job_removed_by_api_submit_job_is_not_double_discarded(self) -> None:
+        """If api_submit_job already removed the head job before raising, the next job is not discarded."""
+        import asyncio
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job_info_head = MagicMock()
+        job_info_head.id_ = "head-job"
+        job_info_head.ids = ["head-job"]
+        completed_head = MagicMock()
+        completed_head.sdk_api_job_info = job_info_head
+
+        job_info_next = MagicMock()
+        job_info_next.id_ = "next-job"
+        job_info_next.ids = ["next-job"]
+        completed_next = MagicMock()
+        completed_next.sdk_api_job_info = job_info_next
+
+        mock_manager = MagicMock()
+        mock_manager._shutting_down = False
+        # Start with two jobs in the queue
+        mock_manager.jobs_pending_submit = [completed_head, completed_next]
+        mock_manager.jobs_lookup = {job_info_head: completed_head, job_info_next: completed_next}
+        mock_manager.job_pop_timestamps = {}
+        mock_manager.jobs_in_progress = []
+        mock_manager.job_faults = {}
+
+        mock_manager._discard_broken_job = types.MethodType(
+            HordeWorkerProcessManager._discard_broken_job, mock_manager
+        )
+
+        async def api_submit_job_removes_head_then_raises() -> None:
+            # Simulate api_submit_job removing the head job internally (e.g. normal cleanup path
+            # partially ran), then raising an unexpected error.
+            mock_manager.jobs_pending_submit.pop(0)
+            raise RuntimeError("Partial failure after head was already removed")
+
+        call_count = 0
+
+        original_submit = api_submit_job_removes_head_then_raises
+
+        async def controlled_submit() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                await original_submit()
+            # Second call: succeed and shut down
+            mock_manager._shutting_down = True
+
+        mock_manager.api_submit_job = controlled_submit
+        mock_manager.is_time_for_shutdown = lambda: mock_manager._shutting_down
+        mock_manager._job_submit_loop_interval = 0.01
+
+        bound_loop = HordeWorkerProcessManager._job_submit_loop.__get__(mock_manager, HordeWorkerProcessManager)
+        asyncio.run(asyncio.wait_for(bound_loop(), timeout=2.0))
+
+        # The next job must NOT have been discarded (it was not the job that failed)
+        assert completed_next in mock_manager.jobs_pending_submit
+        assert job_info_next in mock_manager.jobs_lookup
+
 
 class TestReceiveAndHandleProcessMessagesResilience:
     """Tests that receive_and_handle_process_messages does not crash on INFERENCE_STARTING edge cases."""

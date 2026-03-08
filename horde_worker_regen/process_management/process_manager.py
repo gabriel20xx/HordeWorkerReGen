@@ -4920,6 +4920,9 @@ class HordeWorkerProcessManager:
         """Run the job submit loop."""
         logger.debug("In _job_submit_loop")
         while True:
+            # Snapshot the head job before awaiting so we discard the right job on exception,
+            # even if api_submit_job internally reorders or removes it.
+            head_job = self.jobs_pending_submit[0] if self.jobs_pending_submit else None
             try:
                 await self.api_submit_job()
                 if self.is_time_for_shutdown():
@@ -4929,14 +4932,14 @@ class HordeWorkerProcessManager:
                 logger.debug(f"CancelledError: {e}")
             except Exception:
                 # api_submit_job raised unexpectedly (already logged by its @logger.catch decorator).
-                # Discard the head job so the submit queue is not permanently blocked.
-                if self.jobs_pending_submit:
-                    broken = self.jobs_pending_submit[0]
+                # Discard the snapshotted head job if it is still in the queue so the submit queue
+                # cannot be permanently blocked by a single broken job.
+                if head_job is not None and head_job in self.jobs_pending_submit:
                     logger.error(
-                        f"Discarding job {broken.sdk_api_job_info.id_} from submit queue "
+                        f"Discarding job {head_job.sdk_api_job_info.id_} from submit queue "
                         "after unexpected exception to prevent queue blockage",
                     )
-                    self._discard_broken_job(broken)
+                    self._discard_broken_job(head_job)
 
             await asyncio.sleep(self._job_submit_loop_interval)
 
