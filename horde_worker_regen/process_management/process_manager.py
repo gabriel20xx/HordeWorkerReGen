@@ -297,12 +297,10 @@ class HordeProcessInfo:
         try:
             self.pipe_connection.send(message)
             return True
-        except Exception:
+        except Exception as e:
             global _caught_signal
             if not _caught_signal:
-                # Prevent the log/console to get spammed
-                # logger.error(f"Failed to send message to process {self.process_id}: {e}")
-                pass
+                logger.debug(f"Failed to send message to process {self.process_id}: {e}")
             return False
 
     def __repr__(self) -> str:
@@ -5974,6 +5972,7 @@ class HordeWorkerProcessManager:
                 break
             except Exception as e:
                 logger.error(f"Error in webui update loop: {e}")
+                await asyncio.sleep(self.bridge_data.webui_update_interval)
 
     async def _main_loop(self) -> None:
         process_control_loop = asyncio.create_task(self._process_control_loop(), name="process_control_loop")
@@ -6338,8 +6337,5 @@ class HordeWorkerProcessManager:
             threading.Thread(target=timed_unset_recently_recovered).start()
         else:
             self._hung_processes_detected = False
-
-        if any_replaced:
-            threading.Thread(target=timed_unset_recently_recovered).start()
 
         return any_replaced
