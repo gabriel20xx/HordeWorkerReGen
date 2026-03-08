@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -275,45 +276,72 @@ class TestApiSubmitJobBrokenDataHandling:
     def _make_completed_job(self, job_info: MagicMock, *, censored: object = False) -> MagicMock:
         completed = MagicMock()
         completed.sdk_api_job_info = job_info
-        completed.state = MagicMock()  # non-None, non-faulted
+        completed.state = "ok"  # concrete non-None, non-faulted state
         completed.job_image_results = None
         completed.censored = censored
         return completed
 
-    def _run_api_submit_job(self, completed_job_info: MagicMock) -> list[MagicMock]:
-        """Run api_submit_job with the given completed job and return jobs_pending_submit after."""
+    def _run_api_submit_job(self, completed_job_info: MagicMock) -> tuple[list[MagicMock], dict, dict, list, dict]:
+        """Run api_submit_job with the given completed job and return post-run tracking state."""
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-        mock_manager = MagicMock()
+        job_info = completed_job_info.sdk_api_job_info
+        sentinel_id = job_info.id_
+
         pending: list[MagicMock] = [completed_job_info]
+        jobs_lookup: dict = {job_info: completed_job_info}
+        job_pop_timestamps: dict = {job_info: 0.0}
+        jobs_in_progress: list = [job_info]
+        job_faults: dict = {sentinel_id: []} if sentinel_id is not None else {}
+
+        mock_manager = MagicMock()
         mock_manager.jobs_pending_submit = pending
+        mock_manager.jobs_lookup = jobs_lookup
+        mock_manager.job_pop_timestamps = job_pop_timestamps
+        mock_manager.jobs_in_progress = jobs_in_progress
+        mock_manager.job_faults = job_faults
+        # Bind the real helper so cleanup actually runs
+        mock_manager._discard_broken_job = types.MethodType(
+            HordeWorkerProcessManager._discard_broken_job, mock_manager
+        )
 
         import asyncio
 
         bound = HordeWorkerProcessManager.api_submit_job.__get__(mock_manager, HordeWorkerProcessManager)
         asyncio.run(bound())
-        return pending
+        return pending, jobs_lookup, job_pop_timestamps, jobs_in_progress, job_faults
 
     def test_job_with_none_id_is_skipped(self) -> None:
         """A job with id_=None should be removed from the queue rather than blocking it."""
         job_info = self._make_job_info(id_=None)
         completed = self._make_completed_job(job_info)
-        remaining = self._run_api_submit_job(completed)
-        assert len(remaining) == 0
+        pending, lookup, timestamps, in_progress, faults = self._run_api_submit_job(completed)
+        assert len(pending) == 0
+        assert job_info not in lookup
+        assert job_info not in timestamps
+        assert job_info not in in_progress
 
     def test_job_with_none_seed_is_skipped(self) -> None:
         """A job with seed=None should be removed from the queue rather than blocking it."""
         job_info = self._make_job_info(seed=None)
         completed = self._make_completed_job(job_info)
-        remaining = self._run_api_submit_job(completed)
-        assert len(remaining) == 0
+        pending, lookup, timestamps, in_progress, faults = self._run_api_submit_job(completed)
+        assert len(pending) == 0
+        assert job_info not in lookup
+        assert job_info not in timestamps
+        assert job_info not in in_progress
+        assert "test-id" not in faults
 
     def test_job_with_none_r2_upload_is_skipped(self) -> None:
         """A job with r2_upload=None should be removed from the queue rather than blocking it."""
         job_info = self._make_job_info(r2_upload=None)
         completed = self._make_completed_job(job_info)
-        remaining = self._run_api_submit_job(completed)
-        assert len(remaining) == 0
+        pending, lookup, timestamps, in_progress, faults = self._run_api_submit_job(completed)
+        assert len(pending) == 0
+        assert job_info not in lookup
+        assert job_info not in timestamps
+        assert job_info not in in_progress
+        assert "test-id" not in faults
 
     def test_job_with_none_censored_and_images_is_skipped(self) -> None:
         """A job with image_results set but censored=None should be removed rather than blocking."""
@@ -322,6 +350,10 @@ class TestApiSubmitJobBrokenDataHandling:
         # Set job_image_results to trigger the censored check
         completed.job_image_results = [MagicMock()]
         completed.sdk_api_job_info.payload.n_iter = 1
-        remaining = self._run_api_submit_job(completed)
-        assert len(remaining) == 0
+        pending, lookup, timestamps, in_progress, faults = self._run_api_submit_job(completed)
+        assert len(pending) == 0
+        assert job_info not in lookup
+        assert job_info not in timestamps
+        assert job_info not in in_progress
+        assert "test-id" not in faults
 
