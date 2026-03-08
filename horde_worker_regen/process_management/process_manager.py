@@ -3552,15 +3552,23 @@ class HordeWorkerProcessManager:
                 logger.info("Attempting to return batched jobs results")
 
             if completed_job_info.censored is None:
-                raise ValueError("completed_job_info.censored is None")
+                logger.error(f"Job {job_info.ids} has censored=None, skipping submission to prevent queue block")
+                self.jobs_pending_submit.remove(completed_job_info)
+                return
         if job_info.id_ is None:
-            raise ValueError("job_info.id_ is None")
+            logger.error("job_info.id_ is None, skipping submission to prevent queue block")
+            self.jobs_pending_submit.remove(completed_job_info)
+            return
 
         if job_info.payload.seed is None:
-            raise ValueError("job_info.payload.seed is None")
+            logger.error(f"Job {job_info.ids} has seed=None, skipping submission to prevent queue block")
+            self.jobs_pending_submit.remove(completed_job_info)
+            return
 
         if job_info.r2_upload is None:  # TODO: r2_upload should be being set somewhere
-            raise ValueError("job_info.r2_upload is None")
+            logger.error(f"Job {job_info.ids} has r2_upload=None, skipping submission to prevent queue block")
+            self.jobs_pending_submit.remove(completed_job_info)
+            return
 
         highest_reward = 0
         highest_kudos_per_second = 0.0

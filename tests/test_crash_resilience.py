@@ -219,3 +219,109 @@ class TestWorkerCycleExceptionHandling:
         ]
         assert HordeProcessState.PROCESS_ENDING in sent_states
 
+    def test_cleanup_for_exit_exception_still_sends_process_ended(self) -> None:
+        """When cleanup_for_exit raises, main_loop should still send PROCESS_ENDED."""
+        from horde_worker_regen.process_management.horde_process import HordeProcess
+
+        class _CleanupFailsProcess(HordeProcess):
+            def worker_cycle(self) -> None:
+                self._end_process = True  # Exit the loop immediately
+
+            def cleanup_for_exit(self) -> None:
+                raise RuntimeError("Simulated cleanup failure")
+
+            def _receive_and_handle_control_message(self, message: object) -> None:
+                pass
+
+        mock_queue = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.poll.return_value = False
+        mock_lock = MagicMock()
+
+        proc = _CleanupFailsProcess(
+            process_id=0,
+            process_message_queue=mock_queue,
+            pipe_connection=mock_conn,
+            disk_lock=mock_lock,
+            process_launch_identifier=1,
+        )
+
+        with patch("signal.signal"), patch.object(sys, "exit"):
+            proc.main_loop()
+
+        # Even though cleanup_for_exit raised, PROCESS_ENDED must still be sent
+        sent_states = [
+            call.args[0].process_state
+            for call in mock_queue.put.call_args_list
+            if hasattr(call.args[0], "process_state")
+        ]
+        assert HordeProcessState.PROCESS_ENDED in sent_states
+
+
+class TestApiSubmitJobBrokenDataHandling:
+    """Tests that api_submit_job skips broken jobs instead of leaving the submit queue blocked."""
+
+    def _make_job_info(self, *, id_: object = "test-id", seed: object = 42, r2_upload: object = "url") -> MagicMock:
+        """Return a minimal sdk_api_job_info mock."""
+        job_info = MagicMock()
+        job_info.id_ = id_
+        job_info.ids = [id_]
+        job_info.r2_upload = r2_upload
+        job_info.payload = MagicMock()
+        job_info.payload.seed = seed
+        job_info.payload.n_iter = 1
+        return job_info
+
+    def _make_completed_job(self, job_info: MagicMock, *, censored: object = False) -> MagicMock:
+        completed = MagicMock()
+        completed.sdk_api_job_info = job_info
+        completed.state = MagicMock()  # non-None, non-faulted
+        completed.job_image_results = None
+        completed.censored = censored
+        return completed
+
+    def _run_api_submit_job(self, completed_job_info: MagicMock) -> list[MagicMock]:
+        """Run api_submit_job with the given completed job and return jobs_pending_submit after."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        pending: list[MagicMock] = [completed_job_info]
+        mock_manager.jobs_pending_submit = pending
+
+        import asyncio
+
+        bound = HordeWorkerProcessManager.api_submit_job.__get__(mock_manager, HordeWorkerProcessManager)
+        asyncio.run(bound())
+        return pending
+
+    def test_job_with_none_id_is_skipped(self) -> None:
+        """A job with id_=None should be removed from the queue rather than blocking it."""
+        job_info = self._make_job_info(id_=None)
+        completed = self._make_completed_job(job_info)
+        remaining = self._run_api_submit_job(completed)
+        assert len(remaining) == 0
+
+    def test_job_with_none_seed_is_skipped(self) -> None:
+        """A job with seed=None should be removed from the queue rather than blocking it."""
+        job_info = self._make_job_info(seed=None)
+        completed = self._make_completed_job(job_info)
+        remaining = self._run_api_submit_job(completed)
+        assert len(remaining) == 0
+
+    def test_job_with_none_r2_upload_is_skipped(self) -> None:
+        """A job with r2_upload=None should be removed from the queue rather than blocking it."""
+        job_info = self._make_job_info(r2_upload=None)
+        completed = self._make_completed_job(job_info)
+        remaining = self._run_api_submit_job(completed)
+        assert len(remaining) == 0
+
+    def test_job_with_none_censored_and_images_is_skipped(self) -> None:
+        """A job with image_results set but censored=None should be removed rather than blocking."""
+        job_info = self._make_job_info()
+        completed = self._make_completed_job(job_info, censored=None)
+        # Set job_image_results to trigger the censored check
+        completed.job_image_results = [MagicMock()]
+        completed.sdk_api_job_info.payload.n_iter = 1
+        remaining = self._run_api_submit_job(completed)
+        assert len(remaining) == 0
+

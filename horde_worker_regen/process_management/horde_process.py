@@ -277,7 +277,10 @@ class HordeProcess(abc.ABC):
             info="Process ending",
         )
 
-        self.cleanup_for_exit()
+        try:
+            self.cleanup_for_exit()
+        except Exception as e:
+            logger.exception(f"Error during cleanup_for_exit, process will still end: {type(e).__name__}: {e}")
 
         logger.info("Process ended")
         self.send_process_state_change_message(

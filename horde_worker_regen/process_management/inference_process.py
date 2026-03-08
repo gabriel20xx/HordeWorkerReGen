@@ -775,10 +775,6 @@ class HordeInferenceProcess(HordeProcess):
     def cleanup_for_exit(self) -> None:
         """Cleanup the process pending a shutdown."""
         self.unload_models_from_ram()
-        self.send_process_state_change_message(
-            process_state=HordeProcessState.PROCESS_ENDED,
-            info="Process ended",
-        )
 
     def send_aux_model_message(
         self,
