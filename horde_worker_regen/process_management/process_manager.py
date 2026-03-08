@@ -280,7 +280,10 @@ class HordeProcessInfo:
         """Return true if the process is alive."""
         if not self.mp_process.is_alive():
             return False
-        return not (self.last_process_state == HordeProcessState.PROCESS_ENDING or HordeProcessState.PROCESS_ENDED)
+        return not (
+            self.last_process_state == HordeProcessState.PROCESS_ENDING
+            or self.last_process_state == HordeProcessState.PROCESS_ENDED
+        )
 
     def safe_send_message(self, message: HordeControlMessage) -> bool:
         """Send a message to the process.
@@ -5079,6 +5082,10 @@ class HordeWorkerProcessManager:
             except CancelledError as e:
                 self._shutdown()
                 logger.debug(f"CancelledError: {e}")
+            except Exception:
+                # Unexpected errors are already logged by logger.catch(reraise=True) in the loop body;
+                # sleep before retrying to keep the control loop alive without duplicating logs.
+                await asyncio.sleep(self._loop_interval)
 
         while len(self.jobs_pending_inference) > 0:
             await asyncio.sleep(0.2)
@@ -5558,6 +5565,12 @@ class HordeWorkerProcessManager:
             except CancelledError as e:
                 self._shutdown()
                 logger.debug(f"CancelledError: {e}")
+            except FileNotFoundError:
+                logger.warning(f"Could not find {BRIDGE_CONFIG_FILENAME}. Waiting for it to be created...")
+                await asyncio.sleep(self._bridge_data_loop_interval)
+            except Exception:
+                logger.exception("Unexpected error in bridge data loop")
+                await asyncio.sleep(self._bridge_data_loop_interval)
 
     def _calculate_granular_progress(
         self,
@@ -6320,7 +6333,7 @@ class HordeWorkerProcessManager:
             for process_info in self._process_map.values():
                 if process_info.process_type == HordeProcessType.INFERENCE:
                     self._replace_inference_process(process_info)
-                    self._any_replaced = True
+                    any_replaced = True
 
             threading.Thread(target=timed_unset_recently_recovered).start()
         else:
