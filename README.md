@@ -53,9 +53,11 @@ Before installing the worker:
 2. Open PowerShell or Command Prompt.
 3. Navigate to the folder where you want to install the worker:
 
-   ```cmd
-   cd C:\path\to\install\folder
-   ```
+    > **Warning**: Do not use spaces in the installation path. For example, `C:\horde_worker` is good, while `C:\My Workers` is not.
+
+    ```cmd
+    cd C:\path\to\install\folder
+    ```
 
 4. Clone the repository:
 
