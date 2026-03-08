@@ -260,7 +260,16 @@ class HordeProcess(abc.ABC):
         while not self._end_process:
             time.sleep(self._loop_interval)
             self.receive_and_handle_control_messages()
-            self.worker_cycle()
+            try:
+                self.worker_cycle()
+            except Exception as e:
+                error_msg = f"Unexpected error in worker cycle: {type(e).__name__}: {e}"
+                logger.error(error_msg)
+                self.send_process_state_change_message(
+                    process_state=HordeProcessState.PROCESS_ENDING,
+                    info=error_msg,
+                )
+                self._end_process = True
 
         # We escaped the loop, so the process is ending
         self.send_process_state_change_message(
