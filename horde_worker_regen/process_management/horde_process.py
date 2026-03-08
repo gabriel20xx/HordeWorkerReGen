@@ -264,7 +264,7 @@ class HordeProcess(abc.ABC):
                 self.worker_cycle()
             except Exception as e:
                 error_msg = f"Unexpected error in worker cycle: {type(e).__name__}: {e}"
-                logger.error(error_msg)
+                logger.exception(error_msg)
                 self.send_process_state_change_message(
                     process_state=HordeProcessState.PROCESS_ENDING,
                     info=error_msg,

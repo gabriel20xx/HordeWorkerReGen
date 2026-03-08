@@ -5082,8 +5082,9 @@ class HordeWorkerProcessManager:
             except CancelledError as e:
                 self._shutdown()
                 logger.debug(f"CancelledError: {e}")
-            except Exception as e:
-                logger.error(f"Unexpected error in process control loop: {type(e).__name__}: {e}")
+            except Exception:
+                # Unexpected errors are already logged by logger.catch(reraise=True) in the loop body;
+                # sleep before retrying to keep the control loop alive without duplicating logs.
                 await asyncio.sleep(self._loop_interval)
 
         while len(self.jobs_pending_inference) > 0:
@@ -5564,8 +5565,11 @@ class HordeWorkerProcessManager:
             except CancelledError as e:
                 self._shutdown()
                 logger.debug(f"CancelledError: {e}")
-            except Exception as e:
-                logger.error(f"Unexpected error in bridge data loop: {type(e).__name__}: {e}")
+            except FileNotFoundError:
+                logger.warning(f"Could not find {BRIDGE_CONFIG_FILENAME}. Waiting for it to be created...")
+                await asyncio.sleep(self._bridge_data_loop_interval)
+            except Exception:
+                logger.exception("Unexpected error in bridge data loop")
                 await asyncio.sleep(self._bridge_data_loop_interval)
 
     def _calculate_granular_progress(

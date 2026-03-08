@@ -1,6 +1,7 @@
 """Tests for crash resilience improvements."""
 
-import textwrap
+import asyncio
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,107 +59,163 @@ class TestIsProcessAlive:
 
 
 class TestReplaceHungProcessesAnyReplaced:
-    """Tests for the any_replaced local variable fix in replace_hung_processes."""
+    """Behavioral tests for the any_replaced fix in replace_hung_processes."""
 
-    def test_any_replaced_variable_is_local_not_instance(self) -> None:
-        """Verify the fix: replace_hung_processes uses any_replaced local var, not self._any_replaced."""
-        import ast
-        import inspect
-
+    def test_returns_true_when_stuck_inference_process_replaced(self) -> None:
+        """replace_hung_processes should return True when it replaces a stuck inference process."""
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-        source = textwrap.dedent(inspect.getsource(HordeWorkerProcessManager.replace_hung_processes))
-        tree = ast.parse(source)
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.process_timeout = 600
 
-        # Check that self._any_replaced is NOT assigned anywhere in the method
-        # (before the fix, `self._any_replaced = True` was used instead of `any_replaced = True`)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Attribute):
-                        if target.attr == "_any_replaced":
-                            pytest.fail(
-                                "replace_hung_processes should not assign to self._any_replaced; "
-                                "use the local variable any_replaced instead"
-                            )
+        # Create a mock process that appears stuck on inference
+        import time
+
+        mock_process = MagicMock()
+        mock_process.process_id = 0
+        mock_process.last_heartbeat_percent_complete = 50
+        mock_process.last_job_referenced = None
+        mock_process.last_heartbeat_delta = 9999
+        mock_process.last_progress_timestamp = time.time() - 9999
+        mock_process.last_received_timestamp = time.time() - 9999
+        mock_process.last_heartbeat_timestamp = time.time() - 9999
+
+        mock_manager._process_map.values.return_value = [mock_process]
+        mock_manager._process_map.is_stuck_on_inference.return_value = True
+
+        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+
+        with patch("threading.Thread"):
+            result = bound_method()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(mock_process)
 
 
 class TestBridgeDataLoopExceptionHandling:
-    """Tests that the bridge data loop recovers from unexpected exceptions."""
+    """Behavioral tests that the bridge data loop recovers from exceptions."""
 
-    def test_bridge_data_loop_has_general_exception_handler(self) -> None:
-        """The _bridge_data_loop method should handle general exceptions without dying."""
-        import ast
-        import inspect
-
+    def test_loop_continues_after_file_not_found(self) -> None:
+        """The bridge data loop should log a warning and continue when the config file is not found."""
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-        source = textwrap.dedent(inspect.getsource(HordeWorkerProcessManager._bridge_data_loop))
-        tree = ast.parse(source)
+        call_count = 0
 
-        # Look for try/except blocks with a general Exception handler
-        found_general_except = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ExceptHandler):
-                if node.type is None:
-                    found_general_except = True
-                    break
-                if isinstance(node.type, ast.Name) and node.type.id == "Exception":
-                    found_general_except = True
-                    break
+        async def run_test() -> None:
+            nonlocal call_count
+            mock_manager = MagicMock()
+            mock_manager._shutting_down = False
+            mock_manager._bridge_data_loop_interval = 0.01
+            mock_manager._bridge_data_last_modified_time = 0.0
+            mock_manager._last_bridge_data_reload_time = 0.0
 
-        assert found_general_except, "_bridge_data_loop should have a general Exception handler"
+            bound_loop = HordeWorkerProcessManager._bridge_data_loop.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
 
+            with patch("horde_worker_regen.process_management.process_manager.os.path.getmtime") as mock_getmtime:
 
-class TestProcessControlLoopExceptionHandling:
-    """Tests that the process control loop handles unexpected exceptions."""
+                def side_effect(path: str) -> float:
+                    nonlocal call_count
+                    call_count += 1
+                    if call_count <= 2:
+                        raise FileNotFoundError(f"No such file: {path}")
+                    # After 2 FileNotFoundErrors, stop the loop gracefully
+                    mock_manager._shutting_down = True
+                    return 0.0
 
-    def test_process_control_loop_has_general_exception_handler(self) -> None:
-        """The _process_control_loop method should handle general exceptions without dying."""
-        import ast
-        import inspect
+                mock_getmtime.side_effect = side_effect
+                await asyncio.wait_for(bound_loop(), timeout=2.0)
 
+        asyncio.run(run_test())
+        # The loop iterated at least 3 times, meaning it survived 2 FileNotFoundErrors
+        assert call_count >= 3
+
+    def test_loop_continues_after_unexpected_exception(self) -> None:
+        """The bridge data loop should log the exception and continue after an unexpected error."""
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-        source = textwrap.dedent(inspect.getsource(HordeWorkerProcessManager._process_control_loop))
-        tree = ast.parse(source)
+        call_count = 0
 
-        # Look for try/except blocks with a general Exception handler
-        found_general_except = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ExceptHandler):
-                if node.type is None:
-                    found_general_except = True
-                    break
-                if isinstance(node.type, ast.Name) and node.type.id == "Exception":
-                    found_general_except = True
-                    break
+        async def run_test() -> None:
+            nonlocal call_count
+            mock_manager = MagicMock()
+            mock_manager._shutting_down = False
+            mock_manager._bridge_data_loop_interval = 0.01
+            mock_manager._bridge_data_last_modified_time = 0.0
+            mock_manager._last_bridge_data_reload_time = 0.0
 
-        assert found_general_except, "_process_control_loop should have a general Exception handler"
+            bound_loop = HordeWorkerProcessManager._bridge_data_loop.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+
+            with patch("horde_worker_regen.process_management.process_manager.os.path.getmtime") as mock_getmtime:
+
+                def side_effect(path: str) -> float:
+                    nonlocal call_count
+                    call_count += 1
+                    if call_count <= 2:
+                        raise RuntimeError("Simulated disk error")
+                    mock_manager._shutting_down = True
+                    return 0.0
+
+                mock_getmtime.side_effect = side_effect
+                await asyncio.wait_for(bound_loop(), timeout=2.0)
+
+        asyncio.run(run_test())
+        assert call_count >= 3
 
 
 class TestWorkerCycleExceptionHandling:
-    """Tests that the subprocess main loop handles worker_cycle() exceptions."""
+    """Behavioral tests that the subprocess main loop handles worker_cycle() exceptions."""
 
-    def test_main_loop_has_worker_cycle_exception_handling(self) -> None:
-        """The main_loop should catch exceptions from worker_cycle() and end gracefully."""
-        import ast
-        import inspect
-
+    def test_worker_cycle_exception_ends_process_gracefully(self) -> None:
+        """When worker_cycle raises, main_loop should set _end_process and report PROCESS_ENDING."""
         from horde_worker_regen.process_management.horde_process import HordeProcess
 
-        source = textwrap.dedent(inspect.getsource(HordeProcess.main_loop))
-        tree = ast.parse(source)
+        class _BrokenWorkerProcess(HordeProcess):
+            cycle_calls: int = 0
 
-        # Look for try/except blocks that wrap worker_cycle
-        found_worker_cycle_try = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Try):
-                for child in ast.walk(node):
-                    if isinstance(child, ast.Call):
-                        if isinstance(child.func, ast.Attribute) and child.func.attr == "worker_cycle":
-                            found_worker_cycle_try = True
-                            break
+            def worker_cycle(self) -> None:
+                self.cycle_calls += 1
+                raise RuntimeError("Simulated crash in worker_cycle")
 
-        assert found_worker_cycle_try, "main_loop should wrap worker_cycle() in a try/except block"
+            def cleanup_for_exit(self) -> None:
+                pass
+
+            def _receive_and_handle_control_message(self, message: object) -> None:
+                pass
+
+        mock_queue = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.poll.return_value = False
+        mock_lock = MagicMock()
+
+        proc = _BrokenWorkerProcess(
+            process_id=0,
+            process_message_queue=mock_queue,
+            pipe_connection=mock_conn,
+            disk_lock=mock_lock,
+            process_launch_identifier=1,
+        )
+
+        with patch("signal.signal"), patch.object(sys, "exit"):
+            proc.main_loop()
+
+        assert proc._end_process is True
+        assert proc.cycle_calls == 1
+
+        # Verify PROCESS_ENDING was reported via the queue
+        sent_states = [
+            call.args[0].process_state
+            for call in mock_queue.put.call_args_list
+            if hasattr(call.args[0], "process_state")
+        ]
+        assert HordeProcessState.PROCESS_ENDING in sent_states
 
