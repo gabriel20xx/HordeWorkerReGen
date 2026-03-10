@@ -1,7 +1,5 @@
 torch==2.10.0
 nvidia-ml-py # Replacement for deprecated pynvml
-qrcode==7.4.2 # horde-engine 2.22.2 requires qrcode==7.4.2
-
 certifi # Required for SSL cert resolution
 
 horde_sdk~=0.18.0
