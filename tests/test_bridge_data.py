@@ -38,8 +38,8 @@ def test_bridge_data_loader_yaml_template() -> None:
     bridge_data_loader = BridgeDataLoader()
 
     horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=True,
-        override_existing=True,
+        download_and_convert_legacy_dbs=False,
+        override_existing=False,
     )
     bridge_data = bridge_data_loader.load(
         file_path="bridgeData_template.yaml",
@@ -57,8 +57,8 @@ def test_bridge_data_loader_yaml_local_if_present() -> None:
     bridge_data_loader = BridgeDataLoader()
 
     horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=True,
-        override_existing=True,
+        download_and_convert_legacy_dbs=False,
+        override_existing=False,
     )
 
     if not pathlib.Path("bridgeData.yaml").is_file():
@@ -83,8 +83,8 @@ def test_bridge_data_load_from_env_vars() -> None:
     os.environ["AIWORKER_REGEN_MODELS_TO_LOAD"] = "['model1', 'model2']"
 
     horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=True,
-        override_existing=True,
+        download_and_convert_legacy_dbs=False,
+        override_existing=False,
     )
 
     bridge_data = BridgeDataLoader.load_from_env_vars(
