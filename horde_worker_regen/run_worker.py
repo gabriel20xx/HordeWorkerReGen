@@ -27,6 +27,7 @@ def main(
     directml: int | None = None,
 ) -> None:
     """Check for a valid config and start the driver ('main') process for the reGen worker."""
+    from horde_model_reference.meta_consts import MODEL_REFERENCE_CATEGORY
     from horde_model_reference.model_reference_manager import ModelReferenceManager
     from pydantic import ValidationError
 
@@ -40,8 +41,11 @@ def main(
         while True:
             try:
                 with logger.catch(reraise=True):
-                    if not horde_model_reference_manager.get_all_model_references(overwrite_existing=True):
-                        logger.error("Failed to download model references. Retrying in 5 seconds...")
+                    all_refs = horde_model_reference_manager.get_all_model_references(overwrite_existing=True)
+                    if MODEL_REFERENCE_CATEGORY.image_generation not in all_refs:
+                        logger.error(
+                            "Image generation model references not found. Retrying in 5 seconds...",
+                        )
                         time.sleep(5)
                     else:
                         return horde_model_reference_manager
