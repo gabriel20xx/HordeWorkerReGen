@@ -2151,6 +2151,24 @@ class HordeWorkerProcessManager:
 
                 if message.process_state == HordeProcessState.PROCESS_ENDING:
                     logger.info(f"Process {message.process_id} is ending")
+                    # If the process is ending but still has a job in progress, fault the job
+                    # so it is not silently lost. This can happen if an exception occurs in the
+                    # child process before it sends the inference result message.
+                    process_info_ending = self._process_map[message.process_id]
+                    if (
+                        process_info_ending.last_job_referenced is not None
+                        and process_info_ending.last_job_referenced in self.jobs_in_progress
+                    ):
+                        logger.error(
+                            f"Process {message.process_id} is ending while job "
+                            f"{process_info_ending.last_job_referenced.id_} is still in progress "
+                            f"(process state: {process_info_ending.last_process_state}). "
+                            "Faulting the job to ensure it is not silently lost.",
+                        )
+                        self.handle_job_fault(
+                            faulted_job=process_info_ending.last_job_referenced,
+                            process_info=process_info_ending,
+                        )
                     self._process_map.on_process_ending(process_id=message.process_id)
 
                 if message.process_state == HordeProcessState.PROCESS_ENDED:
