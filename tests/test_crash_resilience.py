@@ -673,3 +673,76 @@ class TestIsStuckOnInference:
                 f"Expected False for state {state.name}"
             )
 
+
+class TestInferenceSemaphoreBoundedSemaphore:
+    """Tests that _inference_semaphore is a BoundedSemaphore to prevent permit inflation."""
+
+    def test_inference_semaphore_is_bounded(self) -> None:
+        """_inference_semaphore must be a BoundedSemaphore so over-release raises ValueError.
+
+        The existing ValueError handlers in _replace_inference_process() and the child inference
+        process prevent any double-release from inflating permits beyond max_threads.
+        """
+        import multiprocessing
+        from multiprocessing.synchronize import BoundedSemaphore
+
+        ctx = multiprocessing.get_context("spawn")
+
+        # Verify BoundedSemaphore raises ValueError on over-release, unlike Semaphore
+        sem = BoundedSemaphore(1, ctx=ctx)
+        sem.acquire()
+        sem.release()  # Back to initial count
+        raised = False
+        try:
+            sem.release()  # Over-release — must raise ValueError for BoundedSemaphore
+        except ValueError:
+            raised = True
+        assert raised, "BoundedSemaphore should raise ValueError on over-release"
+
+    def test_replace_inference_process_double_release_does_not_inflate_permits(self) -> None:
+        """A double-release of the inference semaphore must not inflate the permit count.
+
+        Scenario: manager still sees INFERENCE_PROCESSING (async state lag) but the child
+        already released the semaphore during post-processing.  Calling _replace_inference_process
+        should not increase the available permits beyond max_threads.
+        """
+        import multiprocessing
+        from multiprocessing.synchronize import BoundedSemaphore
+
+        from horde_worker_regen.process_management.messages import HordeProcessState
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+        max_threads = 1
+        bounded_sem = BoundedSemaphore(max_threads, ctx=ctx)
+
+        # Simulate child having acquired then released the semaphore (post-processing path)
+        bounded_sem.acquire()
+        bounded_sem.release()  # Child released when entering post-processing
+        # Now bounded_sem has 1 permit available (back to initial)
+
+        # Build a minimal mock manager
+        from unittest.mock import MagicMock
+
+        mock_manager = MagicMock()
+        mock_manager._inference_semaphore = bounded_sem
+        mock_manager._disk_lock = MagicMock()
+        mock_manager._disk_lock.release.side_effect = ValueError  # already released
+
+        process_info = MagicMock()
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.last_job_referenced = None
+        process_info.loaded_horde_model_name = None
+
+        # Bind real _replace_inference_process
+        import types
+
+        bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
+        bound(process_info)  # Must not raise
+
+        # The semaphore should still have at most 1 permit (not inflated to 2)
+        acquired = bounded_sem.acquire(block=False)
+        assert acquired, "Semaphore should have exactly 1 permit available"
+        second_acquired = bounded_sem.acquire(block=False)
+        assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
+

@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from enum import auto
 from io import BytesIO
 from multiprocessing.context import BaseContext
+from multiprocessing.synchronize import BoundedSemaphore
 from multiprocessing.synchronize import Lock as Lock_MultiProcessing
 from multiprocessing.synchronize import Semaphore
 from typing import TYPE_CHECKING, Any
@@ -1371,8 +1372,14 @@ class HordeWorkerProcessManager:
     _job_pop_timestamps_lock: Lock_Asyncio
     """The asyncio lock for the job pop timestamps."""
 
-    _inference_semaphore: Semaphore
-    """A semaphore that limits the number of inference processes that can run at once."""
+    _inference_semaphore: BoundedSemaphore
+    """A semaphore that limits the number of inference processes that can run at once.
+
+    Using BoundedSemaphore ensures that an over-release (which would inflate available permits
+    beyond max_threads) raises ValueError rather than silently succeeding.  Both the manager's
+    _replace_inference_process() and the child inference process already catch ValueError on
+    semaphore release, so the existing handlers prevent any permit inflation.
+    """
 
     _vae_decode_semaphore: Semaphore
 
@@ -1448,7 +1455,7 @@ class HordeWorkerProcessManager:
         self.max_download_processes = max_download_processes
 
         self._max_concurrent_inference_processes = bridge_data.max_threads
-        self._inference_semaphore = Semaphore(self._max_concurrent_inference_processes, ctx=ctx)
+        self._inference_semaphore = BoundedSemaphore(self._max_concurrent_inference_processes, ctx=ctx)
 
         self._aux_model_lock = Lock_MultiProcessing(ctx=ctx)
 
