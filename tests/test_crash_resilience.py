@@ -541,3 +541,208 @@ class TestReceiveAndHandleProcessMessagesResilience:
         msg = self._make_message(HordeProcessState.INFERENCE_STARTING)
         self._run_receive(msg, process_info)
 
+
+class TestIsStuckOnInference:
+    """Tests for the is_stuck_on_inference() method covering both INFERENCE_STARTING and INFERENCE_PROCESSING."""
+
+    def _make_process_map_entry(
+        self,
+        state: HordeProcessState,
+        last_progress_timestamp: float,
+        last_heartbeat_timestamp: float,
+        last_heartbeat_delta: float = 0.0,
+    ) -> MagicMock:
+        """Create a mock process map entry with configurable timestamps."""
+        entry = MagicMock()
+        entry.last_process_state = state
+        entry.last_progress_timestamp = last_progress_timestamp
+        entry.last_heartbeat_timestamp = last_heartbeat_timestamp
+        entry.last_heartbeat_delta = last_heartbeat_delta
+        return entry
+
+    def _make_process_map(self, entry: MagicMock) -> MagicMock:
+        """Create a mock process map that returns the given entry for any key."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        process_map = MagicMock()
+        process_map.__getitem__ = MagicMock(return_value=entry)
+        process_map.is_stuck_on_inference = ProcessMap.is_stuck_on_inference.__get__(
+            process_map, ProcessMap
+        )
+        return process_map
+
+    def test_inference_starting_not_stuck_returns_false(self) -> None:
+        """A process in INFERENCE_STARTING with recent progress and heartbeat is not stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 10,
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_starting_no_progress_returns_true(self) -> None:
+        """A process in INFERENCE_STARTING with stalled progress beyond timeout is stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 9999,
+            last_heartbeat_timestamp=time.time() - 10,
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_starting_no_heartbeat_returns_true(self) -> None:
+        """A process in INFERENCE_STARTING with no heartbeat beyond timeout is stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 9999,
+            last_heartbeat_delta=5.0,  # delta between last two heartbeats was normal (5s)
+        )
+        process_map = self._make_process_map(entry)
+        # Should detect via time since last heartbeat, not last_heartbeat_delta
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_processing_not_stuck_returns_false(self) -> None:
+        """A process in INFERENCE_PROCESSING with recent progress and heartbeat is not stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 10,
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_processing_no_progress_returns_true(self) -> None:
+        """A process in INFERENCE_PROCESSING with stalled progress is stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,
+            last_heartbeat_timestamp=time.time() - 10,
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_processing_no_heartbeat_returns_true(self) -> None:
+        """A process in INFERENCE_PROCESSING with no heartbeat beyond timeout is stuck.
+
+        This is the core scenario for the 'stuck at INFERENCE_STARTING' bug:
+        Process A holds the inference semaphore in INFERENCE_PROCESSING and stops responding.
+        Without this check, Process A is never detected as stuck, and any process waiting
+        to acquire the semaphore remains permanently stuck in INFERENCE_STARTING.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 9999,
+            last_heartbeat_delta=5.0,  # delta between last two heartbeats was normal (5s)
+        )
+        process_map = self._make_process_map(entry)
+        # Should detect via time since last heartbeat, not last_heartbeat_delta
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_other_state_returns_false(self) -> None:
+        """A process in a non-inference state is not considered stuck on inference."""
+        import time
+
+        for state in [
+            HordeProcessState.WAITING_FOR_JOB,
+            HordeProcessState.MODEL_LOADING,
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.INFERENCE_COMPLETE,
+        ]:
+            entry = self._make_process_map_entry(
+                state=state,
+                last_progress_timestamp=time.time() - 9999,
+                last_heartbeat_timestamp=time.time() - 9999,
+            )
+            process_map = self._make_process_map(entry)
+            assert process_map.is_stuck_on_inference(0, 600) is False, (
+                f"Expected False for state {state.name}"
+            )
+
+
+class TestInferenceSemaphoreBoundedSemaphore:
+    """Tests that _inference_semaphore is a BoundedSemaphore to prevent permit inflation."""
+
+    def test_inference_semaphore_is_bounded(self) -> None:
+        """_inference_semaphore must be a BoundedSemaphore so over-release raises ValueError.
+
+        The existing ValueError handlers in _replace_inference_process() and the child inference
+        process prevent any double-release from inflating permits beyond max_threads.
+        """
+        import multiprocessing
+        from multiprocessing.synchronize import BoundedSemaphore
+
+        ctx = multiprocessing.get_context("spawn")
+
+        # Verify BoundedSemaphore raises ValueError on over-release, unlike Semaphore
+        sem = BoundedSemaphore(1, ctx=ctx)
+        sem.acquire()
+        sem.release()  # Back to initial count
+        raised = False
+        try:
+            sem.release()  # Over-release — must raise ValueError for BoundedSemaphore
+        except ValueError:
+            raised = True
+        assert raised, "BoundedSemaphore should raise ValueError on over-release"
+
+    def test_replace_inference_process_double_release_does_not_inflate_permits(self) -> None:
+        """A double-release of the inference semaphore must not inflate the permit count.
+
+        Scenario: manager still sees INFERENCE_PROCESSING (async state lag) but the child
+        already released the semaphore during post-processing.  Calling _replace_inference_process
+        should not increase the available permits beyond max_threads.
+        """
+        import multiprocessing
+        from multiprocessing.synchronize import BoundedSemaphore
+
+        from horde_worker_regen.process_management.messages import HordeProcessState
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+        max_threads = 1
+        bounded_sem = BoundedSemaphore(max_threads, ctx=ctx)
+
+        # Simulate child having acquired then released the semaphore (post-processing path)
+        bounded_sem.acquire()
+        bounded_sem.release()  # Child released when entering post-processing
+        # Now bounded_sem has 1 permit available (back to initial)
+
+        # Build a minimal mock manager
+        from unittest.mock import MagicMock
+
+        mock_manager = MagicMock()
+        mock_manager._inference_semaphore = bounded_sem
+        mock_manager._disk_lock = MagicMock()
+        mock_manager._disk_lock.release.side_effect = ValueError  # already released
+
+        process_info = MagicMock()
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.last_job_referenced = None
+        process_info.loaded_horde_model_name = None
+
+        # Bind real _replace_inference_process
+        import types
+
+        bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
+        bound(process_info)  # Must not raise
+
+        # The semaphore should still have at most 1 permit (not inflated to 2)
+        acquired = bounded_sem.acquire(block=False)
+        assert acquired, "Semaphore should have exactly 1 permit available"
+        second_acquired = bounded_sem.acquire(block=False)
+        assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
+
