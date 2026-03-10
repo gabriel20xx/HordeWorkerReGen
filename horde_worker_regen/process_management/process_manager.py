@@ -22,7 +22,7 @@ from io import BytesIO
 from multiprocessing.context import BaseContext
 from multiprocessing.synchronize import Lock as Lock_MultiProcessing
 from multiprocessing.synchronize import Semaphore
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import aiohttp
 import aiohttp.client_exceptions
@@ -1566,7 +1566,7 @@ class HordeWorkerProcessManager:
                 if not isinstance(_sd_ref, dict):
                     raise ValueError("Expected dict of ImageGenerationModelRecord")
 
-                self.stable_diffusion_reference = _sd_ref  # type: ignore[assignment]
+                self.stable_diffusion_reference = cast(dict[str, ImageGenerationModelRecord], _sd_ref)
             except Exception as e:
                 logger.error(e)
                 time.sleep(5)
