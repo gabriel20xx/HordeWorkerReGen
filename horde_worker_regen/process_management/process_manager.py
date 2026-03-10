@@ -599,11 +599,18 @@ class ProcessMap(dict[int, HordeProcessInfo]):
     ) -> bool:
         """Return true if the process is actively doing inference but progress has stalled.
 
-        This detects jobs that are stuck in the INFERENCE_STARTING state with:
+        This detects jobs that are stuck in the INFERENCE_STARTING or INFERENCE_PROCESSING state with:
         1. Progress not advancing for timeout period (stuck at same percentage), OR
         2. No heartbeat received for timeout period (including last step / VAE decode phase)
+
+        Detecting INFERENCE_PROCESSING stalls is critical: a process holding the inference semaphore
+        while stuck prevents other processes from acquiring it, leaving them permanently stuck in
+        INFERENCE_STARTING while waiting on the semaphore.
         """
-        if self[process_id].last_process_state != HordeProcessState.INFERENCE_STARTING:
+        if self[process_id].last_process_state not in (
+            HordeProcessState.INFERENCE_STARTING,
+            HordeProcessState.INFERENCE_PROCESSING,
+        ):
             return False
 
         # Check if we're getting heartbeats but progress isn't advancing
@@ -613,11 +620,13 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             # Progress hasn't advanced in too long - job is stuck
             return True
 
-        # Check if no heartbeat received for timeout period
-        # This catches jobs that have completely stopped responding
+        # Check if no heartbeat received for timeout period.
+        # Use the actual elapsed time since the last heartbeat, not the delta between the last
+        # two heartbeats. last_heartbeat_delta is only updated when a heartbeat arrives, so it
+        # stays at its previous (normal) value when the process stops responding entirely.
         # Note: We check all heartbeat types, not just INFERENCE_STEP, to catch
         # jobs stuck in the last step (VAE decode) which send PIPELINE_STATE_CHANGE heartbeats
-        if self[process_id].last_heartbeat_delta > inference_step_timeout:
+        if (time.time() - self[process_id].last_heartbeat_timestamp) > inference_step_timeout:
             return True
 
         return False
@@ -6279,7 +6288,7 @@ class HordeWorkerProcessManager:
                 self.bridge_data.inference_step_timeout,
             ):
                 # Enhanced logging for stuck job detection
-                time_since_heartbeat = process_info.last_heartbeat_delta
+                time_since_heartbeat = now - process_info.last_heartbeat_timestamp
                 time_since_progress = now - process_info.last_progress_timestamp
                 progress_str = (
                     f"{process_info.last_heartbeat_percent_complete}%"

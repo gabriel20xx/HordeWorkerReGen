@@ -541,3 +541,135 @@ class TestReceiveAndHandleProcessMessagesResilience:
         msg = self._make_message(HordeProcessState.INFERENCE_STARTING)
         self._run_receive(msg, process_info)
 
+
+class TestIsStuckOnInference:
+    """Tests for the is_stuck_on_inference() method covering both INFERENCE_STARTING and INFERENCE_PROCESSING."""
+
+    def _make_process_map_entry(
+        self,
+        state: HordeProcessState,
+        last_progress_timestamp: float,
+        last_heartbeat_timestamp: float,
+        last_heartbeat_delta: float = 0.0,
+    ) -> MagicMock:
+        """Create a mock process map entry with configurable timestamps."""
+        entry = MagicMock()
+        entry.last_process_state = state
+        entry.last_progress_timestamp = last_progress_timestamp
+        entry.last_heartbeat_timestamp = last_heartbeat_timestamp
+        entry.last_heartbeat_delta = last_heartbeat_delta
+        return entry
+
+    def _make_process_map(self, entry: MagicMock) -> MagicMock:
+        """Create a mock process map that returns the given entry for any key."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        process_map = MagicMock()
+        process_map.__getitem__ = MagicMock(return_value=entry)
+        process_map.is_stuck_on_inference = ProcessMap.is_stuck_on_inference.__get__(
+            process_map, ProcessMap
+        )
+        return process_map
+
+    def test_inference_starting_not_stuck_returns_false(self) -> None:
+        """A process in INFERENCE_STARTING with recent progress and heartbeat is not stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 10,
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_starting_no_progress_returns_true(self) -> None:
+        """A process in INFERENCE_STARTING with stalled progress beyond timeout is stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 9999,
+            last_heartbeat_timestamp=time.time() - 10,
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_starting_no_heartbeat_returns_true(self) -> None:
+        """A process in INFERENCE_STARTING with no heartbeat beyond timeout is stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 9999,
+            last_heartbeat_delta=5.0,  # delta between last two heartbeats was normal (5s)
+        )
+        process_map = self._make_process_map(entry)
+        # Should detect via time since last heartbeat, not last_heartbeat_delta
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_processing_not_stuck_returns_false(self) -> None:
+        """A process in INFERENCE_PROCESSING with recent progress and heartbeat is not stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 10,
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_processing_no_progress_returns_true(self) -> None:
+        """A process in INFERENCE_PROCESSING with stalled progress is stuck."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,
+            last_heartbeat_timestamp=time.time() - 10,
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_processing_no_heartbeat_returns_true(self) -> None:
+        """A process in INFERENCE_PROCESSING with no heartbeat beyond timeout is stuck.
+
+        This is the core scenario for the 'stuck at INFERENCE_STARTING' bug:
+        Process A holds the inference semaphore in INFERENCE_PROCESSING and stops responding.
+        Without this check, Process A is never detected as stuck, and any process waiting
+        to acquire the semaphore remains permanently stuck in INFERENCE_STARTING.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 9999,
+            last_heartbeat_delta=5.0,  # delta between last two heartbeats was normal (5s)
+        )
+        process_map = self._make_process_map(entry)
+        # Should detect via time since last heartbeat, not last_heartbeat_delta
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_other_state_returns_false(self) -> None:
+        """A process in a non-inference state is not considered stuck on inference."""
+        import time
+
+        for state in [
+            HordeProcessState.WAITING_FOR_JOB,
+            HordeProcessState.MODEL_LOADING,
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.INFERENCE_COMPLETE,
+        ]:
+            entry = self._make_process_map_entry(
+                state=state,
+                last_progress_timestamp=time.time() - 9999,
+                last_heartbeat_timestamp=time.time() - 9999,
+            )
+            process_map = self._make_process_map(entry)
+            assert process_map.is_stuck_on_inference(0, 600) is False, (
+                f"Expected False for state {state.name}"
+            )
+
