@@ -15,19 +15,29 @@ def download_all_models(
     if not load_config_from_env_vars:
         load_env_vars_from_config()
 
+    import time
+
+    from horde_model_reference.meta_consts import MODEL_REFERENCE_CATEGORY
     from horde_model_reference.model_reference_manager import ModelReferenceManager
     from loguru import logger
 
     from horde_worker_regen.bridge_data.load_config import BridgeDataLoader, reGenBridgeData
     from horde_worker_regen.consts import BRIDGE_CONFIG_FILENAME
 
-    horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=True,
-        override_existing=True,
-    )
+    horde_model_reference_manager = ModelReferenceManager()
 
-    if not horde_model_reference_manager.download_and_convert_all_legacy_dbs(override_existing=True):
-        logger.error("Failed to download and convert legacy DBs. Retrying in 5 seconds...")
+    while True:
+        try:
+            all_refs = horde_model_reference_manager.get_all_model_references(overwrite_existing=True)
+            if MODEL_REFERENCE_CATEGORY.image_generation not in all_refs:
+                logger.error("Image generation model references not found. Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                break
+        except Exception as e:
+            logger.error(f"Failed to download model references: ({type(e).__name__}) {e}")
+            logger.error("Retrying in 5 seconds...")
+            time.sleep(5)
 
     bridge_data: reGenBridgeData | None = None
     try:
