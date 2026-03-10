@@ -28,8 +28,8 @@ def download_all_models(
 
     while True:
         try:
-            all_refs = horde_model_reference_manager.get_all_model_references(overwrite_existing=True)
-            if MODEL_REFERENCE_CATEGORY.image_generation not in all_refs:
+            all_refs = horde_model_reference_manager.get_all_model_references_unsafe(overwrite_existing=True)
+            if not all_refs.get(MODEL_REFERENCE_CATEGORY.image_generation):
                 logger.error("Image generation model references not found. Retrying in 5 seconds...")
                 time.sleep(5)
             else:
