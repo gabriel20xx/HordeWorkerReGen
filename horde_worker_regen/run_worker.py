@@ -35,21 +35,18 @@ def main(
     from horde_worker_regen.process_management.main_entry_point import start_working
 
     def ensure_model_db_downloaded() -> ModelReferenceManager:
-        horde_model_reference_manager = ModelReferenceManager(
-            download_and_convert_legacy_dbs=False,
-            override_existing=True,
-        )
+        horde_model_reference_manager = ModelReferenceManager()
 
         while True:
             try:
                 with logger.catch(reraise=True):
-                    if not horde_model_reference_manager.download_and_convert_all_legacy_dbs(override_existing=True):
-                        logger.error("Failed to download and convert legacy DBs. Retrying in 5 seconds...")
+                    if not horde_model_reference_manager.get_all_model_references(overwrite_existing=True):
+                        logger.error("Failed to download model references. Retrying in 5 seconds...")
                         time.sleep(5)
                     else:
                         return horde_model_reference_manager
             except Exception as e:
-                logger.error(f"Failed to download and convert legacy DBs: ({type(e).__name__}) {e}")
+                logger.error(f"Failed to download model references: ({type(e).__name__}) {e}")
                 logger.error("Retrying in 5 seconds...")
                 time.sleep(5)
 

@@ -40,9 +40,9 @@ repos:
         - aiohttp
         - mediapipe==0.10.21
         - horde_safety==0.3.0
-        - torch==2.9.1
+        - torch==2.10.0
         - ruamel.yaml
-        - horde_engine==2.20.12
-        - horde_sdk==0.17.1
-        - horde_model_reference==0.9.2
+        - horde_engine==2.22.2
+        - horde_sdk==0.18.0
+        - horde_model_reference==2.1.5
         - semver

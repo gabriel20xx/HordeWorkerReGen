@@ -21,13 +21,10 @@ def download_all_models(
     from horde_worker_regen.bridge_data.load_config import BridgeDataLoader, reGenBridgeData
     from horde_worker_regen.consts import BRIDGE_CONFIG_FILENAME
 
-    horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=True,
-        override_existing=True,
-    )
+    horde_model_reference_manager = ModelReferenceManager()
 
-    if not horde_model_reference_manager.download_and_convert_all_legacy_dbs(override_existing=True):
-        logger.error("Failed to download and convert legacy DBs. Retrying in 5 seconds...")
+    if not horde_model_reference_manager.get_all_model_references(overwrite_existing=True):
+        logger.error("Failed to download model references. Retrying in 5 seconds...")
 
     bridge_data: reGenBridgeData | None = None
     try:
