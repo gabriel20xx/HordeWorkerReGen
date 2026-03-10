@@ -36,13 +36,16 @@ def main(
     from horde_worker_regen.process_management.main_entry_point import start_working
 
     def ensure_model_db_downloaded() -> ModelReferenceManager:
-        horde_model_reference_manager = ModelReferenceManager()
+        horde_model_reference_manager = ModelReferenceManager(
+            download_and_convert_legacy_dbs=False,
+            override_existing=False,
+        )
 
         while True:
             try:
                 with logger.catch(reraise=True):
-                    all_refs = horde_model_reference_manager.get_all_model_references_unsafe(overwrite_existing=True)
-                    if not all_refs.get(MODEL_REFERENCE_CATEGORY.image_generation):
+                    all_refs = horde_model_reference_manager.get_all_model_references(redownload_all=True)
+                    if not all_refs.get(MODEL_REFERENCE_CATEGORY.stable_diffusion):
                         logger.error(
                             "Image generation model references not found. Retrying in 5 seconds...",
                         )
