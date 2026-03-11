@@ -2,10 +2,10 @@ torch==2.10.0
 nvidia-ml-py # Replacement for deprecated pynvml
 certifi # Required for SSL cert resolution
 
-horde_sdk~=0.17.0
+horde_sdk~=0.18.0
 horde_safety~=0.3.0
 horde_engine~=2.22.2
-horde_model_reference~=0.10.0
+horde_model_reference~=2.1.5
 
 python-dotenv
 ruamel.yaml
