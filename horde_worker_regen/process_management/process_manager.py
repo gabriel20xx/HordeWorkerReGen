@@ -4485,7 +4485,7 @@ class HordeWorkerProcessManager:
 
         # We let the first job run through to make sure things are working
         # (if we're doomed to fail with 1 job, we're doomed to fail with 2 jobs)
-        if len(self.jobs_pending_inference) != 0 and self.jobs_pending_submit == 0:
+        if len(self.jobs_pending_inference) != 0 and len(self.jobs_pending_submit) == 0:
             return
 
         # if self._testing_jobs_added >= self._testing_max_jobs:
