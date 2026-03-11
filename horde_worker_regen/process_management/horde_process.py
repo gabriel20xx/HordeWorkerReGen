@@ -206,13 +206,14 @@ class HordeProcess(abc.ABC):
             ram_usage_bytes=psutil.Process().memory_info().rss,
         )
 
-        try:
-            if include_vram:
+        if include_vram:
+            try:
                 message.vram_usage_bytes = self.get_vram_usage_bytes()
                 message.vram_total_bytes = self.get_vram_total_bytes()
-        except Exception as e:
-            logger.error(f"Failed to get VRAM usage: {e}")
-            return False
+            except Exception as e:
+                # VRAM info is non-critical metadata; log a warning and send the report without it
+                # rather than returning False and potentially causing the process to terminate.
+                logger.warning(f"Failed to get VRAM usage (report will be sent without VRAM info): {e}")
 
         self.process_message_queue.put(message)
         return True
