@@ -2184,6 +2184,19 @@ class HordeWorkerProcessManager:
 
                 if message.process_state == HordeProcessState.PROCESS_ENDED:
                     logger.info(f"Process {message.process_id} has ended with message: {message.info}")
+                    # Restart the process if we're not shutting down. When a process is replaced
+                    # intentionally (via _replace_inference_process), _start_inference_process has
+                    # already been called and updated _process_map[pid] with a new
+                    # process_launch_identifier, so stale PROCESS_ENDED messages from the old
+                    # process are filtered out before reaching this point. This branch therefore
+                    # only fires for unexpected/crash-induced process endings, where we must restart
+                    # the process to restore the configured worker capacity.
+                    ended_process_info = self._process_map[message.process_id]
+                    if not self._shutting_down and ended_process_info.process_type == HordeProcessType.INFERENCE:
+                        logger.info(
+                            f"Restarting inference process {message.process_id} after unexpected end",
+                        )
+                        self._start_inference_process(message.process_id)
                 else:
                     logger.debug(f"Process {message.process_id} changed state to {message.process_state}")
 

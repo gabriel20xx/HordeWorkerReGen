@@ -874,6 +874,7 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         This ensures _faulted_jobs_history correctly classifies the fault phase as 'During Inference'
         rather than the misleading 'Process Ending'.
         """
+
         job = MagicMock()
         job.id_ = "orphaned-job-id"
 
@@ -919,3 +920,91 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
             f"Expected prior state INFERENCE_PROCESSING, got {seen_state[0]}"
         )
 
+
+
+class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
+    """Tests that an inference process is automatically restarted when PROCESS_ENDED is received.
+
+    Scenario: An inference process crashes during INFERENCE_PROCESSING.  The child sends
+    PROCESS_ENDING (which triggers handle_job_fault) then PROCESS_ENDED.  The parent must
+    restart the dead process so the worker returns to its configured capacity.
+    """
+
+    def _run_receive_process_ended(
+        self,
+        process_type: object,
+        *,
+        shutting_down: bool = False,
+        prior_state: HordeProcessState = HordeProcessState.PROCESS_ENDING,
+    ) -> MagicMock:
+        """Run receive_and_handle_process_messages with a PROCESS_ENDED message.
+
+        Returns the mock_manager so callers can inspect side-effects.
+        """
+        import queue as queue_mod
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = prior_state
+        process_info.last_job_referenced = None
+        process_info.process_type = process_type
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDED)
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+        mock_manager._shutting_down = shutting_down
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+        return mock_manager
+
+    def test_inference_process_restarted_on_unexpected_end(self) -> None:
+        """When PROCESS_ENDED arrives for an inference process and we are not shutting down,
+        _start_inference_process must be called to restore the configured worker capacity."""
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        mock_manager = self._run_receive_process_ended(
+            process_type=HordeProcessType.INFERENCE,
+            shutting_down=False,
+        )
+
+        mock_manager._start_inference_process.assert_called_once_with(0)
+
+    def test_inference_process_not_restarted_during_shutdown(self) -> None:
+        """When PROCESS_ENDED arrives for an inference process while shutting down,
+        _start_inference_process must NOT be called."""
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        mock_manager = self._run_receive_process_ended(
+            process_type=HordeProcessType.INFERENCE,
+            shutting_down=True,
+        )
+
+        mock_manager._start_inference_process.assert_not_called()
+
+    def test_safety_process_not_restarted_on_end(self) -> None:
+        """When PROCESS_ENDED arrives for a safety process, _start_inference_process must NOT
+        be called (safety processes have separate restart logic)."""
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        mock_manager = self._run_receive_process_ended(
+            process_type=HordeProcessType.SAFETY,
+            shutting_down=False,
+        )
+
+        mock_manager._start_inference_process.assert_not_called()
