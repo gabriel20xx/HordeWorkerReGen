@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import types
+from collections import deque
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -936,6 +937,7 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         *,
         shutting_down: bool = False,
         prior_state: HordeProcessState = HordeProcessState.PROCESS_ENDING,
+        existing_manager: MagicMock | None = None,
     ) -> MagicMock:
         """Run receive_and_handle_process_messages with a PROCESS_ENDED message.
 
@@ -959,13 +961,20 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         q = queue_mod.Queue()
         q.put(msg)
 
-        mock_manager = MagicMock()
-        mock_manager._process_message_queue = q
-        mock_manager._process_map = process_map
-        mock_manager._in_deadlock = False
-        mock_manager._in_queue_deadlock = False
-        mock_manager.jobs_in_progress = []
-        mock_manager._shutting_down = shutting_down
+        if existing_manager is not None:
+            mock_manager = existing_manager
+            mock_manager._process_message_queue = q
+            mock_manager._process_map = process_map
+        else:
+            mock_manager = MagicMock()
+            mock_manager._process_message_queue = q
+            mock_manager._process_map = process_map
+            mock_manager._in_deadlock = False
+            mock_manager._in_queue_deadlock = False
+            mock_manager.jobs_in_progress = []
+            mock_manager._shutting_down = shutting_down
+            mock_manager._num_process_recoveries = 0
+            mock_manager._process_restart_history = {}
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
             mock_manager, HordeWorkerProcessManager
@@ -984,6 +993,18 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         )
 
         mock_manager._start_inference_process.assert_called_once_with(0)
+
+    def test_inference_process_restarted_increments_num_process_recoveries(self) -> None:
+        """When a process is restarted after PROCESS_ENDED, _num_process_recoveries must be incremented."""
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        mock_manager = self._run_receive_process_ended(
+            process_type=HordeProcessType.INFERENCE,
+            shutting_down=False,
+        )
+
+        mock_manager._start_inference_process.assert_called_once_with(0)
+        assert mock_manager._num_process_recoveries == 1
 
     def test_inference_process_not_restarted_during_shutdown(self) -> None:
         """When PROCESS_ENDED arrives for an inference process while shutting down,
@@ -1008,3 +1029,74 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         )
 
         mock_manager._start_inference_process.assert_not_called()
+
+    def test_process_starting_prior_state_skips_restart(self) -> None:
+        """When PROCESS_ENDED arrives and the prior state was PROCESS_STARTING, the process
+        must NOT be restarted to avoid a tight crash/restart loop caused by init failures."""
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        mock_manager = self._run_receive_process_ended(
+            process_type=HordeProcessType.INFERENCE,
+            shutting_down=False,
+            prior_state=HordeProcessState.PROCESS_STARTING,
+        )
+
+        mock_manager._start_inference_process.assert_not_called()
+        assert mock_manager._num_process_recoveries == 0
+
+    def test_restart_rate_limited_after_five_failures_in_sixty_seconds(self) -> None:
+        """When a process ends and restarts 5 times within 60 seconds, the 6th restart must
+        be suppressed to prevent a tight crash/restart loop."""
+        import time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        # Seed the restart history with 5 recent timestamps so the next end triggers the limit
+        mock_manager = MagicMock()
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+        mock_manager._shutting_down = False
+        mock_manager._num_process_recoveries = 0
+
+        now = time.time()
+        mock_manager._process_restart_history = {0: deque([now - 5, now - 4, now - 3, now - 2, now - 1], maxlen=5)}
+
+        self._run_receive_process_ended(
+            process_type=HordeProcessType.INFERENCE,
+            shutting_down=False,
+            existing_manager=mock_manager,
+        )
+
+        mock_manager._start_inference_process.assert_not_called()
+        assert mock_manager._num_process_recoveries == 0
+
+    def test_restart_allowed_after_five_failures_spread_over_more_than_sixty_seconds(self) -> None:
+        """When 5 prior restarts are spread over more than 60 seconds, the next restart must
+        still be allowed (rate limit window has passed)."""
+        import time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        mock_manager = MagicMock()
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+        mock_manager._shutting_down = False
+        mock_manager._num_process_recoveries = 0
+
+        now = time.time()
+        # Pre-seed with only 4 entries so after the production code appends the current timestamp,
+        # the deque contains 5 entries and restart_history[0] is 90s ago (outside the 60s window).
+        mock_manager._process_restart_history = {
+            0: deque([now - 90, now - 4, now - 3, now - 2], maxlen=5)
+        }
+
+        self._run_receive_process_ended(
+            process_type=HordeProcessType.INFERENCE,
+            shutting_down=False,
+            existing_manager=mock_manager,
+        )
+
+        mock_manager._start_inference_process.assert_called_once_with(0)
+        assert mock_manager._num_process_recoveries == 1
