@@ -474,8 +474,8 @@ class TestJobSubmitLoopExceptionHandling:
         assert job_info_next in mock_manager.jobs_lookup
 
 
-class TestReceiveAndHandleProcessMessagesResilience:
-    """Tests that receive_and_handle_process_messages does not crash on INFERENCE_STARTING edge cases."""
+class _ReceiveLoopHarnessMixin:
+    """Shared helpers for tests that drive receive_and_handle_process_messages."""
 
     def _make_message(
         self,
@@ -494,8 +494,17 @@ class TestReceiveAndHandleProcessMessagesResilience:
             time_elapsed=None,
         )
 
-    def _run_receive(self, msg: object, process_info: MagicMock) -> None:
-        """Run receive_and_handle_process_messages with a single queued message."""
+    def _run_receive(
+        self,
+        msg: object,
+        process_info: MagicMock,
+        *,
+        jobs_in_progress: list | None = None,
+    ) -> MagicMock:
+        """Run receive_and_handle_process_messages with a single queued message.
+
+        Returns the mock_manager so callers can inspect side-effects.
+        """
         import queue as queue_mod
 
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
@@ -513,11 +522,17 @@ class TestReceiveAndHandleProcessMessagesResilience:
         mock_manager._process_map = process_map
         mock_manager._in_deadlock = False
         mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = jobs_in_progress if jobs_in_progress is not None else []
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
             mock_manager, HordeWorkerProcessManager
         )
         bound()  # must not raise
+        return mock_manager
+
+
+class TestReceiveAndHandleProcessMessagesResilience(_ReceiveLoopHarnessMixin):
+    """Tests that receive_and_handle_process_messages does not crash on INFERENCE_STARTING edge cases."""
 
     def test_inference_starting_with_no_model_does_not_raise(self) -> None:
         """INFERENCE_STARTING with no model loaded should log an error and continue, not raise."""
@@ -745,4 +760,162 @@ class TestInferenceSemaphoreBoundedSemaphore:
         assert acquired, "Semaphore should have exactly 1 permit available"
         second_acquired = bounded_sem.acquire(block=False)
         assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
+
+
+class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
+    """Tests that a job in-progress is faulted when its process sends HordeProcessState.PROCESS_ENDING.
+
+    Scenario: A child process encounters an exception during inference handling and
+    ends itself (sending HordeProcessState.PROCESS_ENDING) before it can send the
+    HordeInferenceResultMessage. The parent must detect the orphaned job and fault it
+    so it is retried or submitted rather than silently lost.
+    """
+
+    def test_process_ending_with_job_in_progress_calls_handle_job_fault(self) -> None:
+        """When PROCESS_ENDING arrives and the job is still in jobs_in_progress, handle_job_fault must be called."""
+        job = MagicMock()
+        job.id_ = "orphaned-job-id"
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.last_job_referenced = job
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+        mock_manager = self._run_receive(msg, process_info, jobs_in_progress=[job])
+
+        mock_manager.handle_job_fault.assert_called_once_with(
+            faulted_job=job,
+            process_info=process_info,
+        )
+
+    def test_process_ending_without_job_in_progress_does_not_call_handle_job_fault(self) -> None:
+        """When HordeProcessState.PROCESS_ENDING arrives and the job is not in jobs_in_progress, handle_job_fault must not be called.
+
+        This covers the normal case: inference completed, the result was already processed
+        (removing the job from jobs_in_progress), and now the process is shutting down.
+        """
+        job = MagicMock()
+        job.id_ = "completed-job-id"
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.last_job_referenced = job
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+        # job is not in jobs_in_progress (it was already submitted)
+        mock_manager = self._run_receive(msg, process_info, jobs_in_progress=[])
+
+        mock_manager.handle_job_fault.assert_not_called()
+
+    def test_process_ending_with_no_job_referenced_does_not_call_handle_job_fault(self) -> None:
+        """When PROCESS_ENDING arrives and last_job_referenced is None, handle_job_fault must not be called."""
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.last_job_referenced = None
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+        mock_manager = self._run_receive(msg, process_info, jobs_in_progress=[])
+
+        mock_manager.handle_job_fault.assert_not_called()
+
+    def test_process_ending_calls_on_process_ending_after_fault(self) -> None:
+        """on_process_ending must be called after (not before) handle_job_fault to avoid clearing last_job_referenced."""
+        job = MagicMock()
+        job.id_ = "orphaned-job-id"
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.last_job_referenced = job
+
+        call_order: list[str] = []
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+
+        import queue as queue_mod
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+        process_map.on_process_ending = MagicMock(side_effect=lambda process_id: call_order.append("on_process_ending"))
+
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = [job]
+        mock_manager.handle_job_fault = MagicMock(side_effect=lambda faulted_job, process_info: call_order.append("handle_job_fault"))
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+
+        # handle_job_fault must be called before on_process_ending, so that
+        # last_job_referenced is still available when handle_job_fault runs
+        assert "handle_job_fault" in call_order, "handle_job_fault was not called"
+        assert "on_process_ending" in call_order, "on_process_ending was not called"
+        assert call_order.index("handle_job_fault") < call_order.index("on_process_ending"), (
+            "handle_job_fault must be called before on_process_ending"
+        )
+
+    def test_process_ending_with_job_in_progress_uses_prior_state_for_fault(self) -> None:
+        """handle_job_fault must see the prior process state (e.g. INFERENCE_PROCESSING), not PROCESS_ENDING.
+
+        This ensures _faulted_jobs_history correctly classifies the fault phase as 'During Inference'
+        rather than the misleading 'Process Ending'.
+        """
+        job = MagicMock()
+        job.id_ = "orphaned-job-id"
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.last_job_referenced = job
+
+        seen_state: list[HordeProcessState] = []
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+
+        import queue as queue_mod
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = [job]
+
+        def capture_fault(*, faulted_job: object, process_info: MagicMock) -> None:
+            seen_state.append(process_info.last_process_state)
+
+        mock_manager.handle_job_fault = MagicMock(side_effect=capture_fault)
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+
+        assert len(seen_state) == 1, "handle_job_fault was not called exactly once"
+        assert seen_state[0] == HordeProcessState.INFERENCE_PROCESSING, (
+            f"Expected prior state INFERENCE_PROCESSING, got {seen_state[0]}"
+        )
 

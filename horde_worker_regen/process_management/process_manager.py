@@ -2144,6 +2144,11 @@ class HordeWorkerProcessManager:
                 if self._process_map[message.process_id].last_process_state == message.process_state:
                     continue
 
+                # Snapshot the prior state before on_process_state_change() overwrites it.
+                # This is used below to log/classify the state in which the process actually died,
+                # rather than always reporting PROCESS_ENDING.
+                prior_process_state = self._process_map[message.process_id].last_process_state
+
                 self._process_map.on_process_state_change(
                     process_id=message.process_id,
                     new_state=message.process_state,
@@ -2151,6 +2156,30 @@ class HordeWorkerProcessManager:
 
                 if message.process_state == HordeProcessState.PROCESS_ENDING:
                     logger.info(f"Process {message.process_id} is ending")
+                    # If the process is ending but still has a job in progress, fault the job
+                    # so it is not silently lost. This can happen if an exception occurs in the
+                    # child process before it sends the inference result message.
+                    process_info_ending = self._process_map[message.process_id]
+                    if (
+                        process_info_ending.last_job_referenced is not None
+                        and process_info_ending.last_job_referenced in self.jobs_in_progress
+                    ):
+                        logger.error(
+                            f"Process {message.process_id} is ending while job "
+                            f"{process_info_ending.last_job_referenced.id_} is still in progress "
+                            f"(prior process state: {prior_process_state}). "
+                            "Faulting the job to ensure it is not silently lost.",
+                        )
+                        # Temporarily restore the prior state so handle_job_fault can correctly
+                        # classify the fault phase in _faulted_jobs_history.
+                        process_info_ending.last_process_state = prior_process_state
+                        try:
+                            self.handle_job_fault(
+                                faulted_job=process_info_ending.last_job_referenced,
+                                process_info=process_info_ending,
+                            )
+                        finally:
+                            process_info_ending.last_process_state = HordeProcessState.PROCESS_ENDING
                     self._process_map.on_process_ending(process_id=message.process_id)
 
                 if message.process_state == HordeProcessState.PROCESS_ENDED:
