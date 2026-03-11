@@ -1568,6 +1568,9 @@ class HordeWorkerProcessManager:
         self._failed_models: dict[str, int] = {}
         self._last_failed_models_print_time: float = 0.0
 
+        # Track per-process-slot restart timestamps for crash-loop rate limiting.
+        self._process_restart_history: dict[int, deque[float]] = {}
+
         # Track last worker config print time
         self._last_worker_config_print_time: float = 0.0
 
@@ -2184,6 +2187,47 @@ class HordeWorkerProcessManager:
 
                 if message.process_state == HordeProcessState.PROCESS_ENDED:
                     logger.info(f"Process {message.process_id} has ended with message: {message.info}")
+                    # Restart the process if we're not shutting down. When a process is replaced
+                    # intentionally (via _replace_inference_process), _start_inference_process has
+                    # already been called and updated _process_map[pid] with a new
+                    # process_launch_identifier, so stale PROCESS_ENDED messages from the old
+                    # process are filtered out before reaching this point. This branch therefore
+                    # only fires for unexpected/crash-induced process endings, where we must restart
+                    # the process to restore the configured worker capacity.
+                    ended_process_info = self._process_map[message.process_id]
+                    if not self._shutting_down and ended_process_info.process_type == HordeProcessType.INFERENCE:
+                        if prior_process_state == HordeProcessState.PROCESS_STARTING:
+                            # The process never reached WAITING_FOR_JOB — it likely failed during
+                            # initialisation (e.g. no models available).  Restarting immediately
+                            # would create a tight crash/restart loop, so skip the restart.
+                            logger.error(
+                                f"Inference process {message.process_id} ended while still in "
+                                "PROCESS_STARTING; skipping auto-restart to avoid a crash loop.",
+                            )
+                        else:
+                            # Rate-limit restarts per process slot to prevent a tight crash/restart
+                            # loop when a process repeatedly fails shortly after starting.
+                            restart_history = self._process_restart_history.setdefault(
+                                message.process_id,
+                                deque(maxlen=5),
+                            )
+                            now_ts = time.time()
+                            restart_history.append(now_ts)
+                            if (
+                                len(restart_history) == restart_history.maxlen
+                                and now_ts - restart_history[0] < 60
+                            ):
+                                logger.error(
+                                    f"Inference process {message.process_id} has ended "
+                                    f"{restart_history.maxlen} times within 60s; "
+                                    "skipping auto-restart to avoid a crash loop.",
+                                )
+                            else:
+                                logger.info(
+                                    f"Restarting inference process {message.process_id} after unexpected end",
+                                )
+                                self._start_inference_process(message.process_id)
+                                self._num_process_recoveries += 1
                 else:
                     logger.debug(f"Process {message.process_id} changed state to {message.process_state}")
 
