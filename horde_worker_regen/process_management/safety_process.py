@@ -21,7 +21,7 @@ except (ImportError, AttributeError):
 from multiprocessing.synchronize import Lock
 
 from loguru import logger
-from PIL import Image
+from PIL import Image, PngImagePlugin
 from typing_extensions import override
 
 from horde_worker_regen import ASSETS_FOLDER_PATH
@@ -279,8 +279,6 @@ class HordeSafetyProcess(HordeProcess):
             metadata: PngImagePlugin.PngInfo | None = None
 
             try:
-                from PIL import PngImagePlugin
-
                 # Create a PngInfo object to hold metadata
                 metadata = PngImagePlugin.PngInfo()
 
