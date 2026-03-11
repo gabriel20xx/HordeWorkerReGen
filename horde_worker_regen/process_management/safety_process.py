@@ -21,7 +21,7 @@ except (ImportError, AttributeError):
 from multiprocessing.synchronize import Lock
 
 from loguru import logger
-from PIL import Image
+from PIL import Image, PngImagePlugin
 from typing_extensions import override
 
 from horde_worker_regen import ASSETS_FOLDER_PATH
@@ -230,11 +230,18 @@ class HordeSafetyProcess(HordeProcess):
         year_month_day_dir = os.path.join(year_month_dir, year_month_day)
 
         # Create all directories
-        os.makedirs(year_month_day_dir, exist_ok=True)
+        try:
+            os.makedirs(year_month_day_dir, exist_ok=True)
 
-        # Apply permissions only to the three relevant ones
-        for d in [year_dir, year_month_dir, year_month_day_dir]:
-            os.chmod(d, 0o777)
+            # Apply permissions only to the three relevant ones
+            for d in [year_dir, year_month_dir, year_month_day_dir]:
+                os.chmod(d, 0o777)
+        except OSError as e:
+            logger.error(
+                f"Failed to create or set permissions on output directory {year_month_day_dir}: "
+                f"{type(e).__name__} {e}. Images will not be saved to disk."
+            )
+            output_directory = None
 
         for image_index, image_base64 in enumerate(message.images_base64):
             # Decode the image from base64
@@ -243,18 +250,35 @@ class HordeSafetyProcess(HordeProcess):
             # Generate a unique timestamp for each image in the batch
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")[:-3]
             # Include image index to ensure unique filenames for batch jobs
-            output_path = os.path.join(output_directory, f"{timestamp}_{image_index}.png")
+            output_path = (
+                os.path.join(output_directory, f"{timestamp}_{image_index}.png")
+                if output_directory is not None
+                else None
+            )
 
-            # Open the image using PIL
-            image_as_pil_0 = Image.open(image_bytes)
+            # Open the image using PIL; if this fails the image data is corrupted and we skip it
+            try:
+                image_as_pil_0 = Image.open(image_bytes)
+                # Force a full load into memory so subsequent operations on image_bytes
+                # (or a second open) do not interfere with this image object.
+                image_as_pil_0.load()
+            except (OSError, ValueError) as e:
+                logger.error(f"Failed to open image: {type(e).__name__} {e}")
+                safety_evaluations.append(
+                    HordeSafetyEvaluation(
+                        is_nsfw=True,
+                        is_csam=True,
+                        replacement_image_base64=None,
+                        failed=True,
+                    ),
+                )
+                continue
 
             original_prompt = message.prompt
 
             metadata: PngImagePlugin.PngInfo | None = None
 
             try:
-                from PIL import PngImagePlugin
-
                 # Create a PngInfo object to hold metadata
                 metadata = PngImagePlugin.PngInfo()
 
@@ -366,23 +390,11 @@ class HordeSafetyProcess(HordeProcess):
             # ! IMPORTANT: End own code
 
             # ! IMPORTANT: Start of own code
-            try:
-                # Open the image using PIL
-                image_as_pil = Image.open(image_bytes)
-            except (OSError, ValueError) as e:
-                # Handle PIL image open errors (corrupted images, unsupported formats)
-                logger.error(f"Failed to open image: {type(e).__name__} {e}")
-                # ! IMPORTANT: End of own code
-                safety_evaluations.append(
-                    HordeSafetyEvaluation(
-                        is_nsfw=True,
-                        is_csam=True,
-                        replacement_image_base64=None,
-                        failed=True,
-                    ),
-                )
-
-                continue
+            # Reuse the already-opened (and fully loaded) image object for NSFW checking.
+            # A second Image.open(image_bytes) would fail because the BytesIO stream
+            # position was advanced by the first open above.
+            image_as_pil = image_as_pil_0
+            # ! IMPORTANT: End of own code
 
             nsfw_result: NSFWResult | None = self._nsfw_checker.check_for_nsfw(
                 image=image_as_pil,
@@ -417,33 +429,48 @@ class HordeSafetyProcess(HordeProcess):
                     metadata.add_text("Safety", "clean")
 
             try:
-                # Save the image as a PNG file
-                if metadata is not None:
+                # Save the image as a PNG file (skip if no output directory is available)
+                if output_path is None:
+                    logger.debug(f"Skipping image save for job {message.job_id}: no output directory available (creation failed)")
+                elif metadata is not None:
                     image_as_pil_0.save(output_path, "png", pnginfo=metadata)
                 else:
                     image_as_pil_0.save(output_path, "png")
 
-                if metadata is not None:
-                    logger.opt(ansi=True).info(
-                        "<b><fg #FF69B4>"
-                        f"Saved 1 image + embedded metadata to disk for job {message.job_id}"
-                        "</></>",
-                    )
-                    saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=True))
-                else:
-                    logger.opt(ansi=True).info(
-                        "<b><fg #FF69B4>"
-                        f"Saved 1 image to disk (no metadata) for job {message.job_id}"
-                        "</></>",
-                    )
-                    saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
+                if output_path is not None:
+                    if metadata is not None:
+                        logger.opt(ansi=True).info(
+                            "<b><fg #FF69B4>"
+                            f"Saved 1 image + embedded metadata to disk for job {message.job_id}"
+                            "</></>",
+                        )
+                        saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=True))
+                    else:
+                        logger.opt(ansi=True).info(
+                            "<b><fg #FF69B4>"
+                            f"Saved 1 image to disk (no metadata) for job {message.job_id}"
+                            "</></>",
+                        )
+                        saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
             except Exception as e:
-                image_as_pil_0.save(output_path, "png")
-                logger.warning(
-                    f"Failed to save image with embedded metadata for job {message.job_id}; "
-                    f"saved without metadata instead: {type(e).__name__} {e}. Path: {output_path}",
-                )
-                saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
+                if output_path is not None:
+                    try:
+                        image_as_pil_0.save(output_path, "png")
+                        logger.warning(
+                            f"Failed to save image with embedded metadata for job {message.job_id}; "
+                            f"saved without metadata instead: {type(e).__name__} {e}. Path: {output_path}",
+                        )
+                        saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=False))
+                    except Exception as save_err:
+                        logger.error(
+                            f"Failed to save image for job {message.job_id}: "
+                            f"{type(save_err).__name__} {save_err}. Path: {output_path}",
+                        )
+                else:
+                    logger.error(
+                        f"Failed to save image for job {message.job_id}: "
+                        f"{type(e).__name__} {e}",
+                    )
             # ! IMPORTANT: End own code
 
             safety_evaluations.append(
