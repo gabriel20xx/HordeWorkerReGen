@@ -2163,16 +2163,21 @@ class HordeWorkerProcessManager:
                     # so it is not silently lost. This can happen if an exception occurs in the
                     # child process before it sends the inference result message.
                     process_info_ending = self._process_map[message.process_id]
-                    # Report when a process ended while loading a model so the user knows which
-                    # model caused the problem.
+                    # Report when a process ended while loading or downloading a model so the user
+                    # knows which model caused the problem.
                     if prior_process_state in (
                         HordeProcessState.MODEL_PRELOADING,
                         HordeProcessState.MODEL_LOADING,
                         HordeProcessState.DOWNLOADING_MODEL,
                     ) and process_info_ending.loaded_horde_model_name is not None:
+                        phase_description = (
+                            "downloading"
+                            if prior_process_state == HordeProcessState.DOWNLOADING_MODEL
+                            else "loading"
+                        )
                         logger.error(
                             f"Problem loading model {process_info_ending.loaded_horde_model_name} "
-                            f"on process {message.process_id}: the process ended unexpectedly while loading. "
+                            f"on process {message.process_id}: the process ended unexpectedly while {phase_description}. "
                             "Check the logs above for details.",
                         )
                     if (
