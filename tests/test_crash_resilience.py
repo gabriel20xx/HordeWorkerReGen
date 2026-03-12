@@ -1118,6 +1118,7 @@ class TestSendMemoryReportMessageVramFailure:
         mock.process_id = 1
         mock.process_launch_identifier = 42
         mock._end_process = False
+        mock._last_vram_warning_time = 0.0  # Ensure getattr fallback works correctly
 
         # Bind the real base-class method
         mock.send_memory_report_message = HordeProcess.send_memory_report_message.__get__(mock, HordeProcess)
@@ -1136,6 +1137,33 @@ class TestSendMemoryReportMessageVramFailure:
         assert result is True, "send_memory_report_message must return True even when VRAM query fails"
         # Verify the message was still sent to the queue (put() was called)
         mock.process_message_queue.put.assert_called_once()
+        # Verify the message payload has VRAM fields as None (not partially set)
+        sent_message = mock.process_message_queue.put.call_args[0][0]
+        assert sent_message.vram_usage_bytes is None, "vram_usage_bytes must be None on failure"
+        assert sent_message.vram_total_bytes is None, "vram_total_bytes must be None on failure"
+
+    def test_partial_vram_failure_sends_report_without_vram(self) -> None:
+        """If the second VRAM query fails, neither VRAM field should be set in the message.
+
+        Guards against partially setting vram_usage_bytes without vram_total_bytes.
+        """
+        mock = self._create_mock_horde_process()
+
+        # First call succeeds, second raises
+        mock.get_vram_usage_bytes.return_value = 1024 * 1024 * 256  # 256 MB
+        mock.get_vram_total_bytes.side_effect = RuntimeError("Driver error")
+
+        result = mock.send_memory_report_message(include_vram=True)
+
+        assert result is True
+        mock.process_message_queue.put.assert_called_once()
+        sent_message = mock.process_message_queue.put.call_args[0][0]
+        assert sent_message.vram_usage_bytes is None, (
+            "vram_usage_bytes must be None when the second VRAM query fails"
+        )
+        assert sent_message.vram_total_bytes is None, (
+            "vram_total_bytes must be None when the second VRAM query fails"
+        )
 
     def test_vram_failure_does_not_set_end_process(self) -> None:
         """A VRAM query failure must not set _end_process = True on the process."""
@@ -1171,6 +1199,26 @@ class TestSendMemoryReportMessageVramFailure:
 
         assert result is True
         mock.process_message_queue.put.assert_called_once()
+
+    def test_vram_warning_is_rate_limited(self) -> None:
+        """Repeated VRAM failures within 10 s must not re-emit a WARNING; they use DEBUG instead."""
+        import time
+        from unittest.mock import call
+
+        mock = self._create_mock_horde_process()
+        mock.get_vram_usage_bytes.side_effect = RuntimeError("CUDA error")
+        mock.get_vram_total_bytes.side_effect = RuntimeError("CUDA error")
+
+        # Simulate the first failure happened 5 seconds ago (within the 10-second window)
+        mock._last_vram_warning_time = time.time() - 5.0
+
+        with patch("horde_worker_regen.process_management.horde_process.logger") as mock_logger:
+            mock.send_memory_report_message(include_vram=True)
+
+        # WARNING must NOT be emitted again within the 10-second window
+        mock_logger.warning.assert_not_called()
+        # DEBUG must be emitted instead
+        mock_logger.debug.assert_called_once()
 
     def test_inference_process_override_does_not_set_end_process_on_vram_failure(self) -> None:
         """The HordeInferenceProcess override must not set _end_process on VRAM failure.
