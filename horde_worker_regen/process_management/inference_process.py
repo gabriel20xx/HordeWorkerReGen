@@ -843,26 +843,55 @@ class HordeInferenceProcess(HordeProcess):
             time_elapsed (float): The time elapsed during the last operation.
         """
         all_image_results = []
+        any_encoding_failed = False
 
         if results is not None:
             for result in results:
                 if result.rawpng is None:
                     logger.critical("Result or result image is None")
+                    # Clear the list immediately and stop collecting: the job will be faulted
+                    all_image_results = []
+                    any_encoding_failed = True
                     continue
 
-                image_base64 = base64.b64encode(result.rawpng.getvalue()).decode("utf-8")
-                all_image_results.append(
-                    HordeImageResult(
-                        image_base64=image_base64,
-                        generation_faults=result.faults,
-                    ),
-                )
+                if any_encoding_failed:
+                    # A previous image already failed; skip encoding the rest to avoid
+                    # unnecessary work.  The job is already being faulted.
+                    continue
+
+                # Intentionally catch all Exception subclasses (not just MemoryError/IOError):
+                # any encoding failure — whether from a corrupt BytesIO, an unexpected
+                # runtime error, or an OOM — must not crash the child process and orphan
+                # the job. The failure is logged at CRITICAL level for diagnostics.
+                try:
+                    image_base64 = base64.b64encode(result.rawpng.getvalue()).decode("utf-8")
+                    all_image_results.append(
+                        HordeImageResult(
+                            image_base64=image_base64,
+                            generation_faults=result.faults,
+                        ),
+                    )
+                except Exception as encode_err:
+                    logger.critical(
+                        f"Failed to encode image result: {type(encode_err).__name__} {encode_err}. "
+                        "Faulting the entire job to avoid partial submission (unsubmitted IDs).",
+                    )
+                    # Clear immediately — no partial results will be submitted
+                    all_image_results = []
+                    any_encoding_failed = True
+
+        # Fault the entire job if any image failed to encode.  Partial submissions are not
+        # safe: the submission pipeline uses positional indexing (gen_iter) across both
+        # job_image_results and sdk_api_job_info.ids, so a shorter image list would leave
+        # some IDs permanently unsubmitted.
+        inferred_any = results is not None and len(results) > 0
+        state = GENERATION_STATE.ok if (inferred_any and not any_encoding_failed) else GENERATION_STATE.faulted
 
         message = HordeInferenceResultMessage(
             process_id=self.process_id,
             process_launch_identifier=self.process_launch_identifier,
             info=self._last_job_inference_rate if self._last_job_inference_rate is not None else "",
-            state=GENERATION_STATE.ok if results is not None and len(results) > 0 else GENERATION_STATE.faulted,
+            state=state,
             time_elapsed=time_elapsed,
             job_image_results=all_image_results,
             sdk_api_job_info=job_info,
@@ -870,20 +899,32 @@ class HordeInferenceProcess(HordeProcess):
         )
         self.process_message_queue.put(message)
 
-        if self._active_model_name is None:
-            logger.critical("No active model name, cannot update model state")
-            return
+        # The result message is now on the queue.  The state-update calls below are
+        # best-effort: if they raise, we log and swallow so the caller never sees the
+        # exception after the message was already successfully enqueued.  Without this
+        # guard, an exception here would propagate to _receive_and_handle_control_message
+        # and trigger a spurious second (faulted) result message for the same job.
+        try:
+            if self._active_model_name is None:
+                logger.critical("No active model name, cannot update model state")
+                return
 
-        self.on_horde_model_state_change(
-            process_state=process_state,
-            horde_model_name=self._active_model_name,
-            horde_model_state=ModelLoadState.LOADED_IN_VRAM,
-        )
+            self.on_horde_model_state_change(
+                process_state=process_state,
+                horde_model_name=self._active_model_name,
+                horde_model_state=ModelLoadState.LOADED_IN_VRAM,
+            )
 
-        self.send_process_state_change_message(
-            HordeProcessState.WAITING_FOR_JOB,
-            info="Waiting for job",
-        )
+            self.send_process_state_change_message(
+                HordeProcessState.WAITING_FOR_JOB,
+                info="Waiting for job",
+            )
+        except Exception as state_update_err:
+            logger.error(
+                f"Failed to update state after enqueueing inference result "
+                f"({type(state_update_err).__name__}: {state_update_err}). "
+                "The result message was already queued; this error is non-fatal.",
+            )
 
     @override
     @logger.catch(reraise=True)
@@ -978,13 +1019,46 @@ class HordeInferenceProcess(HordeProcess):
 
                 process_state = HordeProcessState.INFERENCE_COMPLETE if results else HordeProcessState.INFERENCE_FAILED
                 logger.debug(f"Finished inference with process state {process_state}")
-                self.send_inference_result_message(
-                    process_state=process_state,
-                    job_info=message.sdk_api_job_info,
-                    results=results,
-                    time_elapsed=time.time() - time_start,
-                    sanitized_negative_prompt=self._last_sanitized_negative_prompt,
-                )
+                _time_elapsed = time.time() - time_start
+                try:
+                    self.send_inference_result_message(
+                        process_state=process_state,
+                        job_info=message.sdk_api_job_info,
+                        results=results,
+                        time_elapsed=_time_elapsed,
+                        sanitized_negative_prompt=self._last_sanitized_negative_prompt,
+                    )
+                # Intentionally catch all Exception subclasses: the only code that can raise
+                # here (after the post-enqueue guard in send_inference_result_message) is the
+                # queue.put() call itself — i.e. the result message was NOT successfully delivered.
+                # Catch all to prevent the process exiting with POST_PROCESSING_COMPLETE as its
+                # last known state while the job is still tracked as in-progress by the manager.
+                except Exception as send_err:
+                    # The result message was not enqueued.  Attempt to send a faulted result so
+                    # the job is not silently lost.
+                    logger.critical(
+                        f"Failed to send inference result after post-processing "
+                        f"({type(send_err).__name__}: {send_err}). "
+                        "Sending faulted result to prevent the job from being silently lost on process exit.",
+                    )
+                    try:
+                        self.send_inference_result_message(
+                            process_state=HordeProcessState.INFERENCE_FAILED,
+                            job_info=message.sdk_api_job_info,
+                            results=None,
+                            time_elapsed=_time_elapsed,
+                            sanitized_negative_prompt=self._last_sanitized_negative_prompt,
+                        )
+                    except Exception as fallback_err:
+                        # Both sends failed — re-raise so receive_and_handle_control_messages
+                        # catches it and sets _end_process=True, causing the process to exit
+                        # cleanly.  The manager will fault the job via the PROCESS_ENDING handler.
+                        logger.critical(
+                            f"Failed to send faulted fallback result ({type(fallback_err).__name__}: {fallback_err}). "
+                            "Re-raising to terminate the process; the manager will fault the job "
+                            "via the PROCESS_ENDING handler.",
+                        )
+                        raise
             else:
                 logger.critical(f"Received unexpected message: {message}")
                 return
