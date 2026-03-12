@@ -215,10 +215,7 @@ class HordeInferenceProcess(HordeProcess):
         Returns:
             bool: Whether or not the message was sent successfully.
         """
-        if not super().send_memory_report_message(include_vram=include_vram):
-            self._end_process = True
-
-        return not self._end_process
+        return super().send_memory_report_message(include_vram=include_vram)
 
     @logger.catch(reraise=True)
     def on_horde_model_state_change(

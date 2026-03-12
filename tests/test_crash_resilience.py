@@ -1100,3 +1100,151 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
 
         mock_manager._start_inference_process.assert_called_once_with(0)
         assert mock_manager._num_process_recoveries == 1
+
+
+class TestSendMemoryReportMessageVramFailure:
+    """Tests that VRAM query failures do not terminate the inference process.
+
+    Regression test for the bug where a VRAM query failure inside
+    send_memory_report_message caused the inference process to set
+    _end_process = True and exit mid-inference, orphaning the in-flight job.
+    """
+
+    def _create_mock_horde_process(self) -> MagicMock:
+        """Create a minimal mock that exercises HordeProcess.send_memory_report_message."""
+        from horde_worker_regen.process_management.horde_process import HordeProcess
+
+        mock = MagicMock()
+        mock.process_id = 1
+        mock.process_launch_identifier = 42
+        mock._end_process = False
+        mock._last_vram_warning_time = 0.0  # Ensure getattr fallback works correctly
+
+        # Bind the real base-class method
+        mock.send_memory_report_message = HordeProcess.send_memory_report_message.__get__(mock, HordeProcess)
+        return mock
+
+    def test_vram_failure_still_sends_report(self) -> None:
+        """A VRAM query failure must not prevent the memory report from being sent."""
+        mock = self._create_mock_horde_process()
+
+        # Make VRAM query raise
+        mock.get_vram_usage_bytes.side_effect = RuntimeError("CUDA error")
+        mock.get_vram_total_bytes.side_effect = RuntimeError("CUDA error")
+
+        result = mock.send_memory_report_message(include_vram=True)
+
+        assert result is True, "send_memory_report_message must return True even when VRAM query fails"
+        # Verify the message was still sent to the queue (put() was called)
+        mock.process_message_queue.put.assert_called_once()
+        # Verify the message payload has VRAM fields as None (not partially set)
+        sent_message = mock.process_message_queue.put.call_args[0][0]
+        assert sent_message.vram_usage_bytes is None, "vram_usage_bytes must be None on failure"
+        assert sent_message.vram_total_bytes is None, "vram_total_bytes must be None on failure"
+
+    def test_partial_vram_failure_sends_report_without_vram(self) -> None:
+        """If the second VRAM query fails, neither VRAM field should be set in the message.
+
+        Guards against partially setting vram_usage_bytes without vram_total_bytes.
+        """
+        mock = self._create_mock_horde_process()
+
+        # First call succeeds, second raises
+        mock.get_vram_usage_bytes.return_value = 1024 * 1024 * 256  # 256 MB
+        mock.get_vram_total_bytes.side_effect = RuntimeError("Driver error")
+
+        result = mock.send_memory_report_message(include_vram=True)
+
+        assert result is True
+        mock.process_message_queue.put.assert_called_once()
+        sent_message = mock.process_message_queue.put.call_args[0][0]
+        assert sent_message.vram_usage_bytes is None, (
+            "vram_usage_bytes must be None when the second VRAM query fails"
+        )
+        assert sent_message.vram_total_bytes is None, (
+            "vram_total_bytes must be None when the second VRAM query fails"
+        )
+
+    def test_vram_failure_does_not_set_end_process(self) -> None:
+        """A VRAM query failure must not set _end_process = True on the process."""
+        mock = self._create_mock_horde_process()
+
+        # Make VRAM query raise
+        mock.get_vram_usage_bytes.side_effect = RuntimeError("CUDA OOM error")
+        mock.get_vram_total_bytes.side_effect = RuntimeError("CUDA OOM error")
+
+        mock.send_memory_report_message(include_vram=True)
+
+        assert mock._end_process is False, "_end_process must not be set to True on VRAM query failure"
+
+    def test_successful_report_without_vram(self) -> None:
+        """A report without VRAM info should always succeed."""
+        mock = self._create_mock_horde_process()
+
+        result = mock.send_memory_report_message(include_vram=False)
+
+        assert result is True
+        # get_vram_usage_bytes and get_vram_total_bytes should NOT be called
+        mock.get_vram_usage_bytes.assert_not_called()
+        mock.get_vram_total_bytes.assert_not_called()
+        mock.process_message_queue.put.assert_called_once()
+
+    def test_successful_report_with_vram(self) -> None:
+        """A report with VRAM info should succeed when VRAM query works."""
+        mock = self._create_mock_horde_process()
+        mock.get_vram_usage_bytes.return_value = 1024 * 1024 * 512  # 512 MB
+        mock.get_vram_total_bytes.return_value = 1024 * 1024 * 1024 * 8  # 8 GB
+
+        result = mock.send_memory_report_message(include_vram=True)
+
+        assert result is True
+        mock.process_message_queue.put.assert_called_once()
+
+    def test_vram_warning_is_rate_limited(self) -> None:
+        """Repeated VRAM failures within 10 s must not re-emit a WARNING; they use DEBUG instead."""
+        import time
+        from unittest.mock import call
+
+        mock = self._create_mock_horde_process()
+        mock.get_vram_usage_bytes.side_effect = RuntimeError("CUDA error")
+        mock.get_vram_total_bytes.side_effect = RuntimeError("CUDA error")
+
+        # Simulate the first failure happened 5 seconds ago (within the 10-second window)
+        mock._last_vram_warning_time = time.time() - 5.0
+
+        with patch("horde_worker_regen.process_management.horde_process.logger") as mock_logger:
+            mock.send_memory_report_message(include_vram=True)
+
+        # WARNING must NOT be emitted again within the 10-second window
+        mock_logger.warning.assert_not_called()
+        # DEBUG must be emitted instead
+        mock_logger.debug.assert_called_once()
+
+    def test_inference_process_override_does_not_set_end_process_on_vram_failure(self) -> None:
+        """The HordeInferenceProcess override must not set _end_process on VRAM failure.
+
+        Creates a minimal concrete subclass of HordeInferenceProcess that skips
+        all heavy initialisation, so we can call the real override on a real instance.
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        # Build a minimal concrete subclass that avoids __init__ entirely
+        class _TestProcess(HordeInferenceProcess):
+            def cleanup_for_exit(self) -> None:
+                pass
+
+        instance = object.__new__(_TestProcess)
+        instance.process_id = 1
+        instance.process_launch_identifier = 42
+        instance._end_process = False
+        instance.process_message_queue = MagicMock()
+        instance.get_vram_usage_bytes = MagicMock(side_effect=RuntimeError("CUDA error"))
+        instance.get_vram_total_bytes = MagicMock(side_effect=RuntimeError("CUDA error"))
+
+        result = instance.send_memory_report_message(include_vram=True)
+
+        assert result is True, "Inference process override must return True even on VRAM failure"
+        assert instance._end_process is False, (
+            "_end_process must remain False — the override must not set it to True"
+        )
+        instance.process_message_queue.put.assert_called_once()
