@@ -2140,10 +2140,10 @@ class TestVaeLockAcquiredFlag:
         progress_report.hordelib_progress_state = ProgressState.progress
         progress_report.comfyui_progress = None
 
-        # log_free_ram requires an initialised ComfyUI context; patch it out
-        with patch("horde_worker_regen.process_management.inference_process.HordeInferenceProcess.progress_callback.__wrapped__", None, create=True):
-            with patch("hordelib.comfy_horde.log_free_ram", MagicMock()):
-                HordeInferenceProcess.progress_callback(proc, progress_report)
+        # log_free_ram is imported locally inside progress_callback from hordelib.comfy_horde;
+        # patch it at the source to avoid needing an initialised ComfyUI context.
+        with patch("hordelib.comfy_horde.log_free_ram", MagicMock()):
+            HordeInferenceProcess.progress_callback(proc, progress_report)
 
         assert proc._vae_lock_was_acquired is True, (
             "_vae_lock_was_acquired should be True when acquire succeeded"
