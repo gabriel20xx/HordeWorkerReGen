@@ -688,11 +688,12 @@ class HordeInferenceProcess(HordeProcess):
         except Exception as e:
             if isinstance(e, RuntimeError) and "out of memory" in str(e).lower():
                 logger.critical(
-                    "VRAM is full! Inference failed because the GPU ran out of memory. "
+                    f"VRAM is full! Inference failed because the GPU ran out of memory ({type(e).__name__}: {e}). "
                     "Consider using fewer or smaller models, reducing the resolution, or enabling "
                     "`unload_models_from_vram_often` in your bridge configuration.",
                 )
-            logger.critical(f"Inference failed: {type(e).__name__} {e}")
+            else:
+                logger.critical(f"Inference failed: {type(e).__name__} {e}")
             return None
         finally:
             self._is_busy = False
