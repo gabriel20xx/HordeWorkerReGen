@@ -2423,16 +2423,25 @@ class HordeWorkerProcessManager:
                     self.unload_models_from_vram(process_with_model=self._process_map[message.process_id])
 
                 if message.time_elapsed is not None:
-                    inference_finished_string = (
-                        "\0<fg #da9dff>"
-                        f"Inference finished for job {str(message.sdk_api_job_info.id_)[:8]} "
-                        f"<u>({message.sdk_api_job_info.model})</u> on process {message.process_id}. "
-                        f"It took {round(message.time_elapsed, 2)} seconds, finishing at {message.info} "
-                        f"and reported {message.faults_count} faults."
-                        "</>"
-                    )
-
-                    logger.opt(ansi=True).info(inference_finished_string)
+                    if message.state == GENERATION_STATE.faulted:
+                        inference_finished_string = (
+                            "\0<fg #da9dff>"
+                            f"Inference for job {str(message.sdk_api_job_info.id_)[:8]} "
+                            f"<u>({message.sdk_api_job_info.model})</u> on process {message.process_id} "
+                            f"took {round(message.time_elapsed, 2)} seconds but faulted: {message.info}."
+                            "</>"
+                        )
+                        logger.opt(ansi=True).warning(inference_finished_string)
+                    else:
+                        inference_finished_string = (
+                            "\0<fg #da9dff>"
+                            f"Inference finished for job {str(message.sdk_api_job_info.id_)[:8]} "
+                            f"<u>({message.sdk_api_job_info.model})</u> on process {message.process_id}. "
+                            f"It took {round(message.time_elapsed, 2)} seconds, finishing at {message.info} "
+                            f"and reported {message.faults_count} faults."
+                            "</>"
+                        )
+                        logger.opt(ansi=True).info(inference_finished_string)
 
                 else:
                     logger.info(f"Inference finished for job {message.sdk_api_job_info.id_}")

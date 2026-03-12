@@ -902,10 +902,23 @@ class HordeInferenceProcess(HordeProcess):
         inferred_any = results is not None and len(results) > 0
         state = GENERATION_STATE.ok if (inferred_any and not any_encoding_failed) else GENERATION_STATE.faulted
 
+        if state == GENERATION_STATE.faulted:
+            if any_encoding_failed:
+                rate_context = (
+                    f" (inference ran at {self._last_job_inference_rate})"
+                    if self._last_job_inference_rate
+                    else ""
+                )
+                info_str = f"image encoding failed{rate_context}"
+            else:
+                info_str = "inference produced no results"
+        else:
+            info_str = self._last_job_inference_rate if self._last_job_inference_rate is not None else ""
+
         message = HordeInferenceResultMessage(
             process_id=self.process_id,
             process_launch_identifier=self.process_launch_identifier,
-            info=self._last_job_inference_rate if self._last_job_inference_rate is not None else "",
+            info=info_str,
             state=state,
             time_elapsed=time_elapsed,
             job_image_results=all_image_results,
