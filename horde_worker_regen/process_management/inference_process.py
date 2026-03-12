@@ -836,11 +836,20 @@ class HordeInferenceProcess(HordeProcess):
             time_elapsed (float): The time elapsed during the last operation.
         """
         all_image_results = []
+        any_encoding_failed = False
 
         if results is not None:
             for result in results:
                 if result.rawpng is None:
                     logger.critical("Result or result image is None")
+                    # Clear the list immediately and stop collecting: the job will be faulted
+                    all_image_results = []
+                    any_encoding_failed = True
+                    continue
+
+                if any_encoding_failed:
+                    # A previous image already failed; skip encoding the rest to avoid
+                    # unnecessary work.  The job is already being faulted.
                     continue
 
                 # Intentionally catch all Exception subclasses (not just MemoryError/IOError):
@@ -858,16 +867,18 @@ class HordeInferenceProcess(HordeProcess):
                 except Exception as encode_err:
                     logger.critical(
                         f"Failed to encode image result: {type(encode_err).__name__} {encode_err}. "
-                        "This image will be excluded from the submission.",
+                        "Faulting the entire job to avoid partial submission (unsubmitted IDs).",
                     )
+                    # Clear immediately — no partial results will be submitted
+                    all_image_results = []
+                    any_encoding_failed = True
 
-        # Use the successfully encoded images to determine state. If none could be encoded
-        # (e.g. due to MemoryError or a corrupt BytesIO), report the job as faulted rather
-        # than sending an "ok" message with an empty image list, which would cause silent
-        # failures downstream.
-        encoding_succeeded = bool(all_image_results)
+        # Fault the entire job if any image failed to encode.  Partial submissions are not
+        # safe: the submission pipeline uses positional indexing (gen_iter) across both
+        # job_image_results and sdk_api_job_info.ids, so a shorter image list would leave
+        # some IDs permanently unsubmitted.
         inferred_any = results is not None and len(results) > 0
-        state = GENERATION_STATE.ok if (inferred_any and encoding_succeeded) else GENERATION_STATE.faulted
+        state = GENERATION_STATE.ok if (inferred_any and not any_encoding_failed) else GENERATION_STATE.faulted
 
         message = HordeInferenceResultMessage(
             process_id=self.process_id,
@@ -881,20 +892,32 @@ class HordeInferenceProcess(HordeProcess):
         )
         self.process_message_queue.put(message)
 
-        if self._active_model_name is None:
-            logger.critical("No active model name, cannot update model state")
-            return
+        # The result message is now on the queue.  The state-update calls below are
+        # best-effort: if they raise, we log and swallow so the caller never sees the
+        # exception after the message was already successfully enqueued.  Without this
+        # guard, an exception here would propagate to _receive_and_handle_control_message
+        # and trigger a spurious second (faulted) result message for the same job.
+        try:
+            if self._active_model_name is None:
+                logger.critical("No active model name, cannot update model state")
+                return
 
-        self.on_horde_model_state_change(
-            process_state=process_state,
-            horde_model_name=self._active_model_name,
-            horde_model_state=ModelLoadState.LOADED_IN_VRAM,
-        )
+            self.on_horde_model_state_change(
+                process_state=process_state,
+                horde_model_name=self._active_model_name,
+                horde_model_state=ModelLoadState.LOADED_IN_VRAM,
+            )
 
-        self.send_process_state_change_message(
-            HordeProcessState.WAITING_FOR_JOB,
-            info="Waiting for job",
-        )
+            self.send_process_state_change_message(
+                HordeProcessState.WAITING_FOR_JOB,
+                info="Waiting for job",
+            )
+        except Exception as state_update_err:
+            logger.error(
+                f"Failed to update state after enqueueing inference result "
+                f"({type(state_update_err).__name__}: {state_update_err}). "
+                "The result message was already queued; this error is non-fatal.",
+            )
 
     @override
     @logger.catch(reraise=True)
@@ -998,16 +1021,14 @@ class HordeInferenceProcess(HordeProcess):
                         time_elapsed=_time_elapsed,
                         sanitized_negative_prompt=self._last_sanitized_negative_prompt,
                     )
-                # Intentionally catch all Exception subclasses: any failure during result
-                # sending (image encoding, queue errors, state update errors, etc.) must be
-                # caught here to prevent the process from exiting with POST_PROCESSING_COMPLETE
-                # as its last known state while the job is still in jobs_in_progress, which
-                # would cause the manager's PROCESS_ENDING handler to unnecessarily fault the job.
+                # Intentionally catch all Exception subclasses: the only code that can raise
+                # here (after the post-enqueue guard in send_inference_result_message) is the
+                # queue.put() call itself — i.e. the result message was NOT successfully delivered.
+                # Catch all to prevent the process exiting with POST_PROCESSING_COMPLETE as its
+                # last known state while the job is still tracked as in-progress by the manager.
                 except Exception as send_err:
-                    # If sending the result (e.g. encoding images) raised an exception, attempt to
-                    # send a faulted result so the job is not silently lost and the process does
-                    # not exit with POST_PROCESSING_COMPLETE as its last reported state while the
-                    # job is still tracked as in-progress by the manager.
+                    # The result message was not enqueued.  Attempt to send a faulted result so
+                    # the job is not silently lost.
                     logger.critical(
                         f"Failed to send inference result after post-processing "
                         f"({type(send_err).__name__}: {send_err}). "
@@ -1022,10 +1043,15 @@ class HordeInferenceProcess(HordeProcess):
                             sanitized_negative_prompt=self._last_sanitized_negative_prompt,
                         )
                     except Exception as fallback_err:
+                        # Both sends failed — re-raise so receive_and_handle_control_messages
+                        # catches it and sets _end_process=True, causing the process to exit
+                        # cleanly.  The manager will fault the job via the PROCESS_ENDING handler.
                         logger.critical(
                             f"Failed to send faulted fallback result ({type(fallback_err).__name__}: {fallback_err}). "
-                            "Process will exit; the manager will fault the job via the PROCESS_ENDING handler.",
+                            "Re-raising to terminate the process; the manager will fault the job "
+                            "via the PROCESS_ENDING handler.",
                         )
+                        raise
             else:
                 logger.critical(f"Received unexpected message: {message}")
                 return

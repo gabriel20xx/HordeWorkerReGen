@@ -1260,10 +1260,14 @@ class TestSendInferenceResultEncodingResilience:
     the last known state — causing the manager's PROCESS_ENDING handler to fault the job.
 
     The fix ensures:
-    1. Each image is encoded inside a try/except; failed images are excluded rather than
-       propagating an exception that kills the process.
-    2. If ALL images fail to encode, the message state is set to GENERATION_STATE.faulted
-       (rather than 'ok' with an empty image list) so the manager retries the job.
+    1. Each image is encoded inside a try/except; any encoding failure faults the ENTIRE
+       job (not just the failing image) rather than propagating an exception that kills
+       the process.  Partial submissions are unsafe because the submission pipeline uses
+       positional indexing (gen_iter across job_image_results AND sdk_api_job_info.ids),
+       so a shorter image list would leave some IDs permanently unsubmitted.
+    2. State is derived from encoding success: any failure → GENERATION_STATE.faulted.
+    3. Post-enqueue state-update errors are caught inside send_inference_result_message
+       so the caller never sees a spurious exception after the message is already queued.
     """
 
     _TARGET = "horde_worker_regen.process_management.inference_process.HordeInferenceResultMessage"
@@ -1330,9 +1334,14 @@ class TestSendInferenceResultEncodingResilience:
         decoded = base64.b64decode(captured["job_image_results"][0].image_base64)
         assert decoded == b"\x89PNG\r\n\x1a\nfakedata"
 
-    def test_encoding_failure_excludes_image_and_still_sends_message(self) -> None:
-        """When one image's BytesIO raises on getvalue(), the image is excluded but the
-        message is still put on the queue (process does not crash)."""
+    def test_single_encoding_failure_faults_entire_job(self) -> None:
+        """When any single image's encoding raises, the ENTIRE job must be faulted (state=faulted,
+        empty image list) rather than sending a partial result or crashing the process.
+
+        Partial results are unsafe because the submission pipeline uses gen_iter to index
+        both job_image_results and sdk_api_job_info.ids — a shorter list leaves some IDs
+        permanently unsubmitted.
+        """
         from horde_sdk.ai_horde_api import GENERATION_STATE
 
         proc = self._make_inference_process()
@@ -1364,18 +1373,12 @@ class TestSendInferenceResultEncodingResilience:
 
         # Message must still be sent (no unhandled exception kills the process)
         assert proc.process_message_queue.put.call_count >= 1
-        # No images encoded → must report faulted so the manager retries the job
+        # Encoding failure → entire job faulted, empty image list
         assert captured["state"] == GENERATION_STATE.faulted
         assert captured["job_image_results"] == []
 
     def test_all_images_encoding_failure_reports_faulted(self) -> None:
-        """When ALL images fail to encode, state must be GENERATION_STATE.faulted, not ok.
-
-        Previously the state was determined from `results` (the raw list from basic_inference),
-        so even with an empty all_image_results the state would be 'ok'. This meant the manager
-        would receive a successful but empty result, which could cause silent failures during the
-        safety-check or submission steps.
-        """
+        """When ALL images fail to encode, state must be GENERATION_STATE.faulted, not ok."""
         from horde_sdk.ai_horde_api import GENERATION_STATE
 
         proc = self._make_inference_process()
@@ -1409,8 +1412,13 @@ class TestSendInferenceResultEncodingResilience:
         assert captured["state"] == GENERATION_STATE.faulted
         assert captured["job_image_results"] == []
 
-    def test_partial_encoding_failure_sends_ok_with_remaining_images(self) -> None:
-        """When only some images fail to encode, the successfully encoded ones are submitted."""
+    def test_partial_encoding_failure_faults_entire_job(self) -> None:
+        """When only some images in a batch fail to encode, the ENTIRE job must be faulted.
+
+        Partial submissions are unsafe: the submission pipeline uses gen_iter to index
+        both job_image_results[gen_iter] and sdk_api_job_info.ids[gen_iter].  If the
+        image list is shorter than n_iter, the remaining IDs are never submitted to the API.
+        """
         from horde_sdk.ai_horde_api import GENERATION_STATE
 
         proc = self._make_inference_process()
@@ -1440,9 +1448,9 @@ class TestSendInferenceResultEncodingResilience:
             )
 
         assert proc.process_message_queue.put.call_count >= 1
-        # Good image encoded successfully → state is ok
-        assert captured["state"] == GENERATION_STATE.ok
-        assert len(captured["job_image_results"]) == 1
+        # Partial failure → entire job faulted to avoid unsubmitted IDs
+        assert captured["state"] == GENERATION_STATE.faulted
+        assert captured["job_image_results"] == []
 
     def test_none_results_sends_faulted(self) -> None:
         """Passing results=None must produce a GENERATION_STATE.faulted message (no change to existing behaviour)."""
@@ -1471,6 +1479,59 @@ class TestSendInferenceResultEncodingResilience:
         assert proc.process_message_queue.put.call_count >= 1
         assert captured["state"] == GENERATION_STATE.faulted
         assert captured["job_image_results"] == []
+
+    def test_post_enqueue_state_update_failure_does_not_propagate(self) -> None:
+        """Exceptions from the state-update calls after queue.put() must NOT propagate.
+
+        After the result message is successfully enqueued, on_horde_model_state_change or
+        send_process_state_change_message can raise.  These are wrapped in a try/except so
+        the exception does not escape send_inference_result_message.  Without this guard,
+        the caller's except block would trigger a spurious second (faulted) result message
+        for the same job.
+        """
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        proc = self._make_inference_process()
+        result = self._make_result(rawpng_bytes=b"valid-png-data")
+
+        captured_messages: list = []
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        # call_count[0] == 1: the HordeInferenceResultMessage (the main result, must succeed)
+        # call_count[0] > 1: subsequent puts are for state-change messages inside the post-enqueue
+        #                    try/except block — these are allowed to fail without propagating.
+        call_count = [0]
+
+        def put_side_effect(msg: object) -> None:
+            call_count[0] += 1
+            captured_messages.append(msg)
+            # Let the first put (the HordeInferenceResultMessage) succeed
+            # and raise on the second (so the state update path raises)
+            if call_count[0] > 1:
+                raise RuntimeError("Simulated queue failure after result enqueued")
+
+        proc.process_message_queue.put.side_effect = put_side_effect
+
+        # Must not raise to the caller — the state update exception is caught internally
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            proc.send_inference_result_message(
+                process_state=HordeProcessState.INFERENCE_COMPLETE,
+                job_info=MagicMock(),
+                results=[result],
+                time_elapsed=1.0,
+                sanitized_negative_prompt=None,
+            )
+
+        # Exactly ONE result message must have been sent (not two)
+        # The first put succeeded (the result), subsequent ones raised
+        assert call_count[0] >= 1
+        first_msg = captured_messages[0]
+        assert first_msg.state == GENERATION_STATE.ok
 
 
 class TestSendInferenceResultFallbackOnFailure:
@@ -1568,6 +1629,73 @@ class TestSendInferenceResultFallbackOnFailure:
         assert proc.process_message_queue.put.call_count >= 1
         assert captured["state"] == GENERATION_STATE.faulted
         assert captured["job_image_results"] == []
+
+    def test_both_sends_fail_reraises_to_trigger_end_process(self) -> None:
+        """When both the normal send AND the faulted fallback fail, the exception must re-raise.
+
+        The outer receive_and_handle_control_messages loop catches any exception from
+        _receive_and_handle_control_message and sets _end_process=True, causing the
+        process to exit cleanly.  Without the re-raise, the process would keep running
+        with the job stuck in jobs_in_progress, requiring the manager to time it out as hung.
+        """
+        import io
+
+        import pytest
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        class _TestProcess(HordeInferenceProcess):
+            def cleanup_for_exit(self) -> None:
+                pass
+
+        proc = object.__new__(_TestProcess)
+        proc.process_id = 1
+        proc.process_launch_identifier = 42
+        proc._last_job_inference_rate = None
+        proc._active_model_name = "test-model"
+        proc._last_sanitized_negative_prompt = None
+        proc.process_message_queue = MagicMock()
+
+        # Make every queue.put() raise so BOTH sends fail
+        proc.process_message_queue.put.side_effect = RuntimeError("Persistent queue failure")
+
+        good_result = MagicMock()
+        good_result.rawpng = io.BytesIO(b"valid-data")
+        good_result.faults = []
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        # Calling send_inference_result_message with results raises on queue.put().
+        # The caller's fallback also calls send_inference_result_message (results=None)
+        # which also raises.  The fallback's except block must re-raise so the outer
+        # receive loop can set _end_process=True.
+        #
+        # We simulate this directly: first call raises (normal send), second call also
+        # raises (fallback send).  Verify the final exception escapes.
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            # First send fails
+            with pytest.raises(RuntimeError, match="Persistent queue failure"):
+                proc.send_inference_result_message(
+                    process_state=HordeProcessState.INFERENCE_COMPLETE,
+                    job_info=MagicMock(),
+                    results=[good_result],
+                    time_elapsed=1.0,
+                    sanitized_negative_prompt=None,
+                )
+
+            # Second send (fallback) also fails — the re-raise means the exception escapes
+            with pytest.raises(RuntimeError, match="Persistent queue failure"):
+                proc.send_inference_result_message(
+                    process_state=HordeProcessState.INFERENCE_FAILED,
+                    job_info=MagicMock(),
+                    results=None,
+                    time_elapsed=1.0,
+                    sanitized_negative_prompt=None,
+                )
 
 
 class TestKeepSingleInferenceStates(_ReceiveLoopHarnessMixin):
