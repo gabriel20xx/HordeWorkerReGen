@@ -843,19 +843,33 @@ class HordeInferenceProcess(HordeProcess):
                     logger.critical("Result or result image is None")
                     continue
 
-                image_base64 = base64.b64encode(result.rawpng.getvalue()).decode("utf-8")
-                all_image_results.append(
-                    HordeImageResult(
-                        image_base64=image_base64,
-                        generation_faults=result.faults,
-                    ),
-                )
+                try:
+                    image_base64 = base64.b64encode(result.rawpng.getvalue()).decode("utf-8")
+                    all_image_results.append(
+                        HordeImageResult(
+                            image_base64=image_base64,
+                            generation_faults=result.faults,
+                        ),
+                    )
+                except Exception as encode_err:
+                    logger.critical(
+                        f"Failed to encode image result: {type(encode_err).__name__} {encode_err}. "
+                        "This image will be excluded from the submission.",
+                    )
+
+        # Use the successfully encoded images to determine state. If none could be encoded
+        # (e.g. due to MemoryError or a corrupt BytesIO), report the job as faulted rather
+        # than sending an "ok" message with an empty image list, which would cause silent
+        # failures downstream.
+        encoding_succeeded = bool(all_image_results)
+        inferred_any = results is not None and len(results) > 0
+        state = GENERATION_STATE.ok if (inferred_any and encoding_succeeded) else GENERATION_STATE.faulted
 
         message = HordeInferenceResultMessage(
             process_id=self.process_id,
             process_launch_identifier=self.process_launch_identifier,
             info=self._last_job_inference_rate if self._last_job_inference_rate is not None else "",
-            state=GENERATION_STATE.ok if results is not None and len(results) > 0 else GENERATION_STATE.faulted,
+            state=state,
             time_elapsed=time_elapsed,
             job_image_results=all_image_results,
             sdk_api_job_info=job_info,
@@ -971,13 +985,38 @@ class HordeInferenceProcess(HordeProcess):
 
                 process_state = HordeProcessState.INFERENCE_COMPLETE if results else HordeProcessState.INFERENCE_FAILED
                 logger.debug(f"Finished inference with process state {process_state}")
-                self.send_inference_result_message(
-                    process_state=process_state,
-                    job_info=message.sdk_api_job_info,
-                    results=results,
-                    time_elapsed=time.time() - time_start,
-                    sanitized_negative_prompt=self._last_sanitized_negative_prompt,
-                )
+                _time_elapsed = time.time() - time_start
+                try:
+                    self.send_inference_result_message(
+                        process_state=process_state,
+                        job_info=message.sdk_api_job_info,
+                        results=results,
+                        time_elapsed=_time_elapsed,
+                        sanitized_negative_prompt=self._last_sanitized_negative_prompt,
+                    )
+                except Exception as send_err:
+                    # If sending the result (e.g. encoding images) raised an exception, attempt to
+                    # send a faulted result so the job is not silently lost and the process does
+                    # not exit with POST_PROCESSING_COMPLETE as its last reported state while the
+                    # job is still tracked as in-progress by the manager.
+                    logger.critical(
+                        f"Failed to send inference result after post-processing "
+                        f"({type(send_err).__name__}: {send_err}). "
+                        "Sending faulted result to prevent the job from being silently lost on process exit.",
+                    )
+                    try:
+                        self.send_inference_result_message(
+                            process_state=HordeProcessState.INFERENCE_FAILED,
+                            job_info=message.sdk_api_job_info,
+                            results=None,
+                            time_elapsed=_time_elapsed,
+                            sanitized_negative_prompt=self._last_sanitized_negative_prompt,
+                        )
+                    except Exception as fallback_err:
+                        logger.critical(
+                            f"Failed to send faulted fallback result ({type(fallback_err).__name__}: {fallback_err}). "
+                            "Process will exit; the manager will fault the job via the PROCESS_ENDING handler.",
+                        )
             else:
                 logger.critical(f"Received unexpected message: {message}")
                 return

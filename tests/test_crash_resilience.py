@@ -1250,6 +1250,326 @@ class TestSendMemoryReportMessageVramFailure:
         instance.process_message_queue.put.assert_called_once()
 
 
+class TestSendInferenceResultEncodingResilience:
+    """Tests that send_inference_result_message handles image-encoding failures gracefully.
+
+    Regression tests for the bug where a base64-encoding failure (e.g. MemoryError or
+    corrupt BytesIO) inside send_inference_result_message caused an unhandled exception
+    that propagated through _receive_and_handle_control_message, terminated the child
+    process, and left the job silently in-progress with POST_PROCESSING_COMPLETE as
+    the last known state — causing the manager's PROCESS_ENDING handler to fault the job.
+
+    The fix ensures:
+    1. Each image is encoded inside a try/except; failed images are excluded rather than
+       propagating an exception that kills the process.
+    2. If ALL images fail to encode, the message state is set to GENERATION_STATE.faulted
+       (rather than 'ok' with an empty image list) so the manager retries the job.
+    """
+
+    _TARGET = "horde_worker_regen.process_management.inference_process.HordeInferenceResultMessage"
+
+    def _make_inference_process(self) -> object:
+        """Return a minimal HordeInferenceProcess instance that skips heavy initialisation."""
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        class _TestProcess(HordeInferenceProcess):
+            def cleanup_for_exit(self) -> None:
+                pass
+
+        instance = object.__new__(_TestProcess)
+        instance.process_id = 1
+        instance.process_launch_identifier = 42
+        instance._last_job_inference_rate = None
+        instance._active_model_name = "test-model"
+        instance.process_message_queue = MagicMock()
+        return instance
+
+    def _make_result(self, *, rawpng_bytes: bytes | None = b"fake-png-data") -> MagicMock:
+        """Return a minimal ResultingImageReturn mock."""
+        result = MagicMock()
+        if rawpng_bytes is None:
+            result.rawpng = None
+        else:
+            import io
+
+            result.rawpng = io.BytesIO(rawpng_bytes)
+        result.faults = []
+        return result
+
+    def test_successful_encoding_sends_ok_message(self) -> None:
+        """When all images encode successfully the message state must be GENERATION_STATE.ok."""
+        import base64
+
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        proc = self._make_inference_process()
+        result = self._make_result(rawpng_bytes=b"\x89PNG\r\n\x1a\nfakedata")
+
+        captured: dict = {}
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            captured.update(kwargs)
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            proc.send_inference_result_message(
+                process_state=HordeProcessState.INFERENCE_COMPLETE,
+                job_info=MagicMock(),
+                results=[result],
+                time_elapsed=1.0,
+                sanitized_negative_prompt=None,
+            )
+
+        assert proc.process_message_queue.put.call_count >= 1
+        assert captured["state"] == GENERATION_STATE.ok
+        assert len(captured["job_image_results"]) == 1
+        # Validate the base64 payload round-trips correctly
+        decoded = base64.b64decode(captured["job_image_results"][0].image_base64)
+        assert decoded == b"\x89PNG\r\n\x1a\nfakedata"
+
+    def test_encoding_failure_excludes_image_and_still_sends_message(self) -> None:
+        """When one image's BytesIO raises on getvalue(), the image is excluded but the
+        message is still put on the queue (process does not crash)."""
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        proc = self._make_inference_process()
+
+        # Make getvalue() raise to simulate a corrupt BytesIO
+        bad_result = MagicMock()
+        bad_result.rawpng = MagicMock()
+        bad_result.rawpng.getvalue.side_effect = RuntimeError("Simulated BytesIO corruption")
+        bad_result.faults = []
+
+        captured: dict = {}
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            captured.update(kwargs)
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            # Must not raise — the encoding failure must be caught internally
+            proc.send_inference_result_message(
+                process_state=HordeProcessState.INFERENCE_COMPLETE,
+                job_info=MagicMock(),
+                results=[bad_result],
+                time_elapsed=1.0,
+                sanitized_negative_prompt=None,
+            )
+
+        # Message must still be sent (no unhandled exception kills the process)
+        assert proc.process_message_queue.put.call_count >= 1
+        # No images encoded → must report faulted so the manager retries the job
+        assert captured["state"] == GENERATION_STATE.faulted
+        assert captured["job_image_results"] == []
+
+    def test_all_images_encoding_failure_reports_faulted(self) -> None:
+        """When ALL images fail to encode, state must be GENERATION_STATE.faulted, not ok.
+
+        Previously the state was determined from `results` (the raw list from basic_inference),
+        so even with an empty all_image_results the state would be 'ok'. This meant the manager
+        would receive a successful but empty result, which could cause silent failures during the
+        safety-check or submission steps.
+        """
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        proc = self._make_inference_process()
+
+        def _make_bad() -> MagicMock:
+            r = MagicMock()
+            r.rawpng = MagicMock()
+            r.rawpng.getvalue.side_effect = MemoryError("Out of memory during encoding")
+            r.faults = []
+            return r
+
+        captured: dict = {}
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            captured.update(kwargs)
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            proc.send_inference_result_message(
+                process_state=HordeProcessState.INFERENCE_COMPLETE,
+                job_info=MagicMock(),
+                results=[_make_bad(), _make_bad()],
+                time_elapsed=2.0,
+                sanitized_negative_prompt=None,
+            )
+
+        assert proc.process_message_queue.put.call_count >= 1
+        assert captured["state"] == GENERATION_STATE.faulted
+        assert captured["job_image_results"] == []
+
+    def test_partial_encoding_failure_sends_ok_with_remaining_images(self) -> None:
+        """When only some images fail to encode, the successfully encoded ones are submitted."""
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        proc = self._make_inference_process()
+        good_result = self._make_result(rawpng_bytes=b"valid-png-data")
+
+        bad_result = MagicMock()
+        bad_result.rawpng = MagicMock()
+        bad_result.rawpng.getvalue.side_effect = RuntimeError("Encoding error")
+        bad_result.faults = []
+
+        captured: dict = {}
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            captured.update(kwargs)
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            proc.send_inference_result_message(
+                process_state=HordeProcessState.INFERENCE_COMPLETE,
+                job_info=MagicMock(),
+                results=[good_result, bad_result],
+                time_elapsed=1.5,
+                sanitized_negative_prompt=None,
+            )
+
+        assert proc.process_message_queue.put.call_count >= 1
+        # Good image encoded successfully → state is ok
+        assert captured["state"] == GENERATION_STATE.ok
+        assert len(captured["job_image_results"]) == 1
+
+    def test_none_results_sends_faulted(self) -> None:
+        """Passing results=None must produce a GENERATION_STATE.faulted message (no change to existing behaviour)."""
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        proc = self._make_inference_process()
+
+        captured: dict = {}
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            captured.update(kwargs)
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            proc.send_inference_result_message(
+                process_state=HordeProcessState.INFERENCE_COMPLETE,
+                job_info=MagicMock(),
+                results=None,
+                time_elapsed=0.5,
+                sanitized_negative_prompt=None,
+            )
+
+        assert proc.process_message_queue.put.call_count >= 1
+        assert captured["state"] == GENERATION_STATE.faulted
+        assert captured["job_image_results"] == []
+
+
+class TestSendInferenceResultFallbackOnFailure:
+    """Tests the fallback in _receive_and_handle_control_message when send_inference_result_message fails.
+
+    Regression tests for the scenario where the call to send_inference_result_message (with the
+    actual results) raises unexpectedly (e.g. queue full, model state update fails, etc.).
+    The child process must attempt to send a faulted result instead of propagating the
+    exception and dying silently with POST_PROCESSING_COMPLETE as the last known state.
+    """
+
+    _TARGET = "horde_worker_regen.process_management.inference_process.HordeInferenceResultMessage"
+
+    def _make_process(self) -> object:
+        """Create a minimal HordeInferenceProcess that skips all heavy initialisation."""
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        class _TestProcess(HordeInferenceProcess):
+            def cleanup_for_exit(self) -> None:
+                pass
+
+        instance = object.__new__(_TestProcess)
+        instance.process_id = 1
+        instance.process_launch_identifier = 42
+        instance._last_job_inference_rate = None
+        instance._active_model_name = "test-model"
+        instance._last_sanitized_negative_prompt = None
+        instance.process_message_queue = MagicMock()
+        return instance
+
+    def test_queue_put_failure_propagates_from_send_inference_result_message(self) -> None:
+        """When queue.put() raises inside send_inference_result_message, the exception propagates.
+
+        This confirms that the caller (in _receive_and_handle_control_message) must wrap the
+        call in try/except to send a faulted fallback.
+        """
+        import io
+
+        import pytest
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        proc = self._make_process()
+
+        good_result = MagicMock()
+        good_result.rawpng = io.BytesIO(b"valid-png-data")
+        good_result.faults = []
+
+        # Make queue.put() raise on the first call
+        proc.process_message_queue.put.side_effect = RuntimeError("Simulated queue failure")
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            with pytest.raises(RuntimeError, match="Simulated queue failure"):
+                proc.send_inference_result_message(
+                    process_state=HordeProcessState.INFERENCE_COMPLETE,
+                    job_info=MagicMock(),
+                    results=[good_result],
+                    time_elapsed=1.0,
+                    sanitized_negative_prompt=None,
+                )
+
+    def test_faulted_fallback_with_none_results_succeeds(self) -> None:
+        """The faulted-fallback path (results=None) must succeed when the queue is working.
+
+        This models the second attempt in the caller's except block.
+        """
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        proc = self._make_process()
+
+        captured: dict = {}
+
+        def fake_msg_cls(**kwargs: object) -> MagicMock:
+            captured.update(kwargs)
+            m = MagicMock()
+            m.state = kwargs.get("state")
+            m.job_image_results = kwargs.get("job_image_results", [])
+            return m
+
+        with patch(self._TARGET, side_effect=fake_msg_cls):
+            proc.send_inference_result_message(
+                process_state=HordeProcessState.INFERENCE_FAILED,
+                job_info=MagicMock(),
+                results=None,
+                time_elapsed=1.0,
+                sanitized_negative_prompt=None,
+            )
+
+        assert proc.process_message_queue.put.call_count >= 1
+        assert captured["state"] == GENERATION_STATE.faulted
+        assert captured["job_image_results"] == []
+
+
 class TestKeepSingleInferenceStates(_ReceiveLoopHarnessMixin):
     """Tests that keep_single_inference correctly checks all active inference states.
 
