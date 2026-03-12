@@ -686,7 +686,14 @@ class HordeInferenceProcess(HordeProcess):
                         time_elapsed=time.time() - self._start_inference_time,
                     )
         except Exception as e:
-            logger.critical(f"Inference failed: {type(e).__name__} {e}")
+            if isinstance(e, RuntimeError) and "out of memory" in str(e).lower():
+                logger.critical(
+                    f"VRAM is full! Inference failed because the GPU ran out of memory ({type(e).__name__}: {e}). "
+                    "Consider using fewer or smaller models, reducing the resolution, or enabling "
+                    "`unload_models_from_vram_often` in your bridge configuration.",
+                )
+            else:
+                logger.critical(f"Inference failed: {type(e).__name__} {e}")
             return None
         finally:
             self._is_busy = False
