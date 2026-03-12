@@ -497,7 +497,7 @@ class HordeInferenceProcess(HordeProcess):
             # Do NOT re-raise: an uncaught exception here propagates into basic_inference()
             # which may silently swallow it and return None, producing "inference produced no
             # results" with no CRITICAL log to explain why.
-            logger.error(
+            logger.opt(exception=cb_err).error(
                 f"Unexpected error in progress_callback ({type(cb_err).__name__}: {cb_err}). "
                 "Suppressing to avoid aborting inference.",
             )

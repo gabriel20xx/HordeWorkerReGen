@@ -2362,7 +2362,7 @@ class TestProgressCallbackExceptionSuppression:
         proc._progress_callback_impl.assert_called_once_with(progress_report)
 
     def test_exception_in_impl_is_logged(self) -> None:
-        """An exception from _progress_callback_impl must be logged at ERROR level."""
+        """An exception from _progress_callback_impl must be logged at ERROR level with traceback."""
         from unittest.mock import patch as _patch
 
         proc = self._make_process()
@@ -2371,9 +2371,21 @@ class TestProgressCallbackExceptionSuppression:
         progress_report = MagicMock()
 
         with _patch("horde_worker_regen.process_management.inference_process.logger") as mock_logger:
+            # logger.opt(exception=...).error(...) is called — opt() returns a bound logger
+            mock_opt_logger = MagicMock()
+            mock_logger.opt.return_value = mock_opt_logger
+
             proc.progress_callback(progress_report)
-            mock_logger.error.assert_called_once()
-            error_call_args = mock_logger.error.call_args[0][0]
+
+            # logger.opt must be called with the exception for full traceback capture
+            mock_logger.opt.assert_called_once()
+            opt_kwargs = mock_logger.opt.call_args.kwargs
+            assert isinstance(opt_kwargs.get("exception"), ValueError), (
+                "logger.opt must be passed the exception for traceback logging"
+            )
+            # The .error() on the bound logger must be called with the message
+            mock_opt_logger.error.assert_called_once()
+            error_call_args = mock_opt_logger.error.call_args[0][0]
             assert "ValueError" in error_call_args
             assert "bad value" in error_call_args
 
@@ -2388,6 +2400,7 @@ class TestProgressCallbackExceptionSuppression:
 
         with _patch("horde_worker_regen.process_management.inference_process.logger") as mock_logger:
             proc.progress_callback(progress_report)
+            mock_logger.opt.assert_not_called()
             mock_logger.error.assert_not_called()
 
 
@@ -2475,19 +2488,27 @@ class TestPostProcessingVAESemaphore:
         assert proc._vae_acquire_attempted is True, (
             "VAE semaphore acquisition must be attempted in the post-processing path"
         )
+        # And the semaphore must actually have been acquired successfully
+        assert proc._vae_lock_was_acquired is True, (
+            "VAE semaphore must be successfully acquired in the post-processing path"
+        )
 
     def test_vae_semaphore_only_acquired_once_in_post_processing(self) -> None:
         """VAE semaphore must not be acquired twice even with multiple post_processing callbacks."""
         import multiprocessing
-        from unittest.mock import patch as _patch
+        from unittest.mock import MagicMock, patch as _patch
 
         proc = self._make_process()
 
-        vae_sem = multiprocessing.Semaphore(1)
+        # Use a mock VAE semaphore so we can count exact acquire() calls.
+        # A real Semaphore would block on the second acquire, making the test hang.
+        mock_vae_sem = MagicMock()
+        mock_vae_sem.acquire.return_value = True  # simulate successful acquire
+
         inference_sem = multiprocessing.Semaphore(1)
         inference_sem.acquire()
         proc._inference_semaphore = inference_sem
-        proc._vae_decode_semaphore = vae_sem
+        proc._vae_decode_semaphore = mock_vae_sem
 
         proc.send_process_state_change_message = MagicMock()
         proc.send_heartbeat_message = MagicMock()
@@ -2514,12 +2535,12 @@ class TestPostProcessingVAESemaphore:
             progress_report.hordelib_progress_state = mock_progress_state.post_processing
             progress_report.comfyui_progress = None
 
-            # Call twice — semaphore should only be acquired once
+            # Call twice — semaphore must only be acquired on the first call
             proc._progress_callback_impl(progress_report)
             proc._progress_callback_impl(progress_report)
 
         assert proc._vae_acquire_attempted is True
-        # If the semaphore was acquired twice, vae_sem would be at -1 (can't happen with a
-        # real Semaphore, which would block).  Verify by checking _vae_lock_was_acquired is
-        # consistent (True = acquired once, False = failed/not attempted).
-        # The important thing is _vae_acquire_attempted is True after the first call.
+        # Semaphore.acquire() must have been called exactly once despite two callbacks
+        mock_vae_sem.acquire.assert_called_once_with(timeout=proc.VAE_SEMAPHORE_TIMEOUT), (
+            "VAE semaphore acquire() must be called exactly once across multiple post-processing callbacks"
+        )
