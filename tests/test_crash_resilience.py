@@ -1286,12 +1286,12 @@ class TestSendInferenceResultEncodingResilience:
 
     def _make_result(self, *, rawpng_bytes: bytes | None = b"fake-png-data") -> MagicMock:
         """Return a minimal ResultingImageReturn mock."""
+        import io
+
         result = MagicMock()
         if rawpng_bytes is None:
             result.rawpng = None
         else:
-            import io
-
             result.rawpng = io.BytesIO(rawpng_bytes)
         result.faults = []
         return result

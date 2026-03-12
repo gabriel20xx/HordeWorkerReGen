@@ -843,6 +843,10 @@ class HordeInferenceProcess(HordeProcess):
                     logger.critical("Result or result image is None")
                     continue
 
+                # Intentionally catch all Exception subclasses (not just MemoryError/IOError):
+                # any encoding failure — whether from a corrupt BytesIO, an unexpected
+                # runtime error, or an OOM — must not crash the child process and orphan
+                # the job. The failure is logged at CRITICAL level for diagnostics.
                 try:
                     image_base64 = base64.b64encode(result.rawpng.getvalue()).decode("utf-8")
                     all_image_results.append(
@@ -994,6 +998,11 @@ class HordeInferenceProcess(HordeProcess):
                         time_elapsed=_time_elapsed,
                         sanitized_negative_prompt=self._last_sanitized_negative_prompt,
                     )
+                # Intentionally catch all Exception subclasses: any failure during result
+                # sending (image encoding, queue errors, state update errors, etc.) must be
+                # caught here to prevent the process from exiting with POST_PROCESSING_COMPLETE
+                # as its last known state while the job is still in jobs_in_progress, which
+                # would cause the manager's PROCESS_ENDING handler to unnecessarily fault the job.
                 except Exception as send_err:
                     # If sending the result (e.g. encoding images) raised an exception, attempt to
                     # send a faulted result so the job is not silently lost and the process does
