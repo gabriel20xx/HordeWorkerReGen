@@ -6427,6 +6427,12 @@ class HordeWorkerProcessManager:
 
         now = time.time()
 
+        # Pre-compute once so the per-process INFERENCE_STARTING check is O(1) rather than O(n).
+        any_active_inference_processing = any(
+            p.last_process_state == HordeProcessState.INFERENCE_PROCESSING
+            for p in self._process_map.values()
+        )
+
         any_replaced = False
         for process_info in self._process_map.values():
             if self._process_map.is_stuck_on_inference(
@@ -6503,11 +6509,6 @@ class HordeWorkerProcessManager:
                         now - process_info.last_heartbeat_timestamp,
                     )
                     if time_elapsed_starting > self.bridge_data.preload_timeout:
-                        any_active_inference_processing = any(
-                            p.last_process_state == HordeProcessState.INFERENCE_PROCESSING
-                            for p in self._process_map.values()
-                            if p.process_id != process_info.process_id
-                        )
                         if not any_active_inference_processing:
                             logger.error(
                                 f"{process_info} seems to be stuck in INFERENCE_STARTING "

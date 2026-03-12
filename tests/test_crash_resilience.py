@@ -2350,8 +2350,6 @@ class TestReplaceHungInferenceStarting:
         mock_manager._process_map.values.return_value = processes
         # _check_and_replace_process must return False so it doesn't spuriously trigger
         mock_manager._check_and_replace_process.return_value = False
-        # Allow the per-process state lookup used inside the check
-        by_id = {p.process_id: p for p in processes}
         mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
 
         # Bind the real method to the mock manager
