@@ -679,24 +679,20 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         This is used to prevent overloading the system with inference processes, such as with batched jobs.
         """
         for p in self.values():
-            # We only parallelizing if we have a currently running inference with n_iter > 1
+            # We only parallelize if we have a currently running inference with n_iter > 1
             if p.batch_amount > 1 and (
                 p.last_process_state == HordeProcessState.INFERENCE_STARTING
-                or p.last_process_state == HordeProcessState.INFERENCE_STARTING
-                or p.last_process_state == HordeProcessState.INFERENCE_STARTING
+                or p.last_process_state == HordeProcessState.INFERENCE_PROCESSING
+                or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
             ):
                 return True, "Batched job"
 
             if (
                 (
                     p.last_process_state == HordeProcessState.INFERENCE_STARTING
-                    or p.last_process_state == HordeProcessState.INFERENCE_STARTING
-                    or p.last_process_state == HordeProcessState.INFERENCE_STARTING
+                    or p.last_process_state == HordeProcessState.INFERENCE_PROCESSING
                     or (
-                        (
-                            p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                            or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                        )
+                        p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
                         and not post_process_job_overlap
                     )
                 )
@@ -725,14 +721,10 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                 if model_info.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_xl and (
                     p.can_accept_job()
                     or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                    or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
                 ):
                     return True, "ControlNet XL"
 
-            if (
-                p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-            ) and not post_process_job_overlap:
+            if p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING and not post_process_job_overlap:
                 return True, "Post processing overlap"
 
             if p.can_accept_job():
@@ -2159,6 +2151,21 @@ class HordeWorkerProcessManager:
 
                 if message.process_state == HordeProcessState.PROCESS_ENDING:
                     logger.info(f"Process {message.process_id} is ending")
+                    # If the process was holding the inference semaphore (i.e., it was in
+                    # INFERENCE_PROCESSING), release it now so that any process blocked in
+                    # INFERENCE_STARTING waiting to acquire the semaphore can proceed.
+                    # This handles edge cases such as OOM kills where the child process was
+                    # terminated without running its finally block.  BoundedSemaphore raises
+                    # ValueError on over-release (when the child already released it normally),
+                    # so this is always safe to call.
+                    if prior_process_state == HordeProcessState.INFERENCE_PROCESSING:
+                        try:
+                            self._inference_semaphore.release()
+                        except ValueError:
+                            logger.debug(
+                                f"Inference semaphore already released for process {message.process_id} "
+                                "on PROCESS_ENDING (child released it normally via finally block)"
+                            )
                     # If the process is ending but still has a job in progress, fault the job
                     # so it is not silently lost. This can happen if an exception occurs in the
                     # child process before it sends the inference result message.

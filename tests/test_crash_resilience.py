@@ -1248,3 +1248,237 @@ class TestSendMemoryReportMessageVramFailure:
             "_end_process must remain False — the override must not set it to True"
         )
         instance.process_message_queue.put.assert_called_once()
+
+
+class TestKeepSingleInferenceStates(_ReceiveLoopHarnessMixin):
+    """Tests that keep_single_inference correctly checks all active inference states.
+
+    Previously the function had duplicate conditions that only checked INFERENCE_STARTING,
+    missing INFERENCE_PROCESSING and INFERENCE_POST_PROCESSING. This caused jobs to be
+    dispatched when they should not be (e.g., while a batch or VRAM-heavy model was in
+    INFERENCE_PROCESSING), leading to unnecessary semaphore contention and jobs stuck in
+    INFERENCE_STARTING.
+    """
+
+    def _make_process_map_with_process(
+        self,
+        state: HordeProcessState,
+        *,
+        batch_amount: int = 1,
+        model: str | None = None,
+    ) -> MagicMock:
+        """Build a minimal mock process map containing one process in the given state."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        p = MagicMock()
+        p.last_process_state = state
+        p.batch_amount = batch_amount
+
+        if model is not None:
+            p.last_job_referenced = MagicMock()
+            p.last_job_referenced.model = model
+        else:
+            p.last_job_referenced = None
+
+        process_map = MagicMock()
+        process_map.values.return_value = [p]
+        process_map.keep_single_inference = ProcessMap.keep_single_inference.__get__(
+            process_map, ProcessMap
+        )
+        return process_map
+
+    def test_batch_job_inference_processing_keeps_single(self) -> None:
+        """keep_single_inference must return True when a batch job is in INFERENCE_PROCESSING.
+
+        Previously the check only tested for INFERENCE_STARTING, so a batch job that had
+        already moved to INFERENCE_PROCESSING would not block additional jobs from being
+        dispatched.
+        """
+        process_map = self._make_process_map_with_process(
+            HordeProcessState.INFERENCE_PROCESSING,
+            batch_amount=4,
+        )
+
+        result, reason = process_map.keep_single_inference(
+            stable_diffusion_model_reference=MagicMock(),
+            post_process_job_overlap=False,
+        )
+
+        assert result is True, (
+            "Expected keep_single_inference=True for batch job in INFERENCE_PROCESSING, "
+            f"got ({result!r}, {reason!r})"
+        )
+        assert reason == "Batched job"
+
+    def test_batch_job_inference_post_processing_keeps_single(self) -> None:
+        """keep_single_inference must return True when a batch job is in INFERENCE_POST_PROCESSING."""
+        process_map = self._make_process_map_with_process(
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            batch_amount=2,
+        )
+
+        result, reason = process_map.keep_single_inference(
+            stable_diffusion_model_reference=MagicMock(),
+            post_process_job_overlap=False,
+        )
+
+        assert result is True, (
+            "Expected keep_single_inference=True for batch job in INFERENCE_POST_PROCESSING, "
+            f"got ({result!r}, {reason!r})"
+        )
+        assert reason == "Batched job"
+
+    def test_batch_job_inference_starting_keeps_single(self) -> None:
+        """keep_single_inference must return True when a batch job is in INFERENCE_STARTING."""
+        process_map = self._make_process_map_with_process(
+            HordeProcessState.INFERENCE_STARTING,
+            batch_amount=3,
+        )
+
+        result, reason = process_map.keep_single_inference(
+            stable_diffusion_model_reference=MagicMock(),
+            post_process_job_overlap=False,
+        )
+
+        assert result is True
+        assert reason == "Batched job"
+
+    def test_non_batch_job_inference_processing_does_not_keep_single(self) -> None:
+        """keep_single_inference must return False when a normal job is in INFERENCE_PROCESSING."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        p = MagicMock()
+        p.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        p.batch_amount = 1
+        p.last_job_referenced = MagicMock()
+        p.last_job_referenced.model = "some_normal_model"
+        p.last_job_referenced.payload.workflow = None
+        p.can_accept_job.return_value = False
+
+        process_map = MagicMock()
+        process_map.values.return_value = [p]
+        process_map.keep_single_inference = ProcessMap.keep_single_inference.__get__(
+            process_map, ProcessMap
+        )
+
+        result, reason = process_map.keep_single_inference(
+            stable_diffusion_model_reference=MagicMock(),
+            post_process_job_overlap=False,
+        )
+
+        assert result is False, (
+            "Expected keep_single_inference=False for normal job in INFERENCE_PROCESSING"
+        )
+
+
+class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
+    """Tests that the inference semaphore is released when PROCESS_ENDING is received for a
+    process that was in INFERENCE_PROCESSING.
+
+    This prevents other processes from being permanently stuck in INFERENCE_STARTING when
+    a child process terminates without releasing the semaphore (e.g., due to an OOM kill
+    where the finally block did not run).
+    """
+
+    def _run_receive_process_ending_with_semaphore(
+        self,
+        prior_state: HordeProcessState,
+        *,
+        semaphore_acquired: bool = True,
+    ) -> tuple[MagicMock, object]:
+        """Run receive_and_handle_process_messages with PROCESS_ENDING and a real semaphore.
+
+        Args:
+            prior_state: The process state before the PROCESS_ENDING transition.
+            semaphore_acquired: If True, the semaphore is pre-acquired to simulate the child
+                                holding it. If False, the semaphore is at its initial value.
+
+        Returns (mock_manager, bounded_semaphore) so callers can inspect the semaphore state.
+        """
+        import multiprocessing
+        import queue as queue_mod
+        from multiprocessing.synchronize import BoundedSemaphore
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+        bounded_sem = BoundedSemaphore(1, ctx=ctx)
+        if semaphore_acquired:
+            # Simulate the child holding the semaphore (acquired but not released)
+            bounded_sem.acquire()
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = prior_state
+        process_info.last_job_referenced = None
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+        mock_manager._inference_semaphore = bounded_sem
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+        return mock_manager, bounded_sem
+
+    def test_semaphore_released_when_process_ending_from_inference_processing(self) -> None:
+        """When PROCESS_ENDING arrives for a process in INFERENCE_PROCESSING, the inference
+        semaphore must be released so that other processes stuck in INFERENCE_STARTING can
+        acquire it and proceed.
+        """
+        _mock_manager, sem = self._run_receive_process_ending_with_semaphore(
+            prior_state=HordeProcessState.INFERENCE_PROCESSING,
+            semaphore_acquired=True,
+        )
+
+        # The semaphore should now be available (released by PROCESS_ENDING handler)
+        acquired = sem.acquire(block=False)
+        assert acquired, (
+            "Semaphore should be acquirable after PROCESS_ENDING from INFERENCE_PROCESSING — "
+            "the handler must release it to unblock processes stuck in INFERENCE_STARTING"
+        )
+
+    def test_semaphore_not_released_when_process_ending_from_waiting_for_job(self) -> None:
+        """When PROCESS_ENDING arrives for a process in WAITING_FOR_JOB, the inference
+        semaphore must NOT be released (the process was not holding it).
+        """
+        _mock_manager, sem = self._run_receive_process_ending_with_semaphore(
+            prior_state=HordeProcessState.WAITING_FOR_JOB,
+            semaphore_acquired=True,
+        )
+
+        # The semaphore was acquired before the test but should NOT have been released
+        # by the PROCESS_ENDING handler (WAITING_FOR_JOB does not hold the semaphore)
+        acquired = sem.acquire(block=False)
+        assert not acquired, (
+            "Semaphore must not be acquirable when PROCESS_ENDING is for a non-inference state"
+        )
+
+    def test_semaphore_double_release_safe_when_child_already_released(self) -> None:
+        """When PROCESS_ENDING arrives and the child already released the semaphore normally,
+        the PROCESS_ENDING handler's release attempt must not raise and must not inflate permits.
+        """
+        # semaphore_acquired=False: child already released via its finally block
+        _mock_manager, sem = self._run_receive_process_ending_with_semaphore(
+            prior_state=HordeProcessState.INFERENCE_PROCESSING,
+            semaphore_acquired=False,
+        )
+
+        # Semaphore should still have exactly 1 permit (not corrupted to 2)
+        acquired = sem.acquire(block=False)
+        assert acquired, "Semaphore should have 1 permit (unchanged) after safe double-release"
+        second_acquired = sem.acquire(block=False)
+        assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
