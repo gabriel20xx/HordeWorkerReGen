@@ -1451,6 +1451,26 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
             "the handler must release it to unblock processes stuck in INFERENCE_STARTING"
         )
 
+    def test_semaphore_released_when_process_ending_from_post_processing_starting(self) -> None:
+        """When PROCESS_ENDING arrives for a process in POST_PROCESSING_STARTING, the inference
+        semaphore must also be released.
+
+        The child emits POST_PROCESSING_STARTING BEFORE releasing the semaphore (see
+        inference_process.py progress_callback). If the process crashes between emitting the
+        state and calling release(), the semaphore leaks and other processes remain stuck in
+        INFERENCE_STARTING.
+        """
+        _mock_manager, sem = self._run_receive_process_ending_with_semaphore(
+            prior_state=HordeProcessState.POST_PROCESSING_STARTING,
+            semaphore_acquired=True,
+        )
+
+        acquired = sem.acquire(block=False)
+        assert acquired, (
+            "Semaphore should be acquirable after PROCESS_ENDING from POST_PROCESSING_STARTING — "
+            "the handler must release it to unblock processes stuck in INFERENCE_STARTING"
+        )
+
     def test_semaphore_not_released_when_process_ending_from_waiting_for_job(self) -> None:
         """When PROCESS_ENDING arrives for a process in WAITING_FOR_JOB, the inference
         semaphore must NOT be released (the process was not holding it).
@@ -1478,6 +1498,22 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         )
 
         # Semaphore should still have exactly 1 permit (not corrupted to 2)
+        acquired = sem.acquire(block=False)
+        assert acquired, "Semaphore should have 1 permit (unchanged) after safe double-release"
+        second_acquired = sem.acquire(block=False)
+        assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
+
+    def test_semaphore_double_release_safe_from_post_processing_starting_when_child_already_released(self) -> None:
+        """When PROCESS_ENDING arrives from POST_PROCESSING_STARTING and the child already
+        released the semaphore (normal path: emitted state then released), the handler's
+        defensive release must not inflate the permit count.
+        """
+        # semaphore_acquired=False: child already released after emitting POST_PROCESSING_STARTING
+        _mock_manager, sem = self._run_receive_process_ending_with_semaphore(
+            prior_state=HordeProcessState.POST_PROCESSING_STARTING,
+            semaphore_acquired=False,
+        )
+
         acquired = sem.acquire(block=False)
         assert acquired, "Semaphore should have 1 permit (unchanged) after safe double-release"
         second_acquired = sem.acquire(block=False)

@@ -2152,13 +2152,22 @@ class HordeWorkerProcessManager:
                 if message.process_state == HordeProcessState.PROCESS_ENDING:
                     logger.info(f"Process {message.process_id} is ending")
                     # If the process was holding the inference semaphore (i.e., it was in
-                    # INFERENCE_PROCESSING), release it now so that any process blocked in
-                    # INFERENCE_STARTING waiting to acquire the semaphore can proceed.
-                    # This handles edge cases such as OOM kills where the child process was
-                    # terminated without running its finally block.  BoundedSemaphore raises
-                    # ValueError on over-release (when the child already released it normally),
-                    # so this is always safe to call.
-                    if prior_process_state == HordeProcessState.INFERENCE_PROCESSING:
+                    # INFERENCE_PROCESSING or POST_PROCESSING_STARTING), release it now so that
+                    # any process blocked in INFERENCE_STARTING waiting to acquire the semaphore
+                    # can proceed. This handles edge cases such as OOM kills where the child
+                    # process was terminated without running its finally block.
+                    #
+                    # POST_PROCESSING_STARTING must also be covered because the child emits that
+                    # state message BEFORE releasing the semaphore (see inference_process.py
+                    # progress_callback): if the child crashes between emitting the state and
+                    # calling release(), the semaphore leaks.
+                    #
+                    # BoundedSemaphore raises ValueError on over-release (when the child already
+                    # released it normally), so this is always safe to call.
+                    if prior_process_state in (
+                        HordeProcessState.INFERENCE_PROCESSING,
+                        HordeProcessState.POST_PROCESSING_STARTING,
+                    ):
                         try:
                             self._inference_semaphore.release()
                         except ValueError:
