@@ -2413,15 +2413,14 @@ class HordeWorkerProcessManager:
 
                     self.jobs_pending_safety_check.append(job_info)
                 else:
-                    logger.error(
-                        f"Job {message.sdk_api_job_info.id_} faulted on process {message.process_id}: {message.info}",
-                    )
-
                     logger.debug(
                         f"Job data: {message.sdk_api_job_info.model_dump(exclude=_excludes_for_job_dump)}",  # type: ignore
                     )
 
-                    self.jobs_pending_submit.append(job_info)
+                    self.handle_job_fault(
+                        faulted_job=message.sdk_api_job_info,
+                        process_info=self._process_map[message.process_id],
+                    )
 
             # If the process is sending us a safety job result:
             # - if an unexpected error occurred, log an error a
