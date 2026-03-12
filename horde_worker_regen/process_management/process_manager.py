@@ -2430,15 +2430,15 @@ class HordeWorkerProcessManager:
 
                     self.jobs_pending_safety_check.append(job_info)
                 else:
-                    logger.error(
-                        f"Job {message.sdk_api_job_info.id_} faulted on process {message.process_id}: {message.info}",
-                    )
-
                     logger.debug(
                         f"Job data: {message.sdk_api_job_info.model_dump(exclude=_excludes_for_job_dump)}",  # type: ignore
                     )
 
-                    self.jobs_pending_submit.append(job_info)
+                    self.handle_job_fault(
+                        faulted_job=message.sdk_api_job_info,
+                        process_info=self._process_map[message.process_id],
+                        fault_info=message.info,
+                    )
 
             # If the process is sending us a safety job result:
             # - if an unexpected error occurred, log an error a
@@ -4023,6 +4023,7 @@ class HordeWorkerProcessManager:
         self,
         faulted_job: ImageGenerateJobPopResponse,
         process_info: HordeProcessInfo | None = None,
+        fault_info: str | None = None,
     ) -> None:
         """Mark a job as faulted and add it to the completed jobs list to report it faulted.
 
@@ -4031,6 +4032,7 @@ class HordeWorkerProcessManager:
         Args:
             faulted_job (ImageGenerateJobPopResponse): The job that faulted.
             process_info (HordeProcessInfo | None, optional): The process that faulted the job. Defaults to None.
+            fault_info (str | None, optional): A human-readable description of the fault reason. Defaults to None.
         """
         job_info = self.jobs_lookup.get(faulted_job)
 
@@ -4041,9 +4043,10 @@ class HordeWorkerProcessManager:
             if job_info.retry_count < self.MAX_JOB_RETRIES:
                 # Retry the job once
                 job_info.retry_count += 1
+                fault_detail = f": {fault_info}" if fault_info else ""
                 logger.warning(
-                    f"Job {faulted_job.id_} faulted on process {process_info.process_id if process_info else 'unknown'}, "
-                    f"retrying (attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})",
+                    f"Job {faulted_job.id_} faulted on process {process_info.process_id if process_info else 'unknown'}"
+                    f"{fault_detail}, retrying (attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})",
                 )
 
                 # Remove from jobs_in_progress if present
@@ -4064,9 +4067,10 @@ class HordeWorkerProcessManager:
 
             # Job has exhausted all retry attempts, proceed with faulting
             retry_text = "retry attempt" if self.MAX_JOB_RETRIES == 1 else "retry attempts"
+            fault_detail = f": {fault_info}" if fault_info else ""
             logger.error(
-                f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} {retry_text}, "
-                f"marking as permanently faulted",
+                f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} {retry_text}"
+                f"{fault_detail}, marking as permanently faulted",
             )
 
             if faulted_job in self.jobs_pending_inference:
