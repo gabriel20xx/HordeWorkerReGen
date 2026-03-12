@@ -541,10 +541,13 @@ class HordeInferenceProcess(HordeProcess):
 
         if self._current_job_inference_steps_complete:
             if not self._vae_lock_was_acquired:
-                self._vae_lock_was_acquired = True
                 # Use timeout on VAE semaphore acquire to prevent indefinite blocking
                 # This prevents jobs from hanging at the last step waiting for VAE decode
                 acquired = self._vae_decode_semaphore.acquire(timeout=self.VAE_SEMAPHORE_TIMEOUT)
+                # Only mark as acquired if the acquire actually succeeded so the finally
+                # block does not release a semaphore that was never taken (which would
+                # inflate the count or raise ValueError on a BoundedSemaphore).
+                self._vae_lock_was_acquired = acquired
                 if not acquired:
                     logger.error(
                         f"Failed to acquire VAE decode semaphore within {self.VAE_SEMAPHORE_TIMEOUT}s timeout. "
@@ -715,16 +718,16 @@ class HordeInferenceProcess(HordeProcess):
             if not inference_semaphore_already_released:
                 try:
                     self._inference_semaphore.release()
-                except ValueError:
-                    logger.warning("Unexpected ValueError releasing inference semaphore")
+                except Exception as e:
+                    logger.warning(f"Unexpected error releasing inference semaphore: {type(e).__name__}: {e}")
 
             # Release the VAE decode semaphore only if it was actually acquired, in a separate
             # block so this attempt always runs regardless of the inference semaphore outcome.
             if vae_semaphore_was_acquired:
                 try:
                     self._vae_decode_semaphore.release()
-                except ValueError:
-                    logger.warning("Unexpected ValueError releasing VAE decode semaphore")
+                except Exception as e:
+                    logger.warning(f"Unexpected error releasing VAE decode semaphore: {type(e).__name__}: {e}")
         return results
 
     @staticmethod
@@ -981,7 +984,19 @@ class HordeInferenceProcess(HordeProcess):
 
                 time_start = time.time()
 
-                results = self.start_inference(message.sdk_api_job_info)
+                # Wrap start_inference in a try/except so that if an exception escapes
+                # (e.g. from the finally block releasing semaphores after a successful
+                # inference), the job is not silently lost.  Treat any exception the same
+                # as a None/empty result: send INFERENCE_FAILED so the manager can retry.
+                try:
+                    results = self.start_inference(message.sdk_api_job_info)
+                except Exception as start_err:
+                    logger.critical(
+                        f"start_inference raised an unexpected exception after inference "
+                        f"completed ({type(start_err).__name__}: {start_err}). "
+                        "Treating as a failed inference to prevent the job from being silently lost.",
+                    )
+                    results = None
 
                 if results is None or len(results) == 0:
                     self.send_memory_report_message(include_vram=True)

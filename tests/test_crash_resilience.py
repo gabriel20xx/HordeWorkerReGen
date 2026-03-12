@@ -1966,3 +1966,248 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         assert acquired, "Semaphore should have 1 permit (unchanged) after safe double-release"
         second_acquired = sem.acquire(block=False)
         assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
+
+
+class TestCanAcceptJobPostProcessingComplete:
+    """Tests for can_accept_job() excluding POST_PROCESSING_COMPLETE."""
+
+    def _make_process_info(self, state: HordeProcessState) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeProcessInfo
+
+        mock_info = MagicMock()
+        mock_info.last_process_state = state
+        mock_info.can_accept_job = HordeProcessInfo.can_accept_job.__get__(mock_info, HordeProcessInfo)
+        return mock_info
+
+    def test_post_processing_complete_cannot_accept_job(self) -> None:
+        """A process in POST_PROCESSING_COMPLETE must not be considered available.
+
+        The child is still inside _receive_and_handle_control_message sending the
+        result to the manager.  Treating it as available would let the manager
+        schedule a new job or replace the process before the current job's result
+        has been enqueued.
+        """
+        info = self._make_process_info(HordeProcessState.POST_PROCESSING_COMPLETE)
+        assert info.can_accept_job() is False
+
+    def test_waiting_for_job_can_accept(self) -> None:
+        info = self._make_process_info(HordeProcessState.WAITING_FOR_JOB)
+        assert info.can_accept_job() is True
+
+    def test_inference_complete_can_accept(self) -> None:
+        info = self._make_process_info(HordeProcessState.INFERENCE_COMPLETE)
+        assert info.can_accept_job() is True
+
+    def test_model_preloaded_can_accept(self) -> None:
+        info = self._make_process_info(HordeProcessState.MODEL_PRELOADED)
+        assert info.can_accept_job() is True
+
+    def test_inference_processing_cannot_accept(self) -> None:
+        info = self._make_process_info(HordeProcessState.INFERENCE_PROCESSING)
+        assert info.can_accept_job() is False
+
+    def test_process_ending_cannot_accept(self) -> None:
+        info = self._make_process_info(HordeProcessState.PROCESS_ENDING)
+        assert info.can_accept_job() is False
+
+
+class TestStartInferenceExceptionHandling:
+    """Tests that exceptions from start_inference() are caught, preventing the
+    process from ending before the job result is submitted.
+    """
+
+    def _make_inference_process(self) -> MagicMock:
+        """Return a minimally-mocked HordeInferenceProcess."""
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._last_sanitized_negative_prompt = None
+        proc._active_model_name = "TestModel"
+        return proc
+
+    def test_start_inference_exception_sends_faulted_result(self) -> None:
+        """If start_inference() raises, the handler must send INFERENCE_FAILED so
+        the manager can retry, rather than letting the exception propagate and
+        cause a PROCESS_ENDING with the job still in progress.
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+        from horde_worker_regen.process_management.messages import (
+            HordeControlFlag,
+            HordeInferenceControlMessage,
+        )
+        from horde_sdk.ai_horde_api.apimodels import ImageGenerateJobPopResponse
+
+        proc = self._make_inference_process()
+
+        # start_inference raises an unexpected exception (simulates a finally-block error
+        # that occurs after POST_PROCESSING_COMPLETE was emitted)
+        proc.start_inference.side_effect = RuntimeError("Semaphore release failed")
+
+        # Build a minimal START_INFERENCE message
+        job_info = MagicMock(spec=ImageGenerateJobPopResponse)
+        job_info.model = "TestModel"
+        message = MagicMock(spec=HordeInferenceControlMessage)
+        message.control_flag = HordeControlFlag.START_INFERENCE
+        message.horde_model_name = "TestModel"
+        message.sdk_api_job_info = job_info
+
+        # Bind the real method but short-circuit everything except the path under test
+        proc.on_horde_model_state_change = MagicMock()
+        proc.send_process_state_change_message = MagicMock()
+        proc.send_memory_report_message = MagicMock()
+        proc.send_inference_result_message = MagicMock()
+        proc.unload_models_from_ram = MagicMock()
+        proc.preload_model = MagicMock()
+
+        # Call the real method (it will hit the try/except we added around start_inference)
+        HordeInferenceProcess._receive_and_handle_control_message(proc, message)
+
+        # send_inference_result_message must have been called with INFERENCE_FAILED
+        calls = proc.send_inference_result_message.call_args_list
+        assert len(calls) >= 1, "send_inference_result_message was not called"
+        first_call_kwargs = calls[0].kwargs if calls[0].kwargs else {}
+        first_call_args = calls[0].args if calls[0].args else ()
+        # process_state can come as positional or keyword arg
+        process_state_arg = first_call_kwargs.get("process_state") or (
+            first_call_args[0] if first_call_args else None
+        )
+        assert process_state_arg == HordeProcessState.INFERENCE_FAILED, (
+            f"Expected INFERENCE_FAILED, got {process_state_arg}"
+        )
+
+
+class TestVaeLockAcquiredFlag:
+    """Tests that _vae_lock_was_acquired is only set to True when the VAE
+    semaphore is actually acquired (not pre-emptively on timeout).
+    """
+
+    def test_vae_lock_flag_false_on_timeout(self) -> None:
+        """When the VAE semaphore acquire times out, _vae_lock_was_acquired must remain
+        False so the finally block does not try to release a semaphore we never held.
+        """
+        import multiprocessing
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = True
+        proc._in_post_processing = False  # Must be False so we reach the VAE-lock branch
+        proc.VAE_SEMAPHORE_TIMEOUT = 0.01
+
+        # Semaphore with 0 permits – acquire will time out immediately
+        sem = multiprocessing.Semaphore(0)
+        proc._vae_decode_semaphore = sem
+
+        proc.send_heartbeat_message = MagicMock()
+
+        # Simulate a ProgressReport that triggers the VAE-semaphore path
+        from hordelib.horde import ProgressState  # type: ignore[import]
+
+        progress_report = MagicMock()
+        progress_report.hordelib_progress_state = ProgressState.progress
+        progress_report.comfyui_progress = None
+
+        HordeInferenceProcess.progress_callback(proc, progress_report)
+
+        # acquire timed out → flag must be False (not True as it was before the fix)
+        assert proc._vae_lock_was_acquired is False, (
+            "_vae_lock_was_acquired should be False when acquire timed out"
+        )
+
+
+    def test_vae_lock_flag_true_on_success(self) -> None:
+        """When the VAE semaphore is successfully acquired, _vae_lock_was_acquired is True."""
+        import multiprocessing
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = True
+        proc._in_post_processing = False  # Must be False so we reach the VAE-lock branch
+        proc.VAE_SEMAPHORE_TIMEOUT = 5
+
+        # Semaphore with 1 permit – acquire will succeed
+        sem = multiprocessing.Semaphore(1)
+        proc._vae_decode_semaphore = sem
+
+        proc.send_heartbeat_message = MagicMock()
+
+        from hordelib.horde import ProgressState  # type: ignore[import]
+
+        progress_report = MagicMock()
+        progress_report.hordelib_progress_state = ProgressState.progress
+        progress_report.comfyui_progress = None
+
+        # log_free_ram requires an initialised ComfyUI context; patch it out
+        with patch("horde_worker_regen.process_management.inference_process.HordeInferenceProcess.progress_callback.__wrapped__", None, create=True):
+            with patch("hordelib.comfy_horde.log_free_ram", MagicMock()):
+                HordeInferenceProcess.progress_callback(proc, progress_report)
+
+        assert proc._vae_lock_was_acquired is True, (
+            "_vae_lock_was_acquired should be True when acquire succeeded"
+        )
+        # Clean up the acquired semaphore
+        sem.release()
+
+
+class TestSemaphoreReleaseBroadExceptionHandling:
+    """Tests that unexpected non-ValueError exceptions during semaphore release
+    in the start_inference finally block do not propagate and crash the process.
+    """
+
+    def test_inference_semaphore_os_error_is_swallowed(self) -> None:
+        """An OSError from inference semaphore release must not escape start_inference.
+
+        This validates that the broad `except Exception` handler in the finally block
+        prevents unexpected OS-level semaphore errors from crashing the process and
+        causing PROCESS_ENDING with the job still in progress.
+        """
+        import multiprocessing
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._is_busy = False
+        proc._in_post_processing = False
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_sanitized_negative_prompt = None
+        proc._active_model_name = "TestModel"
+        proc.VAE_SEMAPHORE_TIMEOUT = 5
+
+        # Semaphore that raises OSError on release (not ValueError)
+        bad_sem = MagicMock()
+        bad_sem.acquire = MagicMock(return_value=True)
+        bad_sem.release = MagicMock(side_effect=OSError("Invalid semaphore"))
+        proc._inference_semaphore = bad_sem
+
+        good_vae = multiprocessing.Semaphore(1)
+        proc._vae_decode_semaphore = good_vae
+
+        proc.send_process_state_change_message = MagicMock()
+        proc.send_heartbeat_message = MagicMock()
+        proc.on_horde_model_state_change = MagicMock()
+
+        # _horde.basic_inference returns a valid (non-None) result
+        fake_result = MagicMock()
+        fake_result.rawpng = MagicMock()
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = [fake_result]
+
+        # Use plain MagicMock (not spec=...) so all attribute access including .ids works
+        job_info = MagicMock()
+        job_info.payload.prompt = "test"
+        job_info.extra_source_images = None
+        job_info.source_image = None
+        job_info.source_mask = None
+        job_info.ids = []
+
+        # Should not raise even though inference semaphore release raises OSError.
+        # The OSError must be caught in the finally block and logged, not propagated.
+        result = HordeInferenceProcess.start_inference(proc, job_info)
+
+        # The result should be returned (not swallowed), since the error is only in cleanup
+        assert result is not None, "start_inference should return results despite semaphore OSError"
+        bad_sem.release.assert_called_once()

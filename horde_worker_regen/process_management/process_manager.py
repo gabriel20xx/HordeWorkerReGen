@@ -312,13 +312,19 @@ class HordeProcessInfo:
         )
 
     def can_accept_job(self) -> bool:
-        """Return true if the process can accept a job."""
+        """Return true if the process can accept a job.
+
+        POST_PROCESSING_COMPLETE is intentionally excluded: the child process is still
+        inside _receive_and_handle_control_message sending the result to the manager;
+        treating it as available would let the manager schedule a new job or replace
+        the process before the current job's result has been enqueued, which can cause
+        the job to be silently lost.
+        """
         return (
             self.last_process_state == HordeProcessState.WAITING_FOR_JOB
             or self.last_process_state == HordeProcessState.MODEL_PRELOADED
             or self.last_process_state == HordeProcessState.MODEL_LOADED
             or self.last_process_state == HordeProcessState.INFERENCE_COMPLETE
-            or self.last_process_state == HordeProcessState.POST_PROCESSING_COMPLETE
             or self.last_process_state == HordeProcessState.ALCHEMY_COMPLETE
         )
 
