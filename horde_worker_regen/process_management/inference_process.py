@@ -440,12 +440,16 @@ class HordeInferenceProcess(HordeProcess):
         time_start = time.time()
 
         with contextlib.nullcontext():  # self.disk_lock:
-            self._checkpoint_loader.load_checkpoint(
-                will_load_loras=will_load_loras,
-                seamless_tiling_enabled=seamless_tiling_enabled,
-                horde_model_name=horde_model_name,
-                preloading=True,
-            )
+            try:
+                self._checkpoint_loader.load_checkpoint(
+                    will_load_loras=will_load_loras,
+                    seamless_tiling_enabled=seamless_tiling_enabled,
+                    horde_model_name=horde_model_name,
+                    preloading=True,
+                )
+            except Exception as e:
+                logger.error(f"Problem loading model {horde_model_name}: {type(e).__name__}: {e}")
+                raise
 
         logger.info(f"Preloaded model {horde_model_name}")
         self._active_model_name = horde_model_name
