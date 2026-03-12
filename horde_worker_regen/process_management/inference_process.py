@@ -469,7 +469,10 @@ class HordeInferenceProcess(HordeProcess):
     _in_post_processing: bool = False
 
     _current_job_inference_steps_complete: bool = False
+    _vae_acquire_attempted: bool = False
+    """True once we have *tried* to acquire the VAE decode semaphore (regardless of success)."""
     _vae_lock_was_acquired: bool = False
+    """True only when the VAE decode semaphore was actually acquired and must be released."""
 
     _last_job_inference_rate: str | None = None
     _last_sanitized_negative_prompt: str | None = None
@@ -540,13 +543,15 @@ class HordeInferenceProcess(HordeProcess):
             return
 
         if self._current_job_inference_steps_complete:
-            if not self._vae_lock_was_acquired:
+            if not self._vae_acquire_attempted:
+                # Mark as attempted first so subsequent callbacks (fired while basic_inference
+                # is still running) do not re-enter this block and retry acquire indefinitely.
+                self._vae_acquire_attempted = True
                 # Use timeout on VAE semaphore acquire to prevent indefinite blocking
                 # This prevents jobs from hanging at the last step waiting for VAE decode
                 acquired = self._vae_decode_semaphore.acquire(timeout=self.VAE_SEMAPHORE_TIMEOUT)
-                # Only mark as acquired if the acquire actually succeeded so the finally
-                # block does not release a semaphore that was never taken (which would
-                # inflate the count or raise ValueError on a BoundedSemaphore).
+                # Track whether we actually acquired so the finally block only releases
+                # what we held (avoids inflating the count or a ValueError on BoundedSemaphore).
                 self._vae_lock_was_acquired = acquired
                 if not acquired:
                     logger.error(
@@ -640,33 +645,39 @@ class HordeInferenceProcess(HordeProcess):
         self._current_job_inference_steps_complete = False
         self._last_job_inference_rate = None
 
-        # Send state change to indicate inference is now processing
-        self.send_process_state_change_message(
-            process_state=HordeProcessState.INFERENCE_PROCESSING,
-            info="Processing inference",
-        )
-
-        # ! IMPORTANT: Start own code
+        # Capture original_prompt here so the finally block can always restore it,
+        # even if an exception occurs before the sanitization section runs.
         original_prompt = job_info.payload.prompt
         self._last_sanitized_negative_prompt = None
 
+        # Everything after acquire() is wrapped in a single try/finally so that
+        # _inference_semaphore, _is_busy, and the VAE semaphore are *always*
+        # released/reset, including if send_process_state_change_message() or any
+        # other setup call raises before the inner inference block runs.
         try:
-            prompt = job_info.payload.prompt
-            if prompt and "###" in prompt:
-                positive_prompt, negative_prompt = prompt.split("###", 1)
-                cleaned_negative = negative_prompt
-                # Use precompiled regex patterns for better performance
-                cleaned_negative = _NEGATIVE_PROMPT_KEYWORDS_PATTERN.sub("", cleaned_negative)
-                cleaned_negative = _MULTIPLE_COMMAS_PATTERN.sub(", ", cleaned_negative)
-                cleaned_negative = _MULTIPLE_SPACES_PATTERN.sub(" ", cleaned_negative)
-                cleaned_negative = cleaned_negative.strip(" ,")
-                self._last_sanitized_negative_prompt = cleaned_negative
-                job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
-        except Exception as e:
-            logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
-        # ! IMPORTANT: End own code
+            # Send state change to indicate inference is now processing
+            self.send_process_state_change_message(
+                process_state=HordeProcessState.INFERENCE_PROCESSING,
+                info="Processing inference",
+            )
 
-        try:
+            # ! IMPORTANT: Start own code
+            try:
+                prompt = job_info.payload.prompt
+                if prompt and "###" in prompt:
+                    positive_prompt, negative_prompt = prompt.split("###", 1)
+                    cleaned_negative = negative_prompt
+                    # Use precompiled regex patterns for better performance
+                    cleaned_negative = _NEGATIVE_PROMPT_KEYWORDS_PATTERN.sub("", cleaned_negative)
+                    cleaned_negative = _MULTIPLE_COMMAS_PATTERN.sub(", ", cleaned_negative)
+                    cleaned_negative = _MULTIPLE_SPACES_PATTERN.sub(" ", cleaned_negative)
+                    cleaned_negative = cleaned_negative.strip(" ,")
+                    self._last_sanitized_negative_prompt = cleaned_negative
+                    job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
+            except Exception as e:
+                logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
+            # ! IMPORTANT: End own code
+
             self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
             logger.info(f"Starting inference for job(s) {job_info.ids}")
             esi_count = len(job_info.extra_source_images) if job_info.extra_source_images is not None else 0
@@ -705,6 +716,7 @@ class HordeInferenceProcess(HordeProcess):
             vae_semaphore_was_acquired = self._vae_lock_was_acquired
             self._in_post_processing = False
             self._current_job_inference_steps_complete = False
+            self._vae_acquire_attempted = False
             self._vae_lock_was_acquired = False
 
             # ! IMPORTANT: Start own code
@@ -984,16 +996,18 @@ class HordeInferenceProcess(HordeProcess):
 
                 time_start = time.time()
 
-                # Wrap start_inference in a try/except so that if an exception escapes
-                # (e.g. from the finally block releasing semaphores after a successful
-                # inference), the job is not silently lost.  Treat any exception the same
-                # as a None/empty result: send INFERENCE_FAILED so the manager can retry.
+                # Wrap start_inference in a try/except as a last-resort safety net.
+                # start_inference() now wraps its entire post-acquire body in a
+                # try/finally, so semaphores and busy flags are always cleaned up
+                # before this except runs.  Any exception that reaches here means
+                # inference did not produce results; send INFERENCE_FAILED so the
+                # manager can retry rather than silently losing the job.
                 try:
                     results = self.start_inference(message.sdk_api_job_info)
                 except Exception as start_err:
                     logger.critical(
-                        f"start_inference raised an unexpected exception after inference "
-                        f"completed ({type(start_err).__name__}: {start_err}). "
+                        f"start_inference raised an unexpected exception "
+                        f"({type(start_err).__name__}: {start_err}). "
                         "Treating as a failed inference to prevent the job from being silently lost.",
                     )
                     results = None

@@ -2078,18 +2078,21 @@ class TestStartInferenceExceptionHandling:
 
 class TestVaeLockAcquiredFlag:
     """Tests that _vae_lock_was_acquired is only set to True when the VAE
-    semaphore is actually acquired (not pre-emptively on timeout).
+    semaphore is actually acquired (not pre-emptively on timeout), and that
+    _vae_acquire_attempted prevents repeated acquire attempts after a timeout.
     """
 
     def test_vae_lock_flag_false_on_timeout(self) -> None:
         """When the VAE semaphore acquire times out, _vae_lock_was_acquired must remain
         False so the finally block does not try to release a semaphore we never held.
+        _vae_acquire_attempted must be True so subsequent callbacks don't retry.
         """
         import multiprocessing
 
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
         proc = MagicMock(spec=HordeInferenceProcess)
+        proc._vae_acquire_attempted = False
         proc._vae_lock_was_acquired = False
         proc._current_job_inference_steps_complete = True
         proc._in_post_processing = False  # Must be False so we reach the VAE-lock branch
@@ -2110,11 +2113,45 @@ class TestVaeLockAcquiredFlag:
 
         HordeInferenceProcess.progress_callback(proc, progress_report)
 
-        # acquire timed out → flag must be False (not True as it was before the fix)
+        # acquire timed out → _vae_lock_was_acquired must be False (no semaphore to release)
         assert proc._vae_lock_was_acquired is False, (
             "_vae_lock_was_acquired should be False when acquire timed out"
         )
+        # _vae_acquire_attempted must be True so subsequent callbacks skip the acquire
+        assert proc._vae_acquire_attempted is True, (
+            "_vae_acquire_attempted should be True after first attempt (even on timeout)"
+        )
 
+    def test_vae_lock_not_retried_after_timeout(self) -> None:
+        """A second progress_callback invocation after a timeout must not re-attempt
+        acquire (which would block up to VAE_SEMAPHORE_TIMEOUT again and spam logs).
+        """
+        import multiprocessing
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        # Simulate state after a first timeout: attempted but not acquired
+        proc._vae_acquire_attempted = True
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = True
+        proc._in_post_processing = False
+        proc.VAE_SEMAPHORE_TIMEOUT = 0.01
+
+        sem = MagicMock()
+        proc._vae_decode_semaphore = sem
+        proc.send_heartbeat_message = MagicMock()
+
+        from hordelib.horde import ProgressState  # type: ignore[import]
+
+        progress_report = MagicMock()
+        progress_report.hordelib_progress_state = ProgressState.progress
+        progress_report.comfyui_progress = None
+
+        HordeInferenceProcess.progress_callback(proc, progress_report)
+
+        # acquire must NOT be called again
+        sem.acquire.assert_not_called()
 
     def test_vae_lock_flag_true_on_success(self) -> None:
         """When the VAE semaphore is successfully acquired, _vae_lock_was_acquired is True."""
@@ -2123,6 +2160,7 @@ class TestVaeLockAcquiredFlag:
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
         proc = MagicMock(spec=HordeInferenceProcess)
+        proc._vae_acquire_attempted = False
         proc._vae_lock_was_acquired = False
         proc._current_job_inference_steps_complete = True
         proc._in_post_processing = False  # Must be False so we reach the VAE-lock branch
@@ -2148,6 +2186,9 @@ class TestVaeLockAcquiredFlag:
         assert proc._vae_lock_was_acquired is True, (
             "_vae_lock_was_acquired should be True when acquire succeeded"
         )
+        assert proc._vae_acquire_attempted is True, (
+            "_vae_acquire_attempted should be True after a successful acquire"
+        )
         # Clean up the acquired semaphore
         sem.release()
 
@@ -2171,6 +2212,7 @@ class TestSemaphoreReleaseBroadExceptionHandling:
         proc = MagicMock(spec=HordeInferenceProcess)
         proc._is_busy = False
         proc._in_post_processing = False
+        proc._vae_acquire_attempted = False
         proc._vae_lock_was_acquired = False
         proc._current_job_inference_steps_complete = False
         proc._last_sanitized_negative_prompt = None
@@ -2211,3 +2253,52 @@ class TestSemaphoreReleaseBroadExceptionHandling:
         # The result should be returned (not swallowed), since the error is only in cleanup
         assert result is not None, "start_inference should return results despite semaphore OSError"
         bad_sem.release.assert_called_once()
+
+    def test_setup_exception_releases_semaphore(self) -> None:
+        """If send_process_state_change_message() raises during start_inference() setup
+        (before the inference itself runs), the inference semaphore must still be released
+        and _is_busy must be reset.  This tests the restructured try/finally that now
+        covers the entire post-acquire body.
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._is_busy = False
+        proc._in_post_processing = False
+        proc._vae_acquire_attempted = False
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_sanitized_negative_prompt = None
+        proc._active_model_name = "TestModel"
+        proc.VAE_SEMAPHORE_TIMEOUT = 5
+
+        import multiprocessing
+        real_sem = multiprocessing.Semaphore(1)
+        proc._inference_semaphore = real_sem
+        proc._vae_decode_semaphore = multiprocessing.Semaphore(1)
+
+        # send_process_state_change_message raises on the first call (during setup)
+        proc.send_process_state_change_message = MagicMock(
+            side_effect=OSError("pipe broken")
+        )
+        proc.send_heartbeat_message = MagicMock()
+
+        job_info = MagicMock()
+        job_info.payload.prompt = "test"
+        job_info.extra_source_images = None
+        job_info.source_image = None
+        job_info.source_mask = None
+        job_info.ids = []
+
+        result = HordeInferenceProcess.start_inference(proc, job_info)
+
+        # Inference failed due to setup exception → result must be None
+        assert result is None, "start_inference should return None when setup raises"
+
+        # Critically: _is_busy must be False and semaphore must have been released
+        assert proc._is_busy is False, "_is_busy must be reset even after setup exception"
+        # The semaphore started with 1 permit, was acquired (-1 = 0), then should have
+        # been released (+1 = 1) by the finally block.  Verify we can acquire it again.
+        acquired = real_sem.acquire(block=False)
+        assert acquired, "Inference semaphore must be released by finally block even on setup exception"
+        real_sem.release()  # restore for clean teardown
