@@ -2321,7 +2321,7 @@ class TestProgressCallbackExceptionSuppression:
     return (no exception), allowing inference to proceed normally.
     """
 
-    def _make_process(self) -> object:
+    def _make_process(self) -> "HordeInferenceProcess":
         """Return a minimal HordeInferenceProcess that skips heavy initialisation."""
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
@@ -2400,7 +2400,7 @@ class TestPostProcessingVAESemaphore:
     to return None silently.
     """
 
-    def _make_process(self) -> object:
+    def _make_process(self) -> "HordeInferenceProcess":
         """Return a minimal HordeInferenceProcess that skips heavy initialisation."""
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
@@ -2445,11 +2445,6 @@ class TestPostProcessingVAESemaphore:
 
         # Import locally to avoid module-level import of hordelib
         from unittest.mock import patch as _patch
-
-        with _patch(
-            "horde_worker_regen.process_management.inference_process.HordeInferenceProcess._progress_callback_impl",
-        ) as _:
-            pass  # unused — we call _progress_callback_impl directly below
 
         # Patch the hordelib imports inside _progress_callback_impl
         with (
