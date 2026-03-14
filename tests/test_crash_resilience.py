@@ -2045,6 +2045,10 @@ class TestStartInferenceExceptionHandling:
         # Build a minimal START_INFERENCE message
         job_info = MagicMock()
         job_info.model = "TestModel"
+        # Provide payload attributes used in the failure-path preload_model call
+        job_info.payload = MagicMock()
+        job_info.payload.loras = None
+        job_info.payload.tiling = False
         message = MagicMock(spec=HordeInferenceControlMessage)
         message.control_flag = HordeControlFlag.START_INFERENCE
         message.horde_model_name = "TestModel"
