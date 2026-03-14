@@ -2035,7 +2035,6 @@ class TestStartInferenceExceptionHandling:
             HordeControlFlag,
             HordeInferenceControlMessage,
         )
-        from horde_sdk.ai_horde_api.apimodels import ImageGenerateJobPopResponse
 
         proc = self._make_inference_process()
 
@@ -2044,7 +2043,7 @@ class TestStartInferenceExceptionHandling:
         proc.start_inference.side_effect = RuntimeError("Semaphore release failed")
 
         # Build a minimal START_INFERENCE message
-        job_info = MagicMock(spec=ImageGenerateJobPopResponse)
+        job_info = MagicMock()
         job_info.model = "TestModel"
         # Provide payload attributes used in the failure-path preload_model call
         job_info.payload = MagicMock()
@@ -2115,7 +2114,7 @@ class TestVaeLockAcquiredFlag:
         progress_report.hordelib_progress_state = ProgressState.progress
         progress_report.comfyui_progress = None
 
-        HordeInferenceProcess.progress_callback(proc, progress_report)
+        HordeInferenceProcess._progress_callback_impl(proc, progress_report)
 
         # acquire timed out → _vae_lock_was_acquired must be False (no semaphore to release)
         assert proc._vae_lock_was_acquired is False, (
@@ -2152,7 +2151,7 @@ class TestVaeLockAcquiredFlag:
         progress_report.hordelib_progress_state = ProgressState.progress
         progress_report.comfyui_progress = None
 
-        HordeInferenceProcess.progress_callback(proc, progress_report)
+        HordeInferenceProcess._progress_callback_impl(proc, progress_report)
 
         # acquire must NOT be called again
         sem.acquire.assert_not_called()
@@ -2185,7 +2184,7 @@ class TestVaeLockAcquiredFlag:
         # log_free_ram is imported locally inside progress_callback from hordelib.comfy_horde;
         # patch it at the source to avoid needing an initialised ComfyUI context.
         with patch("hordelib.comfy_horde.log_free_ram", MagicMock()):
-            HordeInferenceProcess.progress_callback(proc, progress_report)
+            HordeInferenceProcess._progress_callback_impl(proc, progress_report)
 
         assert proc._vae_lock_was_acquired is True, (
             "_vae_lock_was_acquired should be True when acquire succeeded"
@@ -2306,6 +2305,202 @@ class TestSemaphoreReleaseBroadExceptionHandling:
         acquired = real_sem.acquire(block=False)
         assert acquired, "Inference semaphore must be released by finally block even on setup exception"
         real_sem.release()  # restore for clean teardown
+
+
+class TestReplaceHungInferenceStarting:
+    """Tests for the INFERENCE_STARTING stuck-process detection added to replace_hung_processes().
+
+    When a process has been in INFERENCE_STARTING for longer than preload_timeout AND no other
+    process is actively in INFERENCE_PROCESSING (which would legitimately hold the semaphore),
+    the manager must replace it so the stuck job is retried.
+    """
+
+    def _make_process(
+        self,
+        process_id: int,
+        state: HordeProcessState,
+        *,
+        time_elapsed: float = 9999.0,
+    ) -> MagicMock:
+        import time as _time
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.last_process_state = state
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def _make_manager(self, processes: list[MagicMock]) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        # is_stuck_on_inference always returns False so the specific INFERENCE_STARTING
+        # check (in the `else` branch) is exercised.
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        # _check_and_replace_process must return False so it doesn't spuriously trigger
+        mock_manager._check_and_replace_process.return_value = False
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+
+        # Bind the real method to the mock manager
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def test_stuck_inference_starting_no_active_inference_replaced(self) -> None:
+        """An INFERENCE_STARTING process stuck longer than preload_timeout with no active
+        INFERENCE_PROCESSING must be detected and replaced.
+        """
+        proc = self._make_process(0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True, "replace_hung_processes must return True when replacing stuck INFERENCE_STARTING"
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+    def test_stuck_inference_starting_with_active_inference_not_replaced(self) -> None:
+        """An INFERENCE_STARTING process must NOT be replaced when another process is in
+        INFERENCE_PROCESSING, because that process legitimately holds the semaphore.
+        """
+        inference_starting = self._make_process(
+            0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0
+        )
+        inference_processing = self._make_process(
+            1, HordeProcessState.INFERENCE_PROCESSING, time_elapsed=10.0
+        )
+        mock_manager = self._make_manager([inference_starting, inference_processing])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        # The INFERENCE_STARTING process must not be replaced (INFERENCE_PROCESSING is active)
+        mock_manager._replace_inference_process.assert_not_called()
+        # Return value: no processes were replaced in this run
+        assert result is False
+
+    def test_inference_starting_not_replaced_before_preload_timeout(self) -> None:
+        """An INFERENCE_STARTING process that has been waiting less than preload_timeout
+        must NOT be detected as stuck yet.
+        """
+        # Only 10 seconds elapsed — well below preload_timeout (80 s)
+        proc = self._make_process(0, HordeProcessState.INFERENCE_STARTING, time_elapsed=10.0)
+        mock_manager = self._make_manager([proc])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+
+class TestProcessEndingReleasesInferenceSemaphoreFromInferenceStarting(_ReceiveLoopHarnessMixin):
+    """Tests that the inference semaphore is released when PROCESS_ENDING is received for a
+    process whose prior state was INFERENCE_STARTING.
+
+    This covers the race condition in _replace_inference_process(): the manager releases the
+    semaphore to unblock the blocked child; the child may acquire it before the kill signal
+    arrives.  If the child is killed before it sends INFERENCE_PROCESSING, the manager still
+    records INFERENCE_STARTING as the prior state.  Without releasing on PROCESS_ENDING the
+    semaphore count stays at 0 permanently, leaving the next INFERENCE_STARTING blocked forever.
+    """
+
+    def _run_receive_process_ending_with_semaphore(
+        self,
+        prior_state: HordeProcessState,
+        *,
+        semaphore_acquired: bool,
+    ) -> tuple[MagicMock, object]:
+        """Helper reused from TestProcessEndingReleasesInferenceSemaphore."""
+        import multiprocessing
+        import queue as queue_mod
+        from multiprocessing.synchronize import BoundedSemaphore
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+        bounded_sem = BoundedSemaphore(1, ctx=ctx)
+        if semaphore_acquired:
+            bounded_sem.acquire()
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = prior_state
+        process_info.last_job_referenced = None
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+        mock_manager._inference_semaphore = bounded_sem
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+        return mock_manager, bounded_sem
+
+    def test_semaphore_released_when_process_ending_from_inference_starting_acquired(self) -> None:
+        """PROCESS_ENDING from INFERENCE_STARTING with a held semaphore must release it.
+
+        Scenario: manager released the semaphore to unblock the blocked child, the child
+        acquired it (race), was then killed before sending INFERENCE_PROCESSING.  The
+        PROCESS_ENDING handler must release to restore the permit count to 1.
+        """
+        _mock_manager, sem = self._run_receive_process_ending_with_semaphore(
+            prior_state=HordeProcessState.INFERENCE_STARTING,
+            semaphore_acquired=True,
+        )
+
+        acquired = sem.acquire(block=False)
+        assert acquired, (
+            "Semaphore must be released on PROCESS_ENDING from INFERENCE_STARTING (acquired case) "
+            "to prevent the next INFERENCE_STARTING process from blocking forever"
+        )
+
+    def test_semaphore_not_inflated_when_process_ending_from_inference_starting_not_acquired(self) -> None:
+        """PROCESS_ENDING from INFERENCE_STARTING when the child never acquired the semaphore
+        must not inflate the permit count beyond 1 (BoundedSemaphore safety).
+
+        Scenario: manager released the semaphore (count: 0→1), child was killed before
+        acquiring.  Semaphore count is already 1.  The PROCESS_ENDING handler's release
+        attempt raises ValueError (BoundedSemaphore) and is silently caught; count stays 1.
+        """
+        _mock_manager, sem = self._run_receive_process_ending_with_semaphore(
+            prior_state=HordeProcessState.INFERENCE_STARTING,
+            semaphore_acquired=False,
+        )
+
+        # Count should still be 1 (not inflated to 2)
+        acquired = sem.acquire(block=False)
+        assert acquired, "Semaphore should have exactly 1 permit (not inflated)"
+        second_acquired = sem.acquire(block=False)
+        assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
 
 
 class TestProgressCallbackExceptionSuppression:

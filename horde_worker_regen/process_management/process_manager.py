@@ -2170,7 +2170,19 @@ class HordeWorkerProcessManager:
                     #
                     # BoundedSemaphore raises ValueError on over-release (when the child already
                     # released it normally), so this is always safe to call.
+                    #
+                    # INFERENCE_STARTING is also included here: when _replace_inference_process()
+                    # is called for a stuck INFERENCE_STARTING process it releases the semaphore
+                    # to unblock the child.  There is a narrow race where the child acquires the
+                    # semaphore and transitions toward INFERENCE_PROCESSING before the kill signal
+                    # arrives.  If the child is killed before it can send the INFERENCE_PROCESSING
+                    # state message, the manager still records INFERENCE_STARTING as the prior
+                    # state.  Without releasing here the semaphore count stays at 0 even though
+                    # no process is holding it, leaving the next INFERENCE_STARTING process blocked
+                    # forever.  The BoundedSemaphore ValueError handler covers the case where the
+                    # child never acquired (over-release attempt), so this is always safe to add.
                     if prior_process_state in (
+                        HordeProcessState.INFERENCE_STARTING,
                         HordeProcessState.INFERENCE_PROCESSING,
                         HordeProcessState.POST_PROCESSING_STARTING,
                     ):
@@ -6415,6 +6427,12 @@ class HordeWorkerProcessManager:
 
         now = time.time()
 
+        # Pre-compute once so the per-process INFERENCE_STARTING check is O(1) rather than O(n).
+        any_active_inference_processing = any(
+            p.last_process_state == HordeProcessState.INFERENCE_PROCESSING
+            for p in self._process_map.values()
+        )
+
         any_replaced = False
         for process_info in self._process_map.values():
             if self._process_map.is_stuck_on_inference(
@@ -6475,6 +6493,29 @@ class HordeWorkerProcessManager:
                 for timeout, state, error_message in conditions:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
                         any_replaced = True
+
+                # Check if an INFERENCE_STARTING process is stuck because the semaphore is
+                # unavailable even though no other process is actively running inference.
+                # is_stuck_on_inference() uses inference_step_timeout (600 s by default), which
+                # is far too long for this phase: a process waiting to acquire the semaphore
+                # should not have to wait more than preload_timeout seconds when no other
+                # inference is running.  We skip this check when another process IS in
+                # INFERENCE_PROCESSING, because that process legitimately holds the semaphore
+                # and INFERENCE_STARTING should wait for it to finish.
+                if process_info.last_process_state == HordeProcessState.INFERENCE_STARTING:
+                    time_elapsed_starting = now - process_info.last_received_timestamp
+                    time_elapsed_starting = min(
+                        time_elapsed_starting,
+                        now - process_info.last_heartbeat_timestamp,
+                    )
+                    if time_elapsed_starting > self.bridge_data.preload_timeout:
+                        if not any_active_inference_processing:
+                            logger.error(
+                                f"{process_info} seems to be stuck in INFERENCE_STARTING "
+                                "with no active inference process holding the semaphore; replacing it",
+                            )
+                            self._replace_inference_process(process_info)
+                            any_replaced = True
 
         # If any processes were replaced, set the recently recovered flag and start timer
         if any_replaced:
