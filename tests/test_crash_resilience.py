@@ -2046,6 +2046,10 @@ class TestStartInferenceExceptionHandling:
         # Build a minimal START_INFERENCE message
         job_info = MagicMock(spec=ImageGenerateJobPopResponse)
         job_info.model = "TestModel"
+        # Provide payload attributes used in the failure-path preload_model call
+        job_info.payload = MagicMock()
+        job_info.payload.loras = None
+        job_info.payload.tiling = False
         message = MagicMock(spec=HordeInferenceControlMessage)
         message.control_flag = HordeControlFlag.START_INFERENCE
         message.horde_model_name = "TestModel"
@@ -2302,3 +2306,241 @@ class TestSemaphoreReleaseBroadExceptionHandling:
         acquired = real_sem.acquire(block=False)
         assert acquired, "Inference semaphore must be released by finally block even on setup exception"
         real_sem.release()  # restore for clean teardown
+
+
+class TestProgressCallbackExceptionSuppression:
+    """Tests that progress_callback swallows exceptions to prevent aborting inference.
+
+    Regression tests for the bug where an exception raised inside _progress_callback_impl
+    (e.g. from log_free_ram(), send_heartbeat_message(), or a semaphore operation)
+    propagated into HordeLib's basic_inference(), which then caught it internally and
+    returned None — producing "inference produced no results" with no CRITICAL log to
+    explain the root cause.
+
+    The fix wraps the callback body in try/except so HordeLib always receives a clean
+    return (no exception), allowing inference to proceed normally.
+    """
+
+    def _make_process(self) -> "HordeInferenceProcess":
+        """Return a minimal HordeInferenceProcess that skips heavy initialisation."""
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        class _TestProcess(HordeInferenceProcess):
+            def cleanup_for_exit(self) -> None:
+                pass
+
+        instance = object.__new__(_TestProcess)
+        instance.process_id = 1
+        instance.process_launch_identifier = 42
+        instance._in_post_processing = False
+        instance._current_job_inference_steps_complete = False
+        instance._vae_acquire_attempted = False
+        instance._vae_lock_was_acquired = False
+        instance._last_job_inference_rate = None
+        instance._start_inference_time = 0.0
+        instance._active_model_name = "test-model"
+        instance.process_message_queue = MagicMock()
+        return instance
+
+    def test_exception_in_impl_does_not_propagate(self) -> None:
+        """An exception raised by _progress_callback_impl must NOT escape progress_callback.
+
+        If the exception propagated to HordeLib, basic_inference() would silently return
+        None and the job would fault with "inference produced no results".
+        """
+        proc = self._make_process()
+
+        # Simulate _progress_callback_impl raising unexpectedly
+        proc._progress_callback_impl = MagicMock(side_effect=RuntimeError("Simulated error"))
+
+        progress_report = MagicMock()
+
+        # Must not raise — progress_callback must swallow the exception
+        proc.progress_callback(progress_report)
+
+        # The impl was called
+        proc._progress_callback_impl.assert_called_once_with(progress_report)
+
+    def test_exception_in_impl_is_logged(self) -> None:
+        """An exception from _progress_callback_impl must be logged at ERROR level with traceback."""
+        from unittest.mock import patch as _patch
+
+        proc = self._make_process()
+        proc._progress_callback_impl = MagicMock(side_effect=ValueError("bad value"))
+
+        progress_report = MagicMock()
+
+        with _patch("horde_worker_regen.process_management.inference_process.logger") as mock_logger:
+            # logger.opt(exception=...).error(...) is called — opt() returns a bound logger
+            mock_opt_logger = MagicMock()
+            mock_logger.opt.return_value = mock_opt_logger
+
+            proc.progress_callback(progress_report)
+
+            # logger.opt must be called with the exception for full traceback capture
+            mock_logger.opt.assert_called_once()
+            opt_kwargs = mock_logger.opt.call_args.kwargs
+            assert isinstance(opt_kwargs.get("exception"), ValueError), (
+                "logger.opt must be passed the exception for traceback logging"
+            )
+            # The .error() on the bound logger must be called with the message
+            mock_opt_logger.error.assert_called_once()
+            error_call_args = mock_opt_logger.error.call_args[0][0]
+            assert "ValueError" in error_call_args
+            assert "bad value" in error_call_args
+
+    def test_successful_impl_does_not_log_error(self) -> None:
+        """When _progress_callback_impl succeeds no error should be logged."""
+        from unittest.mock import patch as _patch
+
+        proc = self._make_process()
+        proc._progress_callback_impl = MagicMock(return_value=None)
+
+        progress_report = MagicMock()
+
+        with _patch("horde_worker_regen.process_management.inference_process.logger") as mock_logger:
+            proc.progress_callback(progress_report)
+            mock_logger.opt.assert_not_called()
+            mock_logger.error.assert_not_called()
+
+
+class TestPostProcessingVAESemaphore:
+    """Tests that the VAE decode semaphore is acquired via the post-processing path.
+
+    Regression tests for the bug where ProgressState.post_processing callbacks bypassed
+    the VAE semaphore acquisition in the step-completion path, allowing concurrent
+    heavy GPU work across processes that could exhaust VRAM and cause basic_inference()
+    to return None silently.
+    """
+
+    def _make_process(self) -> "HordeInferenceProcess":
+        """Return a minimal HordeInferenceProcess that skips heavy initialisation."""
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        class _TestProcess(HordeInferenceProcess):
+            def cleanup_for_exit(self) -> None:
+                pass
+
+        instance = object.__new__(_TestProcess)
+        instance.process_id = 1
+        instance.process_launch_identifier = 42
+        instance._in_post_processing = False
+        instance._current_job_inference_steps_complete = False
+        instance._vae_acquire_attempted = False
+        instance._vae_lock_was_acquired = False
+        instance._last_job_inference_rate = None
+        instance._start_inference_time = 0.0
+        instance._active_model_name = "test-model"
+        instance.VAE_SEMAPHORE_TIMEOUT = 5
+        instance.process_message_queue = MagicMock()
+        return instance
+
+    def test_vae_semaphore_acquired_on_first_post_processing_callback(self) -> None:
+        """VAE decode semaphore must be acquired the first time post_processing fires.
+
+        Before the fix, the post_processing branch returned early without ever touching
+        the VAE semaphore, leaving concurrent VAE decode unlimited.
+        """
+        import multiprocessing
+
+        proc = self._make_process()
+
+        vae_sem = multiprocessing.Semaphore(1)
+        inference_sem = multiprocessing.Semaphore(1)
+        inference_sem.acquire()  # simulate that inference holds the semaphore
+        proc._inference_semaphore = inference_sem
+        proc._vae_decode_semaphore = vae_sem
+
+        proc.send_process_state_change_message = MagicMock()
+        proc.send_heartbeat_message = MagicMock()
+
+        progress_report = MagicMock()
+
+        # Import locally to avoid module-level import of hordelib
+        from unittest.mock import patch as _patch
+
+        # Patch the hordelib imports inside _progress_callback_impl
+        with (
+            _patch("horde_worker_regen.process_management.inference_process.logger"),
+            _patch.dict(
+                "sys.modules",
+                {
+                    "hordelib": MagicMock(),
+                    "hordelib.comfy_horde": MagicMock(),
+                    "hordelib.horde": MagicMock(),
+                    "hordelib.utils": MagicMock(),
+                    "hordelib.utils.ioredirect": MagicMock(),
+                },
+            ),
+        ):
+            import sys
+
+            # Set up the ProgressState mock so the post_processing branch fires
+            mock_progress_state = MagicMock()
+            sys.modules["hordelib.horde"].ProgressState = mock_progress_state
+
+            progress_report.hordelib_progress_state = mock_progress_state.post_processing
+            progress_report.comfyui_progress = None
+
+            proc._progress_callback_impl(progress_report)
+
+        # VAE semaphore must have been acquired (attempt was made)
+        assert proc._vae_acquire_attempted is True, (
+            "VAE semaphore acquisition must be attempted in the post-processing path"
+        )
+        # And the semaphore must actually have been acquired successfully
+        assert proc._vae_lock_was_acquired is True, (
+            "VAE semaphore must be successfully acquired in the post-processing path"
+        )
+
+    def test_vae_semaphore_only_acquired_once_in_post_processing(self) -> None:
+        """VAE semaphore must not be acquired twice even with multiple post_processing callbacks."""
+        import multiprocessing
+        from unittest.mock import MagicMock, patch as _patch
+
+        proc = self._make_process()
+
+        # Use a mock VAE semaphore so we can count exact acquire() calls.
+        # A real Semaphore would block on the second acquire, making the test hang.
+        mock_vae_sem = MagicMock()
+        mock_vae_sem.acquire.return_value = True  # simulate successful acquire
+
+        inference_sem = multiprocessing.Semaphore(1)
+        inference_sem.acquire()
+        proc._inference_semaphore = inference_sem
+        proc._vae_decode_semaphore = mock_vae_sem
+
+        proc.send_process_state_change_message = MagicMock()
+        proc.send_heartbeat_message = MagicMock()
+
+        with (
+            _patch("horde_worker_regen.process_management.inference_process.logger"),
+            _patch.dict(
+                "sys.modules",
+                {
+                    "hordelib": MagicMock(),
+                    "hordelib.comfy_horde": MagicMock(),
+                    "hordelib.horde": MagicMock(),
+                    "hordelib.utils": MagicMock(),
+                    "hordelib.utils.ioredirect": MagicMock(),
+                },
+            ),
+        ):
+            import sys
+
+            mock_progress_state = MagicMock()
+            sys.modules["hordelib.horde"].ProgressState = mock_progress_state
+
+            progress_report = MagicMock()
+            progress_report.hordelib_progress_state = mock_progress_state.post_processing
+            progress_report.comfyui_progress = None
+
+            # Call twice — semaphore must only be acquired on the first call
+            proc._progress_callback_impl(progress_report)
+            proc._progress_callback_impl(progress_report)
+
+        assert proc._vae_acquire_attempted is True
+        # Semaphore.acquire() must have been called exactly once despite two callbacks
+        mock_vae_sem.acquire.assert_called_once_with(timeout=proc.VAE_SEMAPHORE_TIMEOUT), (
+            "VAE semaphore acquire() must be called exactly once across multiple post-processing callbacks"
+        )
