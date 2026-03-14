@@ -483,9 +483,30 @@ class HordeInferenceProcess(HordeProcess):
     ) -> None:
         """Handle progress updates from the HordeLib instance.
 
+        This method is called by HordeLib during inference.  Any unhandled exception that
+        escapes this callback may be caught by HordeLib internally, causing basic_inference()
+        to return None/[] instead of results — the exact "inference produced no results"
+        failure mode.  The outer try/except ensures that never happens.
+
         Args:
             progress_report (ProgressReport): The progress report from the HordeLib instance.
         """
+        try:
+            self._progress_callback_impl(progress_report)
+        except Exception as cb_err:
+            # Do NOT re-raise: an uncaught exception here propagates into basic_inference()
+            # which may silently swallow it and return None, producing "inference produced no
+            # results" with no CRITICAL log to explain why.
+            logger.opt(exception=cb_err).error(
+                f"Unexpected error in progress_callback ({type(cb_err).__name__}: {cb_err}). "
+                "Suppressing to avoid aborting inference.",
+            )
+
+    def _progress_callback_impl(
+        self,
+        progress_report: ProgressReport,
+    ) -> None:
+        """Internal implementation of progress_callback — may raise freely."""
         from hordelib.comfy_horde import log_free_ram
         from hordelib.horde import ProgressState
         from hordelib.utils.ioredirect import ComfyUIProgressUnit
@@ -510,6 +531,27 @@ class HordeInferenceProcess(HordeProcess):
                     logger.debug("Released inference semaphore")
                 except Exception as e:
                     logger.error(f"Failed to release inference semaphore: {type(e).__name__} {e}")
+
+                # Acquire the VAE decode semaphore on first entry to post-processing, just as
+                # the step-completion path does.  Without this, the post_processing code path
+                # skips VAE semaphore acquisition entirely, allowing concurrent heavy GPU work
+                # across processes that can exhaust VRAM and cause inference to return None.
+                if not self._vae_acquire_attempted:
+                    self._vae_acquire_attempted = True
+                    acquired = self._vae_decode_semaphore.acquire(timeout=self.VAE_SEMAPHORE_TIMEOUT)
+                    self._vae_lock_was_acquired = acquired
+                    if not acquired:
+                        logger.error(
+                            f"Failed to acquire VAE decode semaphore within {self.VAE_SEMAPHORE_TIMEOUT}s "
+                            "timeout during post-processing. "
+                            "Job will continue but may fail if VRAM is exhausted.",
+                        )
+                    else:
+                        try:
+                            log_free_ram()
+                        except Exception as e:
+                            logger.debug(f"log_free_ram failed during post-processing: {type(e).__name__}: {e}")
+                        logger.debug("Acquired VAE decode semaphore (post-processing path)")
 
             # Send in-progress state
             self.send_process_state_change_message(
@@ -561,7 +603,10 @@ class HordeInferenceProcess(HordeProcess):
                     # Job continues without VAE semaphore (likely to fail during decode)
                     # If it hangs, stuck detection will trigger after inference_step_timeout
                 else:
-                    log_free_ram()
+                    try:
+                        log_free_ram()
+                    except Exception as e:
+                        logger.debug(f"log_free_ram failed after step completion: {type(e).__name__}: {e}")
                     logger.debug("Acquired VAE decode semaphore")
 
             # Send heartbeat with 100% progress to indicate we're in final stage
@@ -691,6 +736,21 @@ class HordeInferenceProcess(HordeProcess):
             with logger.catch(reraise=True):
                 self._start_inference_time = time.time()
                 results = self._horde.basic_inference(job_info, progress_callback=self.progress_callback)
+
+                # Detect a silent failure mode: basic_inference() returned None or an empty
+                # list without raising.  Log a warning immediately so the cause is visible in
+                # the logs (the "inference produced no results" fault message that follows gives
+                # no indication of WHY the results are missing).
+                if results is None:
+                    logger.warning(
+                        "basic_inference() returned None without raising an exception. "
+                        "This is an unexpected silent failure from HordeLib.",
+                    )
+                elif len(results) == 0:
+                    logger.warning(
+                        "basic_inference() returned an empty result list without raising an exception. "
+                        "This is an unexpected silent failure from HordeLib.",
+                    )
 
                 # Emit POST_PROCESSING_COMPLETE state if post-processing was done
                 if self._in_post_processing:
@@ -1047,11 +1107,11 @@ class HordeInferenceProcess(HordeProcess):
                     else:
                         self.preload_model(
                             active_model_name,
-                            will_load_loras=True,
-                            seamless_tiling_enabled=False,
+                            will_load_loras=message.sdk_api_job_info.payload.loras is not None
+                            and len(message.sdk_api_job_info.payload.loras) > 0,
+                            seamless_tiling_enabled=message.sdk_api_job_info.payload.tiling,
                             job_info=message.sdk_api_job_info,
                         )
-                        logger.warning("A non-blocking LoRas/TIs preload didn't occur!. This is a bug.")
 
                     self.send_process_state_change_message(
                         process_state=HordeProcessState.WAITING_FOR_JOB,
