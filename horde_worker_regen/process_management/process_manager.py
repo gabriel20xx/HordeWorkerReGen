@@ -3725,8 +3725,6 @@ class HordeWorkerProcessManager:
                     f"but only {len(completed_job_info.job_image_results)} returned by the inference process "
                     "We will continue, but you might get put into maintenance if this keeps happening.",
                 )
-            elif len(completed_job_info.job_image_results) > 1:
-                logger.info("Attempting to return batched jobs results")
 
             if completed_job_info.censored is None:
                 logger.error(f"Job {job_info.ids} has censored=None, skipping submission to prevent queue block")
