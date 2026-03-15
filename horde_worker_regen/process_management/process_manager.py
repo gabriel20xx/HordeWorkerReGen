@@ -3806,23 +3806,23 @@ class HordeWorkerProcessManager:
                 # Single job - show the one job ID
                 job_id_short = str(successful_submits[0].job_id)[:8]
                 logger.opt(ansi=True).success(
-                    f"Submitted generation {job_id_short} (model: "
+                    f"<b>Submitted generation {job_id_short} (model: "
                     f"<u>{model_name}</u>) "
                     f"for {total_kudos:,.2f} kudos. "
                     f"Job popped {time_taken} seconds ago "
                     f"and took {time_to_generate:.2f} to generate. "
-                    f"({kudos_per_second_batch:.2f} kudos/second for the whole batch. 0.4 or greater is ideal)",
+                    f"({kudos_per_second_batch:.2f} kudos/second for the whole batch. 0.4 or greater is ideal)</b>",
                 )
             else:
                 # Batch job - show all job IDs and combined stats
                 job_ids_short = ", ".join(str(job.job_id)[:8] for job in successful_submits)
                 logger.opt(ansi=True).success(
-                    f"Submitted {batch_size} generations [{job_ids_short}] (model: "
+                    f"<b>Submitted {batch_size} generations [{job_ids_short}] (model: "
                     f"<u>{model_name}</u>) "
                     f"for {total_kudos:,.2f} kudos. "
                     f"Job popped {time_taken} seconds ago "
                     f"and took {time_to_generate:.2f} to generate. "
-                    f"({kudos_per_second_batch:.2f} kudos/second for the whole batch. 0.4 or greater is ideal)",
+                    f"({kudos_per_second_batch:.2f} kudos/second for the whole batch. 0.4 or greater is ideal)</b>",
                 )
 
             # If slower than 0.4 kudos per second, log a warning
