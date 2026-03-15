@@ -3015,7 +3015,8 @@ class TestFrozenPayloadPromptRestore:
         With the old ``contextlib.suppress(AttributeError)`` the ValidationError raised
         by the frozen-model assignment escaped the finally block, so start_inference()
         appeared to have failed even though basic_inference() returned valid results.
-        The fix changes the suppress to ``contextlib.suppress(Exception)`` so the
+        The fix changes the suppress to
+        ``contextlib.suppress(AttributeError, PydanticValidationError)`` so the
         ValidationError is silently swallowed and the inference results are returned.
         """
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
