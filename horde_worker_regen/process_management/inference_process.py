@@ -798,7 +798,12 @@ class HordeInferenceProcess(HordeProcess):
             self._vae_lock_was_acquired = False
 
             # ! IMPORTANT: Start own code
-            with contextlib.suppress(AttributeError):
+            # Use contextlib.suppress(Exception) instead of suppress(AttributeError) because
+            # ImageGenerateJobPopPayload is a frozen Pydantic v2 model, which raises
+            # pydantic.ValidationError (not AttributeError) when an assignment is attempted.
+            # Without this, the ValidationError propagates out of the finally block and causes
+            # start_inference() to be treated as failed even when basic_inference() succeeded.
+            with contextlib.suppress(Exception):
                 job_info.payload.prompt = original_prompt
             # ! IMPORTANT: End own code
 

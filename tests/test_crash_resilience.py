@@ -2955,3 +2955,105 @@ class TestPostProcessingFaultMessage:
         assert proc._post_processing_was_started is False, (
             "_post_processing_was_started must remain False when post-processing was never entered"
         )
+
+
+class TestFrozenPayloadPromptRestore:
+    """Regression tests for the frozen Pydantic payload prompt restoration bug.
+
+    ``ImageGenerateJobPopPayload`` is a frozen Pydantic v2 model.  Assigning to
+    a frozen model attribute raises ``pydantic.ValidationError``, *not*
+    ``AttributeError``.  The original code used ``contextlib.suppress(AttributeError)``
+    in the ``start_inference`` finally block, so the ``ValidationError`` propagated
+    and caused ``start_inference`` to return ``None`` even when ``basic_inference()``
+    succeeded — making every job fault with "inference produced no results".
+    """
+
+    def _make_proc(self) -> MagicMock:
+        """Return a minimally-mocked HordeInferenceProcess for start_inference tests."""
+        import multiprocessing
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._is_busy = False
+        proc._in_post_processing = False
+        proc._post_processing_was_started = False
+        proc._vae_acquire_attempted = False
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_sanitized_negative_prompt = None
+        proc._last_job_inference_rate = None
+        proc._active_model_name = "TestModel"
+        proc._start_inference_time = 0.0
+        proc.VAE_SEMAPHORE_TIMEOUT = 5
+        proc._inference_semaphore = multiprocessing.Semaphore(1)
+        proc._vae_decode_semaphore = multiprocessing.Semaphore(1)
+        proc.send_process_state_change_message = MagicMock()
+        proc.send_heartbeat_message = MagicMock()
+        return proc
+
+    def _make_frozen_job_info(self) -> MagicMock:
+        """Return a job_info whose payload raises ValidationError on assignment (frozen model)."""
+        import pydantic
+
+        class FrozenPayload(pydantic.BaseModel):
+            model_config = pydantic.config.ConfigDict(frozen=True)
+            prompt: str = "positive###negative"
+
+        job_info = MagicMock()
+        job_info.payload = FrozenPayload()
+        job_info.extra_source_images = None
+        job_info.source_image = None
+        job_info.source_mask = None
+        job_info.ids = []
+        return job_info
+
+    def test_frozen_payload_prompt_restore_does_not_propagate(self) -> None:
+        """start_inference must return results (not None) when job_info.payload is a
+        frozen Pydantic model.
+
+        With the old ``contextlib.suppress(AttributeError)`` the ValidationError raised
+        by the frozen-model assignment escaped the finally block, so start_inference()
+        appeared to have failed even though basic_inference() returned valid results.
+        The fix changes the suppress to ``contextlib.suppress(Exception)`` so the
+        ValidationError is silently swallowed and the inference results are returned.
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc()
+
+        fake_result = MagicMock()
+        fake_result.rawpng = MagicMock()
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = [fake_result]
+
+        job_info = self._make_frozen_job_info()
+
+        # Before the fix this returned None because ValidationError escaped the finally block.
+        result = HordeInferenceProcess.start_inference(proc, job_info)
+
+        assert result is not None, (
+            "start_inference must return results even when job_info.payload is a frozen "
+            "Pydantic model (ValidationError in the finally block must be suppressed)"
+        )
+        assert result == [fake_result], "start_inference must return the exact results from basic_inference()"
+
+    def test_frozen_payload_prompt_restore_when_inference_fails(self) -> None:
+        """When basic_inference() raises, start_inference must still return None even
+        if job_info.payload is a frozen model (the ValidationError from the finally block
+        must not shadow the original inference exception).
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc()
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.side_effect = RuntimeError("OOM")
+
+        job_info = self._make_frozen_job_info()
+
+        result = HordeInferenceProcess.start_inference(proc, job_info)
+
+        assert result is None, (
+            "start_inference must return None when basic_inference() raises, "
+            "regardless of whether payload restoration raises in the finally block"
+        )
