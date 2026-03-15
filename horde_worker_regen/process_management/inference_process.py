@@ -468,12 +468,13 @@ class HordeInferenceProcess(HordeProcess):
 
     _in_post_processing: bool = False
     _post_processing_was_started: bool = False
-    """True if post-processing was started for the current or most-recently-completed job.
+    """True if post-processing was entered for the most-recently-completed inference call.
 
-    Unlike ``_in_post_processing``, this flag is *not* reset inside ``start_inference()``'s
-    finally block; instead it is set there (capturing ``_in_post_processing`` before the
-    reset) so that ``send_inference_result_message`` can produce an accurate error message
-    even after the finally block has cleared ``_in_post_processing``.
+    This flag is set in ``start_inference()``'s ``finally`` block by capturing the value of
+    ``_in_post_processing`` *before* that flag is reset.  It is therefore ``False`` throughout
+    the active inference run and only becomes meaningful once ``start_inference()`` has
+    returned.  ``send_inference_result_message()`` reads it to emit an accurate fault
+    description ("post-processing produced no results" vs "inference produced no results").
     """
 
     _current_job_inference_steps_complete: bool = False
