@@ -2739,3 +2739,219 @@ class TestPostProcessingVAESemaphore:
         mock_vae_sem.acquire.assert_called_once_with(timeout=proc.VAE_SEMAPHORE_TIMEOUT), (
             "VAE semaphore acquire() must be called exactly once across multiple post-processing callbacks"
         )
+
+
+class TestPostProcessingFaultMessage:
+    """Regression tests for the post-processing failure distinction fix.
+
+    Covers two behaviours introduced by the fix:
+    1. ``send_inference_result_message`` emits "post-processing produced no results"
+       (not "inference produced no results") when ``_post_processing_was_started`` is True.
+    2. ``start_inference`` does *not* emit ``POST_PROCESSING_COMPLETE`` when
+       ``basic_inference()`` returns ``None`` or ``[]``.
+    """
+
+    # ------------------------------------------------------------------ helpers
+
+    def _make_proc_for_send_result(self, *, post_processing_was_started: bool) -> MagicMock:
+        """Return a minimal mock suited to calling send_inference_result_message directly."""
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._post_processing_was_started = post_processing_was_started
+        proc._last_job_inference_rate = None
+        proc.process_id = 0
+        proc.process_launch_identifier = 0
+        # process_message_queue is set in __init__ so it is not part of the class spec;
+        # assign it directly so the real send_inference_result_message can call .put().
+        proc.process_message_queue = MagicMock()
+        return proc
+
+    def _call_send_result_get_info(self, *, post_processing_was_started: bool, results=None) -> str:
+        """Call send_inference_result_message and return the ``info`` string passed
+        to the HordeInferenceResultMessage constructor."""
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        proc = self._make_proc_for_send_result(post_processing_was_started=post_processing_was_started)
+
+        with patch(
+            "horde_worker_regen.process_management.inference_process.HordeInferenceResultMessage"
+        ) as mock_cls:
+            mock_cls.return_value = MagicMock()
+            HordeInferenceProcess.send_inference_result_message(
+                proc,
+                process_state=HordeProcessState.INFERENCE_FAILED,
+                job_info=MagicMock(),
+                results=results,
+                time_elapsed=1.0,
+                sanitized_negative_prompt=None,
+            )
+            return mock_cls.call_args.kwargs["info"]
+
+    # ------------------------------------------------ send_inference_result_message tests
+
+    def test_fault_info_is_post_processing_when_post_processing_was_started(self) -> None:
+        """When _post_processing_was_started is True and results is None, the fault
+        info string must say "post-processing produced no results" — not the generic
+        "inference produced no results" — so operators can distinguish the failure phase.
+        """
+        info = self._call_send_result_get_info(post_processing_was_started=True, results=None)
+        assert info == "post-processing produced no results", (
+            f"Expected 'post-processing produced no results', got '{info}'"
+        )
+
+    def test_fault_info_is_inference_when_post_processing_was_not_started(self) -> None:
+        """When _post_processing_was_started is False (inference never reached
+        post-processing), the fault info must say "inference produced no results".
+        """
+        info = self._call_send_result_get_info(post_processing_was_started=False, results=None)
+        assert info == "inference produced no results", (
+            f"Expected 'inference produced no results', got '{info}'"
+        )
+
+    def test_fault_info_is_post_processing_when_results_is_empty_list(self) -> None:
+        """An empty list (not None) returned by basic_inference() must also produce
+        "post-processing produced no results" when post-processing was started.
+        """
+        info = self._call_send_result_get_info(post_processing_was_started=True, results=[])
+        assert info == "post-processing produced no results", (
+            f"Expected 'post-processing produced no results', got '{info}'"
+        )
+
+    # ------------------------------------------------ POST_PROCESSING_COMPLETE suppression tests
+
+    def _make_proc_for_start_inference(self, *, in_post_processing: bool) -> MagicMock:
+        """Return a minimal mock suitable for calling start_inference() directly."""
+        import multiprocessing
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._is_busy = False
+        proc._in_post_processing = in_post_processing
+        proc._post_processing_was_started = False
+        proc._vae_acquire_attempted = False
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_sanitized_negative_prompt = None
+        proc._last_job_inference_rate = None
+        proc._active_model_name = "TestModel"
+        proc._start_inference_time = 0.0
+        proc.VAE_SEMAPHORE_TIMEOUT = 5
+
+        # Real semaphore so acquire/release work correctly
+        sem = multiprocessing.Semaphore(1)
+        proc._inference_semaphore = sem
+        proc._vae_decode_semaphore = multiprocessing.Semaphore(1)
+
+        proc.send_process_state_change_message = MagicMock()
+        proc.send_heartbeat_message = MagicMock()
+        proc.on_horde_model_state_change = MagicMock()
+
+        return proc
+
+    def _make_job_info(self) -> MagicMock:
+        job_info = MagicMock()
+        job_info.payload.prompt = "test prompt"
+        job_info.extra_source_images = None
+        job_info.source_image = None
+        job_info.source_mask = None
+        job_info.ids = []
+        return job_info
+
+    def _pp_complete_calls(self, proc: MagicMock) -> list:
+        """Return all send_process_state_change_message calls for POST_PROCESSING_COMPLETE."""
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        return [
+            c
+            for c in proc.send_process_state_change_message.call_args_list
+            if c.kwargs.get("process_state") == HordeProcessState.POST_PROCESSING_COMPLETE
+        ]
+
+    def test_post_processing_complete_not_emitted_when_basic_inference_returns_none(self) -> None:
+        """When basic_inference() returns None and _in_post_processing is True (we entered
+        post-processing but it failed), POST_PROCESSING_COMPLETE must NOT be emitted.
+
+        Emitting it would be misleading: the process-manager uses that state to update the
+        progress bar and history UI, falsely reporting success.
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc_for_start_inference(in_post_processing=True)
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = None
+
+        HordeInferenceProcess.start_inference(proc, self._make_job_info())
+
+        assert len(self._pp_complete_calls(proc)) == 0, (
+            "POST_PROCESSING_COMPLETE must not be emitted when basic_inference() returns None"
+        )
+
+    def test_post_processing_complete_not_emitted_when_basic_inference_returns_empty_list(self) -> None:
+        """When basic_inference() returns an empty list and _in_post_processing is True,
+        POST_PROCESSING_COMPLETE must NOT be emitted.
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc_for_start_inference(in_post_processing=True)
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = []
+
+        HordeInferenceProcess.start_inference(proc, self._make_job_info())
+
+        assert len(self._pp_complete_calls(proc)) == 0, (
+            "POST_PROCESSING_COMPLETE must not be emitted when basic_inference() returns []"
+        )
+
+    def test_post_processing_complete_not_emitted_when_no_post_processing(self) -> None:
+        """When post-processing was never entered (_in_post_processing is False),
+        POST_PROCESSING_COMPLETE must not be emitted regardless of the result.
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc_for_start_inference(in_post_processing=False)
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = None
+
+        HordeInferenceProcess.start_inference(proc, self._make_job_info())
+
+        assert len(self._pp_complete_calls(proc)) == 0, (
+            "POST_PROCESSING_COMPLETE must not be emitted when post-processing was never entered"
+        )
+
+    def test_post_processing_was_started_flag_set_in_finally_when_in_post_processing(self) -> None:
+        """The finally block must copy _in_post_processing → _post_processing_was_started
+        before resetting _in_post_processing, so send_inference_result_message can
+        read the flag even after start_inference() has returned.
+        """
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc_for_start_inference(in_post_processing=True)
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = None
+
+        HordeInferenceProcess.start_inference(proc, self._make_job_info())
+
+        assert proc._post_processing_was_started is True, (
+            "_post_processing_was_started must be True after start_inference() when post-processing was entered"
+        )
+        # And the live flag must have been cleared
+        assert proc._in_post_processing is False, (
+            "_in_post_processing must be reset to False by the finally block"
+        )
+
+    def test_post_processing_was_started_flag_false_when_no_post_processing(self) -> None:
+        """When post-processing was never entered, _post_processing_was_started must remain False."""
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc_for_start_inference(in_post_processing=False)
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = None
+
+        HordeInferenceProcess.start_inference(proc, self._make_job_info())
+
+        assert proc._post_processing_was_started is False, (
+            "_post_processing_was_started must remain False when post-processing was never entered"
+        )

@@ -467,6 +467,15 @@ class HordeInferenceProcess(HordeProcess):
     _start_inference_time: float = 0.0
 
     _in_post_processing: bool = False
+    _post_processing_was_started: bool = False
+    """True if post-processing was entered for the most-recently-completed inference call.
+
+    This flag is set in ``start_inference()``'s ``finally`` block by capturing the value of
+    ``_in_post_processing`` *before* that flag is reset.  It is therefore ``False`` throughout
+    the active inference run and only becomes meaningful once ``start_inference()`` has
+    returned.  ``send_inference_result_message()`` reads it to emit an accurate fault
+    description ("post-processing produced no results" vs "inference produced no results").
+    """
 
     _current_job_inference_steps_complete: bool = False
     _vae_acquire_attempted: bool = False
@@ -689,6 +698,7 @@ class HordeInferenceProcess(HordeProcess):
         self._is_busy = True
         self._current_job_inference_steps_complete = False
         self._last_job_inference_rate = None
+        self._post_processing_was_started = False
 
         # Capture original_prompt here so the finally block can always restore it,
         # even if an exception occurs before the sanitization section runs.
@@ -752,8 +762,12 @@ class HordeInferenceProcess(HordeProcess):
                         "This is an unexpected silent failure from HordeLib.",
                     )
 
-                # Emit POST_PROCESSING_COMPLETE state if post-processing was done
-                if self._in_post_processing:
+                # Emit POST_PROCESSING_COMPLETE state only when post-processing actually
+                # produced valid results.  Emitting it unconditionally would be misleading
+                # when basic_inference() returned None/[] — the job is about to fault, so
+                # reporting "Post processing complete" is inaccurate and can mask the true
+                # failure in the logs.
+                if self._in_post_processing and results is not None and len(results) > 0:
                     self.send_process_state_change_message(
                         process_state=HordeProcessState.POST_PROCESSING_COMPLETE,
                         info="Post processing complete",
@@ -774,6 +788,10 @@ class HordeInferenceProcess(HordeProcess):
             # Capture flags before resetting them — we need them to decide what needs releasing.
             inference_semaphore_already_released = self._in_post_processing
             vae_semaphore_was_acquired = self._vae_lock_was_acquired
+            # Persist whether post-processing was started for this job so that
+            # send_inference_result_message() can emit an accurate error description
+            # after this finally block has cleared _in_post_processing.
+            self._post_processing_was_started = self._in_post_processing
             self._in_post_processing = False
             self._current_job_inference_steps_complete = False
             self._vae_acquire_attempted = False
@@ -970,6 +988,11 @@ class HordeInferenceProcess(HordeProcess):
                     else ""
                 )
                 info_str = f"image encoding failed{rate_context}"
+            elif self._post_processing_was_started:
+                # Inference itself succeeded (the progress callback entered post-processing),
+                # but post-processing returned no results.  Report this accurately so the
+                # operator can distinguish a post-processing failure from an inference failure.
+                info_str = "post-processing produced no results"
             else:
                 info_str = "inference produced no results"
         else:
