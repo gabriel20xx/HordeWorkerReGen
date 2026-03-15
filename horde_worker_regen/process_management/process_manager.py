@@ -3262,6 +3262,9 @@ class HordeWorkerProcessManager:
         if self._max_concurrent_inference_processes == 1 and len(self.bridge_data.image_models_to_load) == 1:
             return False
 
+        required_model_names = {job.model for job in self.jobs_pending_inference}
+        required_model_names.update(job.model for job in self.jobs_in_progress)
+
         for process_info in self._process_map.values():
             if process_info.process_type != HordeProcessType.INFERENCE:
                 continue
@@ -3281,10 +3284,7 @@ class HordeWorkerProcessManager:
                 if model_entry is not None and model_entry.horde_model_load_state == ModelLoadState.IN_USE:
                     continue
 
-                if (
-                    any(job.model == process_info.loaded_horde_model_name for job in self.jobs_pending_inference)
-                    or any(job.model == process_info.loaded_horde_model_name for job in self.jobs_in_progress)
-                ):
+                if process_info.loaded_horde_model_name in required_model_names:
                     continue
 
                 self.unload_from_ram(process_info.process_id)
