@@ -3089,7 +3089,16 @@ class HordeWorkerProcessManager:
             logger.error(
                 f"Failed to start inference for job {next_job.id_} on process {process_with_model.process_id}",
             )
-            self.handle_job_fault(faulted_job=next_job, process_info=process_with_model)
+            # The pipe to the child process is broken.  Replace the dead/unresponsive process
+            # now so that the job retry is dispatched to a healthy worker instead of hitting
+            # the same broken pipe again.  Capture last_job_referenced first because
+            # _replace_inference_process may fault it internally; we only call handle_job_fault
+            # for next_job if it is a different job (avoiding a double-fault when the same
+            # job is being retried on the same process that has now lost its pipe).
+            last_referenced = process_with_model.last_job_referenced
+            self._replace_inference_process(process_with_model)
+            if last_referenced is None or next_job.id_ != last_referenced.id_:
+                self.handle_job_fault(faulted_job=next_job, process_info=process_with_model)
 
         self._skipped_line_next_job_and_process = None
 
