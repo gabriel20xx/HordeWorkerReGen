@@ -34,6 +34,7 @@ from horde_sdk.ai_horde_api.apimodels import (
     ImageGenerateJobPopResponse,
 )
 from loguru import logger
+from pydantic import ValidationError as PydanticValidationError
 from typing_extensions import override
 
 from horde_worker_regen.process_management._aliased_types import ProcessQueue
@@ -798,12 +799,12 @@ class HordeInferenceProcess(HordeProcess):
             self._vae_lock_was_acquired = False
 
             # ! IMPORTANT: Start own code
-            # Use contextlib.suppress(Exception) instead of suppress(AttributeError) because
+            # Use contextlib.suppress(AttributeError, PydanticValidationError) because
             # ImageGenerateJobPopPayload is a frozen Pydantic v2 model, which raises
             # pydantic.ValidationError (not AttributeError) when an assignment is attempted.
             # Without this, the ValidationError propagates out of the finally block and causes
             # start_inference() to be treated as failed even when basic_inference() succeeded.
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError, PydanticValidationError):
                 job_info.payload.prompt = original_prompt
             # ! IMPORTANT: End own code
 
