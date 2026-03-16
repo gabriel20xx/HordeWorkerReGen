@@ -199,6 +199,13 @@ class HordeProcessInfo:
     process_launch_identifier: int
     """The identifier for the process launch. Used to track restarting of specific process slots."""
 
+    last_send_error: Exception | None
+    """The last exception raised by safe_send_message(), or None if the last send succeeded.
+
+    This field is set by safe_send_message() and is intended for diagnostic use immediately
+    after safe_send_message() returns False. It is reset to None on each successful send, so
+    consumers should read it before the next send call."""
+
     # TODO: VRAM usage
 
     def __init__(
@@ -252,6 +259,8 @@ class HordeProcessInfo:
 
         self.process_launch_identifier = process_launch_identifier
 
+        self.last_send_error = None
+
     def is_process_busy(self) -> bool:
         """Return true if the process is actively engaged in a task.
 
@@ -294,14 +303,21 @@ class HordeProcessInfo:
 
         Returns:
             bool: True if the message was sent successfully, False otherwise.
+            On failure the exception is stored in ``last_send_error`` so callers
+            can surface the underlying cause in error logs and fault information.
         """
         try:
             self.pipe_connection.send(message)
+            self.last_send_error = None
             return True
         except Exception as e:
+            self.last_send_error = e
             global _caught_signal
             if not _caught_signal:
-                logger.debug(f"Failed to send message to process {self.process_id}: {e}")
+                logger.debug(
+                    f"Failed to send message to process {self.process_id}: "
+                    f"{type(e).__name__}: {e}"
+                )
             return False
 
     def __repr__(self) -> str:
@@ -3086,10 +3102,25 @@ class HordeWorkerProcessManager:
             )
 
         else:
-            logger.error(
-                f"Failed to start inference for job {next_job.id_} on process {process_with_model.process_id}",
+            send_error = process_with_model.last_send_error
+            send_error_detail = (
+                f" ({type(send_error).__name__}: {send_error})" if send_error is not None else ""
             )
-            self.handle_job_fault(faulted_job=next_job, process_info=process_with_model)
+            logger.error(
+                f"Failed to start inference for job {next_job.id_} on process "
+                f"{process_with_model.process_id}{send_error_detail}",
+            )
+            # The pipe to the child process is broken.  Replace the dead/unresponsive process
+            # now so that the job retry is dispatched to a healthy worker instead of hitting
+            # the same broken pipe again.  Capture last_job_referenced first because
+            # _replace_inference_process may fault it internally; we only call handle_job_fault
+            # for next_job if it is a different job (avoiding a double-fault when the same
+            # job is being retried on the same process that has now lost its pipe).
+            last_referenced = process_with_model.last_job_referenced
+            self._replace_inference_process(process_with_model)
+            if last_referenced is None or next_job.id_ != last_referenced.id_:
+                fault_info = f"pipe broken{send_error_detail}"
+                self.handle_job_fault(faulted_job=next_job, process_info=process_with_model, fault_info=fault_info)
 
         self._skipped_line_next_job_and_process = None
 
