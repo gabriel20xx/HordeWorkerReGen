@@ -3058,3 +3058,191 @@ class TestFrozenPayloadPromptRestore:
             "start_inference must return None when basic_inference() raises, "
             "regardless of whether payload restoration raises in the finally block"
         )
+
+
+class TestStartInferencePipeBroken:
+    """Tests that a broken pipe to a child process causes the process to be
+    replaced and the job fault to be handled correctly (without double-faulting).
+
+    The scenario:
+    - ``safe_send_message()`` returns False (e.g. BrokenPipeError).
+    - The broken process must be replaced immediately via ``_replace_inference_process``.
+    - ``handle_job_fault`` must be called for ``next_job`` when it is a *different* job
+      from ``last_job_referenced`` (IDs differ).
+    - ``handle_job_fault`` must NOT be called for ``next_job`` when the IDs match,
+      because ``_replace_inference_process`` already handles the fault internally.
+    """
+
+    def _make_manager_with_pipe_failure(
+        self,
+        next_job_id: str,
+        last_job_id: str | None,
+    ) -> MagicMock:
+        """Build a minimal mock HordeWorkerProcessManager for the pipe-failure path of
+        ``start_inference()``.
+
+        ``get_next_job_and_process`` is mocked to return a plain MagicMock whose
+        ``.next_job`` and ``.process_with_model`` attributes are set up appropriately.
+        ``safe_send_message`` on the process mock always returns False.
+
+        ``HordeInferenceControlMessage`` is patched at the module level so Pydantic
+        validation of ``sdk_api_job_info`` does not interfere with the test — we only
+        care about the behaviour after ``safe_send_message`` returns False.
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        # Build the next_job mock (the new job being dispatched)
+        next_job = MagicMock()
+        next_job.id_ = next_job_id
+        next_job.model = "TestModel"
+        next_job.source_image = None
+        next_job.payload = MagicMock()
+        next_job.payload.control_type = None
+        next_job.payload.loras = None
+        next_job.payload.tis = None
+        next_job.payload.post_processing = None
+        next_job.payload.hires_fix = False
+        next_job.payload.workflow = None
+        next_job.payload.width = 512
+        next_job.payload.height = 512
+        next_job.payload.ddim_steps = 8
+        next_job.payload.sampler_name = "k_euler"
+        next_job.payload.n_iter = 1
+        next_job.ids = [next_job_id]
+
+        # Build the process whose pipe is "broken"
+        process_with_model = MagicMock()
+        process_with_model.process_id = 1
+        process_with_model.batch_amount = 1
+
+        if last_job_id is not None:
+            last_ref = MagicMock()
+            last_ref.id_ = last_job_id
+            process_with_model.last_job_referenced = last_ref
+        else:
+            process_with_model.last_job_referenced = None
+
+        # safe_send_message always fails (simulates broken pipe)
+        process_with_model.safe_send_message.return_value = False
+
+        # Mock get_next_job_and_process to return a plain MagicMock with the right attrs.
+        # We avoid importing NextJobAndProcess here because it transitively pulls in heavy
+        # GPU/image-processing dependencies.
+        nj_and_p = MagicMock()
+        nj_and_p.next_job = next_job
+        nj_and_p.process_with_model = process_with_model
+        nj_and_p.skipped_line = False
+        nj_and_p.skipped_line_for = None
+
+        mock_manager = MagicMock()
+        mock_manager.get_next_job_and_process.return_value = nj_and_p
+        mock_manager.bridge_data.unload_models_from_vram_often = False
+        mock_manager.post_process_job_overlap_allowed = False
+        mock_manager._skipped_line_next_job_and_process = None
+
+        # Bind the real start_inference method onto the mock manager so we exercise
+        # the real control-flow path.
+        mock_manager._start_inference = HordeWorkerProcessManager.start_inference.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def test_replace_inference_process_called_on_pipe_failure(self) -> None:
+        """When safe_send_message returns False, _replace_inference_process must be invoked."""
+        mock_manager = self._make_manager_with_pipe_failure(
+            next_job_id="aaaaaaaa-0000-0000-0000-000000000001",
+            last_job_id=None,
+        )
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage"
+        ):
+            mock_manager._start_inference()
+
+        mock_manager._replace_inference_process.assert_called_once()
+
+    def test_handle_job_fault_called_once_for_new_job(self) -> None:
+        """When next_job has a different ID from last_job_referenced, handle_job_fault
+        must be called exactly once with next_job as the faulted_job.
+        """
+        next_job_id = "bbbbbbbb-0000-0000-0000-000000000002"
+        last_job_id = "cccccccc-0000-0000-0000-000000000003"  # different ID
+        mock_manager = self._make_manager_with_pipe_failure(
+            next_job_id=next_job_id,
+            last_job_id=last_job_id,
+        )
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage"
+        ):
+            mock_manager._start_inference()
+
+        mock_manager.handle_job_fault.assert_called_once()
+        call_args = mock_manager.handle_job_fault.call_args
+        faulted = call_args.kwargs.get("faulted_job") or call_args.args[0]
+        assert faulted.id_ == next_job_id, (
+            f"handle_job_fault must be called for next_job ({next_job_id}), "
+            f"got {faulted.id_}"
+        )
+
+    def test_handle_job_fault_suppressed_when_same_job_already_handled(self) -> None:
+        """When next_job has the same ID as last_job_referenced, handle_job_fault must
+        NOT be called for next_job because _replace_inference_process already faulted it.
+        """
+        same_id = "dddddddd-0000-0000-0000-000000000004"
+        mock_manager = self._make_manager_with_pipe_failure(
+            next_job_id=same_id,
+            last_job_id=same_id,  # same ID → double-fault guard suppresses extra call
+        )
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage"
+        ):
+            mock_manager._start_inference()
+
+        mock_manager.handle_job_fault.assert_not_called()
+
+    def test_handle_job_fault_called_when_last_job_referenced_is_none(self) -> None:
+        """When the process has never run a job (last_job_referenced is None),
+        handle_job_fault must still be called for next_job.
+        """
+        next_job_id = "eeeeeeee-0000-0000-0000-000000000005"
+        mock_manager = self._make_manager_with_pipe_failure(
+            next_job_id=next_job_id,
+            last_job_id=None,
+        )
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage"
+        ):
+            mock_manager._start_inference()
+
+        mock_manager.handle_job_fault.assert_called_once()
+
+    def test_safe_send_message_stores_last_send_error(self) -> None:
+        """After a failed send, last_send_error holds the exception that was raised."""
+        from horde_worker_regen.process_management.process_manager import HordeProcessInfo
+
+        mock_info = MagicMock()
+        err = BrokenPipeError("pipe gone")
+        mock_info.pipe_connection.send.side_effect = err
+        mock_info.process_id = 42
+
+        result = HordeProcessInfo.safe_send_message.__get__(mock_info, HordeProcessInfo)(MagicMock())
+
+        assert result is False
+        assert mock_info.last_send_error is err
+
+    def test_safe_send_message_clears_last_send_error_on_success(self) -> None:
+        """After a successful send, last_send_error is reset to None."""
+        from horde_worker_regen.process_management.process_manager import HordeProcessInfo
+
+        mock_info = MagicMock()
+        mock_info.pipe_connection.send.return_value = None  # success
+        mock_info.process_id = 42
+        mock_info.last_send_error = BrokenPipeError("stale")
+
+        result = HordeProcessInfo.safe_send_message.__get__(mock_info, HordeProcessInfo)(MagicMock())
+
+        assert result is True
+        assert mock_info.last_send_error is None
