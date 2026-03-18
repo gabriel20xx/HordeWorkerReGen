@@ -31,7 +31,7 @@ def create_level_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS"):
         "DEBUG": f"{{time:{time_format}}} <dim>|</dim> <blue>{{level: <8}}</blue> <dim>|</dim> {{message}}",
         "INFO": f"{{time:{time_format}}} <dim>|</dim> <bold><cyan>{{level: <8}}</cyan></bold> <dim>|</dim> {{message}}",
         "SUCCESS": f"{{time:{time_format}}} <dim>|</dim> <bold><green>{{level: <8}}</green></bold> <dim>|</dim> <green>{{message}}</green>",
-        "WARNING": f"{{time:{time_format}}} <dim>|</dim> <bold><yellow>{{level: <8}}</yellow></bold> <dim>|</dim> <yellow>{{message}}</yellow>",
+        "WARNING": f"{{time:{time_format}}} <dim>|</dim> <bold><yellow>{{level: <8}}</yellow></bold> <dim>|</dim> <bold><yellow>{{message}}</yellow></bold>",
         "ERROR": f"{{time:{time_format}}} <dim>|</dim> <bold><red>{{level: <8}}</red></bold> <dim>|</dim> {{message}}",
         "CRITICAL": f"{{time:{time_format}}} <dim>|</dim> <bold><red><u>{{level: <8}}</u></red></bold> <dim>|</dim> {{message}}",
     }
