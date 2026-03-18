@@ -30,10 +30,10 @@ def create_level_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS"):
         "TRACE": f"{{time:{time_format}}} <dim>|</dim> <dim><cyan>{{level: <8}}</cyan></dim> <dim>|</dim> <dim>{{message}}</dim>",
         "DEBUG": f"{{time:{time_format}}} <dim>|</dim> <blue>{{level: <8}}</blue> <dim>|</dim> {{message}}",
         "INFO": f"{{time:{time_format}}} <dim>|</dim> <bold><cyan>{{level: <8}}</cyan></bold> <dim>|</dim> {{message}}",
-        "SUCCESS": f"{{time:{time_format}}} <dim>|</dim> <bold><green>{{level: <8}}</green></bold> <dim>|</dim> <green>{{message}}</green>",
-        "WARNING": f"{{time:{time_format}}} <dim>|</dim> <bold><yellow>{{level: <8}}</yellow></bold> <dim>|</dim> {{message}}",
-        "ERROR": f"{{time:{time_format}}} <dim>|</dim> <bold><red>{{level: <8}}</red></bold> <dim>|</dim> {{message}}",
-        "CRITICAL": f"{{time:{time_format}}} <dim>|</dim> <bold><red><u>{{level: <8}}</u></red></bold> <dim>|</dim> {{message}}",
+        "SUCCESS": f"{{time:{time_format}}} <dim>|</dim> <bold><green>{{level: <8}}</green></bold> <dim>|</dim> <bold><green>{{message}}</green></bold>",
+        "WARNING": f"{{time:{time_format}}} <dim>|</dim> <bold><yellow>{{level: <8}}</yellow></bold> <dim>|</dim> <bold><yellow>{{message}}</yellow></bold>",
+        "ERROR": f"{{time:{time_format}}} <dim>|</dim> <bold><red>{{level: <8}}</red></bold> <dim>|</dim> <bold><red>{{message}}</red></bold>",
+        "CRITICAL": f"{{time:{time_format}}} <dim>|</dim> <bold><fg #8B0000><u>{{level: <8}}</u></fg #8B0000></bold> <dim>|</dim> <bold><fg #8B0000>{{message}}</fg #8B0000></bold>",
     }
 
     def format_record(record):
