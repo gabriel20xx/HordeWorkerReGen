@@ -235,6 +235,27 @@ class WorkerWebUI:
             overflow-y: auto;
         }
 
+        .errors-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.85em;
+            background: #1e1e1e;
+            color: #f87171;
+            padding: 10px;
+            border-radius: 6px;
+        }
+
+        .error-item {
+            white-space: pre-wrap;
+            word-break: break-word;
+            border-left: 3px solid #dc2626;
+            padding-left: 8px;
+        }
+
         .faulted-job-item {
             background: #fff5f5;
             border: 1px solid #fecaca;
@@ -668,6 +689,15 @@ class WorkerWebUI:
                     <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
                     <div id="faulted-jobs" class="faulted-jobs-list">
                         <div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="card wide-card">
+                    <h2>Errors (<span id="errors-count">0</span>)</h2>
+                    <div id="errors-list" class="errors-list">
+                        <div style="text-align: center; color: #999; padding: 20px;">No errors</div>
                     </div>
                 </div>
             </div>
@@ -1169,6 +1199,24 @@ class WorkerWebUI:
                         faultedJobsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>';
                     }
 
+                    // Errors
+                    const errorsListDiv = document.getElementById('errors-list');
+                    const errorsCount = document.getElementById('errors-count');
+                    if (data.errors_history && data.errors_history.length > 0) {
+                        errorsCount.textContent = data.errors_history.length;
+                        const wasScrolledToBottom = isScrolledToBottom(errorsListDiv, SCROLL_TOLERANCE_PX);
+                        errorsListDiv.innerHTML = data.errors_history.map(entry => {
+                            const coloredEntry = ansiToHtml(entry);
+                            return `<div class="error-item">${coloredEntry}</div>`;
+                        }).join('');
+                        if (wasScrolledToBottom) {
+                            errorsListDiv.scrollTop = errorsListDiv.scrollHeight;
+                        }
+                    } else {
+                        errorsCount.textContent = '0';
+                        errorsListDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No errors</div>';
+                    }
+
                     // Last Generated Images
                     const lastImageContainer = document.getElementById('last-image-container');
                     const lastImageTime = document.getElementById('last-image-time');
@@ -1319,6 +1367,7 @@ class WorkerWebUI:
         last_image_submission_timestamp: float | None = None,
         console_logs: list[str] | None = None,
         faulted_jobs_history: list[dict[str, Any]] | None = None,
+        errors_history: list[str] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -1348,6 +1397,7 @@ class WorkerWebUI:
             last_image_submission_timestamp: Timestamp when the last image was submitted
             console_logs: Recent console log messages
             faulted_jobs_history: List of faulted jobs with details
+            errors_history: List of recent error log messages
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -1399,6 +1449,8 @@ class WorkerWebUI:
             self.status_data["console_logs"] = console_logs
         if faulted_jobs_history is not None:
             self.status_data["faulted_jobs_history"] = faulted_jobs_history
+        if errors_history is not None:
+            self.status_data["errors_history"] = errors_history
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]

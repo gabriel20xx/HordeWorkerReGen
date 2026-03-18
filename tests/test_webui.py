@@ -232,6 +232,31 @@ def test_webui_faulted_jobs_history() -> None:
     assert webui.status_data["faulted_jobs_history"][1]["fault_phase"] == "Post Processing"
 
 
+def test_webui_errors_history() -> None:
+    """Test that WorkerWebUI handles errors history."""
+    webui = WorkerWebUI(port=0)
+
+    # Default should be empty list
+    assert webui.status_data["errors_history"] == []
+
+    # Test updating errors history
+    test_errors = [
+        "ERROR    | horde_worker_regen:process_manager.py:123 - Something went wrong",
+        "ERROR    | horde_worker_regen:process_manager.py:456 - Another error occurred",
+    ]
+    webui.update_status(errors_history=test_errors)
+    assert webui.status_data["errors_history"] == test_errors
+    assert len(webui.status_data["errors_history"]) == 2
+
+    # Test that None does not overwrite existing errors
+    webui.update_status(errors_history=None)
+    assert webui.status_data["errors_history"] == test_errors
+
+    # Test clearing errors
+    webui.update_status(errors_history=[])
+    assert webui.status_data["errors_history"] == []
+
+
 def test_webui_batch_size_display() -> None:
     """Test that WorkerWebUI handles batch size in current job and job queue."""
     webui = WorkerWebUI(port=0)
@@ -398,6 +423,9 @@ if __name__ == "__main__":
 
     test_webui_faulted_jobs_history()
     print("✓ WebUI faulted jobs history test passed")
+
+    test_webui_errors_history()
+    print("✓ WebUI errors history test passed")
 
     test_webui_batch_size_display()
     print("✓ WebUI batch size display test passed")
