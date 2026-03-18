@@ -1207,6 +1207,7 @@ class HordeWorkerProcessManager:
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
+    _MAX_ERRORS_BUFFER = 50  # Maximum number of error log entries to keep in memory buffer
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1619,6 +1620,10 @@ class HordeWorkerProcessManager:
         """Recent console logs for webui display."""
         self._log_handler_id: int | None = None
         """ID of the logger handler for capturing console logs."""
+        self._errors_history: list[str] = []
+        """Recent error log entries for webui display."""
+        self._error_log_handler_id: int | None = None
+        """ID of the logger handler for capturing error logs."""
 
         if self.bridge_data.enable_webui:
             from horde_worker_regen.webui.server import WorkerWebUI
@@ -1641,6 +1646,14 @@ class HordeWorkerProcessManager:
                 colorize=True,
             )
 
+            # Add a separate log handler to capture ERROR+ messages for the errors section
+            self._error_log_handler_id = logger.add(
+                self._capture_error_for_webui,
+                format=webui_format_record,
+                level="ERROR",
+                colorize=True,
+            )
+
     def _capture_log_for_webui(self, message: str) -> None:
         """Capture log messages for webui display.
 
@@ -1656,6 +1669,21 @@ class HordeWorkerProcessManager:
             # Keep only the last N logs
             if len(self._console_logs) > self._MAX_CONSOLE_LOGS_BUFFER:
                 self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER :]
+
+    def _capture_error_for_webui(self, message: str) -> None:
+        """Capture ERROR-level log messages for the webui errors section.
+
+        Args:
+            message: The formatted error log message (may contain ANSI color codes)
+        """
+        clean_message = self.ANSI_ESCAPE_PATTERN.sub("", message).strip()
+
+        if clean_message:
+            # Store the original message with ANSI codes for colored display in webui
+            self._errors_history.append(message.strip())
+            # Keep only the last N error entries
+            if len(self._errors_history) > self._MAX_ERRORS_BUFFER:
+                self._errors_history = self._errors_history[-self._MAX_ERRORS_BUFFER :]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -6162,6 +6190,7 @@ class HordeWorkerProcessManager:
             last_image_submission_timestamp=self._last_image_job_timestamp,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
+            errors_history=self._errors_history,
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
@@ -6427,6 +6456,14 @@ class HordeWorkerProcessManager:
                     self._log_handler_id = None
                 except Exception as e:
                     logger.debug(f"Failed to remove log handler during shutdown: {e}")
+
+            # Cleanup webui error log handler
+            if self._error_log_handler_id is not None:
+                try:
+                    logger.remove(self._error_log_handler_id)
+                    self._error_log_handler_id = None
+                except Exception as e:
+                    logger.debug(f"Failed to remove error log handler during shutdown: {e}")
 
     def _abort(self) -> None:
         """Exit as soon as possible, aborting all processes and jobs immediately."""

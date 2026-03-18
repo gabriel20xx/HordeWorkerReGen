@@ -52,6 +52,7 @@ class WorkerWebUI:
             "last_image_submission_timestamp": 0.0,
             "console_logs": [],
             "faulted_jobs_history": [],
+            "errors_history": [],
         }
 
         self._setup_routes()
