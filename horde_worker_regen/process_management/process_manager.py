@@ -443,8 +443,11 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             if self[process_id].last_progress_value != percent_complete:
                 self[process_id].last_progress_timestamp = time.time()
                 self[process_id].last_progress_value = percent_complete
-
-        self[process_id].last_heartbeat_percent_complete = percent_complete
+            # Only update the known progress when we have an actual value; liveness-only
+            # heartbeats (percent_complete=None, e.g. from _comfyui_callback) must not
+            # reset the last known percentage or the webui progress bar will briefly jump
+            # back to 20% whenever a no-progress heartbeat fires during inference.
+            self[process_id].last_heartbeat_percent_complete = percent_complete
 
     def on_process_ending(self, process_id: int) -> None:
         """Update the process map when a process has ended.
