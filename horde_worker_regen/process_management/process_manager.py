@@ -1605,7 +1605,7 @@ class HordeWorkerProcessManager:
                 time.sleep(5)
 
         # Initialize web UI if enabled
-        self.webui: WorkerWebUI | None = None
+        self.webui: WorkerWebUI | None = None  # noqa: UP037
         self._last_image_base64: list[str] = []
         """The last generated images in base64 format for webui preview (supports batch jobs)."""
         self._last_image_job_timestamp: float = 0.0
@@ -6524,7 +6524,10 @@ class HordeWorkerProcessManager:
                         time_elapsed_starting,
                         now - process_info.last_heartbeat_timestamp,
                     )
-                    if time_elapsed_starting > self.bridge_data.preload_timeout and not any_active_inference_processing:
+                    if (
+                        time_elapsed_starting > self.bridge_data.preload_timeout
+                        and not any_active_inference_processing
+                    ):
                         logger.error(
                             f"{process_info} seems to be stuck in INFERENCE_STARTING "
                             "with no active inference process holding the semaphore; replacing it",
