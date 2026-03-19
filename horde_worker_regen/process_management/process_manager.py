@@ -6190,7 +6190,7 @@ class HordeWorkerProcessManager:
             last_image_submission_timestamp=self._last_image_job_timestamp,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
-            errors_history=self._errors_history,
+            errors_history=list(self._errors_history),
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
