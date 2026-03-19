@@ -7,7 +7,6 @@ Verifies:
 
 import re
 
-import pytest
 from loguru import logger
 
 from horde_worker_regen.logger_config import create_level_format_function
@@ -209,6 +208,7 @@ def test_debug_ansi_sequences() -> None:
     log = _capture_logs_for_level("DEBUG")
     seqs = re.findall(r"\x1b\[([0-9;]+)m", log)
     assert "34" in seqs, "DEBUG level should use blue (ANSI 34)"
+    assert "1" not in seqs, "DEBUG level should NOT use bold (ANSI 1)"
 
 
 def test_trace_ansi_sequences() -> None:
