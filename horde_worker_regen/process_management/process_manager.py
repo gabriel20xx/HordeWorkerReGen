@@ -35,7 +35,7 @@ import yarl
 from aiohttp import ClientSession
 from horde_model_reference.meta_consts import MODEL_REFERENCE_CATEGORY, STABLE_DIFFUSION_BASELINE_CATEGORY
 from horde_model_reference.model_reference_manager import ModelReferenceManager
-from horde_model_reference.model_reference_records import ImageGenerationModelRecord
+from horde_model_reference.model_reference_records import StableDiffusion_ModelReference
 from horde_sdk import RequestErrorResponse
 from horde_sdk.ai_horde_api import GENERATION_STATE
 from horde_sdk.ai_horde_api.ai_horde_clients import (
@@ -693,7 +693,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
     def keep_single_inference(
         self,
         *,
-        stable_diffusion_model_reference: dict[str, ImageGenerationModelRecord],
+        stable_diffusion_model_reference: StableDiffusion_ModelReference,
         post_process_job_overlap: bool,
     ) -> tuple[bool, str]:
         """Return true if we should keep only a single inference process running.
@@ -735,7 +735,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                     )
                     continue
 
-                model_info = stable_diffusion_model_reference.get(model)
+                model_info = stable_diffusion_model_reference.root.get(model)
                 if model_info is None:
                     logger.debug(f"Model {model} not found in stable diffusion model reference. Is it a custom model?")
                     continue
@@ -1327,7 +1327,7 @@ class HordeWorkerProcessManager:
     _aiohttp_client_session: aiohttp.ClientSession
     """The aiohttp client session to use for making network calls."""
 
-    stable_diffusion_reference: dict[str, ImageGenerationModelRecord] | None
+    stable_diffusion_reference: StableDiffusion_ModelReference | None
     """The class which contains the list of models from horde_model_reference."""
 
     def get_model_baseline(self, model_name: str) -> STABLE_DIFFUSION_BASELINE_CATEGORY | str | None:
@@ -1335,10 +1335,10 @@ class HordeWorkerProcessManager:
         if self.stable_diffusion_reference is None:
             return None
 
-        if model_name not in self.stable_diffusion_reference:
+        if model_name not in self.stable_diffusion_reference.root:
             return None
 
-        return self.stable_diffusion_reference[model_name].baseline
+        return self.stable_diffusion_reference.root[model_name].baseline
 
     horde_client_session: AIHordeAPIAsyncClientSession | None
     """The context manager for the horde sdk client."""
@@ -1592,11 +1592,14 @@ class HordeWorkerProcessManager:
 
         while self.stable_diffusion_reference is None:
             try:
-                horde_model_reference_manager = ModelReferenceManager()
-                all_refs = horde_model_reference_manager.get_all_model_references(overwrite_existing=False)
-                _sd_ref = all_refs.get(MODEL_REFERENCE_CATEGORY.image_generation)
+                horde_model_reference_manager = ModelReferenceManager(
+                    download_and_convert_legacy_dbs=False,
+                    override_existing=False,
+                )
+                all_refs = horde_model_reference_manager.get_all_model_references(redownload_all=False)
+                _sd_ref = all_refs.get(MODEL_REFERENCE_CATEGORY.stable_diffusion)
 
-                if not isinstance(_sd_ref, dict):
+                if not isinstance(_sd_ref, StableDiffusion_ModelReference):
                     logger.error("Stable diffusion model references not found. Retrying in 5 seconds...")
                     time.sleep(5)
                     continue
@@ -1764,7 +1767,7 @@ class HordeWorkerProcessManager:
         if self.stable_diffusion_reference is None:
             raise ValueError("stable_diffusion_reference is None")
 
-        horde_model_record = self.stable_diffusion_reference[horde_model_name]
+        horde_model_record = self.stable_diffusion_reference.root[horde_model_name]
 
         if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_1:
             return int(3 * 1024 * 1024 * 1024)
@@ -3370,8 +3373,8 @@ class HordeWorkerProcessManager:
 
         # Custom models don't appear in the downloaded model reference
         model_info = {}
-        if completed_job_info.sdk_api_job_info.model in self.stable_diffusion_reference:
-            model_info = self.stable_diffusion_reference[completed_job_info.sdk_api_job_info.model].model_dump()
+        if completed_job_info.sdk_api_job_info.model in self.stable_diffusion_reference.root:
+            model_info = self.stable_diffusion_reference.root[completed_job_info.sdk_api_job_info.model].model_dump()
 
         generation_metadata: dict[str, object] = {}
         try:
@@ -3952,7 +3955,7 @@ class HordeWorkerProcessManager:
                             if (
                                 self.stable_diffusion_reference is not None
                                 and hji.sdk_api_job_info.model is not None
-                                and hji.sdk_api_job_info.model in self.stable_diffusion_reference
+                                and hji.sdk_api_job_info.model in self.stable_diffusion_reference.root
                             ):
 
                                 model_dump = hji.model_dump(
@@ -3963,7 +3966,7 @@ class HordeWorkerProcessManager:
                                     and hji.sdk_api_job_info.model is not None
                                 ):
                                     model_dump["sdk_api_job_info"]["model_baseline"] = (
-                                        self.stable_diffusion_reference[hji.sdk_api_job_info.model].baseline
+                                        self.stable_diffusion_reference.root[hji.sdk_api_job_info.model].baseline
                                     )
                                 # Preparation for multiple schedulers
                                 if hji.sdk_api_job_info.payload.karras:
@@ -5226,7 +5229,7 @@ class HordeWorkerProcessManager:
                                 if next_job_and_process is not None:
                                     next_model = next_job_and_process.next_job.model
                                     if next_model is not None:
-                                        next_model_record = self.stable_diffusion_reference.get(next_model)
+                                        next_model_record = self.stable_diffusion_reference.root.get(next_model)
                                         next_workflow = next_job_and_process.next_job.payload.workflow
 
                                         next_job_heavy_model_and_workflow = (
