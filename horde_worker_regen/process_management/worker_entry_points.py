@@ -57,6 +57,7 @@ def start_inference_process(
         logger.remove()
 
         try:
+            import horde_worker_regen._horde_compat  # noqa: F401
             import hordelib
             from hordelib.utils.logger import HordeLog
 

@@ -63,6 +63,7 @@ def download_all_models(
     # Suppress known warnings from dependencies
     warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU.*")
 
+    import horde_worker_regen._horde_compat  # noqa: F401
     import hordelib
     from horde_safety.deep_danbooru_model import download_deep_danbooru_model
     from horde_safety.interrogate import get_interrogator_no_blip
