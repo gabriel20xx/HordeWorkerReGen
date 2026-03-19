@@ -99,6 +99,49 @@ def test_post_processing_progress_scaling() -> None:
     assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_POST_PROCESSING, None) == 75
 
 
+def test_no_progress_jump_on_none_heartbeat() -> None:
+    """Test that a liveness-only heartbeat (percent_complete=None) does not reset progress.
+
+    Regression test for: webui progress jumps back to 20% between inference processing
+    and inference post-process.  The _comfyui_callback fires with no percent_complete
+    during the transition; on_heartbeat must not overwrite the last known percentage
+    with None in that case.
+    """
+    from horde_worker_regen.process_management.messages import HordeHeartbeatType
+    from horde_worker_regen.process_management.process_manager import HordeProcessInfo, ProcessMap
+
+    process_map = ProcessMap()
+    process_id = 0
+    process_map[process_id] = HordeProcessInfo(
+        mp_process=MagicMock(),
+        pipe_connection=MagicMock(),
+        process_id=process_id,
+        process_type=MagicMock(),
+        last_process_state=HordeProcessState.INFERENCE_PROCESSING,
+        process_launch_identifier=0,
+    )
+
+    # Simulate: inference at 80% (overall = 60%)
+    process_map.on_heartbeat(
+        process_id,
+        heartbeat_type=HordeHeartbeatType.INFERENCE_STEP,
+        percent_complete=80,
+    )
+    assert process_map[process_id].last_heartbeat_percent_complete == 80
+
+    # Simulate: liveness-only heartbeat fires (e.g. from _comfyui_callback) with no percent
+    process_map.on_heartbeat(
+        process_id,
+        heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+        percent_complete=None,
+    )
+    # Must NOT reset to None – the last known progress must be preserved
+    assert process_map[process_id].last_heartbeat_percent_complete == 80, (
+        "A heartbeat with percent_complete=None must not reset last_heartbeat_percent_complete "
+        "to None (would cause 20% progress jump in the webui)"
+    )
+
+
 if __name__ == "__main__":
     # Run tests manually for debugging
     import sys
@@ -111,6 +154,8 @@ if __name__ == "__main__":
         print("✓ test_inference_progress_scaling passed")
         test_post_processing_progress_scaling()
         print("✓ test_post_processing_progress_scaling passed")
+        test_no_progress_jump_on_none_heartbeat()
+        print("✓ test_no_progress_jump_on_none_heartbeat passed")
         print("\n✓ All granular progress tests passed!")
     except AssertionError as e:
         print(f"\n✗ Test failed: {e}")
