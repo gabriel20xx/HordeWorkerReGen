@@ -24,15 +24,12 @@ def download_all_models(
     from horde_worker_regen.bridge_data.load_config import BridgeDataLoader, reGenBridgeData
     from horde_worker_regen.consts import BRIDGE_CONFIG_FILENAME
 
-    horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=False,
-        override_existing=False,
-    )
+    horde_model_reference_manager = ModelReferenceManager()
 
     while True:
         try:
-            all_refs = horde_model_reference_manager.get_all_model_references(redownload_all=True)
-            if not all_refs.get(MODEL_REFERENCE_CATEGORY.stable_diffusion):
+            all_refs = horde_model_reference_manager.get_all_model_references(overwrite_existing=True)
+            if not all_refs.get(MODEL_REFERENCE_CATEGORY.image_generation):
                 logger.error("Image generation model references not found. Retrying in 5 seconds...")
                 time.sleep(5)
             else:
