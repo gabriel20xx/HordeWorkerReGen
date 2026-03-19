@@ -5496,8 +5496,8 @@ class HordeWorkerProcessManager:
             jobs_in_progress_list = []
             for x in self.jobs_in_progress:
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
-                safe_model = (x.model or "").replace("<", "&lt;").replace(">", "&gt;")
-                jobs_in_progress_list.append(f"&lt;{shortened_id}: <u>{safe_model}</u>&gt;")
+                safe_model = (x.model or "").replace("<", "\\<")
+                jobs_in_progress_list.append(f"[{shortened_id}: <u>{safe_model}</u>]")
 
             if jobs_in_progress_list:
                 logging_function(f'  In Progress: {", ".join(jobs_in_progress_list)}')
@@ -5508,8 +5508,8 @@ class HordeWorkerProcessManager:
                 if x in self.jobs_in_progress:
                     continue
                 shortened_id = str(x.id_.root)[:8] if x.id_ is not None else "None?"
-                safe_model = (x.model or "").replace("<", "&lt;").replace(">", "&gt;")
-                jobs_pending_list.append(f"&lt;{shortened_id}: <u>{safe_model}</u>&gt;")
+                safe_model = (x.model or "").replace("<", "\\<")
+                jobs_pending_list.append(f"[{shortened_id}: <u>{safe_model}</u>]")
 
             if jobs_pending_list:
                 logging_function(f'  Queued: {", ".join(jobs_pending_list)}')
