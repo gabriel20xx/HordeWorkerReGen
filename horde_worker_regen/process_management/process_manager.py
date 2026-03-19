@@ -6444,10 +6444,6 @@ class HordeWorkerProcessManager:
 
     def replace_hung_processes(self) -> bool:
         """Replaces processes that haven't checked in since `process_timeout` seconds in bridgeData."""
-        # Guard: Prevent cascading recoveries - only one timer thread can be active at a time
-        if self._recently_recovered:
-            return False
-
         import threading
 
         def timed_unset_recently_recovered() -> None:
@@ -6468,6 +6464,10 @@ class HordeWorkerProcessManager:
                 process_info.process_id,
                 self.bridge_data.inference_step_timeout,
             ):
+                # Guard: skip aggressive mid-inference replacements during the cooldown
+                # window after a prior recovery to prevent cascading replacements.
+                if self._recently_recovered:
+                    continue
                 # Enhanced logging for stuck job detection
                 time_since_heartbeat = now - process_info.last_heartbeat_timestamp
                 time_since_progress = now - process_info.last_progress_timestamp
@@ -6486,8 +6486,8 @@ class HordeWorkerProcessManager:
                 self._replace_inference_process(process_info)
                 any_replaced = True
             else:
-                # Check PROCESS_STARTING first - this should always be checked regardless of job availability
-                # since processes should complete initialization even when no jobs are available
+                # Check PROCESS_STARTING first - always checked regardless of job availability
+                # or prior recoveries, since processes must complete initialization to be useful.
                 if self._check_and_replace_process(
                     process_info,
                     self.bridge_data.preload_timeout,
@@ -6495,18 +6495,31 @@ class HordeWorkerProcessManager:
                     "seems to be stuck starting",
                 ):
                     any_replaced = True
+                    continue
 
                 # Skip other state checks if no jobs are available since those states are job-related
                 if self._last_pop_no_jobs_available:
                     continue
 
-                # Check job-related states that only matter when jobs are being processed
+                # Check MODEL_PRELOADING - always checked even after a recent recovery.
+                # A process stuck here holds a preloading slot and prevents pending jobs from
+                # being dispatched to other processes; it must be detected and replaced promptly.
+                if self._check_and_replace_process(
+                    process_info,
+                    self.bridge_data.preload_timeout,
+                    HordeProcessState.MODEL_PRELOADING,
+                    "seems to be stuck preloading a model",
+                ):
+                    any_replaced = True
+                    continue
+
+                # Skip remaining checks during the recovery cooldown to prevent cascading
+                # replacements after a prior process was just recovered.
+                if self._recently_recovered:
+                    continue
+
+                # Check remaining job-related states that only matter when jobs are being processed
                 conditions: list[tuple[float, HordeProcessState, str]] = [
-                    (
-                        self.bridge_data.preload_timeout,
-                        HordeProcessState.MODEL_PRELOADING,
-                        "seems to be stuck preloading a model",
-                    ),
                     (
                         self.bridge_data.download_timeout,
                         HordeProcessState.DOWNLOADING_AUX_MODEL,
@@ -6546,8 +6559,10 @@ class HordeWorkerProcessManager:
                             self._replace_inference_process(process_info)
                             any_replaced = True
 
-        # If any processes were replaced, set the recently recovered flag and start timer
-        if any_replaced:
+        # If any processes were replaced, set the recently recovered flag and start a timer
+        # thread to clear it after inference_step_timeout.  Only start one timer thread at a
+        # time: if _recently_recovered is already True a timer is already running.
+        if any_replaced and not self._recently_recovered:
             self._recently_recovered = True
             threading.Thread(target=timed_unset_recently_recovered).start()
 
