@@ -222,12 +222,12 @@ class HordeProcess(abc.ABC):
                 last_warning = getattr(self, "_last_vram_warning_time", 0.0)
                 if now - last_warning >= 10.0:
                     logger.warning(
-                        f"Failed to get VRAM usage (report will be sent without VRAM info): {e}"
+                        f"Failed to get VRAM usage (report will be sent without VRAM info): {e}",
                     )
                     self._last_vram_warning_time = now
                 else:
                     logger.debug(
-                        f"Failed to get VRAM usage (report will be sent without VRAM info): {e}"
+                        f"Failed to get VRAM usage (report will be sent without VRAM info): {e}",
                     )
 
         self.process_message_queue.put(message)
