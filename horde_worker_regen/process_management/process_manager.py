@@ -2800,9 +2800,26 @@ class HordeWorkerProcessManager:
                     process_id=available_process.process_id,
                     new_state=HordeProcessState.MODEL_PRELOADING,
                 )
+            else:
+                # The pipe to the process is broken — the child has died silently without
+                # sending PROCESS_ENDING/PROCESS_ENDED (e.g. SIGKILL from the OS).
+                # Leaving it in WAITING_FOR_JOB would cause preload_models() to keep
+                # selecting the same dead process every cycle and never dispatch the
+                # queued job (the retry job would be permanently "stuck" or "vanish").
+                # Replace the dead process now so the next cycle can find a healthy one.
+                send_error = available_process.last_send_error
+                send_error_detail = (
+                    f" ({type(send_error).__name__}: {send_error})" if send_error is not None else ""
+                )
+                logger.error(
+                    f"Failed to send PRELOAD_MODEL to process {available_process.process_id}"
+                    f"{send_error_detail}; replacing the dead process",
+                )
+                self._replace_inference_process(available_process)
 
-            # Even if the message fails to send, we still want to return True so that we can let the main loop
-            # catch up and potentially replace the process.
+            # Return True to signal that we handled a preload attempt this cycle.
+            # If the send succeeded, the model is now loading.  If it failed, the dead
+            # process has been replaced and the next cycle will find a healthy process.
             return True
 
         return False

@@ -3246,3 +3246,133 @@ class TestStartInferencePipeBroken:
 
         assert result is True
         assert mock_info.last_send_error is None
+
+
+class TestPreloadModelsPipeBroken:
+    """Tests that a broken pipe to a child process during preload_models() causes the
+    dead process to be replaced immediately instead of causing an infinite loop.
+
+    The scenario:
+    - A job is queued in jobs_pending_inference for a model that is not loaded.
+    - An available process (WAITING_FOR_JOB, no model) is selected for preloading.
+    - ``safe_send_message()`` returns False (e.g. broken pipe — the process died silently).
+    - The dead process must be replaced via ``_replace_inference_process``.
+    - The queued job must NOT be faulted (no job was associated with the idle process).
+    """
+
+    def _make_manager_for_preload(
+        self,
+        send_message_succeeds: bool,
+    ) -> MagicMock:
+        """Build a minimal mock HordeWorkerProcessManager for the preload_models() path.
+
+        If ``send_message_succeeds`` is False, ``safe_send_message`` returns False to
+        simulate a broken pipe.
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        # Queued job that needs model "TestPreloadModel"
+        job = MagicMock()
+        job.model = "TestPreloadModel"
+        job.payload = MagicMock()
+        job.payload.loras = None
+        job.payload.tiling = None
+
+        # The available process: WAITING_FOR_JOB, no model loaded
+        available_process = MagicMock()
+        available_process.process_id = 1
+        available_process.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        available_process.loaded_horde_model_name = None
+        available_process.last_send_error = None
+        available_process.safe_send_message.return_value = send_message_succeeds
+
+        # Process map
+        mock_process_map = MagicMock()
+        mock_process_map.values.return_value = [available_process]
+        mock_process_map.get_first_available_inference_process.return_value = available_process
+        mock_process_map.num_loaded_inference_processes.return_value = 1
+        mock_process_map.num_preloading_processes.return_value = 0
+
+        # Model map: "TestPreloadModel" not in loaded/loading models
+        mock_model_map = MagicMock()
+        mock_model_map.root = {}  # empty — no model loading or loaded
+
+        mock_manager = MagicMock()
+        mock_manager._process_map = mock_process_map
+        mock_manager._horde_model_map = mock_model_map
+        mock_manager.jobs_pending_inference = [job]
+        mock_manager.jobs_in_progress = []
+        mock_manager.bridge_data.cycle_process_on_model_change = False
+        mock_manager.bridge_data.very_fast_disk_mode = False
+        mock_manager._max_concurrent_inference_processes = 1
+        mock_manager._preload_delay_notified = False
+        mock_manager._shutting_down = False
+
+        mock_manager.get_processes_with_model_for_queued_job.return_value = []
+
+        # Bind the real preload_models method onto the mock manager.
+        mock_manager._preload_models = HordeWorkerProcessManager.preload_models.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def test_replace_inference_process_called_on_pipe_failure(self) -> None:
+        """When safe_send_message returns False in preload_models(), the dead process
+        must be replaced via _replace_inference_process."""
+        mock_manager = self._make_manager_for_preload(send_message_succeeds=False)
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage"
+        ):
+            result = mock_manager._preload_models()
+
+        assert result is True, "preload_models() should still return True after replacing dead process"
+        mock_manager._replace_inference_process.assert_called_once()
+        # Verify it was the dead process that was passed for replacement
+        replaced_process = mock_manager._replace_inference_process.call_args[0][0]
+        assert replaced_process.process_id == 1
+
+    def test_handle_job_fault_not_called_for_idle_process(self) -> None:
+        """When the dead process had no job (WAITING_FOR_JOB, no last_job_referenced),
+        handle_job_fault must NOT be called — the queued job should remain in the queue."""
+        mock_manager = self._make_manager_for_preload(send_message_succeeds=False)
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage"
+        ):
+            mock_manager._preload_models()
+
+        # _replace_inference_process is mocked, so handle_job_fault won't be called
+        # indirectly. We just verify handle_job_fault was never called directly.
+        mock_manager.handle_job_fault.assert_not_called()
+
+    def test_model_map_updated_on_success(self) -> None:
+        """When safe_send_message succeeds, the model map and process map are updated."""
+        mock_manager = self._make_manager_for_preload(send_message_succeeds=True)
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage"
+        ):
+            result = mock_manager._preload_models()
+
+        assert result is True
+        # _replace_inference_process must NOT be called on success
+        mock_manager._replace_inference_process.assert_not_called()
+        # Model map should be updated with LOADING state
+        mock_manager._horde_model_map.update_entry.assert_called_once()
+        # Process map should reflect MODEL_PRELOADING state
+        mock_manager._process_map.on_process_state_change.assert_called_once()
+
+    def test_returns_true_even_on_pipe_failure(self) -> None:
+        """preload_models() must return True even when safe_send_message fails, so
+        the main loop knows a preload cycle was attempted and waits for the replacement
+        to complete before dispatching again."""
+        mock_manager = self._make_manager_for_preload(send_message_succeeds=False)
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage"
+        ):
+            result = mock_manager._preload_models()
+
+        assert result is True
