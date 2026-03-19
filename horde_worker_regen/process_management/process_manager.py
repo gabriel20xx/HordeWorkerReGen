@@ -1596,7 +1596,7 @@ class HordeWorkerProcessManager:
 
         while self.stable_diffusion_reference is None:
             try:
-                all_refs = self.horde_model_reference_manager.get_all_model_references(overwrite_existing=False)
+                all_refs = self.horde_model_reference_manager.get_all_model_references_unsafe(overwrite_existing=False)
                 _sd_ref = all_refs.get(MODEL_REFERENCE_CATEGORY.image_generation)
 
                 if not isinstance(_sd_ref, dict):
