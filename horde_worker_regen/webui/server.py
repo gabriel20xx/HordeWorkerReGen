@@ -1398,6 +1398,8 @@ class WorkerWebUI:
             self.status_data["console_logs"] = console_logs
         if faulted_jobs_history is not None:
             self.status_data["faulted_jobs_history"] = faulted_jobs_history
+        if errors_history is not None:
+            self.status_data["errors_history"] = list(errors_history)
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]
