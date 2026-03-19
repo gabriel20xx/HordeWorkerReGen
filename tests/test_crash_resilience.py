@@ -3309,7 +3309,12 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
         proc = self._make_process(0, HordeProcessState.MODEL_PRELOADING, time_elapsed=9999.0)
         mock_manager = self._make_manager([proc], recently_recovered=False)
 
-        def fake_check_and_replace(process_info, timeout, state, error_msg):  # noqa: ANN001
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
             if process_info.last_process_state == state:
                 import time as _t
 
@@ -3338,7 +3343,12 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
         # _recently_recovered=True simulates the state where a prior recovery blocked detection
         mock_manager = self._make_manager([proc], recently_recovered=True)
 
-        def fake_check_and_replace(process_info, timeout, state, error_msg):  # noqa: ANN001
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
             if process_info.last_process_state == state:
                 import time as _t
 

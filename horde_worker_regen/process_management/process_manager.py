@@ -6618,6 +6618,7 @@ class HordeWorkerProcessManager:
                 return True
 
             logger.error("All processes have been unresponsive for too long, attempting to recover.")
+            already_recovering = self._recently_recovered
             self._recently_recovered = True
 
             for process_info in self._process_map.values():
@@ -6625,7 +6626,11 @@ class HordeWorkerProcessManager:
                     self._replace_inference_process(process_info)
                     any_replaced = True
 
-            threading.Thread(target=timed_unset_recently_recovered).start()
+            # Only start a new timer thread if one is not already running (i.e. _recently_recovered
+            # was False before this block). This prevents a second thread from being spawned during
+            # a shutdown timeout that fires while a prior recovery is still cooling down.
+            if not already_recovering:
+                threading.Thread(target=timed_unset_recently_recovered).start()
         else:
             self._hung_processes_detected = False
 
