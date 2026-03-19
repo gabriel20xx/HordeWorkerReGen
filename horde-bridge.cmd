@@ -5,7 +5,7 @@ cd /d %~dp0
 call runtime python -s -m pip -V
 
 call python -s -m pip uninstall hordelib
-call python -s -m pip install horde_sdk~=0.17.0 horde_model_reference~=0.10.0 horde_engine~=2.22.2 horde_safety~=0.3.0 -U
+call python -s -m pip install horde_sdk~=0.18.0 horde_model_reference~=2.1.5 horde_engine~=2.22.2 horde_safety~=0.3.0 -U
 
 if %ERRORLEVEL% NEQ 0 (
     echo "Please run update-runtime.cmd."
