@@ -1592,12 +1592,11 @@ class HordeWorkerProcessManager:
 
         while self.stable_diffusion_reference is None:
             try:
-                horde_model_reference_manager = ModelReferenceManager()
-                all_refs = horde_model_reference_manager.get_all_model_references(overwrite_existing=False)
+                all_refs = self.horde_model_reference_manager.get_all_model_references(overwrite_existing=False)
                 _sd_ref = all_refs.get(MODEL_REFERENCE_CATEGORY.image_generation)
 
                 if not isinstance(_sd_ref, dict):
-                    logger.error("Stable diffusion model references not found. Retrying in 5 seconds...")
+                    logger.error("Image generation model references not found. Retrying in 5 seconds...")
                     time.sleep(5)
                     continue
 
