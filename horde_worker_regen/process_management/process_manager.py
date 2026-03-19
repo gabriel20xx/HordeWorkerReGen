@@ -6497,13 +6497,10 @@ class HordeWorkerProcessManager:
                     any_replaced = True
                     continue
 
-                # Skip other state checks if no jobs are available since those states are job-related
-                if self._last_pop_no_jobs_available:
-                    continue
-
-                # Check MODEL_PRELOADING - always checked even after a recent recovery.
-                # A process stuck here holds a preloading slot and prevents pending jobs from
-                # being dispatched to other processes; it must be detected and replaced promptly.
+                # Check MODEL_PRELOADING - always checked even after a recent recovery and
+                # even when no new jobs were popped.  A process stuck here holds the single
+                # preloading slot and prevents any pending jobs from being dispatched to other
+                # processes; it must be detected and replaced promptly regardless of API state.
                 if self._check_and_replace_process(
                     process_info,
                     self.bridge_data.preload_timeout,
@@ -6511,6 +6508,10 @@ class HordeWorkerProcessManager:
                     "seems to be stuck preloading a model",
                 ):
                     any_replaced = True
+                    continue
+
+                # Skip other state checks if no jobs are available since those states are job-related
+                if self._last_pop_no_jobs_available:
                     continue
 
                 # Skip remaining checks during the recovery cooldown to prevent cascading
@@ -6603,14 +6604,18 @@ class HordeWorkerProcessManager:
                 return True
 
             logger.error("All processes have been unresponsive for too long, attempting to recover.")
-            self._recently_recovered = True
 
             for process_info in self._process_map.values():
                 if process_info.process_type == HordeProcessType.INFERENCE:
                     self._replace_inference_process(process_info)
                     any_replaced = True
 
-            threading.Thread(target=timed_unset_recently_recovered).start()
+            # Only start a new timer thread if one is not already running from the
+            # any_replaced path above.  _recently_recovered may already be True if
+            # individual-process checks ran earlier in this call.
+            if not self._recently_recovered:
+                self._recently_recovered = True
+                threading.Thread(target=timed_unset_recently_recovered).start()
         else:
             self._hung_processes_detected = False
 
