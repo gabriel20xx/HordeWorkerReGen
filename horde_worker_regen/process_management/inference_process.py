@@ -937,7 +937,6 @@ class HordeInferenceProcess(HordeProcess):
         Args:
             process_state (HordeProcessState): The state of the process.
             job_info (ImageGenerateJobPopResponse): The job that was inferred.
-            images (list[Image] | None): The generated images, or None if inference failed.
             results (list[ResultingImageReturn] | None): The generated images, or None if inference failed.
             time_elapsed (float): The time elapsed during the last operation.
             sanitized_negative_prompt (str | None): The sanitized negative prompt, if any.
