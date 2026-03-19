@@ -6443,11 +6443,15 @@ class HordeWorkerProcessManager:
     _hung_processes_detected_time = 0.0
 
     def replace_hung_processes(self) -> bool:
-        """Replaces processes that haven't checked in since `process_timeout` seconds in bridgeData."""
-        # Guard: Prevent cascading recoveries - only one timer thread can be active at a time
-        if self._recently_recovered:
-            return False
+        """Replaces processes that haven't checked in since `process_timeout` seconds in bridgeData.
 
+        The ``_recently_recovered`` guard is applied *selectively*:
+        - ``is_stuck_on_inference`` and ``INFERENCE_STARTING`` checks are skipped while the flag
+          is set, to prevent cascading replacements immediately after an inference recovery.
+        - ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
+          ``PROCESS_STARTING`` are **always** evaluated, so a process that is genuinely stuck in
+          one of those states is recovered even when a different process was recently replaced.
+        """
         import threading
 
         def timed_unset_recently_recovered() -> None:
@@ -6464,7 +6468,9 @@ class HordeWorkerProcessManager:
 
         any_replaced = False
         for process_info in self._process_map.values():
-            if self._process_map.is_stuck_on_inference(
+            # Guard inference-stuck detection against cascading recoveries: skip when a
+            # replacement was made recently so the new process has time to initialise.
+            if not self._recently_recovered and self._process_map.is_stuck_on_inference(
                 process_info.process_id,
                 self.bridge_data.inference_step_timeout,
             ):
@@ -6523,6 +6529,23 @@ class HordeWorkerProcessManager:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
                         any_replaced = True
 
+                # Check for WAITING_FOR_JOB inference processes with stale heartbeats when
+                # jobs are pending.  These processes may have died silently without sending
+                # PROCESS_ENDING.  A freshly replaced process starts in PROCESS_STARTING (with
+                # a fresh timestamp) so it will never match this condition immediately after a
+                # recovery — no need to gate this check on _recently_recovered.
+                if (
+                    process_info.process_type == HordeProcessType.INFERENCE
+                    and process_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
+                    and (now - process_info.last_heartbeat_timestamp) > self.bridge_data.process_timeout
+                ):
+                    logger.error(
+                        f"{process_info} has been idle in WAITING_FOR_JOB for "
+                        f"{now - process_info.last_heartbeat_timestamp:.0f}s with pending jobs; replacing it",
+                    )
+                    self._replace_inference_process(process_info)
+                    any_replaced = True
+
                 # Check if an INFERENCE_STARTING process is stuck because the semaphore is
                 # unavailable even though no other process is actively running inference.
                 # is_stuck_on_inference() uses inference_step_timeout (600 s by default), which
@@ -6531,7 +6554,10 @@ class HordeWorkerProcessManager:
                 # inference is running.  We skip this check when another process IS in
                 # INFERENCE_PROCESSING, because that process legitimately holds the semaphore
                 # and INFERENCE_STARTING should wait for it to finish.
-                if process_info.last_process_state == HordeProcessState.INFERENCE_STARTING:
+                # Guard against cascading recoveries: skip when a replacement was made recently.
+                if not self._recently_recovered and (
+                    process_info.last_process_state == HordeProcessState.INFERENCE_STARTING
+                ):
                     time_elapsed_starting = now - process_info.last_received_timestamp
                     time_elapsed_starting = min(
                         time_elapsed_starting,
@@ -6546,8 +6572,12 @@ class HordeWorkerProcessManager:
                             self._replace_inference_process(process_info)
                             any_replaced = True
 
-        # If any processes were replaced, set the recently recovered flag and start timer
-        if any_replaced:
+        # If any processes were replaced and we are not already inside a recovery window,
+        # start the cascading-recovery guard timer.  When _recently_recovered is already True
+        # (because an earlier recovery is still cooling down) we still perform the replacements
+        # above (e.g. MODEL_PRELOADING) but we do NOT start a second timer thread, which would
+        # extend the blocked window unnecessarily.
+        if any_replaced and not self._recently_recovered:
             self._recently_recovered = True
             threading.Thread(target=timed_unset_recently_recovered).start()
 
