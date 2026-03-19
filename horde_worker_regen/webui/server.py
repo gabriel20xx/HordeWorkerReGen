@@ -789,21 +789,24 @@ class WorkerWebUI:
         }
 
         // ANSI color code to HTML converter
+        // Colors match the VS Code integrated terminal palette, which is the reference
+        // terminal for this project and produces output identical to what users see in
+        // their VS Code terminal.
         function ansiToHtml(text) {
             // Escape HTML first to prevent XSS
             text = escapeHtml(text);
 
-            // ANSI color codes mapping
+            // Foreground color mapping (ANSI codes 30-37 standard, 90-97 bright/intense)
+            // Values are VS Code integrated-terminal colors so the webui matches the
+            // normal console exactly.
             const colors = {
                 '30': '#000000', '31': '#cd3131', '32': '#0dbc79', '33': '#e5e510',
                 '34': '#2472c8', '35': '#bc3fbc', '36': '#11a8cd', '37': '#e5e5e5',
                 '90': '#666666', '91': '#f14c4c', '92': '#23d18b', '93': '#f5f543',
                 '94': '#3b8eea', '95': '#d670d6', '96': '#29b8db', '97': '#ffffff',
-                // Bold+color combinations for loguru compatibility
-                '1;30': '#666666', '1;31': '#f14c4c', '1;32': '#23d18b', '1;33': '#f5f543',
-                '1;34': '#3b8eea', '1;35': '#d670d6', '1;36': '#29b8db', '1;37': '#ffffff',
             };
 
+            // Background color mapping (ANSI codes 40-47 standard, 100-107 bright/intense)
             const bgColors = {
                 '40': '#000000', '41': '#cd3131', '42': '#0dbc79', '43': '#e5e510',
                 '44': '#2472c8', '45': '#bc3fbc', '46': '#11a8cd', '47': '#e5e5e5',
@@ -834,25 +837,38 @@ class WorkerWebUI:
                             // Reset all styles
                             currentStyles = [];
                         } else if (code === '1') {
-                            // Bold - check if not already applied
-                            if (!currentStyles.some(s => s.startsWith('font-weight:'))) {
-                                currentStyles.push('font-weight:bold');
-                            }
+                            // Bold
+                            currentStyles = currentStyles.filter(s => !s.startsWith('font-weight:'));
+                            currentStyles.push('font-weight:bold');
                         } else if (code === '2') {
-                            // Dim/faint - reduce opacity
-                            if (!currentStyles.some(s => s.startsWith('opacity:'))) {
-                                currentStyles.push('opacity:0.6');
-                            }
+                            // Dim/faint: per ANSI spec, dim cancels bold and reduces intensity.
+                            // Remove bold and apply reduced opacity to match terminal dim rendering
+                            // (terminals typically display dim text at ~50% of normal brightness).
+                            currentStyles = currentStyles.filter(s => !s.startsWith('font-weight:') && !s.startsWith('opacity:'));
+                            currentStyles.push('opacity:0.5');
+                        } else if (code === '22') {
+                            // Normal intensity: cancels both bold (1) and dim (2)
+                            currentStyles = currentStyles.filter(s => !s.startsWith('font-weight:') && !s.startsWith('opacity:'));
                         } else if (code === '3') {
                             // Italic
-                            if (!currentStyles.some(s => s.startsWith('font-style:'))) {
-                                currentStyles.push('font-style:italic');
-                            }
+                            currentStyles = currentStyles.filter(s => !s.startsWith('font-style:'));
+                            currentStyles.push('font-style:italic');
+                        } else if (code === '23') {
+                            // Not italic
+                            currentStyles = currentStyles.filter(s => !s.startsWith('font-style:'));
                         } else if (code === '4') {
                             // Underline
-                            if (!currentStyles.some(s => s.startsWith('text-decoration:'))) {
-                                currentStyles.push('text-decoration:underline');
-                            }
+                            currentStyles = currentStyles.filter(s => !s.startsWith('text-decoration:'));
+                            currentStyles.push('text-decoration:underline');
+                        } else if (code === '24') {
+                            // Not underlined
+                            currentStyles = currentStyles.filter(s => !s.startsWith('text-decoration:'));
+                        } else if (code === '39') {
+                            // Default foreground color
+                            currentStyles = currentStyles.filter(s => !s.startsWith('color:'));
+                        } else if (code === '49') {
+                            // Default background color
+                            currentStyles = currentStyles.filter(s => !s.startsWith('background-color:'));
                         } else if (colors[code]) {
                             // Foreground color - replace existing color
                             currentStyles = currentStyles.filter(s => !s.startsWith('color:'));
