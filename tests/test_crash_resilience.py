@@ -3271,7 +3271,6 @@ class TestPreloadModelsPipeBroken:
         """
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
         from horde_worker_regen.process_management.messages import HordeProcessState
-        from horde_worker_regen.process_management.process_manager import ModelLoadState
 
         # Queued job that needs model "TestPreloadModel"
         job = MagicMock()
