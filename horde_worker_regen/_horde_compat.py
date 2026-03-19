@@ -70,7 +70,9 @@ def _apply() -> None:
             return _orig_mrm_new(cls, **kwargs)
 
         _MRM.__new__ = _compat_mrm_new  # type: ignore[method-assign]
-    except Exception:
+    except (ImportError, AttributeError):
+        # If the expected ModelReferenceManager location or attributes change,
+        # let _validate() detect incompatibility deterministically.
         pass
 
 
@@ -104,16 +106,16 @@ def _validate() -> None:
         )
 
     # Ensure ModelReferenceManager accepts legacy kwargs without raising.
-    try:
-        from horde_model_reference.model_reference_manager import ModelReferenceManager as _MRM_val
+    from horde_model_reference.model_reference_manager import ModelReferenceManager as _MRM_val
 
+    try:
         _MRM_val(download_and_convert_legacy_dbs=False, override_existing=False)
     except TypeError as exc:
         raise AssertionError(
             "ModelReferenceManager still rejects legacy kwargs after applying the compatibility shim"
         ) from exc
-    except Exception:
-        # Any other exception (e.g. network/IO) is unrelated to the shim.
+    except OSError:
+        # OSError (e.g. network/IO side effects after a successful constructor call) is unrelated to the shim.
         pass
 
 
