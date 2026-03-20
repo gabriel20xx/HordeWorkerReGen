@@ -1605,7 +1605,7 @@ class HordeWorkerProcessManager:
                 time.sleep(5)
 
         # Initialize web UI if enabled
-        self.webui: WorkerWebUI | None = None  # noqa: UP037
+        self.webui: WorkerWebUI | None = None  # noqa: F823
         self._last_image_base64: list[str] = []
         """The last generated images in base64 format for webui preview (supports batch jobs)."""
         self._last_image_job_timestamp: float = 0.0
