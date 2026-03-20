@@ -1243,6 +1243,7 @@ class HordeWorkerProcessManager:
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
+    _MAX_ERRORS_HISTORY = 50  # Maximum number of error messages to keep in history
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1696,6 +1697,14 @@ class HordeWorkerProcessManager:
             # Keep only the last N logs
             if len(self._console_logs) > self._MAX_CONSOLE_LOGS_BUFFER:
                 self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER :]
+
+            # Also capture ERROR and CRITICAL level messages into errors_history
+            log_record = getattr(message, "record", None)
+            level = log_record.get("level") if log_record is not None else None
+            if level is not None and level.no >= logger.level("ERROR").no:
+                self._errors_history.insert(0, clean_message)
+                if len(self._errors_history) > self._MAX_ERRORS_HISTORY:
+                    self._errors_history = self._errors_history[: self._MAX_ERRORS_HISTORY]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""

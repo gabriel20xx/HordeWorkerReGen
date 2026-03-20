@@ -52,6 +52,7 @@ class WorkerWebUI:
             "last_image_submission_timestamp": 0.0,
             "console_logs": [],
             "faulted_jobs_history": [],
+            "errors_history": [],
         }
 
         self._setup_routes()
@@ -520,6 +521,27 @@ class WorkerWebUI:
         .image-overlay-close:hover {
             background: #764ba2;
         }
+
+        .errors-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .error-item {
+            background: #fff5f5;
+            border: 1px solid #fecaca;
+            border-left: 4px solid #dc2626;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.85em;
+            color: #7f1d1d;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
     </style>
 </head>
 <body>
@@ -667,6 +689,15 @@ class WorkerWebUI:
                     <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
                     <div id="faulted-jobs" class="faulted-jobs-list">
                         <div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="card wide-card">
+                    <h2>Errors (<span id="errors-count">0</span>)</h2>
+                    <div id="errors-history" class="errors-list">
+                        <div style="text-align: center; color: #999; padding: 20px;">No errors</div>
                     </div>
                 </div>
             </div>
@@ -1166,6 +1197,19 @@ class WorkerWebUI:
                     } else {
                         faultedJobsCount.textContent = '0';
                         faultedJobsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>';
+                    }
+
+                    // Errors History
+                    const errorsDiv = document.getElementById('errors-history');
+                    const errorsCount = document.getElementById('errors-count');
+                    if (data.errors_history && data.errors_history.length > 0) {
+                        errorsCount.textContent = data.errors_history.length;
+                        errorsDiv.innerHTML = data.errors_history.map(err => {
+                            return `<div class="error-item">${escapeHtml(err)}</div>`;
+                        }).join('');
+                    } else {
+                        errorsCount.textContent = '0';
+                        errorsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No errors</div>';
                     }
 
                     // Last Generated Images
