@@ -59,7 +59,8 @@ def start_inference_process(
 
         # Prevent ONNX Runtime from attempting to set CPU thread affinity, which fails in containers
         # and restricted environments with error: "pthread_setaffinity_np failed ... Invalid argument"
-        os.environ.setdefault("OMP_NUM_THREADS", str(os.cpu_count() or 1))
+        # Default to 1 to avoid oversubscribing CPU threads when multiple inference processes run concurrently.
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
 
         try:
             import hordelib
