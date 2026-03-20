@@ -9,16 +9,6 @@ import re
 import sys
 import time
 
-from horde_worker_regen.consts import BASE_LORA_DOWNLOAD_TIMEOUT, EXTRA_LORA_DOWNLOAD_TIMEOUT
-
-# Precompiled regex patterns for prompt sanitization (performance optimization)
-_NEGATIVE_PROMPT_KEYWORDS_PATTERN = re.compile(
-    r"\b(child|infant|underage|immature|teenager|tween)\b",
-    flags=re.IGNORECASE,
-)
-_MULTIPLE_COMMAS_PATTERN = re.compile(r"\s*,\s*")
-_MULTIPLE_SPACES_PATTERN = re.compile(r"\s{2,}")
-
 # ! IMPORTANT: Start of own code
 try:
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
@@ -37,6 +27,7 @@ from loguru import logger
 from pydantic import ValidationError as PydanticValidationError
 from typing_extensions import override
 
+from horde_worker_regen.consts import BASE_LORA_DOWNLOAD_TIMEOUT, EXTRA_LORA_DOWNLOAD_TIMEOUT
 from horde_worker_regen.process_management._aliased_types import ProcessQueue
 from horde_worker_regen.process_management.horde_process import HordeProcess
 from horde_worker_regen.process_management.messages import (
@@ -72,6 +63,15 @@ else:
 
     class ProgressReport:  # noqa
         pass
+
+
+# Precompiled regex patterns for prompt sanitization (performance optimization)
+_NEGATIVE_PROMPT_KEYWORDS_PATTERN = re.compile(
+    r"\b(child|infant|underage|immature|teenager|tween)\b",
+    flags=re.IGNORECASE,
+)
+_MULTIPLE_COMMAS_PATTERN = re.compile(r"\s*,\s*")
+_MULTIPLE_SPACES_PATTERN = re.compile(r"\s{2,}")
 
 
 class HordeInferenceProcess(HordeProcess):
@@ -584,7 +584,7 @@ class HordeInferenceProcess(HordeProcess):
                 )
                 logger.info(
                     f"Post-processing: {percent}% (Step {progress_report.comfyui_progress.current_step}/"
-                    f"{progress_report.comfyui_progress.total_steps})"
+                    f"{progress_report.comfyui_progress.total_steps})",
                 )
             else:
                 # Fallback to 100% if no detailed progress available
@@ -937,9 +937,9 @@ class HordeInferenceProcess(HordeProcess):
         Args:
             process_state (HordeProcessState): The state of the process.
             job_info (ImageGenerateJobPopResponse): The job that was inferred.
-            images (list[Image] | None): The generated images, or None if inference failed.
             results (list[ResultingImageReturn] | None): The generated images, or None if inference failed.
             time_elapsed (float): The time elapsed during the last operation.
+            sanitized_negative_prompt (str | None): The sanitized negative prompt, if any.
         """
         all_image_results = []
         any_encoding_failed = False

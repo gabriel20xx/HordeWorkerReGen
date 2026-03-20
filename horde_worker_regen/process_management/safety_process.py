@@ -239,7 +239,7 @@ class HordeSafetyProcess(HordeProcess):
         except OSError as e:
             logger.error(
                 f"Failed to create or set permissions on output directory {year_month_day_dir}: "
-                f"{type(e).__name__} {e}. Images will not be saved to disk."
+                f"{type(e).__name__} {e}. Images will not be saved to disk.",
             )
             output_directory = None
 
@@ -308,14 +308,21 @@ class HordeSafetyProcess(HordeProcess):
                     datetime.now().isoformat(timespec="seconds"),
                 )
 
-                def _add_metadata_text(key: str, value: object) -> None:
+                def _add_metadata_text(
+                    key: str,
+                    value: object,
+                    *,
+                    _md: PngImagePlugin.PngInfo | None = metadata,
+                ) -> None:
+                    if _md is None:
+                        return
                     if value is None:
-                        metadata.add_text(key, "")
+                        _md.add_text(key, "")
                         return
                     if isinstance(value, str):
-                        metadata.add_text(key, value)
+                        _md.add_text(key, value)
                     else:
-                        metadata.add_text(key, json.dumps(value, ensure_ascii=False, default=str))
+                        _md.add_text(key, json.dumps(value, ensure_ascii=False, default=str))
 
                 # Explicitly add key fields when available
                 _add_metadata_text("Model name", generation_metadata.get("model"))
@@ -431,7 +438,10 @@ class HordeSafetyProcess(HordeProcess):
             try:
                 # Save the image as a PNG file (skip if no output directory is available)
                 if output_path is None:
-                    logger.debug(f"Skipping image save for job {message.job_id}: no output directory available (creation failed)")
+                    logger.debug(
+                        f"Skipping image save for job {message.job_id}: "
+                        "no output directory available (creation failed)",
+                    )
                 elif metadata is not None:
                     image_as_pil_0.save(output_path, "png", pnginfo=metadata)
                 else:

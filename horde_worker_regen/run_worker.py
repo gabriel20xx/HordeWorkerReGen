@@ -1,5 +1,6 @@
 """The main entry point for the reGen worker."""
 
+import contextlib
 import sys
 
 if sys.platform == "win32":
@@ -8,7 +9,6 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import argparse
-import contextlib
 import io
 import multiprocessing
 import os
@@ -218,17 +218,14 @@ class LogConsoleRewriter(io.StringIO):
 
 def init() -> int:
     """Initialise the worker, including logging, environment variables, and other housekeeping.
-    
+
     Returns:
         int: Exit code (0 for success, non-zero for failure)
     """
     # ! IMPORTANT: Start of own code
     # Try to set spawn method, ignore if already set
-    try:
+    with contextlib.suppress(RuntimeError):
         multiprocessing.set_start_method("spawn", force=True)
-    except RuntimeError:
-        # Start method already set, continue
-        pass
 
     if os.path.exists(".abort"):
         try:
@@ -336,7 +333,7 @@ def init() -> int:
         amd_gpu=args.amd,
         directml=args.directml,
     )
-    
+
     return 0
 
 
