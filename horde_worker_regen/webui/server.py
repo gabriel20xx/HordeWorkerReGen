@@ -1318,6 +1318,7 @@ class WorkerWebUI:
         last_image_submission_timestamp: float | None = None,
         console_logs: list[str] | None = None,
         faulted_jobs_history: list[dict[str, Any]] | None = None,
+        errors_history: list[str] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -1347,6 +1348,7 @@ class WorkerWebUI:
             last_image_submission_timestamp: Timestamp when the last image was submitted
             console_logs: Recent console log messages
             faulted_jobs_history: List of faulted jobs with details
+            errors_history: List of recent error messages
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
