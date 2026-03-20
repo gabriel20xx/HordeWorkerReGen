@@ -276,6 +276,11 @@ def init() -> int:
 
     os.environ["HORDE_SDK_DISABLE_CUSTOM_SINKS"] = "1"
 
+    # Prevent ONNX Runtime from attempting to set CPU thread affinity, which fails in containers
+    # and restricted environments with error: "pthread_setaffinity_np failed ... Invalid argument"
+    # Setting OMP_NUM_THREADS explicitly suppresses the auto-detection that triggers the affinity attempt.
+    os.environ.setdefault("OMP_NUM_THREADS", str(os.cpu_count() or 1))
+
     if args.worker_name:
         os.environ["AIWORKER_DREAMER_WORKER_NAME"] = args.worker_name
 
