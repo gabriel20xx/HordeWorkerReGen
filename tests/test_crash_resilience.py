@@ -3246,3 +3246,262 @@ class TestStartInferencePipeBroken:
 
         assert result is True
         assert mock_info.last_send_error is None
+
+
+class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
+    """Tests that MODEL_PRELOADING stuck detection works even when _recently_recovered is True.
+
+    The _recently_recovered guard was previously applied at function entry, meaning a process
+    stuck in MODEL_PRELOADING would never be recovered if a different process had been replaced
+    recently (within inference_step_timeout seconds).  After the fix, MODEL_PRELOADING (and
+    other non-cascading state checks) are always evaluated regardless of _recently_recovered.
+    """
+
+    def _make_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        recently_recovered: bool = False,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        # is_stuck_on_inference returns False so we exercise the else branch
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def _make_process(
+        self,
+        process_id: int,
+        state: HordeProcessState,
+        *,
+        time_elapsed: float = 9999.0,
+    ) -> MagicMock:
+        import time as _time
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.last_process_state = state
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_model_preloading_replaced_when_recently_recovered_false(self) -> None:
+        """MODEL_PRELOADING should be caught and replaced under normal conditions."""
+        proc = self._make_process(0, HordeProcessState.MODEL_PRELOADING, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=False)
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+    def test_model_preloading_replaced_even_when_recently_recovered_true(self) -> None:
+        """MODEL_PRELOADING must be caught even when _recently_recovered is True.
+
+        This is the regression test for the bug: a process stuck in MODEL_PRELOADING was
+        previously never recovered while _recently_recovered=True (the flag was True for up
+        to inference_step_timeout=600 seconds after any prior recovery).
+        """
+        proc = self._make_process(0, HordeProcessState.MODEL_PRELOADING, time_elapsed=9999.0)
+        # _recently_recovered=True simulates the state where a prior recovery blocked detection
+        mock_manager = self._make_manager([proc], recently_recovered=True)
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread") as mock_thread:
+            result = mock_manager._bound_replace_hung()
+
+        # The stuck MODEL_PRELOADING process must still be replaced
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+        # No new timer thread should be started when already inside a recovery window
+        mock_thread.assert_not_called()
+
+    def test_inference_starting_not_replaced_when_recently_recovered_true(self) -> None:
+        """INFERENCE_STARTING detection must be skipped while _recently_recovered is True.
+
+        Replacing a process in INFERENCE_STARTING shortly after another recovery can cascade;
+        the guard prevents that.
+        """
+        proc = self._make_process(0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=True)
+
+        # _check_and_replace_process returns False for all states
+        mock_manager._check_and_replace_process.return_value = False
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+
+class TestReplaceHungWaitingForJob:
+    """Tests for the new per-process WAITING_FOR_JOB stale-heartbeat recovery.
+
+    When an inference process has been in WAITING_FOR_JOB with no heartbeat for longer than
+    process_timeout and there are pending jobs, it should be replaced automatically even while
+    _recently_recovered is True (a freshly replaced process starts in PROCESS_STARTING with a
+    fresh timestamp, so it will never immediately re-match this condition).
+    """
+
+    def _make_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        recently_recovered: bool = False,
+        last_pop_no_jobs: bool = False,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 100
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._check_and_replace_process.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def _make_inference_process(
+        self,
+        process_id: int,
+        *,
+        time_elapsed: float,
+    ) -> MagicMock:
+        import time as _time
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_stale_waiting_for_job_process_replaced_when_jobs_pending(self) -> None:
+        """A WAITING_FOR_JOB process whose heartbeat is older than process_timeout must be
+        replaced when there are pending jobs (not _last_pop_no_jobs_available).
+        """
+        # 200s stale, process_timeout=100s → should trigger
+        proc = self._make_inference_process(1, time_elapsed=200.0)
+        mock_manager = self._make_manager([proc])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+    def test_stale_waiting_for_job_process_replaced_even_when_recently_recovered(self) -> None:
+        """The WAITING_FOR_JOB per-process check must run even when _recently_recovered=True.
+
+        This is the regression case: in the reported bug Processes 1 and 3 were stuck in
+        WAITING_FOR_JOB for 351 s and 464 s while _recently_recovered blocked all detection.
+        """
+        proc = self._make_inference_process(3, time_elapsed=464.0)
+        # Simulate the state from the bug report: another recovery was recent
+        mock_manager = self._make_manager([proc], recently_recovered=True)
+
+        with patch("threading.Thread") as mock_thread:
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+        # No new timer thread when already inside recovery window
+        mock_thread.assert_not_called()
+
+    def test_fresh_waiting_for_job_process_not_replaced(self) -> None:
+        """A WAITING_FOR_JOB process with a recent heartbeat must not be replaced."""
+        # Only 10s stale, well below process_timeout=100s
+        proc = self._make_inference_process(1, time_elapsed=10.0)
+        mock_manager = self._make_manager([proc])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+    def test_stale_waiting_for_job_not_replaced_when_no_jobs_available(self) -> None:
+        """A stale WAITING_FOR_JOB process must NOT be replaced when no jobs are available.
+
+        WAITING_FOR_JOB is the expected idle state; replacing processes when there's nothing
+        to do would cause needless churn.
+        """
+        proc = self._make_inference_process(1, time_elapsed=9999.0)
+        # last_pop_no_jobs=True means the server has no work for us
+        mock_manager = self._make_manager([proc], last_pop_no_jobs=True)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
