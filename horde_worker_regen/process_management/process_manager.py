@@ -6516,8 +6516,16 @@ class HordeWorkerProcessManager:
             #   A process that holds the inference semaphore and stops responding blocks all
             #   other processes.  Newly-replaced processes start in PROCESS_STARTING, so there
             #   is no risk of a false-positive cascading replacement here.
-            #   Pass process_timeout as the shorter no_step_heartbeat_timeout so that a crash
-            #   before any diffusion step (or a hang during VAE decode) is caught quickly.
+            #   Pass a no_step_heartbeat_timeout so that a crash before any diffusion step is
+            #   caught more quickly than the full inference_step_timeout.
+            #
+            #   The timeout must be >= the VAE decode semaphore timeout (300 s) because when
+            #   all diffusion steps finish the 100 % PIPELINE_STATE_CHANGE heartbeat resets
+            #   heartbeats_inference_steps to 0, and the process then blocks on
+            #   vae_decode_semaphore.acquire(timeout=300) without sending further heartbeats.
+            #   Using a value shorter than 300 s would kill a legitimately-running VAE decode.
+            #   We therefore take max(process_timeout, 300) so that even in high_performance_mode
+            #   (where process_timeout is reduced to 100 s) we do not fire prematurely.
             #
             # INFERENCE_STARTING: guard with _recently_recovered.
             #   After replacing a stuck INFERENCE_PROCESSING process the semaphore is released
@@ -6526,10 +6534,13 @@ class HordeWorkerProcessManager:
             #   falsely declare it stuck right away.
             is_stuck_inference = False
             if process_info.last_process_state == HordeProcessState.INFERENCE_PROCESSING:
+                # VAE_SEMAPHORE_TIMEOUT in HordeInferenceProcess is 300 s; mirror that here.
+                _vae_semaphore_timeout = 300
+                no_step_timeout = max(self.bridge_data.process_timeout, _vae_semaphore_timeout)
                 is_stuck_inference = self._process_map.is_stuck_on_inference(
                     process_info.process_id,
                     self.bridge_data.inference_step_timeout,
-                    no_step_heartbeat_timeout=self.bridge_data.process_timeout,
+                    no_step_heartbeat_timeout=no_step_timeout,
                 )
             elif not self._recently_recovered:
                 is_stuck_inference = self._process_map.is_stuck_on_inference(

@@ -183,7 +183,7 @@ class TestReplaceHungProcessesAnyReplaced:
         )
 
         with patch("threading.Thread"):
-            result = bound_method()
+            bound_method()
 
         # Should NOT replace the INFERENCE_STARTING process while recently recovered
         mock_manager._replace_inference_process.assert_not_called()
