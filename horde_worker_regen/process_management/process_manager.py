@@ -5780,9 +5780,9 @@ class HordeWorkerProcessManager:
                     )
 
             if self._shutting_down:
-                logger.warning("<red>" + "=" * 80 + "</red>")
-                logger.warning("<red>SHUTTING DOWN - Finishing current jobs...</red>")
-                logger.warning("<red>" + "=" * 80 + "</red>")
+                logger.opt(ansi=True).warning("<red>" + "=" * 80 + "</>")
+                logger.opt(ansi=True).warning("<red>SHUTTING DOWN - Finishing current jobs...</>")
+                logger.opt(ansi=True).warning("<red>" + "=" * 80 + "</>")
                 self._status_message_frequency = 5.0
 
             self._last_status_message_time = cur_time
