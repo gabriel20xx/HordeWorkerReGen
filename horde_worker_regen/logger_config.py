@@ -40,19 +40,20 @@ def create_level_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS") -
         ),
         "SUCCESS": (
             f"{{time:{time_format}}} <dim>|</dim>"
-            f" <bold><green>{{level: <8}}</green></bold> <dim>|</dim> <green>{{message}}</green>"
+            f" <bold><green>{{level: <8}}</green></bold> <dim>|</dim> <bold><green>{{message}}</green></bold>"
         ),
         "WARNING": (
             f"{{time:{time_format}}} <dim>|</dim>"
-            f" <bold><yellow>{{level: <8}}</yellow></bold> <dim>|</dim> {{message}}"
+            f" <bold><yellow>{{level: <8}}</yellow></bold> <dim>|</dim> <bold><yellow>{{message}}</yellow></bold>"
         ),
         "ERROR": (
             f"{{time:{time_format}}} <dim>|</dim>"
-            f" <bold><red>{{level: <8}}</red></bold> <dim>|</dim> {{message}}"
+            f" <bold><red>{{level: <8}}</red></bold> <dim>|</dim> <bold><red>{{message}}</red></bold>"
         ),
         "CRITICAL": (
             f"{{time:{time_format}}} <dim>|</dim>"
-            f" <bold><red><u>{{level: <8}}</u></red></bold> <dim>|</dim> {{message}}"
+            f" <bold><fg #8B0000><u>{{level: <8}}</u></fg #8B0000></bold>"
+            f" <dim>|</dim> <bold><fg #8B0000>{{message}}</fg #8B0000></bold>"
         ),
     }
 
