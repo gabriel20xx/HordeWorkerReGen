@@ -1338,8 +1338,6 @@ class HordeWorkerProcessManager:
 
     _errors_history: list[str]
     """A list of recent error messages for display in the webui."""
-    _max_errors_history: int = 50
-    """Maximum number of error messages to keep in history."""
 
     jobs_pending_submit: list[HordeJobInfo]
     """A list of HordeJobInfo objects containing the job, the state, and whether or not the job was censored."""
