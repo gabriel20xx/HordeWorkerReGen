@@ -79,6 +79,7 @@ class TestReplaceHungProcessesAnyReplaced:
 
         mock_process = MagicMock()
         mock_process.process_id = 0
+        mock_process.last_process_state = HordeProcessState.INFERENCE_PROCESSING
         mock_process.last_heartbeat_percent_complete = 50
         mock_process.last_job_referenced = None
         mock_process.last_heartbeat_delta = 9999
@@ -98,6 +99,94 @@ class TestReplaceHungProcessesAnyReplaced:
 
         assert result is True
         mock_manager._replace_inference_process.assert_called_once_with(mock_process)
+
+    def test_inference_processing_detected_even_when_recently_recovered(self) -> None:
+        """INFERENCE_PROCESSING stuck detection must fire even when _recently_recovered is True.
+
+        Scenario: a previous recovery set _recently_recovered=True (e.g. after one of several
+        prior stuck-process recoveries).  An INFERENCE_PROCESSING process that stops sending
+        heartbeats must still be detected and replaced; the _recently_recovered guard must NOT
+        block it.
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = True  # guard is active
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.process_timeout = 30
+
+        import time
+
+        mock_process = MagicMock()
+        mock_process.process_id = 0
+        mock_process.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        mock_process.last_heartbeat_percent_complete = None
+        mock_process.last_job_referenced = None
+        mock_process.last_heartbeat_delta = 9999
+        mock_process.last_progress_timestamp = time.time() - 9999
+        mock_process.last_received_timestamp = time.time() - 9999
+        mock_process.last_heartbeat_timestamp = time.time() - 9999
+
+        mock_manager._process_map.values.return_value = [mock_process]
+        mock_manager._process_map.is_stuck_on_inference.return_value = True
+
+        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+
+        with patch("threading.Thread"):
+            result = bound_method()
+
+        assert result is True, (
+            "replace_hung_processes must return True for a stuck INFERENCE_PROCESSING process "
+            "even when _recently_recovered is True"
+        )
+        mock_manager._replace_inference_process.assert_called_once_with(mock_process)
+
+    def test_inference_starting_not_detected_when_recently_recovered(self) -> None:
+        """INFERENCE_STARTING detection must be suppressed when _recently_recovered is True.
+
+        After replacing a stuck INFERENCE_PROCESSING process the semaphore is released.  Any
+        INFERENCE_STARTING process that was blocked waiting for the semaphore may have a stale
+        heartbeat timestamp (it could not send heartbeats while blocked).  The _recently_recovered
+        guard prevents a cascading false-positive replacement.
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = True  # guard is active
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.process_timeout = 30
+
+        import time
+
+        mock_process = MagicMock()
+        mock_process.process_id = 0
+        mock_process.last_process_state = HordeProcessState.INFERENCE_STARTING
+        mock_process.last_heartbeat_percent_complete = None
+        mock_process.last_job_referenced = None
+        mock_process.last_heartbeat_delta = 9999
+        mock_process.last_progress_timestamp = time.time() - 9999
+        mock_process.last_received_timestamp = time.time() - 9999
+        mock_process.last_heartbeat_timestamp = time.time() - 9999
+
+        mock_manager._process_map.values.return_value = [mock_process]
+        # is_stuck_on_inference returns True but the guard should block the replacement
+        mock_manager._process_map.is_stuck_on_inference.return_value = True
+
+        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+
+        with patch("threading.Thread"):
+            result = bound_method()
+
+        # Should NOT replace the INFERENCE_STARTING process while recently recovered
+        mock_manager._replace_inference_process.assert_not_called()
 
 
 class TestBridgeDataLoopExceptionHandling:
@@ -567,6 +656,7 @@ class TestIsStuckOnInference:
         last_progress_timestamp: float,
         last_heartbeat_timestamp: float,
         last_heartbeat_delta: float = 0.0,
+        heartbeats_inference_steps: int = 0,
     ) -> MagicMock:
         """Create a mock process map entry with configurable timestamps."""
         entry = MagicMock()
@@ -574,6 +664,7 @@ class TestIsStuckOnInference:
         entry.last_progress_timestamp = last_progress_timestamp
         entry.last_heartbeat_timestamp = last_heartbeat_timestamp
         entry.last_heartbeat_delta = last_heartbeat_delta
+        entry.heartbeats_inference_steps = heartbeats_inference_steps
         return entry
 
     def _make_process_map(self, entry: MagicMock) -> MagicMock:
@@ -688,6 +779,81 @@ class TestIsStuckOnInference:
             assert process_map.is_stuck_on_inference(0, 600) is False, (
                 f"Expected False for state {state.name}"
             )
+
+    def test_inference_processing_no_step_heartbeats_uses_shorter_timeout(self) -> None:
+        """INFERENCE_PROCESSING with no step heartbeats triggers on no_step_heartbeat_timeout.
+
+        Scenario: the process sent the initial PIPELINE_STATE_CHANGE heartbeat (heartbeats_inference_steps=0)
+        and then went completely silent (crash before any diffusion step, or stall during VAE decode).
+        With no_step_heartbeat_timeout=120 and time_since_heartbeat=150, the process must be
+        detected as stuck even though inference_step_timeout=600 has not elapsed.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 150,
+            heartbeats_inference_steps=0,
+        )
+        process_map = self._make_process_map(entry)
+        # Without no_step_heartbeat_timeout, 150s < 600s inference_step_timeout → not stuck
+        assert process_map.is_stuck_on_inference(0, 600) is False
+        # With no_step_heartbeat_timeout=120, 150s > 120s → stuck
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is True
+
+    def test_inference_processing_no_step_heartbeats_not_yet_timed_out(self) -> None:
+        """INFERENCE_PROCESSING with no step heartbeats is NOT stuck if shorter timeout not elapsed."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 50,
+            heartbeats_inference_steps=0,
+        )
+        process_map = self._make_process_map(entry)
+        # 50s < no_step_heartbeat_timeout=120 → not yet stuck
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is False
+
+    def test_inference_processing_with_step_heartbeats_ignores_shorter_timeout(self) -> None:
+        """When step heartbeats have been received, no_step_heartbeat_timeout is ignored.
+
+        A process that has completed at least one diffusion step uses inference_step_timeout,
+        not the shorter no_step_heartbeat_timeout, for the heartbeat check.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 150,
+            heartbeats_inference_steps=5,  # steps have been received
+        )
+        process_map = self._make_process_map(entry)
+        # 150s > no_step_heartbeat_timeout=120, but heartbeats_inference_steps > 0 so short
+        # timeout must NOT apply.  150s < inference_step_timeout=600 → not stuck.
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is False
+
+    def test_inference_starting_no_step_heartbeats_does_not_use_shorter_timeout(self) -> None:
+        """no_step_heartbeat_timeout must NOT apply to INFERENCE_STARTING.
+
+        A process blocked on semaphore acquisition cannot send heartbeats.  Applying the shorter
+        timeout to INFERENCE_STARTING would create false positives right after a prior replacement
+        frees the semaphore (cascading recovery).
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 150,
+            heartbeats_inference_steps=0,
+        )
+        process_map = self._make_process_map(entry)
+        # 150s > no_step_heartbeat_timeout=120, but state is INFERENCE_STARTING → not stuck
+        # (still below the full inference_step_timeout of 600s)
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is False
 
 
 class TestInferenceSemaphoreBoundedSemaphore:

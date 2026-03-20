@@ -619,6 +619,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         self,
         process_id: int,
         inference_step_timeout: int,
+        no_step_heartbeat_timeout: int | None = None,
     ) -> bool:
         """Return true if the process is actively doing inference but progress has stalled.
 
@@ -629,8 +630,23 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         Detecting INFERENCE_PROCESSING stalls is critical: a process holding the inference semaphore
         while stuck prevents other processes from acquiring it, leaving them permanently stuck in
         INFERENCE_STARTING while waiting on the semaphore.
+
+        Args:
+            process_id: The ID of the process to check.
+            inference_step_timeout: Timeout (seconds) for the progress-stalled and between-step
+                heartbeat checks.
+            no_step_heartbeat_timeout: If provided, and the process is in INFERENCE_PROCESSING with
+                zero step-heartbeats received so far, use this shorter timeout for the no-heartbeat
+                check instead of ``inference_step_timeout``.  This catches two cases quickly:
+                (a) the process crashed before completing even one diffusion step, and
+                (b) the process is in the VAE decode / post-processing phase after all steps
+                    completed and sent a 100 % PIPELINE_STATE_CHANGE heartbeat that reset the
+                    step counter.
+                Do NOT apply this to INFERENCE_STARTING: a process blocked on semaphore
+                acquisition cannot send heartbeats and would be a false positive.
         """
-        if self[process_id].last_process_state not in (
+        state = self[process_id].last_process_state
+        if state not in (
             HordeProcessState.INFERENCE_STARTING,
             HordeProcessState.INFERENCE_PROCESSING,
         ):
@@ -649,7 +665,27 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         # stays at its previous (normal) value when the process stops responding entirely.
         # Note: We check all heartbeat types, not just INFERENCE_STEP, to catch
         # jobs stuck in the last step (VAE decode) which send PIPELINE_STATE_CHANGE heartbeats
-        if (time.time() - self[process_id].last_heartbeat_timestamp) > inference_step_timeout:
+        time_since_heartbeat = time.time() - self[process_id].last_heartbeat_timestamp
+
+        # When the process is in INFERENCE_PROCESSING and has not yet received any step-level
+        # heartbeats (heartbeats_inference_steps == 0), it is either:
+        #   * stuck before the first diffusion step (e.g. crashed / hung right after acquiring
+        #     the semaphore), or
+        #   * in the VAE decode phase (all steps done; the 100 % PIPELINE_STATE_CHANGE heartbeat
+        #     reset the counter to 0).
+        # In both cases the last heartbeat timestamp was just refreshed, so we time out from
+        # that fresh baseline.  Use the shorter no_step_heartbeat_timeout if provided.
+        # We deliberately skip this for INFERENCE_STARTING because a process that is blocked
+        # waiting to acquire the semaphore is unable to send heartbeats and would falsely trigger.
+        if (
+            state == HordeProcessState.INFERENCE_PROCESSING
+            and self[process_id].heartbeats_inference_steps == 0
+            and no_step_heartbeat_timeout is not None
+            and time_since_heartbeat > no_step_heartbeat_timeout
+        ):
+            return True
+
+        if time_since_heartbeat > inference_step_timeout:
             return True
 
         return False
@@ -6446,8 +6482,14 @@ class HordeWorkerProcessManager:
         """Replaces processes that haven't checked in since `process_timeout` seconds in bridgeData.
 
         The ``_recently_recovered`` guard is applied *selectively*:
-        - ``is_stuck_on_inference`` and ``INFERENCE_STARTING`` checks are skipped while the flag
-          is set, to prevent cascading replacements immediately after an inference recovery.
+        - INFERENCE_PROCESSING stuck detection is **always** evaluated regardless of the flag.
+          A process holding the inference semaphore in INFERENCE_PROCESSING that stops responding
+          blocks every other process from starting inference.  Newly-replaced processes start in
+          PROCESS_STARTING (never INFERENCE_PROCESSING), so there is no false-positive risk from
+          a recently-recovered slot.
+        - The ``INFERENCE_STARTING`` check is skipped while the flag is set, to prevent cascading
+          replacements: a process blocked waiting to acquire the semaphore cannot send heartbeats
+          and would falsely appear stuck immediately after a prior replacement freed the semaphore.
         - ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
           ``PROCESS_STARTING`` are **always** evaluated, so a process that is genuinely stuck in
           one of those states is recovered even when a different process was recently replaced.
@@ -6468,12 +6510,34 @@ class HordeWorkerProcessManager:
 
         any_replaced = False
         for process_info in self._process_map.values():
-            # Guard inference-stuck detection against cascading recoveries: skip when a
-            # replacement was made recently so the new process has time to initialise.
-            if not self._recently_recovered and self._process_map.is_stuck_on_inference(
-                process_info.process_id,
-                self.bridge_data.inference_step_timeout,
-            ):
+            # Determine whether this process appears stuck on inference.
+            #
+            # INFERENCE_PROCESSING: always check, no _recently_recovered guard.
+            #   A process that holds the inference semaphore and stops responding blocks all
+            #   other processes.  Newly-replaced processes start in PROCESS_STARTING, so there
+            #   is no risk of a false-positive cascading replacement here.
+            #   Pass process_timeout as the shorter no_step_heartbeat_timeout so that a crash
+            #   before any diffusion step (or a hang during VAE decode) is caught quickly.
+            #
+            # INFERENCE_STARTING: guard with _recently_recovered.
+            #   After replacing a stuck INFERENCE_PROCESSING process the semaphore is released
+            #   and any waiting INFERENCE_STARTING process may immediately acquire it.  While it
+            #   is blocked on acquire() it cannot send heartbeats; without the guard we would
+            #   falsely declare it stuck right away.
+            is_stuck_inference = False
+            if process_info.last_process_state == HordeProcessState.INFERENCE_PROCESSING:
+                is_stuck_inference = self._process_map.is_stuck_on_inference(
+                    process_info.process_id,
+                    self.bridge_data.inference_step_timeout,
+                    no_step_heartbeat_timeout=self.bridge_data.process_timeout,
+                )
+            elif not self._recently_recovered:
+                is_stuck_inference = self._process_map.is_stuck_on_inference(
+                    process_info.process_id,
+                    self.bridge_data.inference_step_timeout,
+                )
+
+            if is_stuck_inference:
                 # Enhanced logging for stuck job detection
                 time_since_heartbeat = now - process_info.last_heartbeat_timestamp
                 time_since_progress = now - process_info.last_progress_timestamp
