@@ -829,7 +829,7 @@ class WorkerWebUI:
             }
 
             const totalPages = Math.max(1, Math.ceil(errorsData.length / ERRORS_PAGE_SIZE));
-            errorsCurrentPage = Math.min(errorsCurrentPage, totalPages);
+            errorsCurrentPage = Math.min(Math.max(1, errorsCurrentPage), totalPages);
 
             const start = (errorsCurrentPage - 1) * ERRORS_PAGE_SIZE;
             const pageItems = errorsData.slice(start, start + ERRORS_PAGE_SIZE);
@@ -842,7 +842,8 @@ class WorkerWebUI:
         }
 
         function errorsChangePage(delta) {
-            errorsCurrentPage += delta;
+            const totalPages = Math.max(1, Math.ceil(errorsData.length / ERRORS_PAGE_SIZE));
+            errorsCurrentPage = Math.min(Math.max(1, errorsCurrentPage + delta), totalPages);
             renderErrorsPage();
         }
 

@@ -1244,6 +1244,8 @@ class HordeWorkerProcessManager:
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
+    _MAX_ERRORS_HISTORY = 1000  # Maximum number of error messages to keep in history (memory safety cap)
+    _WEBUI_ERRORS_HISTORY_LIMIT = 200  # Number of recent errors to send to webui per poll
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1703,6 +1705,9 @@ class HordeWorkerProcessManager:
             level = log_record.get("level") if log_record is not None else None
             if level is not None and level.no >= logger.level("ERROR").no:
                 self._errors_history.insert(0, clean_message)
+                # Prevent unbounded growth of the errors history buffer
+                if len(self._errors_history) > self._MAX_ERRORS_HISTORY:
+                    del self._errors_history[self._MAX_ERRORS_HISTORY :]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -6209,7 +6214,7 @@ class HordeWorkerProcessManager:
             last_image_submission_timestamp=self._last_image_job_timestamp,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
-            errors_history=list(self._errors_history),
+            errors_history=self._errors_history[: self._WEBUI_ERRORS_HISTORY_LIMIT],
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
