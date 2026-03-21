@@ -3863,10 +3863,7 @@ class TestPreloadModelsPipeBroken:
         available_process.process_id = 2
         available_process.safe_send_message.return_value = False
         available_process.last_send_error = BrokenPipeError("simulated broken pipe")
-        available_process.last_process_state = __import__(
-            "horde_worker_regen.process_management.messages",
-            fromlist=["HordeProcessState"],
-        ).HordeProcessState.WAITING_FOR_JOB
+        available_process.last_process_state = HordeProcessState.WAITING_FOR_JOB
         available_process.loaded_horde_model_name = None
 
         # Model map reports "Juggernaut XL" not loaded (so the preload is attempted)

@@ -2857,9 +2857,11 @@ class HordeWorkerProcessManager:
                 send_error_detail = (
                     f" ({type(send_error).__name__}: {send_error})" if send_error is not None else ""
                 )
+                job_id = getattr(job, "id_", None) or getattr(job, "ids", None)
                 logger.error(
-                    f"Failed to send preload model message to process "
-                    f"{available_process.process_id}{send_error_detail}",
+                    f"Failed to send preload model message for model {job.model!r}"
+                    f"{f' (job_id={job_id})' if job_id is not None else ''} "
+                    f"to process {available_process.process_id}{send_error_detail}",
                 )
                 self._replace_inference_process(available_process)
 
