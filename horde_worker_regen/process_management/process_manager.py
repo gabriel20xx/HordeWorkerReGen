@@ -93,6 +93,7 @@ from horde_worker_regen.process_management.messages import (
     ModelInfo,
     ModelLoadState,
 )
+from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 from horde_worker_regen.process_management.worker_entry_points import start_inference_process, start_safety_process
 
 if TYPE_CHECKING:
@@ -6533,12 +6534,12 @@ class HordeWorkerProcessManager:
             #   Pass a no_step_heartbeat_timeout so that a crash before any diffusion step is
             #   caught more quickly than the full inference_step_timeout.
             #
-            #   The timeout must be >= the VAE decode semaphore timeout (300 s) because when
-            #   all diffusion steps finish the 100 % PIPELINE_STATE_CHANGE heartbeat resets
-            #   heartbeats_inference_steps to 0, and the process then blocks on
-            #   vae_decode_semaphore.acquire(timeout=300) without sending further heartbeats.
-            #   Using a value shorter than 300 s would kill a legitimately-running VAE decode.
-            #   We therefore use _vae_semaphore_timeout (300 s) directly as the no-step floor.
+            #   The timeout must be >= the VAE decode semaphore timeout
+            #   (HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT) because when all diffusion steps
+            #   finish the 100 % PIPELINE_STATE_CHANGE heartbeat resets heartbeats_inference_steps
+            #   to 0, and the process then blocks on vae_decode_semaphore.acquire() without sending
+            #   further heartbeats.  Using a value shorter than VAE_SEMAPHORE_TIMEOUT would kill a
+            #   legitimately-running VAE decode.
             #
             # INFERENCE_STARTING: guard with _recently_recovered.
             #   After replacing a stuck INFERENCE_PROCESSING process the semaphore is released
@@ -6547,9 +6548,8 @@ class HordeWorkerProcessManager:
             #   falsely declare it stuck right away.
             is_stuck_inference = False
             if process_info.last_process_state == HordeProcessState.INFERENCE_PROCESSING:
-                # VAE_SEMAPHORE_TIMEOUT in HordeInferenceProcess is 300 s; mirror that here.
-                _vae_semaphore_timeout = 300
-                no_step_timeout = _vae_semaphore_timeout
+                # Use VAE_SEMAPHORE_TIMEOUT from HordeInferenceProcess as the source of truth.
+                no_step_timeout = HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT
                 is_stuck_inference = self._process_map.is_stuck_on_inference(
                     process_info.process_id,
                     self.bridge_data.inference_step_timeout,
@@ -6625,7 +6625,7 @@ class HordeWorkerProcessManager:
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
                     and process_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
-                    and (now - process_info.last_heartbeat_timestamp) > max(self.bridge_data.process_timeout, 300)
+                    and (now - process_info.last_heartbeat_timestamp) > max(self.bridge_data.process_timeout, HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT)
                 ):
                     logger.error(
                         f"{process_info} has been idle in WAITING_FOR_JOB for "
