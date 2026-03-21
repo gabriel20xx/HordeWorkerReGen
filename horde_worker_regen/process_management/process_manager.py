@@ -1244,7 +1244,8 @@ class HordeWorkerProcessManager:
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
-    _MAX_ERRORS_HISTORY = 50  # Maximum number of error messages to keep in history
+    _MAX_ERRORS_HISTORY = 1000  # Maximum number of error messages to keep in history (memory safety cap)
+    _WEBUI_ERRORS_HISTORY_LIMIT = 200  # Number of recent errors to send to webui per poll
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1704,8 +1705,9 @@ class HordeWorkerProcessManager:
             level = log_record.get("level") if log_record is not None else None
             if level is not None and level.no >= logger.level("ERROR").no:
                 self._errors_history.insert(0, clean_message)
+                # Prevent unbounded growth of the errors history buffer
                 if len(self._errors_history) > self._MAX_ERRORS_HISTORY:
-                    self._errors_history = self._errors_history[: self._MAX_ERRORS_HISTORY]
+                    del self._errors_history[self._MAX_ERRORS_HISTORY :]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -2088,7 +2090,7 @@ class HordeWorkerProcessManager:
         if process_info.loaded_horde_model_name is not None:
             self._horde_model_map.expire_entry(process_info.loaded_horde_model_name)
 
-        if job_to_remove is not None:
+        if job_to_remove is not None and job_to_remove in self.jobs_in_progress:
             self.handle_job_fault(faulted_job=job_to_remove, process_info=process_info)
 
         self._end_inference_process(process_info)
@@ -2847,9 +2849,24 @@ class HordeWorkerProcessManager:
                     process_id=available_process.process_id,
                     new_state=HordeProcessState.MODEL_PRELOADING,
                 )
+            else:
+                # The pipe to the child process is broken. Replace the dead/unresponsive process
+                # immediately so that the next cycle selects a healthy process.  Without this,
+                # preload_models() would return True every cycle (blocking start_inference())
+                # while repeatedly failing to send the message to the same dead process,
+                # causing any MODEL_PRELOADED process waiting for a job to remain stuck forever.
+                send_error = available_process.last_send_error
+                send_error_detail = (
+                    f" ({type(send_error).__name__}: {send_error})" if send_error is not None else ""
+                )
+                job_id = getattr(job, "id_", None) or getattr(job, "ids", None)
+                logger.error(
+                    f"Failed to send preload model message for model {job.model!r}"
+                    f"{f' (job_id={job_id})' if job_id is not None else ''} "
+                    f"to process {available_process.process_id}{send_error_detail}",
+                )
+                self._replace_inference_process(available_process)
 
-            # Even if the message fails to send, we still want to return True so that we can let the main loop
-            # catch up and potentially replace the process.
             return True
 
         return False
@@ -6232,7 +6249,7 @@ class HordeWorkerProcessManager:
             last_image_submission_timestamp=self._last_image_job_timestamp,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
-            errors_history=list(self._errors_history),
+            errors_history=self._errors_history[: self._WEBUI_ERRORS_HISTORY_LIMIT],
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
@@ -6378,10 +6395,6 @@ class HordeWorkerProcessManager:
         responding, they will spend much longer in the queue than they should while the server waits for the worker
         to respond (and ultimately times out).
         """
-        # Remember which jobs were pending before we start faulting jobs in progress
-        # This allows us to preserve jobs that are re-queued for retry
-        jobs_pending_before_fault = set(self.jobs_pending_inference)
-
         # Mark all jobs currently in progress as faulted before clearing them
         # Note: handle_job_fault may re-queue some jobs to jobs_pending_inference for retry
         if len(self.jobs_in_progress) > 0:
@@ -6389,13 +6402,22 @@ class HordeWorkerProcessManager:
                 self.handle_job_fault(faulted_job=job, process_info=None)
             logger.error("Cleared jobs in progress")
 
-        # Clear only the jobs that were already pending, not the ones added for retry
+        # Keep only jobs that have already been retried at least once (retry_count > 0).
+        # These were faulted in a prior cycle and are awaiting their retry attempt; discarding
+        # them would permanently lose the job without ever giving it a second chance.
+        # Fresh pending jobs (retry_count == 0) are cleared — the server will re-queue them.
         if len(self.jobs_pending_inference) > 0:
-            # Filter out old pending jobs, keep only retry jobs
-            # Convert back to deque to maintain the original data structure
-            self.jobs_pending_inference = deque(
-                [job for job in self.jobs_pending_inference if job not in jobs_pending_before_fault],
-            )
+            kept = []
+            for job in self.jobs_pending_inference:
+                job_info = self.jobs_lookup.get(job)
+                if job_info is None:
+                    logger.warning(
+                        f"Job {job.id_} is in jobs_pending_inference but missing from jobs_lookup "
+                        "(state inconsistency); dropping it during purge.",
+                    )
+                elif job_info.retry_count > 0:
+                    kept.append(job)
+            self.jobs_pending_inference = deque(kept)
             self._last_job_submitted_time = time.time()
 
             # Log how many jobs were kept for retry
@@ -6424,6 +6446,8 @@ class HordeWorkerProcessManager:
         if self._skipped_line_next_job_and_process is not None:
             self._skipped_line_next_job_and_process = None
             logger.error("Cleared skipped line next job and process")
+
+        self._invalidate_megapixelsteps_cache()
 
     def _hard_kill_processes(
         self,
@@ -6525,7 +6549,7 @@ class HordeWorkerProcessManager:
         - The ``INFERENCE_STARTING`` check is skipped while the flag is set, to prevent cascading
           replacements: a process blocked waiting to acquire the semaphore cannot send heartbeats
           and would falsely appear stuck immediately after a prior replacement freed the semaphore.
-        - ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
+        - ``MODEL_PRELOADING``, ``MODEL_PRELOADED``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
           ``PROCESS_STARTING`` are **always** evaluated, so a process that is genuinely stuck in
           one of those states is recovered even when a different process was recently replaced.
         """
@@ -6625,6 +6649,11 @@ class HordeWorkerProcessManager:
                         self.bridge_data.preload_timeout,
                         HordeProcessState.MODEL_PRELOADING,
                         "seems to be stuck preloading a model",
+                    ),
+                    (
+                        self.bridge_data.preload_timeout,
+                        HordeProcessState.MODEL_PRELOADED,
+                        "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
                     ),
                     (
                         self.bridge_data.download_timeout,
