@@ -6626,7 +6626,7 @@ class HordeWorkerProcessManager:
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
                     and process_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
-                    and (now - process_info.last_heartbeat_timestamp) > self.bridge_data.process_timeout
+                    and (now - process_info.last_heartbeat_timestamp) > max(self.bridge_data.process_timeout, 300)
                 ):
                     logger.error(
                         f"{process_info} has been idle in WAITING_FOR_JOB for "

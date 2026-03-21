@@ -3555,12 +3555,12 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
 
 
 class TestReplaceHungWaitingForJob:
-    """Tests for the new per-process WAITING_FOR_JOB stale-heartbeat recovery.
+    """Tests for the per-process WAITING_FOR_JOB stale-heartbeat recovery.
 
     When an inference process has been in WAITING_FOR_JOB with no heartbeat for longer than
-    process_timeout and there are pending jobs, it should be replaced automatically even while
-    _recently_recovered is True (a freshly replaced process starts in PROCESS_STARTING with a
-    fresh timestamp, so it will never immediately re-match this condition).
+    max(process_timeout, 300) seconds and there are pending jobs, it should be replaced
+    automatically even while _recently_recovered is True (a freshly replaced process starts in
+    PROCESS_STARTING with a fresh timestamp, so it will never immediately re-match this condition).
     """
 
     def _make_manager(
@@ -3576,6 +3576,8 @@ class TestReplaceHungWaitingForJob:
         mock_manager._recently_recovered = recently_recovered
         mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
         mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 100
@@ -3613,11 +3615,13 @@ class TestReplaceHungWaitingForJob:
         return proc
 
     def test_stale_waiting_for_job_process_replaced_when_jobs_pending(self) -> None:
-        """A WAITING_FOR_JOB process whose heartbeat is older than process_timeout must be
+        """A WAITING_FOR_JOB process whose heartbeat is older than 300s must be
         replaced when there are pending jobs (not _last_pop_no_jobs_available).
+        The threshold is max(process_timeout, 300) so even high-performance-mode workers
+        (process_timeout=100s) wait at least 300s before being replaced.
         """
-        # 200s stale, process_timeout=100s → should trigger
-        proc = self._make_inference_process(1, time_elapsed=200.0)
+        # 400s stale, effective threshold=max(100, 300)=300s → should trigger
+        proc = self._make_inference_process(1, time_elapsed=400.0)
         mock_manager = self._make_manager([proc])
 
         with patch("threading.Thread"):
@@ -3646,9 +3650,23 @@ class TestReplaceHungWaitingForJob:
 
     def test_fresh_waiting_for_job_process_not_replaced(self) -> None:
         """A WAITING_FOR_JOB process with a recent heartbeat must not be replaced."""
-        # Only 10s stale, well below process_timeout=100s
+        # Only 10s stale, well below effective threshold of max(100, 300)=300s
         proc = self._make_inference_process(1, time_elapsed=10.0)
         mock_manager = self._make_manager([proc])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+    def test_waiting_for_job_not_replaced_below_300s_threshold(self) -> None:
+        """Even with process_timeout=100 (high_performance_mode), a process idle for only 200s
+        must NOT be replaced because the effective threshold is max(process_timeout, 300)=300s.
+        """
+        # 200s stale, effective threshold=max(100, 300)=300s → must NOT trigger
+        proc = self._make_inference_process(1, time_elapsed=200.0)
+        mock_manager = self._make_manager([proc])  # process_timeout=100
 
         with patch("threading.Thread"):
             result = mock_manager._bound_replace_hung()
