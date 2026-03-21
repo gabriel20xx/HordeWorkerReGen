@@ -2849,9 +2849,21 @@ class HordeWorkerProcessManager:
                     process_id=available_process.process_id,
                     new_state=HordeProcessState.MODEL_PRELOADING,
                 )
+            else:
+                # The pipe to the child process is broken.  Replace the dead/unresponsive process
+                # immediately so that the next loop iteration selects a healthy process instead
+                # of retrying the same broken pipe indefinitely (which would block start_inference()
+                # from ever being called and leave jobs stuck in the queue).
+                send_error = available_process.last_send_error
+                send_error_detail = (
+                    f" ({type(send_error).__name__}: {send_error})" if send_error is not None else ""
+                )
+                logger.error(
+                    f"Failed to send PRELOAD_MODEL to process {available_process.process_id}"
+                    f"{send_error_detail}; replacing it",
+                )
+                self._replace_inference_process(available_process)
 
-            # Even if the message fails to send, we still want to return True so that we can let the main loop
-            # catch up and potentially replace the process.
             return True
 
         return False
@@ -6592,8 +6604,11 @@ class HordeWorkerProcessManager:
                 ):
                     any_replaced = True
 
-                # Skip other state checks if no jobs are available since those states are job-related
-                if self._last_pop_no_jobs_available:
+                # Skip other state checks if no jobs are available since those states are job-related.
+                # But if there are already jobs pending in our local queue, always run these checks
+                # so that stuck processes don't block jobs that are already queued.
+                no_local_work = len(self.jobs_pending_inference) == 0 and len(self.jobs_in_progress) == 0
+                if self._last_pop_no_jobs_available and no_local_work:
                     continue
 
                 # Check job-related states that only matter when jobs are being processed
