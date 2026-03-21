@@ -2847,9 +2847,22 @@ class HordeWorkerProcessManager:
                     process_id=available_process.process_id,
                     new_state=HordeProcessState.MODEL_PRELOADING,
                 )
+            else:
+                # The pipe to the child process is broken. Replace the dead/unresponsive process
+                # immediately so that the next cycle selects a healthy process.  Without this,
+                # preload_models() would return True every cycle (blocking start_inference())
+                # while repeatedly failing to send the message to the same dead process,
+                # causing any MODEL_PRELOADED process waiting for a job to remain stuck forever.
+                send_error = available_process.last_send_error
+                send_error_detail = (
+                    f" ({type(send_error).__name__}: {send_error})" if send_error is not None else ""
+                )
+                logger.error(
+                    f"Failed to send preload model message to process "
+                    f"{available_process.process_id}{send_error_detail}",
+                )
+                self._replace_inference_process(available_process)
 
-            # Even if the message fails to send, we still want to return True so that we can let the main loop
-            # catch up and potentially replace the process.
             return True
 
         return False
@@ -6505,7 +6518,7 @@ class HordeWorkerProcessManager:
         - The ``INFERENCE_STARTING`` check is skipped while the flag is set, to prevent cascading
           replacements: a process blocked waiting to acquire the semaphore cannot send heartbeats
           and would falsely appear stuck immediately after a prior replacement freed the semaphore.
-        - ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
+        - ``MODEL_PRELOADING``, ``MODEL_PRELOADED``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
           ``PROCESS_STARTING`` are **always** evaluated, so a process that is genuinely stuck in
           one of those states is recovered even when a different process was recently replaced.
         """
@@ -6600,6 +6613,11 @@ class HordeWorkerProcessManager:
                         self.bridge_data.preload_timeout,
                         HordeProcessState.MODEL_PRELOADING,
                         "seems to be stuck preloading a model",
+                    ),
+                    (
+                        self.bridge_data.preload_timeout,
+                        HordeProcessState.MODEL_PRELOADED,
+                        "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
                     ),
                     (
                         self.bridge_data.download_timeout,
