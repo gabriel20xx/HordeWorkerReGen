@@ -6544,6 +6544,11 @@ class HordeWorkerProcessManager:
         )
 
         any_replaced = False
+        # Tracks only actual subprocess replacements (via _replace_inference_process /
+        # _check_and_replace_process).  Used exclusively for the _recently_recovered cooldown
+        # so that a soft corrective action (e.g. resetting IMAGE_SUBMITTING state) does not
+        # start the cascading-recovery guard unnecessarily.
+        any_process_replaced = False
         for process_info in self._process_map.values():
             # Determine whether this process appears stuck on inference.
             #
@@ -6598,7 +6603,7 @@ class HordeWorkerProcessManager:
                     f"Job: {process_info.last_job_referenced.id_ if process_info.last_job_referenced else 'None'}",
                 )
                 self._replace_inference_process(process_info)
-                any_replaced = True
+                any_replaced = any_process_replaced = True
             else:
                 # Check PROCESS_STARTING first - this should always be checked regardless of job availability
                 # since processes should complete initialization even when no jobs are available
@@ -6608,7 +6613,7 @@ class HordeWorkerProcessManager:
                     HordeProcessState.PROCESS_STARTING,
                     "seems to be stuck starting",
                 ):
-                    any_replaced = True
+                    any_replaced = any_process_replaced = True
 
                 # Skip other state checks if no jobs are available since those states are job-related
                 if self._last_pop_no_jobs_available:
@@ -6635,7 +6640,7 @@ class HordeWorkerProcessManager:
 
                 for timeout, state, error_message in conditions:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
-                        any_replaced = True
+                        any_replaced = any_process_replaced = True
 
                 # IMAGE_SUBMITTING is managed by the process manager, not the subprocess.
                 # Killing the subprocess is not appropriate here; just reset the state so
@@ -6674,7 +6679,7 @@ class HordeWorkerProcessManager:
                         f"{now - process_info.last_heartbeat_timestamp:.0f}s with pending jobs; replacing it",
                     )
                     self._replace_inference_process(process_info)
-                    any_replaced = True
+                    any_replaced = any_process_replaced = True
 
                 # Check if an INFERENCE_STARTING process is stuck because the semaphore is
                 # unavailable even though no other process is actively running inference.
@@ -6700,14 +6705,16 @@ class HordeWorkerProcessManager:
                                 "with no active inference process holding the semaphore; replacing it",
                             )
                             self._replace_inference_process(process_info)
-                            any_replaced = True
+                            any_replaced = any_process_replaced = True
 
-        # If any processes were replaced and we are not already inside a recovery window,
-        # start the cascading-recovery guard timer.  When _recently_recovered is already True
-        # (because an earlier recovery is still cooling down) we still perform the replacements
-        # above (e.g. MODEL_PRELOADING) but we do NOT start a second timer thread, which would
+        # If any subprocesses were actually replaced and we are not already inside a recovery
+        # window, start the cascading-recovery guard timer.  Soft corrective actions such as
+        # resetting IMAGE_SUBMITTING state do not count as process replacements and therefore
+        # do not trigger the cooldown.  When _recently_recovered is already True (because an
+        # earlier recovery is still cooling down) we still perform the replacements above
+        # (e.g. MODEL_PRELOADING) but we do NOT start a second timer thread, which would
         # extend the blocked window unnecessarily.
-        if any_replaced and not self._recently_recovered:
+        if any_process_replaced and not self._recently_recovered:
             self._recently_recovered = True
             threading.Thread(target=timed_unset_recently_recovered).start()
 

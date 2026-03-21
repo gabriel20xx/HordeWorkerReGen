@@ -3929,3 +3929,35 @@ class TestImageSubmittingStuckRecovery:
 
         assert result is False
         mock_manager._replace_inference_process.assert_not_called()
+
+    def test_image_submitting_reset_does_not_trigger_recently_recovered(self) -> None:
+        """Resetting IMAGE_SUBMITTING state must NOT set _recently_recovered.
+
+        IMAGE_SUBMITTING recovery is a soft state reset — the subprocess is NOT killed.
+        Setting _recently_recovered would incorrectly suppress INFERENCE_STARTING detection
+        and other legitimate checks for inference_step_timeout seconds after every submission
+        timeout, which is far too conservative.  Only actual subprocess replacements should
+        start the cascading-recovery cooldown.
+        """
+        proc = self._make_image_submitting_process(2, time_elapsed=90.0)
+        mock_manager = self._make_hung_manager([proc])
+
+        thread_started = False
+
+        class _TrackThread:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                nonlocal thread_started
+                thread_started = True
+
+            def start(self) -> None:
+                pass
+
+        with patch("threading.Thread", _TrackThread):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        # The subprocess must NOT have been killed
+        mock_manager._replace_inference_process.assert_not_called()
+        # The cascading-recovery guard must NOT have been activated
+        assert mock_manager._recently_recovered is False
+        assert not thread_started, "_recently_recovered timer thread must not be started for a state reset"
