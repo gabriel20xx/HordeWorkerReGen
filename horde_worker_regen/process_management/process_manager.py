@@ -2090,7 +2090,7 @@ class HordeWorkerProcessManager:
         if process_info.loaded_horde_model_name is not None:
             self._horde_model_map.expire_entry(process_info.loaded_horde_model_name)
 
-        if job_to_remove is not None:
+        if job_to_remove is not None and job_to_remove in self.jobs_in_progress:
             self.handle_job_fault(faulted_job=job_to_remove, process_info=process_info)
 
         self._end_inference_process(process_info)
@@ -6360,10 +6360,6 @@ class HordeWorkerProcessManager:
         responding, they will spend much longer in the queue than they should while the server waits for the worker
         to respond (and ultimately times out).
         """
-        # Remember which jobs were pending before we start faulting jobs in progress
-        # This allows us to preserve jobs that are re-queued for retry
-        jobs_pending_before_fault = set(self.jobs_pending_inference)
-
         # Mark all jobs currently in progress as faulted before clearing them
         # Note: handle_job_fault may re-queue some jobs to jobs_pending_inference for retry
         if len(self.jobs_in_progress) > 0:
@@ -6371,13 +6367,22 @@ class HordeWorkerProcessManager:
                 self.handle_job_fault(faulted_job=job, process_info=None)
             logger.error("Cleared jobs in progress")
 
-        # Clear only the jobs that were already pending, not the ones added for retry
+        # Keep only jobs that have already been retried at least once (retry_count > 0).
+        # These were faulted in a prior cycle and are awaiting their retry attempt; discarding
+        # them would permanently lose the job without ever giving it a second chance.
+        # Fresh pending jobs (retry_count == 0) are cleared — the server will re-queue them.
         if len(self.jobs_pending_inference) > 0:
-            # Filter out old pending jobs, keep only retry jobs
-            # Convert back to deque to maintain the original data structure
-            self.jobs_pending_inference = deque(
-                [job for job in self.jobs_pending_inference if job not in jobs_pending_before_fault],
-            )
+            kept = []
+            for job in self.jobs_pending_inference:
+                job_info = self.jobs_lookup.get(job)
+                if job_info is None:
+                    logger.warning(
+                        f"Job {job.id_} is in jobs_pending_inference but missing from jobs_lookup "
+                        "(state inconsistency); dropping it during purge.",
+                    )
+                elif job_info.retry_count > 0:
+                    kept.append(job)
+            self.jobs_pending_inference = deque(kept)
             self._last_job_submitted_time = time.time()
 
             # Log how many jobs were kept for retry
@@ -6406,6 +6411,8 @@ class HordeWorkerProcessManager:
         if self._skipped_line_next_job_and_process is not None:
             self._skipped_line_next_job_and_process = None
             logger.error("Cleared skipped line next job and process")
+
+        self._invalidate_megapixelsteps_cache()
 
     def _hard_kill_processes(
         self,
