@@ -3771,7 +3771,7 @@ class TestImageSubmittingStuckRecovery:
         new_submit = self._make_new_submit(proc_info)
 
         # Simulate an asyncio.TimeoutError coming from the API call
-        async def _timeout(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _timeout(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
             raise asyncio.TimeoutError
 
         manager.horde_client_session.submit_request.side_effect = _timeout
@@ -3790,7 +3790,7 @@ class TestImageSubmittingStuckRecovery:
         manager, proc_info = self._make_submit_manager(0)
         new_submit = self._make_new_submit(proc_info)
 
-        async def _fail(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _fail(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
             raise RuntimeError("unexpected error")
 
         manager.horde_client_session.submit_request.side_effect = _fail
@@ -3814,11 +3814,11 @@ class TestImageSubmittingStuckRecovery:
         error_response = MagicMock(spec=RequestErrorResponse)
         error_response.message = "Some unexpected API error"
 
-        async def _return_error(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _return_error(*args, **kwargs) -> object:  # noqa: ANN002, ANN003
             return error_response
 
         # Bypass asyncio.wait_for so the coroutine runs directly and returns the error
-        async def _wait_for_passthrough(coro, timeout):  # noqa: ANN001, ANN002
+        async def _wait_for_passthrough(coro, timeout) -> object:  # noqa: ANN001, ANN002
             return await coro
 
         with patch("asyncio.wait_for", side_effect=_wait_for_passthrough):
