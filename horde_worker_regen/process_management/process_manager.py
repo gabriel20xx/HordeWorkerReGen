@@ -6410,6 +6410,8 @@ class HordeWorkerProcessManager:
             self._skipped_line_next_job_and_process = None
             logger.error("Cleared skipped line next job and process")
 
+        self._invalidate_megapixelsteps_cache()
+
     def _hard_kill_processes(
         self,
         inference: bool = True,

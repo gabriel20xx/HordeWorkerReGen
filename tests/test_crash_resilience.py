@@ -3705,8 +3705,8 @@ class TestReplaceInferenceProcessDoesNotDoubleFault:
         self,
         *,
         job_in_progress: bool,
-    ) -> tuple[MagicMock, MagicMock]:
-        """Return (mock_manager, job) with the job either in jobs_in_progress or not.
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Return (mock_manager, job, process_info) with the job either in jobs_in_progress or not.
 
         The returned mock_manager has _replace_inference_process bound to the real
         implementation so we can exercise the actual guard.
@@ -3733,14 +3733,14 @@ class TestReplaceInferenceProcessDoesNotDoubleFault:
         mock_manager._disk_lock.release.side_effect = ValueError
 
         bound(process_info)
-        return mock_manager, job
+        return mock_manager, job, process_info
 
     def test_handle_job_fault_called_when_job_is_in_progress(self) -> None:
         """_replace_inference_process must call handle_job_fault when the job is still in-progress."""
-        mock_manager, job = self._make_manager_with_job_state(job_in_progress=True)
+        mock_manager, job, process_info = self._make_manager_with_job_state(job_in_progress=True)
         mock_manager.handle_job_fault.assert_called_once_with(
             faulted_job=job,
-            process_info=mock_manager.handle_job_fault.call_args.kwargs["process_info"],
+            process_info=process_info,
         )
 
     def test_handle_job_fault_skipped_when_job_already_requeued_for_retry(self) -> None:
@@ -3749,7 +3749,7 @@ class TestReplaceInferenceProcessDoesNotDoubleFault:
         This happens when _purge_jobs() already moved the job to jobs_pending_inference for its
         retry attempt.  A second call would exhaust the retry budget and permanently fault the job.
         """
-        mock_manager, _job = self._make_manager_with_job_state(job_in_progress=False)
+        mock_manager, _job, _process_info = self._make_manager_with_job_state(job_in_progress=False)
         mock_manager.handle_job_fault.assert_not_called()
 
 
