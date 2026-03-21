@@ -3937,3 +3937,199 @@ class TestPreloadModelsPipeBroken:
             result = mock_manager._preload_models()
 
         assert result is True
+
+
+class TestReplaceInferenceProcessDoesNotDoubleFault:
+    """Tests that _replace_inference_process does not fault a job that was already re-queued for retry.
+
+    When _purge_jobs() is called first (e.g. all processes timed out), it faults each in-progress
+    job and re-queues eligible ones to jobs_pending_inference.  Afterwards _replace_inference_process
+    is called for each crashed process.  Without the guard, _replace_inference_process would call
+    handle_job_fault a second time for the same job — consuming the single retry budget and marking
+    the job permanently faulted before it ever gets its second chance.
+    """
+
+    def _make_manager_with_job_state(
+        self,
+        *,
+        job_in_progress: bool,
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Return (mock_manager, job, process_info) with the job either in jobs_in_progress or not.
+
+        The returned mock_manager has _replace_inference_process bound to the real
+        implementation so we can exercise the actual guard.
+        """
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = MagicMock()
+        job.id_ = "aaaabbbb-0000-0000-0000-000000000001"
+
+        mock_manager = MagicMock()
+        mock_manager.jobs_in_progress = [job] if job_in_progress else []
+        mock_manager.jobs_lookup = {job: MagicMock()}
+
+        # Bind the real method so it exercises the actual code path
+        bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
+
+        process_info = MagicMock()
+        process_info.last_job_referenced = job
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.loaded_horde_model_name = None
+        mock_manager._inference_semaphore.release.side_effect = ValueError
+        mock_manager._disk_lock.release.side_effect = ValueError
+
+        bound(process_info)
+        return mock_manager, job, process_info
+
+    def test_handle_job_fault_called_when_job_is_in_progress(self) -> None:
+        """_replace_inference_process must call handle_job_fault when the job is still in-progress."""
+        mock_manager, job, process_info = self._make_manager_with_job_state(job_in_progress=True)
+        mock_manager.handle_job_fault.assert_called_once_with(
+            faulted_job=job,
+            process_info=process_info,
+        )
+
+    def test_handle_job_fault_skipped_when_job_already_requeued_for_retry(self) -> None:
+        """_replace_inference_process must NOT call handle_job_fault when the job is no longer in jobs_in_progress.
+
+        This happens when _purge_jobs() already moved the job to jobs_pending_inference for its
+        retry attempt.  A second call would exhaust the retry budget and permanently fault the job.
+        """
+        mock_manager, _job, _process_info = self._make_manager_with_job_state(job_in_progress=False)
+        mock_manager.handle_job_fault.assert_not_called()
+
+
+class TestPurgeJobsRetryCount:
+    """Tests that _purge_jobs keeps retry-eligible jobs and discards fresh ones.
+
+    The key invariants:
+    - Jobs already faulted and re-queued (retry_count > 0) survive the purge.
+    - Fresh pending jobs (retry_count == 0) are cleared.
+    - In-progress jobs get faulted via handle_job_fault (which increments retry_count),
+      so they end up in jobs_pending_inference with retry_count > 0 and survive.
+    """
+
+    def _make_job(self, job_id: str) -> MagicMock:
+        job = MagicMock()
+        job.id_ = job_id
+        return job
+
+    def _make_job_info(self, retry_count: int) -> MagicMock:
+        job_info = MagicMock()
+        job_info.retry_count = retry_count
+        return job_info
+
+    def _make_manager(
+        self,
+        *,
+        jobs_in_progress: list,
+        jobs_pending_inference: list,
+        jobs_lookup: dict,
+    ) -> MagicMock:
+        import types
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager.jobs_in_progress = list(jobs_in_progress)
+        mock_manager.jobs_pending_inference = deque(jobs_pending_inference)
+        mock_manager.jobs_lookup = dict(jobs_lookup)
+        mock_manager.jobs_being_safety_checked = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_pending_submit = []
+        mock_manager._skipped_line_next_job_and_process = None
+
+        # handle_job_fault is real: we want _purge_jobs to drive it, so bind the real one.
+        # But to avoid side effects we use a side_effect that just appends to jobs_pending_inference
+        # as the real implementation would for a retry-eligible job.
+        max_retries = HordeWorkerProcessManager.MAX_JOB_RETRIES
+
+        def fake_handle_job_fault(faulted_job: MagicMock, process_info: MagicMock) -> None:
+            job_info = mock_manager.jobs_lookup.get(faulted_job)
+            if job_info is not None and job_info.retry_count < max_retries:
+                job_info.retry_count += 1
+                if faulted_job not in mock_manager.jobs_pending_inference:
+                    mock_manager.jobs_pending_inference.append(faulted_job)
+                if faulted_job in mock_manager.jobs_in_progress:
+                    mock_manager.jobs_in_progress.remove(faulted_job)
+
+        mock_manager.handle_job_fault = fake_handle_job_fault
+        mock_manager._last_job_submitted_time = 0.0
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+
+        bound = types.MethodType(HordeWorkerProcessManager._purge_jobs, mock_manager)
+        mock_manager._bound_purge = bound
+        return mock_manager
+
+    def test_fresh_pending_job_is_cleared(self) -> None:
+        """A pending job that has never been retried (retry_count == 0) must be removed."""
+        job = self._make_job("fresh-job")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[job],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job not in mock_manager.jobs_pending_inference
+
+    def test_already_retried_pending_job_is_kept(self) -> None:
+        """A pending job with retry_count > 0 (already faulted once and re-queued) must be kept.
+
+        This covers the scenario where a prior PROCESS_ENDING handler already retried the job
+        before _purge_jobs runs.  The old snapshot-based filter would discard this job because
+        it was already in jobs_pending_inference at snapshot time.
+        """
+        job = self._make_job("retried-job")
+        job_info = self._make_job_info(retry_count=1)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[job],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job in mock_manager.jobs_pending_inference
+
+    def test_in_progress_job_retried_and_kept(self) -> None:
+        """A job that was in progress (retry_count == 0) gets retried by the purge and survives.
+
+        _purge_jobs calls handle_job_fault for each in-progress job; handle_job_fault moves the
+        job to jobs_pending_inference with retry_count == 1.  The subsequent filter must keep it.
+        """
+        job = self._make_job("in-progress-job")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_pending_inference=[],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job in mock_manager.jobs_pending_inference
+        assert job_info.retry_count == 1
+
+    def test_mixed_pending_jobs_only_retried_ones_kept(self) -> None:
+        """With a mix of fresh and retried pending jobs, only retried ones must survive."""
+        fresh = self._make_job("fresh")
+        retried = self._make_job("retried")
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[fresh, retried],
+            jobs_lookup={
+                fresh: self._make_job_info(retry_count=0),
+                retried: self._make_job_info(retry_count=1),
+            },
+        )
+        mock_manager._bound_purge()
+
+        assert fresh not in mock_manager.jobs_pending_inference
+        assert retried in mock_manager.jobs_pending_inference

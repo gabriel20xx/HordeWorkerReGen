@@ -526,8 +526,6 @@ class WorkerWebUI:
             display: flex;
             flex-direction: column;
             gap: 6px;
-            max-height: 400px;
-            overflow-y: auto;
         }
 
         .error-item {
@@ -541,6 +539,35 @@ class WorkerWebUI:
             color: #7f1d1d;
             white-space: pre-wrap;
             word-break: break-word;
+        }
+
+        .pagination-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .pagination-controls button {
+            background: #667eea;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .pagination-controls button:disabled {
+            background: #c7d2fe;
+            cursor: default;
+        }
+
+        .pagination-info {
+            font-size: 0.9em;
+            color: #555;
         }
     </style>
 </head>
@@ -699,6 +726,11 @@ class WorkerWebUI:
                     <div id="errors-history" class="errors-list">
                         <div style="text-align: center; color: #999; padding: 20px;">No errors</div>
                     </div>
+                    <div class="pagination-controls" id="errors-pagination" style="display: none;">
+                        <button id="errors-prev" onclick="errorsChangePage(-1)" disabled>&#8249; Prev</button>
+                        <span class="pagination-info" id="errors-page-info">Page 1 of 1</span>
+                        <button id="errors-next" onclick="errorsChangePage(1)">Next &#8250;</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -777,6 +809,43 @@ class WorkerWebUI:
 
         // Constants for UI behavior
         const SCROLL_TOLERANCE_PX = 1; // Pixel tolerance for scroll position detection
+
+        // Errors pagination state
+        const ERRORS_PAGE_SIZE = 10;
+        let errorsCurrentPage = 1;
+        let errorsData = [];
+
+        function renderErrorsPage() {
+            const errorsDiv = document.getElementById('errors-history');
+            const pageInfo = document.getElementById('errors-page-info');
+            const prevBtn = document.getElementById('errors-prev');
+            const nextBtn = document.getElementById('errors-next');
+            const pagination = document.getElementById('errors-pagination');
+
+            if (errorsData.length === 0) {
+                errorsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No errors</div>';
+                pagination.style.display = 'none';
+                return;
+            }
+
+            const totalPages = Math.max(1, Math.ceil(errorsData.length / ERRORS_PAGE_SIZE));
+            errorsCurrentPage = Math.min(Math.max(1, errorsCurrentPage), totalPages);
+
+            const start = (errorsCurrentPage - 1) * ERRORS_PAGE_SIZE;
+            const pageItems = errorsData.slice(start, start + ERRORS_PAGE_SIZE);
+
+            errorsDiv.innerHTML = pageItems.map(err => `<div class="error-item">${escapeHtml(err)}</div>`).join('');
+            pageInfo.textContent = `Page ${errorsCurrentPage} of ${totalPages}`;
+            prevBtn.disabled = errorsCurrentPage <= 1;
+            nextBtn.disabled = errorsCurrentPage >= totalPages;
+            pagination.style.display = 'flex';
+        }
+
+        function errorsChangePage(delta) {
+            const totalPages = Math.max(1, Math.ceil(errorsData.length / ERRORS_PAGE_SIZE));
+            errorsCurrentPage = Math.min(Math.max(1, errorsCurrentPage + delta), totalPages);
+            renderErrorsPage();
+        }
 
         // Helper function to check if element is scrolled to bottom
         function isScrolledToBottom(element, tolerance) {
@@ -1200,17 +1269,16 @@ class WorkerWebUI:
                     }
 
                     // Errors History
-                    const errorsDiv = document.getElementById('errors-history');
                     const errorsCount = document.getElementById('errors-count');
                     if (data.errors_history && data.errors_history.length > 0) {
                         errorsCount.textContent = data.errors_history.length;
-                        errorsDiv.innerHTML = data.errors_history.map(err => {
-                            return `<div class="error-item">${escapeHtml(err)}</div>`;
-                        }).join('');
+                        errorsData = data.errors_history;
                     } else {
                         errorsCount.textContent = '0';
-                        errorsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No errors</div>';
+                        errorsData = [];
+                        errorsCurrentPage = 1;
                     }
+                    renderErrorsPage();
 
                     // Last Generated Images
                     const lastImageContainer = document.getElementById('last-image-container');
