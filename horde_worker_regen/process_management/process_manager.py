@@ -3669,109 +3669,129 @@ class HordeWorkerProcessManager:
                 )
                 break
 
-        job_submit_response = None
         try:
-            job_submit_response = await asyncio.wait_for(
-                self.horde_client_session.submit_request(
-                    submit_job_request,
-                    JobSubmitResponse,
-                ),
-                timeout=10 + 1,
-            )
-        except _async_client_exceptions:
-            logger.error(f"Job {new_submit.job_id} submission timed out")
-            new_submit.retry()
-            return new_submit
-        except Exception as e:
-            logger.error(f"Failed to submit job {new_submit.job_id}: {e}")
-            new_submit.retry()
-            return new_submit
-
-        # If the job submit response is an error,
-        # log it and increment the number of consecutive failed job submits
-        if isinstance(job_submit_response, RequestErrorResponse):
-            if (
-                "Processing Job with ID" in job_submit_response.message
-                and "does not exist" in job_submit_response.message
-            ):
-                logger.warning(f"Job {new_submit.job_id} does not exist, removing from completed jobs")
-                new_submit.fault()
+            job_submit_response = None
+            try:
+                job_submit_response = await asyncio.wait_for(
+                    self.horde_client_session.submit_request(
+                        submit_job_request,
+                        JobSubmitResponse,
+                    ),
+                    timeout=10 + 1,
+                )
+            except _async_client_exceptions:
+                logger.error(f"Job {new_submit.job_id} submission timed out")
+                new_submit.retry()
+                return new_submit
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to submit job {new_submit.job_id}: {e}")
+                new_submit.retry()
                 return new_submit
 
-            if "already submitted" in job_submit_response.message:
-                logger.debug(
-                    f"Job {new_submit.job_id} has already been submitted, removing from completed jobs",
+            # If the job submit response is an error,
+            # log it and increment the number of consecutive failed job submits
+            if isinstance(job_submit_response, RequestErrorResponse):
+                if (
+                    "Processing Job with ID" in job_submit_response.message
+                    and "does not exist" in job_submit_response.message
+                ):
+                    logger.warning(f"Job {new_submit.job_id} does not exist, removing from completed jobs")
+                    new_submit.fault()
+                    return new_submit
+
+                if "already submitted" in job_submit_response.message:
+                    logger.debug(
+                        f"Job {new_submit.job_id} has already been submitted, removing from completed jobs",
+                    )
+                    new_submit.fault()
+                    return new_submit
+
+                if "Please check your worker speed" in job_submit_response.message:
+                    logger.error(job_submit_response.message)
+                    new_submit.fault()
+                    return new_submit
+
+                error_string = (
+                    f"Failed to submit job (API Error) " f"{new_submit.retry_attempts_string}: {job_submit_response}"
                 )
-                new_submit.fault()
+                logger.error(error_string)
+                new_submit.retry()
                 return new_submit
 
-            if "Please check your worker speed" in job_submit_response.message:
-                logger.error(job_submit_response.message)
-                new_submit.fault()
+            if job_submit_response is None:
+                logger.error(f"Failed to submit job {new_submit.job_id}")
+                new_submit.retry()
                 return new_submit
 
-            error_string = (
-                f"Failed to submit job (API Error) " f"{new_submit.retry_attempts_string}: {job_submit_response}"
-            )
-            logger.error(error_string)
-            new_submit.retry()
-            return new_submit
+            # Get the time the job was popped from the job deque
+            async with self._job_pop_timestamps_lock:
+                time_popped = self.job_pop_timestamps.get(new_submit.completed_job_info.sdk_api_job_info)
+                if time_popped is None:
+                    logger.warning(
+                        f"Failed to get time_popped for job {new_submit.completed_job_info.sdk_api_job_info.id_}. "
+                        "This is likely a bug.",
+                    )
+                    time_popped = time.time()
 
-        if job_submit_response is None:
-            logger.error(f"Failed to submit job {new_submit.job_id}")
-            new_submit.retry()
-            return new_submit
+                elif time_popped == -1:
+                    logger.warning(
+                        f"Job {new_submit.completed_job_info.sdk_api_job_info.id_} will have an "
+                        "incorrect kudos/second calculation.",
+                    )
+                    time_popped = time.time()
 
-        # Get the time the job was popped from the job deque
-        async with self._job_pop_timestamps_lock:
-            time_popped = self.job_pop_timestamps.get(new_submit.completed_job_info.sdk_api_job_info)
-            if time_popped is None:
-                logger.warning(
-                    f"Failed to get time_popped for job {new_submit.completed_job_info.sdk_api_job_info.id_}. "
-                    "This is likely a bug.",
+            time_taken = round(time.time() - time_popped, 2)
+
+            kudos_per_second = 0.0
+
+            if new_submit.completed_job_info.time_to_generate is None:
+                logger.error(
+                    f"Job {new_submit.job_id} has no time_to_generate, ignoring.",
                 )
-                time_popped = time.time()
+                new_submit.completed_job_info.time_to_generate = 0.0
+            else:
+                kudos_per_second = job_submit_response.reward / new_submit.completed_job_info.time_to_generate
 
-            elif time_popped == -1:
-                logger.warning(
-                    f"Job {new_submit.completed_job_info.sdk_api_job_info.id_} will have an incorrect kudos/second "
-                    "calculation.",
+            # Logging is now done at the batch level in api_submit_job()
+            # Track slowdowns and faults
+            if new_submit.completed_job_info.state != GENERATION_STATE.faulted:
+                kudos_per_second_for_batch = kudos_per_second * new_submit.batch_count
+                if kudos_per_second_for_batch < 0.4:
+                    self._num_job_slowdowns += 1
+            else:
+                self._num_jobs_faulted += 1
+
+            self.kudos_generated_this_session += job_submit_response.reward
+            self.kudos_events.append((time.time(), job_submit_response.reward))
+            new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
+
+            # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
+            if handling_process_id is not None:
+                self._process_map.on_process_state_change(
+                    process_id=handling_process_id,
+                    new_state=HordeProcessState.WAITING_FOR_JOB,
                 )
-                time_popped = time.time()
 
-        time_taken = round(time.time() - time_popped, 2)
-
-        kudos_per_second = 0.0
-
-        if new_submit.completed_job_info.time_to_generate is None:
-            logger.error(
-                f"Job {new_submit.job_id} has no time_to_generate, ignoring.",
-            )
-            new_submit.completed_job_info.time_to_generate = 0.0
-        else:
-            kudos_per_second = job_submit_response.reward / new_submit.completed_job_info.time_to_generate
-
-        # Logging is now done at the batch level in api_submit_job()
-        # Track slowdowns and faults
-        if new_submit.completed_job_info.state != GENERATION_STATE.faulted:
-            kudos_per_second_for_batch = kudos_per_second * new_submit.batch_count
-            if kudos_per_second_for_batch < 0.4:
-                self._num_job_slowdowns += 1
-        else:
-            self._num_jobs_faulted += 1
-
-        self.kudos_generated_this_session += job_submit_response.reward
-        self.kudos_events.append((time.time(), job_submit_response.reward))
-        new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
-
-        # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
-        if handling_process_id is not None:
-            self._process_map.on_process_state_change(
-                process_id=handling_process_id,
-                new_state=HordeProcessState.WAITING_FOR_JOB,
-            )
-
-        return new_submit
+            return new_submit
+        finally:
+            # Ensure the process is never left stuck in IMAGE_SUBMITTING after any failure path.
+            # On success the state has already been set to WAITING_FOR_JOB above, so the check
+            # below is a no-op in that case.  The specific submission error is logged by the
+            # individual except/error-response branches above.
+            if handling_process_id is not None:
+                stuck_proc = self._process_map.get(handling_process_id)
+                if stuck_proc is not None and stuck_proc.last_process_state == HordeProcessState.IMAGE_SUBMITTING:
+                    logger.warning(
+                        f"Process {handling_process_id} was left in IMAGE_SUBMITTING after a failed "
+                        f"submission for job {new_submit.job_id}; "
+                        "resetting to WAITING_FOR_JOB to unblock job scheduling",
+                    )
+                    self._process_map.on_process_state_change(
+                        process_id=handling_process_id,
+                        new_state=HordeProcessState.WAITING_FOR_JOB,
+                    )
 
     def _discard_broken_job(self, completed_job_info: HordeJobInfo) -> None:
         """Remove a job that cannot be submitted from all tracking structures to prevent queue blocking.
@@ -6547,6 +6567,11 @@ class HordeWorkerProcessManager:
         )
 
         any_replaced = False
+        # Tracks only actual subprocess replacements (via _replace_inference_process /
+        # _check_and_replace_process).  Used exclusively for the _recently_recovered cooldown
+        # so that a soft corrective action (e.g. resetting IMAGE_SUBMITTING state) does not
+        # start the cascading-recovery guard unnecessarily.
+        any_process_replaced = False
         no_local_work = len(self.jobs_pending_inference) == 0 and len(self.jobs_in_progress) == 0
         for process_info in self._process_map.values():
             # Determine whether this process appears stuck on inference.
@@ -6602,7 +6627,7 @@ class HordeWorkerProcessManager:
                     f"Job: {process_info.last_job_referenced.id_ if process_info.last_job_referenced else 'None'}",
                 )
                 self._replace_inference_process(process_info)
-                any_replaced = True
+                any_replaced = any_process_replaced = True
             else:
                 # Check PROCESS_STARTING first - this should always be checked regardless of job availability
                 # since processes should complete initialization even when no jobs are available
@@ -6612,7 +6637,7 @@ class HordeWorkerProcessManager:
                     HordeProcessState.PROCESS_STARTING,
                     "seems to be stuck starting",
                 ):
-                    any_replaced = True
+                    any_replaced = any_process_replaced = True
 
                 # Skip other state checks if no jobs are available since those states are job-related.
                 # But if there are already jobs pending in our local queue or in-progress,
@@ -6646,7 +6671,29 @@ class HordeWorkerProcessManager:
 
                 for timeout, state, error_message in conditions:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
-                        any_replaced = True
+                        any_replaced = any_process_replaced = True
+
+                # IMAGE_SUBMITTING is managed by the process manager, not the subprocess.
+                # Killing the subprocess is not appropriate here; just reset the state so
+                # the process can accept new jobs.  The primary fix is in
+                # submit_single_generation() (try/finally), but this serves as a safety net
+                # for any edge cases that slip through.
+                _image_submit_stuck_timeout = 60.0
+                if (
+                    process_info.process_type == HordeProcessType.INFERENCE
+                    and process_info.last_process_state == HordeProcessState.IMAGE_SUBMITTING
+                    and (now - process_info.last_received_timestamp) > _image_submit_stuck_timeout
+                ):
+                    logger.error(
+                        f"{process_info} has been stuck in IMAGE_SUBMITTING for "
+                        f"{now - process_info.last_received_timestamp:.0f}s; "
+                        "resetting to WAITING_FOR_JOB to unblock job scheduling",
+                    )
+                    self._process_map.on_process_state_change(
+                        process_id=process_info.process_id,
+                        new_state=HordeProcessState.WAITING_FOR_JOB,
+                    )
+                    any_replaced = True
 
                 # Check for WAITING_FOR_JOB inference processes with stale heartbeats when
                 # jobs are pending.  These processes may have died silently without sending
@@ -6663,7 +6710,7 @@ class HordeWorkerProcessManager:
                         f"{now - process_info.last_heartbeat_timestamp:.0f}s with local work pending; replacing it",
                     )
                     self._replace_inference_process(process_info)
-                    any_replaced = True
+                    any_replaced = any_process_replaced = True
 
                 # Check if an INFERENCE_STARTING process is stuck because the semaphore is
                 # unavailable even though no other process is actively running inference.
@@ -6689,14 +6736,16 @@ class HordeWorkerProcessManager:
                                 "with no active inference process holding the semaphore; replacing it",
                             )
                             self._replace_inference_process(process_info)
-                            any_replaced = True
+                            any_replaced = any_process_replaced = True
 
-        # If any processes were replaced and we are not already inside a recovery window,
-        # start the cascading-recovery guard timer.  When _recently_recovered is already True
-        # (because an earlier recovery is still cooling down) we still perform the replacements
-        # above (e.g. MODEL_PRELOADING) but we do NOT start a second timer thread, which would
+        # If any subprocesses were actually replaced and we are not already inside a recovery
+        # window, start the cascading-recovery guard timer.  Soft corrective actions such as
+        # resetting IMAGE_SUBMITTING state do not count as process replacements and therefore
+        # do not trigger the cooldown.  When _recently_recovered is already True (because an
+        # earlier recovery is still cooling down) we still perform the replacements above
+        # (e.g. MODEL_PRELOADING) but we do NOT start a second timer thread, which would
         # extend the blocked window unnecessarily.
-        if any_replaced and not self._recently_recovered:
+        if any_process_replaced and not self._recently_recovered:
             self._recently_recovered = True
             threading.Thread(target=timed_unset_recently_recovered).start()
 

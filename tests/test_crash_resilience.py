@@ -3691,6 +3691,279 @@ class TestReplaceHungWaitingForJob:
         assert result is False
 
 
+class TestImageSubmittingStuckRecovery:
+    """Tests for the IMAGE_SUBMITTING stuck-process fixes.
+
+    Two complementary guards are tested:
+    1. submit_single_generation() try/finally resets the state to WAITING_FOR_JOB on every
+       failure path so the process never stays in IMAGE_SUBMITTING after a failed submission.
+    2. replace_hung_processes() resets any process that remains in IMAGE_SUBMITTING for longer
+       than 60 s as a safety net, without killing the subprocess.
+    """
+
+    # -------------------------------------------------------------------------
+    # Helpers shared by the submit_single_generation tests
+    # -------------------------------------------------------------------------
+
+    def _make_process_map(self, process_id: int, initial_state: HordeProcessState) -> tuple[MagicMock, MagicMock]:
+        """Return a (ProcessMap-like mock, process_info mock) pair that tracks state changes."""
+        process_info = MagicMock()
+        process_info.last_process_state = initial_state
+
+        def on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
+            process_info.last_process_state = new_state
+
+        process_map = MagicMock()
+        process_map.items.return_value = [(process_id, process_info)]
+        process_map.get.return_value = process_info
+        process_map.on_process_state_change.side_effect = on_state_change
+
+        return process_map, process_info
+
+    def _make_submit_manager(
+        self,
+        process_id: int,
+        *,
+        initial_state: HordeProcessState = HordeProcessState.IMAGE_SAVED,
+    ) -> tuple[MagicMock, MagicMock]:
+        """Build a minimal mock manager suitable for calling submit_single_generation."""
+        process_map, process_info = self._make_process_map(process_id, initial_state)
+        mock_manager = MagicMock()
+        mock_manager._process_map = process_map
+        return mock_manager, process_info
+
+    def _make_new_submit(self, process_info: MagicMock) -> MagicMock:
+        """Build a faulted PendingSubmitJob mock whose job reference matches the process.
+
+        Using is_faulted=True (faulted job, no image) lets the function bypass the
+        image-upload section and proceed directly to setting IMAGE_SUBMITTING and
+        calling the API, which is what we want to exercise.
+        """
+        sdk_job = MagicMock()
+        # payload.seed must look like an integer so int() doesn't raise
+        sdk_job.payload.seed = 0
+
+        completed_job_info = MagicMock()
+        completed_job_info.sdk_api_job_info = sdk_job
+        completed_job_info.state = "faulted"
+
+        new_submit = MagicMock()
+        new_submit.is_faulted = True   # faulted → skip "no image result" early return
+        new_submit.image_result = None  # faulted job has no image
+        new_submit.completed_job_info = completed_job_info
+
+        # Make process_info.last_job_referenced match so handling_process_id is found
+        process_info.last_job_referenced = sdk_job
+
+        return new_submit
+
+    # -------------------------------------------------------------------------
+    # submit_single_generation tests
+    # -------------------------------------------------------------------------
+
+    def test_state_reset_to_waiting_on_api_timeout(self) -> None:
+        """Process state must be reset to WAITING_FOR_JOB when the API call times out."""
+        import asyncio
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        manager, proc_info = self._make_submit_manager(0)
+        new_submit = self._make_new_submit(proc_info)
+
+        # Simulate an asyncio.TimeoutError coming from the API call
+        async def _timeout(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise asyncio.TimeoutError
+
+        manager.horde_client_session.submit_request.side_effect = _timeout
+
+        bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
+        asyncio.run(bound(new_submit))
+
+        assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
+
+    def test_state_reset_to_waiting_on_unexpected_exception(self) -> None:
+        """Process state must be reset to WAITING_FOR_JOB when submit_request raises unexpectedly."""
+        import asyncio
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        manager, proc_info = self._make_submit_manager(0)
+        new_submit = self._make_new_submit(proc_info)
+
+        async def _fail(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise RuntimeError("unexpected error")
+
+        manager.horde_client_session.submit_request.side_effect = _fail
+
+        bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
+        asyncio.run(bound(new_submit))
+
+        assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
+
+    def test_state_reset_to_waiting_on_api_error_response(self) -> None:
+        """Process state must be reset to WAITING_FOR_JOB when the API returns a RequestErrorResponse."""
+        import asyncio
+
+        from horde_sdk import RequestErrorResponse
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        manager, proc_info = self._make_submit_manager(0)
+        new_submit = self._make_new_submit(proc_info)
+
+        error_response = MagicMock(spec=RequestErrorResponse)
+        error_response.message = "Some unexpected API error"
+
+        async def _return_error(*args, **kwargs) -> object:  # noqa: ANN002, ANN003
+            return error_response
+
+        # Bypass asyncio.wait_for so the coroutine runs directly and returns the error
+        async def _wait_for_passthrough(coro, timeout) -> object:  # noqa: ANN001, ANN002
+            return await coro
+
+        with patch("asyncio.wait_for", side_effect=_wait_for_passthrough):
+            manager.horde_client_session.submit_request = _return_error
+            bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
+            asyncio.run(bound(new_submit))
+
+        assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
+
+    # -------------------------------------------------------------------------
+    # replace_hung_processes safety-net tests
+    # -------------------------------------------------------------------------
+
+    def _make_hung_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        last_pop_no_jobs: bool = False,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._check_and_replace_process.return_value = False
+        mock_manager._process_map.values.return_value = processes
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def _make_image_submitting_process(
+        self,
+        process_id: int,
+        *,
+        time_elapsed: float,
+    ) -> MagicMock:
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.IMAGE_SUBMITTING
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_image_submitting_stuck_over_60s_resets_state(self) -> None:
+        """A process stuck in IMAGE_SUBMITTING for >60 s must have its state reset to WAITING_FOR_JOB."""
+        proc = self._make_image_submitting_process(2, time_elapsed=90.0)
+        mock_manager = self._make_hung_manager([proc])
+
+        state_changes: list[HordeProcessState] = []
+
+        def _on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
+            proc.last_process_state = new_state
+            state_changes.append(new_state)
+
+        mock_manager._process_map.on_process_state_change.side_effect = _on_state_change
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        assert HordeProcessState.WAITING_FOR_JOB in state_changes
+        # The subprocess must NOT have been killed
+        mock_manager._replace_inference_process.assert_not_called()
+
+    def test_image_submitting_not_reset_within_60s(self) -> None:
+        """A process in IMAGE_SUBMITTING for <60 s must not be touched (submission still in progress)."""
+        proc = self._make_image_submitting_process(2, time_elapsed=30.0)
+        mock_manager = self._make_hung_manager([proc])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is False
+        mock_manager._replace_inference_process.assert_not_called()
+        mock_manager._process_map.on_process_state_change.assert_not_called()
+
+    def test_image_submitting_stuck_not_reset_when_no_jobs_available(self) -> None:
+        """IMAGE_SUBMITTING timeout check must be skipped when no jobs are available.
+
+        The check is inside the _last_pop_no_jobs_available guard, so it should not
+        trigger when the server has no work.
+        """
+        proc = self._make_image_submitting_process(2, time_elapsed=9999.0)
+        mock_manager = self._make_hung_manager([proc], last_pop_no_jobs=True)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is False
+        mock_manager._replace_inference_process.assert_not_called()
+
+    def test_image_submitting_reset_does_not_trigger_recently_recovered(self) -> None:
+        """Resetting IMAGE_SUBMITTING state must NOT set _recently_recovered.
+
+        IMAGE_SUBMITTING recovery is a soft state reset — the subprocess is NOT killed.
+        Setting _recently_recovered would incorrectly suppress INFERENCE_STARTING detection
+        and other legitimate checks for inference_step_timeout seconds after every submission
+        timeout, which is far too conservative.  Only actual subprocess replacements should
+        start the cascading-recovery cooldown.
+        """
+        proc = self._make_image_submitting_process(2, time_elapsed=90.0)
+        mock_manager = self._make_hung_manager([proc])
+
+        thread_started = False
+
+        class _TrackThread:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                nonlocal thread_started
+                thread_started = True
+
+            def start(self) -> None:
+                pass
+
+        with patch("threading.Thread", _TrackThread):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        # The subprocess must NOT have been killed
+        mock_manager._replace_inference_process.assert_not_called()
+        # The cascading-recovery guard must NOT have been activated
+        assert mock_manager._recently_recovered is False
+        assert not thread_started, "_recently_recovered timer thread must not be started for a state reset"
+
+
+
 class TestReplaceHungModelPreloaded:
     """Tests that MODEL_PRELOADED stuck detection fires after ``preload_timeout`` seconds.
 
