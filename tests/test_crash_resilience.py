@@ -3691,111 +3691,448 @@ class TestReplaceHungWaitingForJob:
         assert result is False
 
 
-class TestPreloadModelsDeadProcess:
-    """Tests that preload_models() replaces a dead process on safe_send_message failure.
+class TestReplaceHungModelPreloaded:
+    """Tests that MODEL_PRELOADED stuck detection fires after ``preload_timeout`` seconds.
 
-    Regression tests for the bug where a broken pipe to a dead/unresponsive process caused
-    preload_models() to return True without replacing the broken process. This led to an
-    infinite loop where the same dead process was selected every cycle and start_inference()
-    was never called, leaving jobs stuck in jobs_pending_inference forever.
+    A process that is stuck in MODEL_PRELOADED (the model has been loaded into RAM but
+    the job was never dispatched, e.g. because ``start_inference()`` was never called due
+    to ``preload_models()`` blocking it) should be replaced just like MODEL_PRELOADING.
     """
 
-    def _make_manager(self, *, send_succeeds: bool) -> tuple[MagicMock, MagicMock]:
-        """Build a minimal mock manager and available_process for preload_models().
-
-        Returns (mock_manager, mock_available_process).
-        """
+    def _make_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        recently_recovered: bool = False,
+    ) -> MagicMock:
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-        mock_available_process = MagicMock()
-        mock_available_process.process_id = 0
-        mock_available_process.loaded_horde_model_name = None
-        mock_available_process.last_process_state = HordeProcessState.WAITING_FOR_JOB
-        mock_available_process.safe_send_message.return_value = send_succeeds
-        mock_available_process.last_send_error = (
-            None if send_succeeds else BrokenPipeError("simulated broken pipe")
-        )
-
-        job = MagicMock()
-        job.model = "test-model"
-        job.payload.loras = None
-        job.payload.tiling = None
-
         mock_manager = MagicMock()
-        mock_manager._process_map.values.return_value = [mock_available_process]
-        # No models already loaded (root.values() is iterable with 0 items by MagicMock default)
-        mock_manager._horde_model_map.root.values.return_value = []
-        mock_manager._process_map.get_first_available_inference_process.return_value = mock_available_process
-        # Set high enough so num_loaded < len(pending)+len(in_progress) is False
-        mock_manager._process_map.num_loaded_inference_processes.return_value = 99
-        mock_manager._process_map.num_preloading_processes.return_value = 0
-        mock_manager._max_concurrent_inference_processes = 1
-        mock_manager.jobs_pending_inference = [job]
-        mock_manager.jobs_in_progress = []
-        mock_manager.bridge_data.very_fast_disk_mode = False
-        mock_manager.bridge_data.cycle_process_on_model_change = False
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager._last_pop_no_jobs_available = False
         mock_manager._shutting_down = False
-        mock_manager._preload_delay_notified = False
-        mock_manager.get_processes_with_model_for_queued_job.return_value = []
-        mock_manager.get_model_baseline.return_value = None
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
 
-        mock_manager._bound_preload = HordeWorkerProcessManager.preload_models.__get__(
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
             mock_manager, HordeWorkerProcessManager,
         )
-        return mock_manager, mock_available_process
+        return mock_manager
 
-    def test_failed_send_replaces_dead_process(self) -> None:
-        """When safe_send_message fails, _replace_inference_process must be called immediately.
+    def _make_process(
+        self,
+        process_id: int,
+        state: HordeProcessState,
+        *,
+        time_elapsed: float = 9999.0,
+    ) -> MagicMock:
+        import time as _time
 
-        This is the regression test for the infinite-loop bug: before the fix, the dead process
-        was selected every cycle and start_inference() was never called.
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = state
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def _fake_check_and_replace(self, mock_manager: MagicMock) -> object:
+        """Return a ``_check_and_replace_process`` implementation that actually checks the state."""
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        return fake_check_and_replace
+
+    def test_model_preloaded_replaced_after_timeout(self) -> None:
+        """A process stuck in MODEL_PRELOADED for longer than preload_timeout must be replaced."""
+        proc = self._make_process(1, HordeProcessState.MODEL_PRELOADED, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=False)
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+    def test_model_preloaded_replaced_even_when_recently_recovered(self) -> None:
+        """MODEL_PRELOADED stuck detection must fire even when _recently_recovered is True.
+
+        A process that cannot receive its START_INFERENCE message (e.g. because
+        ``preload_models()`` keeps returning True and blocks ``start_inference()``)
+        must be recovered regardless of whether a prior recovery recently ran.
         """
-        mock_manager, mock_available_process = self._make_manager(send_succeeds=False)
+        proc = self._make_process(1, HordeProcessState.MODEL_PRELOADED, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=True)
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
 
-        _patch = "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage"
-        with patch(_patch):
-            result = mock_manager._bound_preload()
-
-        assert result is True
-        mock_manager._replace_inference_process.assert_called_once_with(mock_available_process)
-
-    def test_successful_send_does_not_replace_process(self) -> None:
-        """When safe_send_message succeeds, _replace_inference_process must NOT be called."""
-        mock_manager, _available_process = self._make_manager(send_succeeds=True)
-
-        _patch = "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage"
-        with patch(_patch):
-            result = mock_manager._bound_preload()
+        with patch("threading.Thread") as mock_thread:
+            result = mock_manager._bound_replace_hung()
 
         assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+        mock_thread.assert_not_called()
+
+    def test_model_preloaded_not_replaced_before_timeout(self) -> None:
+        """A process that just entered MODEL_PRELOADED (time_elapsed < preload_timeout).
+
+        Must NOT be replaced, since it is expected to receive START_INFERENCE shortly.
+        """
+        # 10 seconds elapsed — well below preload_timeout (80 s)
+        proc = self._make_process(1, HordeProcessState.MODEL_PRELOADED, time_elapsed=10.0)
+        mock_manager = self._make_manager([proc], recently_recovered=False)
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
         mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
 
-    def test_successful_send_updates_process_state(self) -> None:
-        """When safe_send_message succeeds, the process state must be updated to MODEL_PRELOADING."""
-        mock_manager, mock_available_process = self._make_manager(send_succeeds=True)
+    def test_model_preloaded_not_replaced_when_no_jobs_available(self) -> None:
+        """A stale MODEL_PRELOADED process must NOT be replaced when no jobs are available.
 
-        _patch = "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage"
-        with patch(_patch):
-            mock_manager._bound_preload()
+        When _last_pop_no_jobs_available is True, job-related stuck checks (including
+        MODEL_PRELOADED) are skipped to avoid pointless process churn.
+        """
+        proc = self._make_process(1, HordeProcessState.MODEL_PRELOADED, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=False)
+        mock_manager._last_pop_no_jobs_available = True
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
 
-        mock_manager._process_map.on_process_state_change.assert_called_once_with(
-            process_id=mock_available_process.process_id,
-            new_state=HordeProcessState.MODEL_PRELOADING,
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+
+class TestPreloadModelsPipeBroken:
+    """Tests that a broken pipe in ``preload_models()`` causes immediate process replacement.
+
+    When ``safe_send_message()`` returns False for the PRELOAD_MODEL message,
+    ``_replace_inference_process`` must be called on the dead process immediately.
+    Without this, ``preload_models()`` would return True every cycle (because neither
+    the model map nor the process map state was updated), permanently blocking
+    ``start_inference()`` and leaving any MODEL_PRELOADED process stuck waiting for
+    a job that will never arrive.
+    """
+
+    def _make_manager_preload_send_failure(self) -> MagicMock:
+        """Build a minimal mock for the pipe-failure path of ``preload_models()``."""
+        from horde_worker_regen.process_management.process_manager import (
+            HordeWorkerProcessManager,
         )
 
-    def test_failed_send_does_not_update_process_state(self) -> None:
-        """When safe_send_message fails, on_process_state_change must NOT be called.
+        # Pending job for model "Juggernaut XL" (not yet loaded)
+        pending_job = MagicMock()
+        pending_job.model = "Juggernaut XL"
+        pending_job.payload = MagicMock()
+        pending_job.payload.loras = None
+        pending_job.payload.tiling = None
 
-        Calling on_process_state_change after a failed send would incorrectly record
-        the dead process as MODEL_PRELOADING, masking the broken pipe from monitoring.
+        # The process whose pipe is broken
+        available_process = MagicMock()
+        available_process.process_id = 2
+        available_process.safe_send_message.return_value = False
+        available_process.last_send_error = BrokenPipeError("simulated broken pipe")
+        available_process.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        available_process.loaded_horde_model_name = None
+
+        # Model map reports "Juggernaut XL" not loaded (so the preload is attempted)
+        mock_model_map = MagicMock()
+        mock_model_map.root = {}  # empty → LOADING check returns "not loaded"
+        mock_model_map_values = []
+        mock_model_map.values.return_value = mock_model_map_values
+
+        mock_process_map = MagicMock()
+        mock_process_map.values.return_value = []
+        mock_process_map.get_first_available_inference_process.return_value = available_process
+        mock_process_map.num_loaded_inference_processes.return_value = 3
+        mock_process_map.num_preloading_processes.return_value = 0
+
+        mock_manager = MagicMock()
+        mock_manager._horde_model_map = mock_model_map
+        mock_manager._process_map = mock_process_map
+        mock_manager.jobs_pending_inference = [pending_job]
+        mock_manager.jobs_in_progress = []
+        mock_manager._shutting_down = False
+        mock_manager._preload_delay_notified = False
+        mock_manager._max_concurrent_inference_processes = 3
+        mock_manager.bridge_data.very_fast_disk_mode = False
+        mock_manager.bridge_data.cycle_process_on_model_change = False
+        mock_manager.get_model_baseline.return_value = None
+
+        mock_manager._preload_models = HordeWorkerProcessManager.preload_models.__get__(
+            mock_manager, HordeWorkerProcessManager,
+        )
+        return mock_manager, available_process
+
+    def test_replace_inference_process_called_on_pipe_failure(self) -> None:
+        """When safe_send_message returns False for PRELOAD_MODEL.
+
+        _replace_inference_process must be called immediately on the dead process.
         """
-        mock_manager, _available_process = self._make_manager(send_succeeds=False)
+        mock_manager, available_process = self._make_manager_preload_send_failure()
 
-        _patch = "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage"
-        with patch(_patch):
-            mock_manager._bound_preload()
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage",
+        ):
+            mock_manager._preload_models()
 
-        mock_manager._process_map.on_process_state_change.assert_not_called()
+        mock_manager._replace_inference_process.assert_called_once_with(available_process)
+
+    def test_model_map_not_updated_on_pipe_failure(self) -> None:
+        """When safe_send_message fails, model map entry must NOT be created.
+
+        This ensures the next cycle can select a new healthy process for preloading.
+        """
+        mock_manager, _ = self._make_manager_preload_send_failure()
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage",
+        ):
+            mock_manager._preload_models()
+
+        # update_entry must not have been called (model map not polluted with stale LOADING state)
+        mock_manager._horde_model_map.update_entry.assert_not_called()
+
+    def test_preload_models_still_returns_true_on_pipe_failure(self) -> None:
+        """preload_models() returns True even on pipe failure.
+
+        The main loop knows a preload was attempted and will retry next cycle with a fresh process.
+        """
+        mock_manager, _ = self._make_manager_preload_send_failure()
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage",
+        ):
+            result = mock_manager._preload_models()
+
+        assert result is True
+
+
+class TestReplaceInferenceProcessDoesNotDoubleFault:
+    """Tests that _replace_inference_process does not fault a job that was already re-queued for retry.
+
+    When _purge_jobs() is called first (e.g. all processes timed out), it faults each in-progress
+    job and re-queues eligible ones to jobs_pending_inference.  Afterwards _replace_inference_process
+    is called for each crashed process.  Without the guard, _replace_inference_process would call
+    handle_job_fault a second time for the same job — consuming the single retry budget and marking
+    the job permanently faulted before it ever gets its second chance.
+    """
+
+    def _make_manager_with_job_state(
+        self,
+        *,
+        job_in_progress: bool,
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Return (mock_manager, job, process_info) with the job either in jobs_in_progress or not.
+
+        The returned mock_manager has _replace_inference_process bound to the real
+        implementation so we can exercise the actual guard.
+        """
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = MagicMock()
+        job.id_ = "aaaabbbb-0000-0000-0000-000000000001"
+
+        mock_manager = MagicMock()
+        mock_manager.jobs_in_progress = [job] if job_in_progress else []
+        mock_manager.jobs_lookup = {job: MagicMock()}
+
+        # Bind the real method so it exercises the actual code path
+        bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
+
+        process_info = MagicMock()
+        process_info.last_job_referenced = job
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.loaded_horde_model_name = None
+        mock_manager._inference_semaphore.release.side_effect = ValueError
+        mock_manager._disk_lock.release.side_effect = ValueError
+
+        bound(process_info)
+        return mock_manager, job, process_info
+
+    def test_handle_job_fault_called_when_job_is_in_progress(self) -> None:
+        """_replace_inference_process must call handle_job_fault when the job is still in-progress."""
+        mock_manager, job, process_info = self._make_manager_with_job_state(job_in_progress=True)
+        mock_manager.handle_job_fault.assert_called_once_with(
+            faulted_job=job,
+            process_info=process_info,
+        )
+
+    def test_handle_job_fault_skipped_when_job_already_requeued_for_retry(self) -> None:
+        """_replace_inference_process must NOT call handle_job_fault when the job is no longer in jobs_in_progress.
+
+        This happens when _purge_jobs() already moved the job to jobs_pending_inference for its
+        retry attempt.  A second call would exhaust the retry budget and permanently fault the job.
+        """
+        mock_manager, _job, _process_info = self._make_manager_with_job_state(job_in_progress=False)
+        mock_manager.handle_job_fault.assert_not_called()
+
+
+class TestPurgeJobsRetryCount:
+    """Tests that _purge_jobs keeps retry-eligible jobs and discards fresh ones.
+
+    The key invariants:
+    - Jobs already faulted and re-queued (retry_count > 0) survive the purge.
+    - Fresh pending jobs (retry_count == 0) are cleared.
+    - In-progress jobs get faulted via handle_job_fault (which increments retry_count),
+      so they end up in jobs_pending_inference with retry_count > 0 and survive.
+    """
+
+    def _make_job(self, job_id: str) -> MagicMock:
+        job = MagicMock()
+        job.id_ = job_id
+        return job
+
+    def _make_job_info(self, retry_count: int) -> MagicMock:
+        job_info = MagicMock()
+        job_info.retry_count = retry_count
+        return job_info
+
+    def _make_manager(
+        self,
+        *,
+        jobs_in_progress: list,
+        jobs_pending_inference: list,
+        jobs_lookup: dict,
+    ) -> MagicMock:
+        import types
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager.jobs_in_progress = list(jobs_in_progress)
+        mock_manager.jobs_pending_inference = deque(jobs_pending_inference)
+        mock_manager.jobs_lookup = dict(jobs_lookup)
+        mock_manager.jobs_being_safety_checked = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_pending_submit = []
+        mock_manager._skipped_line_next_job_and_process = None
+
+        # handle_job_fault is real: we want _purge_jobs to drive it, so bind the real one.
+        # But to avoid side effects we use a side_effect that just appends to jobs_pending_inference
+        # as the real implementation would for a retry-eligible job.
+        max_retries = HordeWorkerProcessManager.MAX_JOB_RETRIES
+
+        def fake_handle_job_fault(faulted_job: MagicMock, process_info: MagicMock) -> None:
+            job_info = mock_manager.jobs_lookup.get(faulted_job)
+            if job_info is not None and job_info.retry_count < max_retries:
+                job_info.retry_count += 1
+                if faulted_job not in mock_manager.jobs_pending_inference:
+                    mock_manager.jobs_pending_inference.append(faulted_job)
+                if faulted_job in mock_manager.jobs_in_progress:
+                    mock_manager.jobs_in_progress.remove(faulted_job)
+
+        mock_manager.handle_job_fault = fake_handle_job_fault
+        mock_manager._last_job_submitted_time = 0.0
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+
+        bound = types.MethodType(HordeWorkerProcessManager._purge_jobs, mock_manager)
+        mock_manager._bound_purge = bound
+        return mock_manager
+
+    def test_fresh_pending_job_is_cleared(self) -> None:
+        """A pending job that has never been retried (retry_count == 0) must be removed."""
+        job = self._make_job("fresh-job")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[job],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job not in mock_manager.jobs_pending_inference
+
+    def test_already_retried_pending_job_is_kept(self) -> None:
+        """A pending job with retry_count > 0 (already faulted once and re-queued) must be kept.
+
+        This covers the scenario where a prior PROCESS_ENDING handler already retried the job
+        before _purge_jobs runs.  The old snapshot-based filter would discard this job because
+        it was already in jobs_pending_inference at snapshot time.
+        """
+        job = self._make_job("retried-job")
+        job_info = self._make_job_info(retry_count=1)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[job],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job in mock_manager.jobs_pending_inference
+
+    def test_in_progress_job_retried_and_kept(self) -> None:
+        """A job that was in progress (retry_count == 0) gets retried by the purge and survives.
+
+        _purge_jobs calls handle_job_fault for each in-progress job; handle_job_fault moves the
+        job to jobs_pending_inference with retry_count == 1.  The subsequent filter must keep it.
+        """
+        job = self._make_job("in-progress-job")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_pending_inference=[],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job in mock_manager.jobs_pending_inference
+        assert job_info.retry_count == 1
+
+    def test_mixed_pending_jobs_only_retried_ones_kept(self) -> None:
+        """With a mix of fresh and retried pending jobs, only retried ones must survive."""
+        fresh = self._make_job("fresh")
+        retried = self._make_job("retried")
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[fresh, retried],
+            jobs_lookup={
+                fresh: self._make_job_info(retry_count=0),
+                retried: self._make_job_info(retry_count=1),
+            },
+        )
+        mock_manager._bound_purge()
+
+        assert fresh not in mock_manager.jobs_pending_inference
+        assert retried in mock_manager.jobs_pending_inference
 
 
 class TestReplaceHungProcessesLocalJobsPending:
