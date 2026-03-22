@@ -3963,6 +3963,7 @@ class TestImageSubmittingStuckRecovery:
         assert not thread_started, "_recently_recovered timer thread must not be started for a state reset"
 
 
+
 class TestReplaceHungModelPreloaded:
     """Tests that MODEL_PRELOADED stuck detection fires after ``preload_timeout`` seconds.
 
