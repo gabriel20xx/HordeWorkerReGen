@@ -2850,10 +2850,10 @@ class HordeWorkerProcessManager:
                     new_state=HordeProcessState.MODEL_PRELOADING,
                 )
             else:
-                # The pipe to the child process is broken.  Replace the dead/unresponsive process
-                # immediately so that the next loop iteration selects a healthy process instead
-                # of retrying the same broken pipe indefinitely (which would block start_inference()
-                # from ever being called and leave jobs stuck in the queue).
+                # safe_send_message() failed (the exception is stored in last_send_error).
+                # Replace the process immediately so that the next loop iteration selects a
+                # healthy process instead of retrying the same send indefinitely (which would
+                # block start_inference() from ever being called and leave jobs stuck in the queue).
                 send_error = available_process.last_send_error
                 send_error_detail = (
                     f" ({type(send_error).__name__}: {send_error})" if send_error is not None else ""
@@ -6538,6 +6538,7 @@ class HordeWorkerProcessManager:
         )
 
         any_replaced = False
+        no_local_work = len(self.jobs_pending_inference) == 0 and len(self.jobs_in_progress) == 0
         for process_info in self._process_map.values():
             # Determine whether this process appears stuck on inference.
             #
@@ -6605,9 +6606,8 @@ class HordeWorkerProcessManager:
                     any_replaced = True
 
                 # Skip other state checks if no jobs are available since those states are job-related.
-                # But if there are already jobs pending in our local queue, always run these checks
-                # so that stuck processes don't block jobs that are already queued.
-                no_local_work = len(self.jobs_pending_inference) == 0 and len(self.jobs_in_progress) == 0
+                # But if there are already jobs pending in our local queue or in-progress,
+                # always run these checks so that stuck processes don't block local work.
                 if self._last_pop_no_jobs_available and no_local_work:
                     continue
 
@@ -6646,7 +6646,7 @@ class HordeWorkerProcessManager:
                 ):
                     logger.error(
                         f"{process_info} has been idle in WAITING_FOR_JOB for "
-                        f"{now - process_info.last_heartbeat_timestamp:.0f}s with pending jobs; replacing it",
+                        f"{now - process_info.last_heartbeat_timestamp:.0f}s with local work pending; replacing it",
                     )
                     self._replace_inference_process(process_info)
                     any_replaced = True
