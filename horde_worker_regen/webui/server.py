@@ -963,7 +963,7 @@ class WorkerWebUI:
                     <div class="grid-3 grid-3-popped" style="margin-bottom: 14px;">
                         <div class="stat-card">
                             <div class="stat-card-label">Jobs Popped</div>
-                            <div class="stat-card-value" id="jobs-popped">0</div>
+                            <div class="stat-card-value accent" id="jobs-popped">0</div>
                         </div>
                         <div class="stat-card">
                             <div class="stat-card-label">Jobs Recovered</div>
