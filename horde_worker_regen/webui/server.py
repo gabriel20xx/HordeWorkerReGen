@@ -699,7 +699,8 @@ class WorkerWebUI:
             .sidebar { transform: translateX(-100%); }
             .sidebar.open { transform: translateX(0); }
             .mobile-navbar { display: flex; }
-            .main-content { margin-left: 0; padding-top: 54px; }
+            .mobile-resources { display: flex; }
+            .main-content { margin-left: 0; padding-top: 80px; }
             .topbar { display: none; }
             .content-area { padding: 14px 12px; }
             .grid-4 { grid-template-columns: repeat(2, 1fr); }
@@ -711,6 +712,108 @@ class WorkerWebUI:
             .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; }
             .stat-card-value { font-size: 1.4rem; }
         }
+
+        /* ---- Theme toggle button ---- */
+        .theme-toggle {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.18);
+            color: var(--text-light);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 5px 9px;
+            border-radius: 8px;
+            line-height: 1;
+            transition: background 0.15s;
+            flex-shrink: 0;
+        }
+        .theme-toggle:hover { background: rgba(255,255,255,0.08); }
+        .topbar .theme-toggle {
+            background: none;
+            border: 1px solid #e2e8f0;
+            color: #475569;
+        }
+        .topbar .theme-toggle:hover { background: #f1f5f9; }
+
+        /* ---- Topbar resource chips ---- */
+        .topbar-resources { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .topbar-res-chip {
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            color: #475569;
+            font-size: 0.74rem;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 20px;
+            font-family: 'Courier New', monospace;
+            white-space: nowrap;
+        }
+
+        /* ---- Mobile resources sub-bar ---- */
+        .mobile-resources {
+            display: none;
+            position: fixed;
+            top: 54px; left: 0; right: 0;
+            height: 26px;
+            background: #12162a;
+            align-items: center;
+            padding: 0 14px;
+            gap: 14px;
+            z-index: 199;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .mobile-res-chip {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* ---- Dark mode ---- */
+        [data-theme="dark"] {
+            --main-bg: #0f172a;
+            --card-bg: #1e293b;
+            --border: #2d3f55;
+            --sidebar-bg: #0d1117;
+            --sidebar-hover: #161e2e;
+        }
+        [data-theme="dark"] body { color: #cbd5e1; }
+        [data-theme="dark"] .topbar { background: #1e293b; border-bottom-color: #2d3f55; }
+        [data-theme="dark"] .topbar-worker-name { color: #f1f5f9; }
+        [data-theme="dark"] .topbar-worker-sub,
+        [data-theme="dark"] .topbar-uptime { color: #94a3b8; }
+        [data-theme="dark"] .topbar .theme-toggle { border-color: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .topbar .theme-toggle:hover { background: #2d3f55; }
+        [data-theme="dark"] .topbar-res-chip { background: #151e2e; border-color: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .stat-card-value { color: #f1f5f9; }
+        [data-theme="dark"] .stat-card-label { color: #94a3b8; }
+        [data-theme="dark"] .stat-label { color: #94a3b8; }
+        [data-theme="dark"] .stat-value { color: #f1f5f9; }
+        [data-theme="dark"] .stat-row { border-bottom-color: #2d3f55; }
+        [data-theme="dark"] .card-header { border-bottom-color: #2d3f55; }
+        [data-theme="dark"] .card-title { color: #94a3b8; }
+        [data-theme="dark"] .progress-label { color: #94a3b8; }
+        [data-theme="dark"] .progress-value { color: #f1f5f9; }
+        [data-theme="dark"] .progress-bar-container { background: #2d3f55; }
+        [data-theme="dark"] .section-title { color: #94a3b8; }
+        [data-theme="dark"] .section-count { background: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .process-item { background: #151e2e; border-color: #2d3f55; }
+        [data-theme="dark"] .process-type-badge { background: #312e81; color: #a5b4fc; }
+        [data-theme="dark"] .process-state-badge { background: #14532d; color: #86efac; }
+        [data-theme="dark"] .process-detail-text { color: #94a3b8; }
+        [data-theme="dark"] .job-item { background: #151e2e; border-color: #2d3f55; }
+        [data-theme="dark"] .model-badge { background: #312e81; color: #a5b4fc; }
+        [data-theme="dark"] .job-state-badge { background: #312e81; color: #a5b4fc; }
+        [data-theme="dark"] .loading-text { color: #94a3b8; }
+        [data-theme="dark"] .loading-spinner { border-color: #2d3f55; border-top-color: var(--accent); }
+        [data-theme="dark"] #update-time { color: #64748b; }
+        [data-theme="dark"] .empty-state { color: #64748b; }
+        [data-theme="dark"] .image-grid-item { background: #151e2e; }
+        [data-theme="dark"] .faulted-job-item { background: #1a1010; border-color: #7f1d1d; }
+        [data-theme="dark"] .faulted-job-value { color: #cbd5e1; }
+        [data-theme="dark"] .faulted-job-label { color: #64748b; }
+        [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
+        [data-theme="dark"] .pagination-controls button:disabled { background: #4338ca; opacity: 0.5; }
+        [data-theme="dark"] .pagination-info { color: #94a3b8; }
     </style>
 </head>
 <body>
@@ -719,7 +822,15 @@ class WorkerWebUI:
         <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
         <span class="mobile-title">&#127912; Horde Worker</span>
         <span id="mobile-status-badge"></span>
+        <button class="theme-toggle" onclick="toggleTheme()" id="mobile-theme-toggle" aria-label="Toggle theme">&#127769;</button>
     </nav>
+
+    <!-- Mobile resources sub-bar -->
+    <div class="mobile-resources" aria-label="Resource usage">
+        <span class="mobile-res-chip" id="mobile-cpu">CPU 0%</span>
+        <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
+        <span class="mobile-res-chip" id="mobile-vram">VRAM 0%</span>
+    </div>
 
     <!-- Sidebar overlay -->
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -735,7 +846,7 @@ class WorkerWebUI:
             <a class="nav-item active" onclick="scrollToSection('overview', this)">
                 <span class="nav-icon">&#128202;</span> Overview
             </a>
-            <a class="nav-item" onclick="scrollToSection('current-job-section', this)">
+            <a class="nav-item" onclick="scrollToSection('overview', this)">
                 <span class="nav-icon">&#9889;</span> Current Job
             </a>
             <a class="nav-item" onclick="scrollToSection('resources-section', this)">
@@ -770,9 +881,15 @@ class WorkerWebUI:
                 <div class="topbar-worker-name" id="topbar-worker-name">Horde Worker</div>
                 <div class="topbar-worker-sub" id="topbar-worker-sub">Loading...</div>
             </div>
+            <div class="topbar-resources">
+                <span class="topbar-res-chip" id="topbar-cpu">CPU 0%</span>
+                <span class="topbar-res-chip" id="topbar-gpu">GPU 0%</span>
+                <span class="topbar-res-chip" id="topbar-vram">VRAM 0%</span>
+            </div>
             <div class="topbar-meta">
                 <span id="worker-status-badge"></span>
                 <span class="topbar-uptime">&#9201; <span id="uptime">--</span></span>
+                <button class="theme-toggle" onclick="toggleTheme()" id="topbar-theme-toggle" aria-label="Toggle theme">&#127769;</button>
             </div>
         </div>
 
@@ -881,7 +998,7 @@ class WorkerWebUI:
                     <div class="grid-2" style="margin-top: 14px;">
                         <div class="card">
                             <div class="card-header">
-                                <span class="card-title">&#9889; Current Generation</span>
+                                <span class="card-title">&#9889; Current Job</span>
                             </div>
                             <div id="overview-current-job">
                                 <div class="empty-state">
@@ -902,21 +1019,6 @@ class WorkerWebUI:
                                     <span class="empty-state-icon">&#128444;</span>
                                     No image generated yet
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- CURRENT JOB -->
-                <section class="section" id="current-job-section">
-                    <div class="section-header">
-                        <span class="section-title">&#9889; Current Job</span>
-                    </div>
-                    <div class="card">
-                        <div id="current-job">
-                            <div class="empty-state">
-                                <span class="empty-state-icon">&#9203;</span>
-                                No job in progress
                             </div>
                         </div>
                     </div>
@@ -1080,6 +1182,27 @@ class WorkerWebUI:
             if (navEl) navEl.classList.add('active');
             if (window.innerWidth < 768) closeSidebar();
         }
+
+        // ---- Theme toggle ----
+        function initTheme() {
+            const saved = localStorage.getItem('horde-theme') || 'light';
+            document.documentElement.setAttribute('data-theme', saved);
+            const icon = saved === 'dark' ? '&#9728;' : '&#127769;';
+            document.getElementById('topbar-theme-toggle').innerHTML = icon;
+            document.getElementById('mobile-theme-toggle').innerHTML = icon;
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme') || 'light';
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('horde-theme', next);
+            const icon = next === 'dark' ? '&#9728;' : '&#127769;';
+            document.getElementById('topbar-theme-toggle').innerHTML = icon;
+            document.getElementById('mobile-theme-toggle').innerHTML = icon;
+        }
+
+        initTheme();
 
         // ---- Image overlay ----
         function openImageOverlay(imageSrc) {
@@ -1373,15 +1496,22 @@ class WorkerWebUI:
                     const vramTotal = formatBytes(data.total_vram_mb * 1024 * 1024);
                     vramLabel.textContent = `VRAM: ${vramUsed} / ${vramTotal}`;
 
-                    // Current Job
-                    const currentJobDiv = document.getElementById('current-job');
+                    // Header resource chips (topbar + mobile)
+                    document.getElementById('topbar-cpu').textContent = `CPU ${cpuPercent}%`;
+                    document.getElementById('topbar-gpu').textContent = `GPU ${gpuPercent}%`;
+                    document.getElementById('topbar-vram').textContent = `VRAM ${vramPercent}%`;
+                    document.getElementById('mobile-cpu').textContent = `CPU ${cpuPercent}%`;
+                    document.getElementById('mobile-gpu').textContent = `GPU ${gpuPercent}%`;
+                    document.getElementById('mobile-vram').textContent = `VRAM ${vramPercent}%`;
+
+                    // Current Job (rendered in overview card)
+                    const overviewJobDiv = document.getElementById('overview-current-job');
                     if (data.current_job) {
                         const job = data.current_job;
-                        // Use raw state value to match process state display
                         const stateDisplay = job.state || 'N/A';
                         const progressValue = (job.progress !== null && job.progress !== undefined) ? job.progress : 0;
 
-                        currentJobDiv.innerHTML = `
+                        overviewJobDiv.innerHTML = `
                             <div class="stat-row">
                                 <span class="stat-label">Job ID:</span>
                                 <span class="stat-value" style="font-family:monospace;font-size:0.8rem;">${job.id || 'N/A'}</span>
@@ -1432,33 +1562,6 @@ class WorkerWebUI:
                                 <div class="progress-bar-container" style="height:12px;">
                                     <div class="progress-bar" style="width:${progressValue}%;height:100%;border-radius:6px;"></div>
                                 </div>
-                            </div>
-                        `;
-                    } else {
-                        currentJobDiv.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
-                    }
-
-                    // Overview: current generation progress
-                    const overviewJobDiv = document.getElementById('overview-current-job');
-                    if (data.current_job) {
-                        const ojob = data.current_job;
-                        const oState = ojob.state || 'N/A';
-                        const oProgress = (ojob.progress !== null && ojob.progress !== undefined) ? ojob.progress : 0;
-                        overviewJobDiv.innerHTML = `
-                            <div class="stat-row" style="margin-bottom:8px;">
-                                <span class="stat-label">Model:</span>
-                                <span class="stat-value" style="font-size:0.82rem;word-break:break-word;">${ojob.model || 'N/A'}</span>
-                            </div>
-                            <div class="stat-row" style="margin-bottom:12px;">
-                                <span class="stat-label">State:</span>
-                                <span class="job-state-badge">${oState}</span>
-                            </div>
-                            <div class="progress-header">
-                                <span class="progress-label">Progress</span>
-                                <span class="progress-value">${oProgress}%</span>
-                            </div>
-                            <div class="progress-bar-container" style="height:12px;">
-                                <div class="progress-bar" style="width:${oProgress}%;height:100%;border-radius:6px;"></div>
                             </div>
                         `;
                     } else {
