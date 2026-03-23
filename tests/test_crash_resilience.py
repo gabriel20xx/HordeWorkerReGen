@@ -4603,3 +4603,175 @@ class TestReplaceHungProcessesLocalJobsPending:
 
         assert result is True
         mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+
+class TestInferenceBackgroundHeartbeat:
+    """Tests for the background heartbeat thread introduced to prevent false
+    stuck-process detection during long-running computation phases (e.g., VAE decode).
+    """
+
+    def _make_proc(self) -> "MagicMock":
+        """Create a minimal mock of HordeInferenceProcess for start_inference tests."""
+        import multiprocessing
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._is_busy = False
+        proc._in_post_processing = False
+        proc._vae_acquire_attempted = False
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_sanitized_negative_prompt = None
+        proc._last_inference_percent = None
+        proc._active_model_name = "TestModel"
+        proc.VAE_SEMAPHORE_TIMEOUT = 5
+        proc._INFERENCE_HEARTBEAT_INTERVAL = 30.0
+        proc._inference_semaphore = multiprocessing.Semaphore(1)
+        proc._vae_decode_semaphore = multiprocessing.Semaphore(1)
+        proc.send_process_state_change_message = MagicMock()
+        proc.send_heartbeat_message = MagicMock()
+        return proc
+
+    def test_heartbeat_thread_started_and_stopped(self) -> None:
+        """The background heartbeat thread must be started before basic_inference()
+        and stopped (via Event.set + join) after it returns.
+        """
+        import threading as _threading
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc()
+        fake_result = MagicMock()
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = [fake_result]
+
+        job_info = MagicMock()
+        job_info.payload.prompt = "test"
+        job_info.extra_source_images = None
+        job_info.source_image = None
+        job_info.source_mask = None
+        job_info.ids = []
+
+        threads_created: list[_threading.Thread] = []
+        real_thread_cls = _threading.Thread
+
+        def capturing_thread(*args: object, **kwargs: object) -> _threading.Thread:
+            t = real_thread_cls(*args, **kwargs)
+            threads_created.append(t)
+            return t
+
+        with patch("horde_worker_regen.process_management.inference_process.threading.Thread", capturing_thread):
+            result = HordeInferenceProcess.start_inference(proc, job_info)
+
+        assert result is not None, "start_inference must return results"
+        # At least one thread was created for the heartbeat
+        assert len(threads_created) >= 1, "A background heartbeat thread must be created during inference"
+        # The thread must have finished (was joined)
+        heartbeat_threads = [t for t in threads_created if "heartbeat" in (t.name or "")]
+        assert heartbeat_threads, "A thread named with 'heartbeat' must be created during inference"
+        assert not heartbeat_threads[0].is_alive(), "The heartbeat thread must be stopped after inference"
+
+    def test_heartbeat_thread_is_daemon(self) -> None:
+        """The background heartbeat thread must be a daemon thread so it does not
+        prevent the process from exiting if it is somehow not stopped cleanly.
+        """
+        import threading as _threading
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc()
+        fake_result = MagicMock()
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = [fake_result]
+
+        job_info = MagicMock()
+        job_info.payload.prompt = "test"
+        job_info.extra_source_images = None
+        job_info.source_image = None
+        job_info.source_mask = None
+        job_info.ids = []
+
+        daemon_values: list[bool | None] = []
+
+        real_thread_init = _threading.Thread.__init__
+
+        def patched_init(self_t: _threading.Thread, *args: object, **kwargs: object) -> None:  # noqa: ANN001
+            real_thread_init(self_t, *args, **kwargs)
+            daemon_values.append(self_t.daemon)
+
+        with patch.object(_threading.Thread, "__init__", patched_init):
+            HordeInferenceProcess.start_inference(proc, job_info)
+
+        assert daemon_values, "At least one Thread must be created during inference"
+        assert daemon_values[-1] is True, "The inference heartbeat thread must be a daemon thread"
+
+    def test_inference_heartbeat_loop_sends_heartbeat(self) -> None:
+        """_inference_heartbeat_loop must call send_heartbeat_message with
+        PIPELINE_STATE_CHANGE and the last known inference percent before the
+        stop event fires.
+        """
+        import threading as _threading
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+        from horde_worker_regen.process_management.messages import HordeHeartbeatType
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._last_inference_percent = 97
+        proc._INFERENCE_HEARTBEAT_INTERVAL = 0.01  # fire almost immediately
+
+        stop_event = _threading.Event()
+
+        # Let the loop fire once, then stop it
+        call_counts: list[int] = [0]
+
+        def track_heartbeat(**kwargs: object) -> None:
+            call_counts[0] += 1
+            stop_event.set()  # stop after first call
+
+        proc.send_heartbeat_message = MagicMock(side_effect=track_heartbeat)
+
+        HordeInferenceProcess._inference_heartbeat_loop(proc, stop_event)
+
+        assert call_counts[0] >= 1, "_inference_heartbeat_loop must send at least one heartbeat"
+        proc.send_heartbeat_message.assert_called_with(
+            heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+            percent_complete=97,
+        )
+
+    def test_last_inference_percent_updated_on_inference_step(self) -> None:
+        """_last_inference_percent must be updated to the step's percentage when
+        an INFERENCE_STEP heartbeat is sent in _progress_callback_impl.
+        """
+        from hordelib.horde import ProgressReport, ProgressState
+        from hordelib.utils.ioredirect import ComfyUIProgress
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._in_post_processing = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_inference_percent = None
+        proc.send_heartbeat_message = MagicMock()
+        proc.send_memory_report_message = MagicMock()
+        proc._active_model_name = "TestModel"
+        proc._start_inference_time = 0.0
+
+        # Build a progress report for step 29/30 → 97%
+        comfy_progress = MagicMock(spec=ComfyUIProgress)
+        comfy_progress.current_step = 29
+        comfy_progress.total_steps = 30
+        comfy_progress.percent = 96.67
+        comfy_progress.rate = 1.96
+        from hordelib.utils.ioredirect import ComfyUIProgressUnit
+        comfy_progress.rate_unit = ComfyUIProgressUnit.ITERATIONS_PER_SECOND
+
+        report = MagicMock(spec=ProgressReport)
+        report.hordelib_progress_state = ProgressState.progress
+        report.comfyui_progress = comfy_progress
+
+        HordeInferenceProcess._progress_callback_impl(proc, report)
+
+        assert proc._last_inference_percent == 96, (
+            "_last_inference_percent must be updated to int(96.67) == 96 after an INFERENCE_STEP"
+        )

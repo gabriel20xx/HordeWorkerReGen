@@ -7,6 +7,7 @@ import contextlib
 import gc
 import re
 import sys
+import threading
 import time
 
 from horde_worker_regen.consts import BASE_LORA_DOWNLOAD_TIMEOUT, EXTRA_LORA_DOWNLOAD_TIMEOUT
@@ -487,6 +488,46 @@ class HordeInferenceProcess(HordeProcess):
     _last_job_inference_rate: str | None = None
     _last_sanitized_negative_prompt: str | None = None
 
+    _INFERENCE_HEARTBEAT_INTERVAL: float = 30.0
+    """How often (seconds) the background heartbeat thread fires during inference.
+
+    ComfyUI's progress callback is only called at step completions, which leaves long gaps
+    between callbacks during heavy computation (e.g., VAE decode for large SDXL images).
+    The background heartbeat thread fills these gaps so the process manager does not
+    incorrectly declare the process stuck.
+    """
+
+    _HEARTBEAT_THREAD_JOIN_TIMEOUT: float = 5.0
+    """Seconds to wait for the background heartbeat thread to stop after inference finishes."""
+
+    _last_inference_percent: int | None = None
+    """Last percentage reported by the progress callback; used by the background heartbeat thread."""
+
+    def _inference_heartbeat_loop(self, stop_event: threading.Event) -> None:
+        """Send periodic heartbeats during inference to prevent false stuck-process detection.
+
+        ComfyUI's progress callback is only called at step completions, leaving long gaps
+        between callbacks (e.g., during VAE decode for SDXL 2048x2048 images with a 2x batch)
+        where no heartbeats are sent.  This thread fills those gaps so the process manager
+        does not incorrectly declare the process stuck and replace it.
+
+        Args:
+            stop_event: Set this event to signal the thread to exit.
+        """
+        while not stop_event.wait(timeout=self._INFERENCE_HEARTBEAT_INTERVAL):
+            try:
+                last_pct = self._last_inference_percent
+                logger.info(
+                    f"Inference still running (no step callback for {self._INFERENCE_HEARTBEAT_INTERVAL:.0f}s): "
+                    f"last progress {last_pct}% — process is alive, likely in VAE decode or final step",
+                )
+                self.send_heartbeat_message(
+                    heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                    percent_complete=last_pct,
+                )
+            except Exception as e:
+                logger.debug(f"Background inference heartbeat failed: {type(e).__name__}: {e}")
+
     def progress_callback(
         self,
         progress_report: ProgressReport,
@@ -582,6 +623,7 @@ class HordeInferenceProcess(HordeProcess):
                     heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
                     percent_complete=percent,
                 )
+                self._last_inference_percent = percent
                 logger.info(
                     f"Post-processing: {percent}% (Step {progress_report.comfyui_progress.current_step}/"
                     f"{progress_report.comfyui_progress.total_steps})"
@@ -592,6 +634,7 @@ class HordeInferenceProcess(HordeProcess):
                     heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
                     percent_complete=100,
                 )
+                self._last_inference_percent = 100
             return
 
         if self._current_job_inference_steps_complete:
@@ -624,6 +667,7 @@ class HordeInferenceProcess(HordeProcess):
                 heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
                 percent_complete=100,
             )
+            self._last_inference_percent = 100
             return
 
         if progress_report.comfyui_progress is not None and progress_report.comfyui_progress.current_step == (
@@ -634,6 +678,7 @@ class HordeInferenceProcess(HordeProcess):
                 heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
                 percent_complete=100,
             )
+            self._last_inference_percent = 100
             self._current_job_inference_steps_complete = True
             logger.debug("Current job inference steps complete")
             # Log progress to console
@@ -675,6 +720,7 @@ class HordeInferenceProcess(HordeProcess):
                 process_warning=warning,
                 percent_complete=progress_report.comfyui_progress.percent,
             )
+            self._last_inference_percent = int(progress_report.comfyui_progress.percent)
             # Send memory report with VRAM to update webui resources display
             self.send_memory_report_message(include_vram=True)
         else:
@@ -699,6 +745,7 @@ class HordeInferenceProcess(HordeProcess):
         self._is_busy = True
         self._current_job_inference_steps_complete = False
         self._last_job_inference_rate = None
+        self._last_inference_percent = None
         self._post_processing_was_started = False
 
         # Capture original_prompt here so the finally block can always restore it,
@@ -746,7 +793,19 @@ class HordeInferenceProcess(HordeProcess):
 
             with logger.catch(reraise=True):
                 self._start_inference_time = time.time()
-                results = self._horde.basic_inference(job_info, progress_callback=self.progress_callback)
+                _heartbeat_stop = threading.Event()
+                _heartbeat_thread = threading.Thread(
+                    target=self._inference_heartbeat_loop,
+                    args=(_heartbeat_stop,),
+                    daemon=True,
+                    name=f"inference-heartbeat-p{getattr(self, 'process_id', '?')}",
+                )
+                _heartbeat_thread.start()
+                try:
+                    results = self._horde.basic_inference(job_info, progress_callback=self.progress_callback)
+                finally:
+                    _heartbeat_stop.set()
+                    _heartbeat_thread.join(timeout=HordeInferenceProcess._HEARTBEAT_THREAD_JOIN_TIMEOUT)
 
                 # Detect a silent failure mode: basic_inference() returned None or an empty
                 # list without raising.  Log a warning immediately so the cause is visible in
