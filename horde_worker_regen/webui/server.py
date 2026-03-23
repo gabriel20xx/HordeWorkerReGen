@@ -706,6 +706,8 @@ class WorkerWebUI:
             .grid-4 { grid-template-columns: repeat(2, 1fr); }
             .grid-3 { grid-template-columns: 1fr; }
             .grid-2 { grid-template-columns: 1fr; }
+            .grid-3-popped { grid-template-columns: repeat(2, 1fr); }
+            .grid-3-popped .stat-card:last-child { grid-column: 1 / -1; }
         }
 
         @media (max-width: 480px) {
@@ -958,18 +960,18 @@ class WorkerWebUI:
                     </div>
 
                     <!-- Row 2: 3 stat cards -->
-                    <div class="grid-3" style="margin-bottom: 14px;">
+                    <div class="grid-3 grid-3-popped" style="margin-bottom: 14px;">
                         <div class="stat-card">
                             <div class="stat-card-label">Jobs Popped</div>
                             <div class="stat-card-value" id="jobs-popped">0</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-card-label">Jobs Total</div>
-                            <div class="stat-card-value" id="jobs-queued">0</div>
-                        </div>
-                        <div class="stat-card">
                             <div class="stat-card-label">Jobs Recovered</div>
                             <div class="stat-card-value warning" id="processes-recovered">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-label">Jobs Total</div>
+                            <div class="stat-card-value" id="jobs-queued">0</div>
                         </div>
                     </div>
 
