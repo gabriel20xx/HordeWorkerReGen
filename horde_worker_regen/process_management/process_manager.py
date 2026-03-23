@@ -653,10 +653,13 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         ):
             return False
 
-        # Check if we're getting heartbeats but progress isn't advancing
-        # This catches jobs stuck at a specific progress percentage, including the last step
+        # Check if we're getting heartbeats but progress isn't advancing.
+        # Skip this check when progress is already at 100 %: once all diffusion steps are
+        # complete no further progress increments are expected (the process is in the VAE
+        # decode phase), so a stalled 100 % value is normal behaviour.  The heartbeat-based
+        # checks below are sufficient to detect genuine failures at that stage.
         time_since_progress = time.time() - self[process_id].last_progress_timestamp
-        if time_since_progress > inference_step_timeout:
+        if time_since_progress > inference_step_timeout and self[process_id].last_progress_value != 100:
             # Progress hasn't advanced in too long - job is stuck
             return True
 
@@ -972,13 +975,24 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                     process_info.last_heartbeat_percent_complete is not None
                     and process_info.last_job_referenced is not None
                 ):
-                    process_state_detail = (
+                    percent_detail = (
                         f"{process_info.last_heartbeat_percent_complete}% of "
                         f"{process_info.last_job_referenced.payload.ddim_steps} steps "
                         f"using {process_info.last_job_referenced.payload.sampler_name}"
                     )
                     if process_info.last_job_referenced.payload.n_iter > 1:
-                        process_state_detail += f" ({process_info.last_job_referenced.payload.n_iter}x batch)"
+                        percent_detail += f" ({process_info.last_job_referenced.payload.n_iter}x batch)"
+                    # During post-processing the process state advances beyond INFERENCE_PROCESSING
+                    # but last_heartbeat_percent_complete stays at 100 %.  Include the state name
+                    # so the console reflects the same job/process state as the webui.
+                    if process_info.last_process_state in (
+                        HordeProcessState.POST_PROCESSING_STARTING,
+                        HordeProcessState.INFERENCE_POST_PROCESSING,
+                        HordeProcessState.POST_PROCESSING_COMPLETE,
+                    ):
+                        process_state_detail = f"{process_info.last_process_state.name} ({percent_detail})"
+                    else:
+                        process_state_detail = percent_detail
 
                 horde_model_name_and_baseline = (
                     f"<u>{process_info.loaded_horde_model_name}</u> {process_info.loaded_horde_model_baseline})"
