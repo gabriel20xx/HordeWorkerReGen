@@ -707,7 +707,6 @@ class WorkerWebUI:
             .grid-3 { grid-template-columns: 1fr; }
             .grid-2 { grid-template-columns: 1fr; }
             .grid-3-popped { grid-template-columns: repeat(2, 1fr); }
-            .grid-3-popped .stat-card:last-child { grid-column: 1 / -1; }
         }
 
         @media (max-width: 480px) {
@@ -959,8 +958,8 @@ class WorkerWebUI:
                         </div>
                     </div>
 
-                    <!-- Row 2: 3 stat cards -->
-                    <div class="grid-3 grid-3-popped" style="margin-bottom: 14px;">
+                    <!-- Row 2: 2 stat cards -->
+                    <div class="grid-2 grid-3-popped" style="margin-bottom: 14px;">
                         <div class="stat-card">
                             <div class="stat-card-label">Jobs Popped</div>
                             <div class="stat-card-value accent" id="jobs-popped">0</div>
@@ -968,10 +967,6 @@ class WorkerWebUI:
                         <div class="stat-card">
                             <div class="stat-card-label">Jobs Recovered</div>
                             <div class="stat-card-value warning" id="processes-recovered">0</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-card-label">Jobs Total</div>
-                            <div class="stat-card-value" id="jobs-queued">0</div>
                         </div>
                     </div>
 
@@ -1487,7 +1482,6 @@ class WorkerWebUI:
 
                     // Session Stats
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
-                    document.getElementById('jobs-queued').textContent = data.jobs_queued;
                     document.getElementById('jobs-completed').textContent = data.jobs_completed;
                     document.getElementById('jobs-faulted').textContent = data.jobs_faulted;
                     document.getElementById('processes-recovered').textContent = data.processes_recovered;
