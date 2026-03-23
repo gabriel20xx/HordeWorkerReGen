@@ -1257,6 +1257,24 @@ class HordeWorkerProcessManager:
     _MAX_ERRORS_HISTORY = 1000  # Maximum number of error messages to keep in history (memory safety cap)
     _WEBUI_ERRORS_HISTORY_LIMIT = 200  # Number of recent errors to send to webui per poll
 
+    # States that indicate inference is done and the result is being post-processed or submitted.
+    # In all these states the progress bar must be pinned at 100% so it never goes backwards.
+    _WEBUI_POST_INFERENCE_STATES: frozenset[HordeProcessState] = frozenset(
+        {
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+            HordeProcessState.INFERENCE_COMPLETE,
+            HordeProcessState.POST_PROCESSING_COMPLETE,
+            HordeProcessState.SAFETY_STARTING,
+            HordeProcessState.SAFETY_EVALUATING,
+            HordeProcessState.SAFETY_COMPLETE,
+            HordeProcessState.IMAGE_SAVING,
+            HordeProcessState.IMAGE_SAVED,
+            HordeProcessState.IMAGE_SUBMITTING,
+            HordeProcessState.IMAGE_SUBMITTED,
+        },
+    )
+
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
 
@@ -6067,24 +6085,6 @@ class HordeWorkerProcessManager:
         if self.webui is None:
             return
 
-        # States that indicate inference is done and the result is being post-processed or submitted.
-        # In all these states the progress bar must be pinned at 100 % so it never goes backwards.
-        _POST_INFERENCE_STATES = frozenset(
-            {
-                HordeProcessState.INFERENCE_POST_PROCESSING,
-                HordeProcessState.POST_PROCESSING_STARTING,
-                HordeProcessState.INFERENCE_COMPLETE,
-                HordeProcessState.POST_PROCESSING_COMPLETE,
-                HordeProcessState.SAFETY_STARTING,
-                HordeProcessState.SAFETY_EVALUATING,
-                HordeProcessState.SAFETY_COMPLETE,
-                HordeProcessState.IMAGE_SAVING,
-                HordeProcessState.IMAGE_SAVED,
-                HordeProcessState.IMAGE_SUBMITTING,
-                HordeProcessState.IMAGE_SUBMITTED,
-            },
-        )
-
         # Get current job info
         current_job = None
         if len(self.jobs_in_progress) > 0:
@@ -6100,7 +6100,7 @@ class HordeWorkerProcessManager:
                         state = process_state.name if process_state else None
                         # After inference completes pin progress at 100 % so the bar never
                         # goes backwards during post-processing, safety or submission.
-                        if process_state in _POST_INFERENCE_STATES:
+                        if process_state in self._WEBUI_POST_INFERENCE_STATES:
                             progress = 100
                         else:
                             progress = process.last_heartbeat_percent_complete
@@ -6167,7 +6167,10 @@ class HordeWorkerProcessManager:
                 # INFERENCE_COMPLETE since the job has not yet entered safety evaluation.
                 state = "INFERENCE_COMPLETE"
                 for process in self._process_map.values():
-                    if process.last_job_referenced == job and process.last_process_state in _POST_INFERENCE_STATES:
+                    if (
+                        process.last_job_referenced == job
+                        and process.last_process_state in self._WEBUI_POST_INFERENCE_STATES
+                    ):
                         state = process.last_process_state.name
                         break
                 current_job = {
@@ -6195,16 +6198,14 @@ class HordeWorkerProcessManager:
             try:
                 job_info = self.jobs_pending_submit[0]
                 job = job_info.sdk_api_job_info
-                # Find the process that handled this job so we can show its submission state.
-                state = "IMAGE_SUBMITTING"
+                # Find the process that handled this job so we can show its most recent state.
+                # Default to a manager-centric label indicating that the job is queued for submission.
+                state = "PENDING_SUBMIT"
                 for process in self._process_map.values():
-                    if process.last_job_referenced == job and process.last_process_state in (
-                        HordeProcessState.IMAGE_SAVING,
-                        HordeProcessState.IMAGE_SAVED,
-                        HordeProcessState.IMAGE_SUBMITTING,
-                        HordeProcessState.IMAGE_SUBMITTED,
-                    ):
-                        state = process.last_process_state.name
+                    if process.last_job_referenced == job:
+                        # Use the actual last process state name if available.
+                        if process.last_process_state is not None:
+                            state = process.last_process_state.name
                         break
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
