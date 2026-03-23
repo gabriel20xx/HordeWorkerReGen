@@ -517,6 +517,10 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             ):
                 self[process_id].last_heartbeat_percent_complete = 100
 
+        # Reset progress to 0% when a new inference is starting
+        if new_state == HordeProcessState.INFERENCE_STARTING:
+            self[process_id].last_heartbeat_percent_complete = 0
+
     def on_last_job_reference_change(
         self,
         process_id: int,
@@ -6111,7 +6115,7 @@ class HordeWorkerProcessManager:
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": None,
+                    "progress": 100,
                     "state": state,
                     "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
@@ -6129,14 +6133,14 @@ class HordeWorkerProcessManager:
                 # Safety check list may have been modified, ignore and show no current job
                 pass
         elif self.jobs_pending_safety_check:
-            # Show recently completed job awaiting safety check – inference is complete, no progress to display
+            # Show recently completed job awaiting safety check – inference is complete, progress stays at 100%
             try:
                 job_info = self.jobs_pending_safety_check[0]
                 job = job_info.sdk_api_job_info
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": None,
+                    "progress": 100,
                     "state": "SAFETY_COMPLETE",
                     "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
