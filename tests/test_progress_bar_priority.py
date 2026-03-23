@@ -6,9 +6,7 @@ inference job has been dispatched and is at 0%, the webui must still show the su
 job at 100% because jobs_pending_submit is checked first.
 """
 
-from unittest.mock import MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from horde_worker_regen.process_management.messages import HordeProcessState
 
@@ -96,9 +94,17 @@ def _invoke_update_webui_status(
     # The webui must be non-None so the method does not return immediately
     mock_manager.webui = MagicMock()
 
-    # Bind and call the real method
-    method = HordeWorkerProcessManager.update_webui_status.__get__(mock_manager, HordeWorkerProcessManager)
-    method()
+    # Bind and call the real method, patching out psutil (avoids 0.1s cpu_percent
+    # sleep) and torch (avoids CUDA probing / environment-dependent imports).
+    stub_psutil = MagicMock()
+    stub_psutil.cpu_percent.return_value = 0.0
+    stub_psutil.cpu_count.return_value = 1
+    with (
+        patch("horde_worker_regen.process_management.process_manager.psutil", stub_psutil),
+        patch.dict("sys.modules", {"torch": MagicMock()}),
+    ):
+        method = HordeWorkerProcessManager.update_webui_status.__get__(mock_manager, HordeWorkerProcessManager)
+        method()
 
     # Extract the current_job kwarg passed to webui.update_status
     assert mock_manager.webui.update_status.called, "webui.update_status was not called"
