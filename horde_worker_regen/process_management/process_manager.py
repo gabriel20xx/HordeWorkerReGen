@@ -520,6 +520,9 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         # Reset progress to 0% when a new inference is starting
         if new_state == HordeProcessState.INFERENCE_STARTING:
             self[process_id].last_heartbeat_percent_complete = 0
+            # Also reset progress tracking so stall detection starts fresh
+            self[process_id].last_progress_timestamp = time.time()
+            self[process_id].last_progress_value = None
 
     def on_last_job_reference_change(
         self,
@@ -6098,7 +6101,7 @@ class HordeWorkerProcessManager:
                     ),
                 }
         elif self.jobs_being_safety_checked:
-            # Show job currently being safety checked – inference is complete, no progress to display
+            # Show job currently being safety checked – inference is complete, progress stays at 100%
             try:
                 job_info = self.jobs_being_safety_checked[0]
                 job = job_info.sdk_api_job_info
