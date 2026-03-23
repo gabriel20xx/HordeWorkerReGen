@@ -922,8 +922,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         for p in self.values():
             if (
                 p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
+                or p.last_process_state == HordeProcessState.POST_PROCESSING_STARTING
             ):
                 count += 1
         return count
@@ -932,10 +931,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """Return the number of processes that are preloading models."""
         count = 0
         for p in self.values():
-            if (
-                p.last_process_state == HordeProcessState.MODEL_PRELOADING
-                or p.last_process_state == HordeProcessState.MODEL_PRELOADING
-            ):
+            if p.last_process_state == HordeProcessState.MODEL_PRELOADING:
                 count += 1
         return count
 
@@ -943,10 +939,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """Return the number of processes that have preloaded models."""
         count = 0
         for p in self.values():
-            if (
-                p.last_process_state == HordeProcessState.MODEL_PRELOADED
-                or p.last_process_state == HordeProcessState.MODEL_PRELOADED
-            ):
+            if p.last_process_state == HordeProcessState.MODEL_PRELOADED:
                 count += 1
         return count
 
@@ -2075,6 +2068,7 @@ class HordeWorkerProcessManager:
         if process_info.last_process_state in (
             HordeProcessState.INFERENCE_STARTING,
             HordeProcessState.INFERENCE_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
         ):
             try:
                 self._inference_semaphore.release()
@@ -2084,6 +2078,16 @@ class HordeWorkerProcessManager:
                 self._disk_lock.release()
             except ValueError:
                 logger.debug("Disk lock already released")
+
+        if process_info.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING:
+            # The VAE decode semaphore was acquired in the progress callback before
+            # INFERENCE_POST_PROCESSING was emitted.  Release it here so that the
+            # replacement process (and any other process) is not blocked from acquiring
+            # it for up to VAE_SEMAPHORE_TIMEOUT seconds.
+            try:
+                self._vae_decode_semaphore.release()
+            except Exception:
+                logger.debug("VAE decode semaphore already released")
 
         elif process_info.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL:
             try:
@@ -2271,6 +2275,26 @@ class HordeWorkerProcessManager:
                             logger.debug(
                                 f"Inference semaphore already released for process {message.process_id} "
                                 "on PROCESS_ENDING (child released it normally via finally block)"
+                            )
+                    # When INFERENCE_POST_PROCESSING ends unexpectedly the child's finally block
+                    # may not have run (e.g. OOM kill), leaving the VAE decode semaphore held.
+                    # Release it defensively here so other processes are not blocked.
+                    # POST_PROCESSING_STARTING is also included because the VAE decode semaphore
+                    # may have been acquired between the state message and the INFERENCE_POST_PROCESSING
+                    # state being sent (if the child crashed after acquiring the semaphore but before
+                    # emitting INFERENCE_POST_PROCESSING).  Over-releasing a regular Semaphore is safe
+                    # as it just increments the counter; the child's finally block also releases it
+                    # when it runs normally (keeping the count correct).
+                    if prior_process_state in (
+                        HordeProcessState.INFERENCE_POST_PROCESSING,
+                        HordeProcessState.POST_PROCESSING_STARTING,
+                    ):
+                        try:
+                            self._vae_decode_semaphore.release()
+                        except Exception:
+                            logger.debug(
+                                f"VAE decode semaphore already released for process {message.process_id} "
+                                "on PROCESS_ENDING"
                             )
                     # If the process is ending but still has a job in progress, fault the job
                     # so it is not silently lost. This can happen if an exception occurs in the
@@ -2991,7 +3015,7 @@ class HordeWorkerProcessManager:
                 self.post_process_job_overlap_allowed
                 and (
                     process_with_model.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                    or process_with_model.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
+                    or process_with_model.last_process_state == HordeProcessState.POST_PROCESSING_STARTING
                 )
             ):
                 # If any of the next n jobs (other than this one) aren't using the same model, see if that job
