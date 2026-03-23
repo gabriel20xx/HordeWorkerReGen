@@ -6043,12 +6043,8 @@ class HordeWorkerProcessManager:
                 state = None
                 for process in self._process_map.values():
                     if process.last_job_referenced == job:
-                        # Calculate granular progress based on stage
-                        inference_progress = process.last_heartbeat_percent_complete
-                        progress = self._calculate_granular_progress(
-                            process.last_process_state,
-                            inference_progress,
-                        )
+                        # Use raw inference progress (0-100%) so the bar reflects only the inference steps
+                        progress = process.last_heartbeat_percent_complete
                         state = process.last_process_state.name if process.last_process_state else None
                         break
 
@@ -6070,12 +6066,10 @@ class HordeWorkerProcessManager:
                     ),
                 }
         elif self.jobs_being_safety_checked:
-            # Show job currently being safety checked (80-90%)
+            # Show job currently being safety checked – inference is complete, no progress to display
             try:
                 job_info = self.jobs_being_safety_checked[0]
                 job = job_info.sdk_api_job_info
-                # Find the safety process state to determine exact progress
-                safety_progress = 85  # Default mid-point
                 state = "SAFETY_EVALUATING"
                 for process in self._process_map.values():
                     if process.last_process_state in (
@@ -6083,17 +6077,13 @@ class HordeWorkerProcessManager:
                         HordeProcessState.SAFETY_EVALUATING,
                         HordeProcessState.SAFETY_COMPLETE,
                     ):
-                        safety_progress = self._calculate_granular_progress(
-                            process.last_process_state,
-                            None,
-                        )
                         state = process.last_process_state.name
                         break
 
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": safety_progress,
+                    "progress": None,
                     "state": state,
                     "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
@@ -6111,15 +6101,14 @@ class HordeWorkerProcessManager:
                 # Safety check list may have been modified, ignore and show no current job
                 pass
         elif self.jobs_pending_safety_check:
-            # Show recently completed job in safety check awaiting submission (90%+)
-            # This ensures users see the job progress through final stages
+            # Show recently completed job awaiting safety check – inference is complete, no progress to display
             try:
                 job_info = self.jobs_pending_safety_check[0]
                 job = job_info.sdk_api_job_info
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": 90,  # Safety complete, ready for submission
+                    "progress": None,
                     "state": "SAFETY_COMPLETE",
                     "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
