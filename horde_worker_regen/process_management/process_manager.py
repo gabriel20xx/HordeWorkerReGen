@@ -1257,6 +1257,24 @@ class HordeWorkerProcessManager:
     _MAX_ERRORS_HISTORY = 1000  # Maximum number of error messages to keep in history (memory safety cap)
     _WEBUI_ERRORS_HISTORY_LIMIT = 200  # Number of recent errors to send to webui per poll
 
+    # States that indicate inference is done and the result is being post-processed or submitted.
+    # In all these states the progress bar must be pinned at 100% so it never goes backwards.
+    _WEBUI_POST_INFERENCE_STATES: frozenset[HordeProcessState] = frozenset(
+        {
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+            HordeProcessState.INFERENCE_COMPLETE,
+            HordeProcessState.POST_PROCESSING_COMPLETE,
+            HordeProcessState.SAFETY_STARTING,
+            HordeProcessState.SAFETY_EVALUATING,
+            HordeProcessState.SAFETY_COMPLETE,
+            HordeProcessState.IMAGE_SAVING,
+            HordeProcessState.IMAGE_SAVED,
+            HordeProcessState.IMAGE_SUBMITTING,
+            HordeProcessState.IMAGE_SUBMITTED,
+        },
+    )
+
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
 
@@ -6078,15 +6096,20 @@ class HordeWorkerProcessManager:
                 state = None
                 for process in self._process_map.values():
                     if process.last_job_referenced == job:
-                        # Use raw inference progress (0-100%) so the bar reflects only the inference steps
-                        progress = process.last_heartbeat_percent_complete
-                        state = process.last_process_state.name if process.last_process_state else None
+                        process_state = process.last_process_state
+                        state = process_state.name if process_state else None
+                        # After inference completes pin progress at 100 % so the bar never
+                        # goes backwards during post-processing, safety or submission.
+                        if process_state in self._WEBUI_POST_INFERENCE_STATES:
+                            progress = 100
+                        else:
+                            progress = process.last_heartbeat_percent_complete
                         break
 
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": progress,
+                    "progress": progress if progress is not None else 0,
                     "state": state or "Processing",
                     "is_complete": state == "INFERENCE_COMPLETE" if state else False,
                     "batch_size": job.payload.n_iter if job.payload else None,
@@ -6140,11 +6163,21 @@ class HordeWorkerProcessManager:
             try:
                 job_info = self.jobs_pending_safety_check[0]
                 job = job_info.sdk_api_job_info
+                # Look up the actual process state for accurate display; fall back to
+                # INFERENCE_COMPLETE since the job has not yet entered safety evaluation.
+                state = "INFERENCE_COMPLETE"
+                for process in self._process_map.values():
+                    if (
+                        process.last_job_referenced == job
+                        and process.last_process_state in self._WEBUI_POST_INFERENCE_STATES
+                    ):
+                        state = process.last_process_state.name
+                        break
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
                     "progress": 100,
-                    "state": "SAFETY_COMPLETE",
+                    "state": state,
                     "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
                     "steps": job.payload.ddim_steps if job.payload else None,
@@ -6159,6 +6192,40 @@ class HordeWorkerProcessManager:
                 }
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
+                pass
+        elif self.jobs_pending_submit:
+            # Show a job that has passed safety check and is waiting to be submitted to the API.
+            try:
+                job_info = self.jobs_pending_submit[0]
+                job = job_info.sdk_api_job_info
+                # Find the process that handled this job so we can show its most recent state.
+                # Default to a manager-centric label indicating that the job is queued for submission.
+                state = "PENDING_SUBMIT"
+                for process in self._process_map.values():
+                    if process.last_job_referenced == job:
+                        # Use the actual last process state name if available.
+                        if process.last_process_state is not None:
+                            state = process.last_process_state.name
+                        break
+                current_job = {
+                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                    "model": job.model,
+                    "progress": 100,
+                    "state": state,
+                    "is_complete": False,
+                    "batch_size": job.payload.n_iter if job.payload else None,
+                    "steps": job.payload.ddim_steps if job.payload else None,
+                    "width": job.payload.width if job.payload else None,
+                    "height": job.payload.height if job.payload else None,
+                    "sampler": job.payload.sampler_name if job.payload else None,
+                    "loras": (
+                        self._serialize_loras_for_webui(job.payload.loras)
+                        if job.payload and job.payload.loras
+                        else None
+                    ),
+                }
+            except (IndexError, AttributeError):
+                # Pending submit list may have been modified, ignore and show no current job
                 pass
 
         # Get job queue (exclude jobs that are currently in progress)
