@@ -1035,8 +1035,8 @@ class WorkerWebUI:
                         // Use raw state value to match process state display
                         const stateDisplay = job.state || 'N/A';
 
-                        // Ensure progress is always a valid number (default to 0 if null/undefined)
-                        const progressValue = job.progress !== null && job.progress !== undefined ? job.progress : 0;
+                        const hasProgress = job.progress !== null && job.progress !== undefined;
+                        const progressValue = hasProgress ? job.progress : 0;
 
                         currentJobDiv.innerHTML = `
                             <div class="stat">
@@ -1081,12 +1081,14 @@ class WorkerWebUI:
                                 <span class="stat-label">State:</span>
                                 <span class="stat-value">${stateDisplay}</span>
                             </div>
+                            ${hasProgress ? `
                             <div style="margin-top: 10px;">
                                 <div style="margin-bottom: 5px; color: #666;">Progress:</div>
                                 <div class="progress-bar-container">
                                     <div class="progress-bar" style="width: ${progressValue}%">${progressValue}%</div>
                                 </div>
                             </div>
+                            ` : ''}
                         `;
                     } else {
                         currentJobDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No job in progress</div>';
