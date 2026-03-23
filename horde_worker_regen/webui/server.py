@@ -876,6 +876,35 @@ class WorkerWebUI:
                             </div>
                         </div>
                     </div>
+
+                    <!-- Current Generation + Last Image -->
+                    <div class="grid-2" style="margin-top: 14px;">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#9889; Current Generation</span>
+                            </div>
+                            <div id="overview-current-job">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#9203;</span>
+                                    No job in progress
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#128444; Last Image</span>
+                            </div>
+                            <div style="font-size:0.75rem;color:#94a3b8;margin-bottom:10px;">
+                                <span id="overview-image-time">No image generated yet</span>
+                            </div>
+                            <div id="overview-image-container" style="display:flex;align-items:center;justify-content:center;min-height:120px;">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#128444;</span>
+                                    No image generated yet
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- CURRENT JOB -->
@@ -1407,6 +1436,51 @@ class WorkerWebUI:
                         `;
                     } else {
                         currentJobDiv.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
+                    }
+
+                    // Overview: current generation progress
+                    const overviewJobDiv = document.getElementById('overview-current-job');
+                    if (data.current_job) {
+                        const ojob = data.current_job;
+                        const oState = ojob.state || 'N/A';
+                        const oProgress = (ojob.progress !== null && ojob.progress !== undefined) ? ojob.progress : 0;
+                        overviewJobDiv.innerHTML = `
+                            <div class="stat-row" style="margin-bottom:8px;">
+                                <span class="stat-label">Model:</span>
+                                <span class="stat-value" style="font-size:0.82rem;word-break:break-word;">${ojob.model || 'N/A'}</span>
+                            </div>
+                            <div class="stat-row" style="margin-bottom:12px;">
+                                <span class="stat-label">State:</span>
+                                <span class="job-state-badge">${oState}</span>
+                            </div>
+                            <div class="progress-header">
+                                <span class="progress-label">Progress</span>
+                                <span class="progress-value">${oProgress}%</span>
+                            </div>
+                            <div class="progress-bar-container" style="height:12px;">
+                                <div class="progress-bar" style="width:${oProgress}%;height:100%;border-radius:6px;"></div>
+                            </div>
+                        `;
+                    } else {
+                        overviewJobDiv.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
+                    }
+
+                    // Overview: last image thumbnail
+                    document.getElementById('overview-image-time').textContent = formatTimeAgo(data.last_image_submission_timestamp);
+                    const overviewImgContainer = document.getElementById('overview-image-container');
+                    if (data.last_image_base64 && data.last_image_base64.length > 0) {
+                        const oImgSrc = `data:image/png;base64,${data.last_image_base64[0]}`;
+                        overviewImgContainer.innerHTML = `
+                            <img src="${oImgSrc}"
+                                 style="max-width:100%;max-height:200px;width:auto;height:auto;object-fit:contain;border-radius:8px;cursor:pointer;display:block;margin:0 auto;"
+                                 alt="Last generated image"
+                                 data-fullsize="${oImgSrc}" />
+                        `;
+                        overviewImgContainer.querySelector('img[data-fullsize]').onclick = function() {
+                            openImageOverlay(this.getAttribute('data-fullsize'));
+                        };
+                    } else {
+                        overviewImgContainer.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
                     }
 
                     // Job Queue
