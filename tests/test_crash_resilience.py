@@ -4739,6 +4739,64 @@ class TestInferenceBackgroundHeartbeat:
             percent_complete=97,
         )
 
+    def test_inference_heartbeat_loop_suppresses_when_no_progress(self) -> None:
+        """When _last_inference_percent is None (no real progress yet), the heartbeat
+        loop must NOT call send_heartbeat_message, preserving the process manager's
+        no_step_heartbeat_timeout fast-path for early crash detection.
+        """
+        import threading as _threading
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._last_inference_percent = None
+        proc._INFERENCE_HEARTBEAT_INTERVAL = 0.01  # fire almost immediately
+
+        stop_event = _threading.Event()
+
+        # Let the loop fire once then stop, by setting the event after a brief wait
+        def stop_after_one_tick() -> None:
+            import time as _time
+            _time.sleep(0.05)
+            stop_event.set()
+
+        import threading as _threading2
+        stopper = _threading2.Thread(target=stop_after_one_tick, daemon=True)
+        stopper.start()
+
+        HordeInferenceProcess._inference_heartbeat_loop(proc, stop_event)
+        stopper.join(timeout=1.0)
+
+        proc.send_heartbeat_message.assert_not_called()
+
+    def test_last_inference_percent_updated_on_zero_fallback(self) -> None:
+        """When comfyui_progress is absent and the fallback 0% heartbeat is sent,
+        _last_inference_percent must be set to 0 so the background heartbeat thread
+        can report meaningful (not None) progress.
+        """
+        from hordelib.horde import ProgressReport, ProgressState
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._in_post_processing = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_inference_percent = None
+        proc.send_heartbeat_message = MagicMock()
+        proc._active_model_name = "TestModel"
+        proc._start_inference_time = 0.0
+
+        # Report with no comfyui_progress → triggers the fallback 0% path
+        report = MagicMock(spec=ProgressReport)
+        report.hordelib_progress_state = ProgressState.progress
+        report.comfyui_progress = None
+
+        HordeInferenceProcess._progress_callback_impl(proc, report)
+
+        assert proc._last_inference_percent == 0, (
+            "_last_inference_percent must be set to 0 when the fallback 0% heartbeat fires"
+        )
+
     def test_last_inference_percent_updated_on_inference_step(self) -> None:
         """_last_inference_percent must be updated to the step's percentage when
         an INFERENCE_STEP heartbeat is sent in _progress_callback_impl.

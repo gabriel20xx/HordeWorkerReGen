@@ -511,20 +511,37 @@ class HordeInferenceProcess(HordeProcess):
         where no heartbeats are sent.  This thread fills those gaps so the process manager
         does not incorrectly declare the process stuck and replace it.
 
+        Heartbeats are intentionally suppressed until ``_last_inference_percent`` is set (i.e.,
+        until at least one real progress callback has fired).  This preserves the process
+        manager's ``no_step_heartbeat_timeout`` fast-path: when a process crashes or hangs
+        before its first diffusion step, ``heartbeats_inference_steps`` stays at 0 and
+        ``last_heartbeat_timestamp`` must not be refreshed by this thread or recovery will
+        be delayed from the short ``no_step_heartbeat_timeout`` to the full
+        ``inference_step_timeout``.
+
         Args:
             stop_event: Set this event to signal the thread to exit.
         """
         while not stop_event.wait(timeout=self._INFERENCE_HEARTBEAT_INTERVAL):
             try:
                 last_pct = self._last_inference_percent
-                logger.info(
-                    f"Inference still running (no step callback for {self._INFERENCE_HEARTBEAT_INTERVAL:.0f}s): "
-                    f"last progress {last_pct}% — process is alive, likely in VAE decode or final step",
-                )
-                self.send_heartbeat_message(
-                    heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
-                    percent_complete=last_pct,
-                )
+                if last_pct is None:
+                    # No real progress update yet — do not send a heartbeat so that the
+                    # process manager's no_step_heartbeat_timeout fast-path still fires
+                    # if the process is genuinely stuck before the first diffusion step.
+                    logger.debug(
+                        f"Background heartbeat suppressed (no step callback for "
+                        f"{self._INFERENCE_HEARTBEAT_INTERVAL:.0f}s, progress not yet received)",
+                    )
+                else:
+                    logger.info(
+                        f"Inference still running (no step callback for {self._INFERENCE_HEARTBEAT_INTERVAL:.0f}s): "
+                        f"last progress {last_pct}% — process is alive, likely in VAE decode or final step",
+                    )
+                    self.send_heartbeat_message(
+                        heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                        percent_complete=last_pct,
+                    )
             except Exception as e:
                 logger.debug(f"Background inference heartbeat failed: {type(e).__name__}: {e}")
 
@@ -729,6 +746,7 @@ class HordeInferenceProcess(HordeProcess):
                 heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
                 percent_complete=0,
             )
+            self._last_inference_percent = 0
 
     def start_inference(self, job_info: ImageGenerateJobPopResponse) -> list[ResultingImageReturn] | None:
         """Start an inference job in the HordeLib instance.
