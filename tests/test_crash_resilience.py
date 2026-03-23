@@ -2219,6 +2219,298 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
 
 
+class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
+    """Tests that the VAE decode semaphore is released when PROCESS_ENDING is received for
+    a process that was in INFERENCE_POST_PROCESSING or POST_PROCESSING_STARTING.
+
+    When the child is killed (e.g., OOM) while it holds the VAE decode semaphore, its
+    finally block may not run.  The PROCESS_ENDING handler must release the semaphore
+    defensively so that subsequent processes are not blocked for up to VAE_SEMAPHORE_TIMEOUT.
+    """
+
+    def _run_process_ending_with_vae_semaphore(
+        self,
+        prior_state: HordeProcessState,
+        *,
+        vae_semaphore_acquired: bool = True,
+    ) -> tuple[MagicMock, object]:
+        """Run receive_and_handle_process_messages with PROCESS_ENDING and a real VAE semaphore.
+
+        Returns (mock_manager, vae_semaphore) so callers can inspect the semaphore state.
+        """
+        import multiprocessing
+        import queue as queue_mod
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+        vae_sem = ctx.BoundedSemaphore(1)
+        if vae_semaphore_acquired:
+            vae_sem.acquire()
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = prior_state
+        process_info.last_job_referenced = None
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+        # Use a no-op BoundedSemaphore for the inference semaphore (not under test here)
+        mock_manager._inference_semaphore = ctx.BoundedSemaphore(1)
+        mock_manager._vae_decode_semaphore = vae_sem
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+        return mock_manager, vae_sem
+
+    def test_vae_semaphore_released_when_process_ending_from_inference_post_processing(self) -> None:
+        """When PROCESS_ENDING arrives for a process in INFERENCE_POST_PROCESSING, the VAE
+        decode semaphore must be released so that other processes are not blocked for up to
+        VAE_SEMAPHORE_TIMEOUT seconds waiting to acquire it.
+        """
+        _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
+            prior_state=HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore should be acquirable after PROCESS_ENDING from "
+            "INFERENCE_POST_PROCESSING — the handler must release it to unblock other processes"
+        )
+
+    def test_vae_semaphore_released_when_process_ending_from_post_processing_starting(self) -> None:
+        """When PROCESS_ENDING arrives for a process in POST_PROCESSING_STARTING, the VAE
+        decode semaphore must be released defensively in case the child acquired it but crashed
+        before emitting INFERENCE_POST_PROCESSING.
+        """
+        _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
+            prior_state=HordeProcessState.POST_PROCESSING_STARTING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore should be acquirable after PROCESS_ENDING from "
+            "POST_PROCESSING_STARTING — defensive release should unblock other processes"
+        )
+
+    def test_vae_semaphore_not_released_when_process_ending_from_inference_processing(self) -> None:
+        """When PROCESS_ENDING arrives for a process in INFERENCE_PROCESSING, the VAE decode
+        semaphore must NOT be released — the process did not hold it at that point.
+        """
+        _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
+            prior_state=HordeProcessState.INFERENCE_PROCESSING,
+            vae_semaphore_acquired=True,
+        )
+
+        # The VAE semaphore was pre-acquired (simulating another process holding it)
+        # and must NOT have been released by the PROCESS_ENDING handler.
+        acquired = vae_sem.acquire(block=False)
+        assert not acquired, (
+            "VAE decode semaphore must not be released when PROCESS_ENDING is from "
+            "INFERENCE_PROCESSING — the process did not hold the VAE semaphore at that state"
+        )
+
+    def test_vae_semaphore_over_release_safe_when_already_released(self) -> None:
+        """When PROCESS_ENDING arrives from INFERENCE_POST_PROCESSING and the child had
+        already released the VAE semaphore via its finally block, the defensive release
+        must not raise an exception and must not inflate permits.
+        """
+        # vae_semaphore_acquired=False: child already released via its finally block
+        _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
+            prior_state=HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=False,
+        )
+        # The semaphore is a BoundedSemaphore: over-release raises ValueError (caught),
+        # so permits must remain at exactly 1 — not inflated to 2.
+        first_acquired = vae_sem.acquire(block=False)
+        assert first_acquired, "VAE semaphore should have its permit after the defensive release"
+        second_acquired = vae_sem.acquire(block=False)
+        assert not second_acquired, "Defensive release must not inflate VAE semaphore permits"
+
+
+class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
+    """Tests that _replace_inference_process() releases the VAE decode semaphore when the
+    process state is INFERENCE_POST_PROCESSING.
+
+    A process stuck in INFERENCE_POST_PROCESSING holds the VAE decode semaphore.  When the
+    manager forcibly replaces it (via _check_and_replace_process / replace_hung_processes),
+    the semaphore must be released so that the replacement process can acquire it.
+    """
+
+    def _run_replace_inference_process(
+        self,
+        state: HordeProcessState,
+        *,
+        vae_semaphore_acquired: bool = True,
+    ) -> object:
+        """Call _replace_inference_process() with the given state and return the VAE semaphore."""
+        import multiprocessing
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+
+        vae_sem = ctx.BoundedSemaphore(1)
+        if vae_semaphore_acquired:
+            vae_sem.acquire()
+
+        process_info = MagicMock()
+        process_info.last_process_state = state
+        process_info.last_job_referenced = None
+        process_info.loaded_horde_model_name = None
+
+        mock_manager = MagicMock()
+        mock_manager._inference_semaphore = ctx.BoundedSemaphore(1)
+        mock_manager._vae_decode_semaphore = vae_sem
+        mock_manager._disk_lock = ctx.Lock()
+        mock_manager.jobs_lookup = {}
+        mock_manager.jobs_in_progress = []
+
+        bound = HordeWorkerProcessManager._replace_inference_process.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound(process_info)
+        return vae_sem
+
+    def test_vae_semaphore_released_when_replacing_inference_post_processing(self) -> None:
+        """When a process stuck in INFERENCE_POST_PROCESSING is replaced, the VAE decode
+        semaphore must be released so that other processes can proceed.
+        """
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore must be released by _replace_inference_process when state is "
+            "INFERENCE_POST_PROCESSING — the stuck process holds the semaphore and other processes "
+            "would be blocked for up to VAE_SEMAPHORE_TIMEOUT without this release"
+        )
+
+    def test_vae_semaphore_released_when_replacing_post_processing_starting(self) -> None:
+        """When a process in POST_PROCESSING_STARTING is replaced, the VAE decode semaphore
+        must also be released — the child may have already acquired it before crashing.
+        """
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.POST_PROCESSING_STARTING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore must be released by _replace_inference_process when state is "
+            "POST_PROCESSING_STARTING — the child may have acquired it before crashing"
+        )
+
+    def test_vae_semaphore_over_release_safe_when_replacing_post_processing(self) -> None:
+        """When _replace_inference_process() is called for INFERENCE_POST_PROCESSING and the
+        child had already released the VAE semaphore, the defensive release must not inflate
+        permits beyond max=1 (BoundedSemaphore raises ValueError, which is caught).
+        """
+        # vae_semaphore_acquired=False: child already released via its finally block
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=False,
+        )
+
+        first_acquired = vae_sem.acquire(block=False)
+        assert first_acquired, "VAE semaphore should have its permit (unchanged) after safe double-release"
+        second_acquired = vae_sem.acquire(block=False)
+        assert not second_acquired, "Defensive release must not inflate VAE semaphore permits"
+
+    def test_vae_semaphore_not_released_when_replacing_inference_processing(self) -> None:
+        """When a process in INFERENCE_PROCESSING is replaced, the VAE decode semaphore
+        must NOT be released — it has not been acquired at that state.
+        """
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.INFERENCE_PROCESSING,
+            vae_semaphore_acquired=True,
+        )
+
+        # The VAE semaphore was pre-acquired (simulating another process holding it)
+        # and must NOT have been released.
+        acquired = vae_sem.acquire(block=False)
+        assert not acquired, (
+            "VAE decode semaphore must not be released for INFERENCE_PROCESSING state "
+            "— the VAE semaphore is not held at that stage"
+        )
+
+
+class TestNumBusyWithPostProcessing:
+    """Tests that num_busy_with_post_processing() counts both INFERENCE_POST_PROCESSING
+    and POST_PROCESSING_STARTING states.
+    """
+
+    def _make_process_map(self, states: list[HordeProcessState]) -> object:
+        from horde_worker_regen.process_management.process_manager import HordeProcessType, ProcessMap
+
+        process_map = ProcessMap({})
+        for i, state in enumerate(states):
+            info = MagicMock()
+            info.process_type = HordeProcessType.INFERENCE
+            info.last_process_state = state
+            process_map[i] = info
+        return process_map
+
+    def test_inference_post_processing_counted(self) -> None:
+        """A process in INFERENCE_POST_PROCESSING must be counted."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pm = self._make_process_map([HordeProcessState.INFERENCE_POST_PROCESSING])
+        assert isinstance(pm, ProcessMap)
+        assert pm.num_busy_with_post_processing() == 1
+
+    def test_post_processing_starting_counted(self) -> None:
+        """A process in POST_PROCESSING_STARTING must also be counted — it is transitioning
+        into post-processing and is effectively busy.
+        """
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pm = self._make_process_map([HordeProcessState.POST_PROCESSING_STARTING])
+        assert isinstance(pm, ProcessMap)
+        assert pm.num_busy_with_post_processing() == 1
+
+    def test_inference_processing_not_counted(self) -> None:
+        """A process in INFERENCE_PROCESSING is not in post-processing and must not be counted."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pm = self._make_process_map([HordeProcessState.INFERENCE_PROCESSING])
+        assert isinstance(pm, ProcessMap)
+        assert pm.num_busy_with_post_processing() == 0
+
+    def test_mixed_states_counted_correctly(self) -> None:
+        """With multiple processes in different states, only post-processing states are counted."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pm = self._make_process_map(
+            [
+                HordeProcessState.INFERENCE_POST_PROCESSING,
+                HordeProcessState.POST_PROCESSING_STARTING,
+                HordeProcessState.INFERENCE_PROCESSING,
+                HordeProcessState.WAITING_FOR_JOB,
+            ]
+        )
+        assert isinstance(pm, ProcessMap)
+        assert pm.num_busy_with_post_processing() == 2
+
+
 class TestCanAcceptJobPostProcessingComplete:
     """Tests for can_accept_job() excluding POST_PROCESSING_COMPLETE."""
 
