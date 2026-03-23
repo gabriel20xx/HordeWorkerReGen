@@ -6086,32 +6086,32 @@ class HordeWorkerProcessManager:
             return
 
         # Get current job info
+        # Priority order: jobs furthest along the pipeline are shown first so the progress
+        # bar stays active (at 100%) for the current job until it is fully submitted before
+        # resetting to 0% for the next generation.
         current_job = None
-        if len(self.jobs_in_progress) > 0:
-            job = self.jobs_in_progress[0]
-            job_info = self.jobs_lookup.get(job)
-            if job_info:
-                # Find the process handling this job
-                progress = None
-                state = None
+        if self.jobs_pending_submit:
+            # Show a job that has passed safety check and is waiting to be submitted to the API.
+            # Checked first so the progress bar stays at 100% until submission completes, even
+            # if a new inference job has already been dispatched and sits at 0%.
+            try:
+                job_info = self.jobs_pending_submit[0]
+                job = job_info.sdk_api_job_info
+                # Find the process that handled this job so we can show its most recent state.
+                # Default to a manager-centric label indicating that the job is queued for submission.
+                state = "PENDING_SUBMIT"
                 for process in self._process_map.values():
                     if process.last_job_referenced == job:
-                        process_state = process.last_process_state
-                        state = process_state.name if process_state else None
-                        # After inference completes pin progress at 100 % so the bar never
-                        # goes backwards during post-processing, safety or submission.
-                        if process_state in self._WEBUI_POST_INFERENCE_STATES:
-                            progress = 100
-                        else:
-                            progress = process.last_heartbeat_percent_complete
+                        # Use the actual last process state name if available.
+                        if process.last_process_state is not None:
+                            state = process.last_process_state.name
                         break
-
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": progress if progress is not None else 0,
-                    "state": state or "Processing",
-                    "is_complete": state == "INFERENCE_COMPLETE" if state else False,
+                    "progress": 100,
+                    "state": state,
+                    "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
                     "steps": job.payload.ddim_steps if job.payload else None,
                     "width": job.payload.width if job.payload else None,
@@ -6123,6 +6123,9 @@ class HordeWorkerProcessManager:
                         else None
                     ),
                 }
+            except (IndexError, AttributeError):
+                # Pending submit list may have been modified, ignore and show no current job
+                pass
         elif self.jobs_being_safety_checked:
             # Show job currently being safety checked – inference is complete, progress stays at 100%
             try:
@@ -6193,26 +6196,31 @@ class HordeWorkerProcessManager:
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
                 pass
-        elif self.jobs_pending_submit:
-            # Show a job that has passed safety check and is waiting to be submitted to the API.
-            try:
-                job_info = self.jobs_pending_submit[0]
-                job = job_info.sdk_api_job_info
-                # Find the process that handled this job so we can show its most recent state.
-                # Default to a manager-centric label indicating that the job is queued for submission.
-                state = "PENDING_SUBMIT"
+        elif len(self.jobs_in_progress) > 0:
+            job = self.jobs_in_progress[0]
+            job_info = self.jobs_lookup.get(job)
+            if job_info:
+                # Find the process handling this job
+                progress = None
+                state = None
                 for process in self._process_map.values():
                     if process.last_job_referenced == job:
-                        # Use the actual last process state name if available.
-                        if process.last_process_state is not None:
-                            state = process.last_process_state.name
+                        process_state = process.last_process_state
+                        state = process_state.name if process_state else None
+                        # After inference completes pin progress at 100 % so the bar never
+                        # goes backwards during post-processing, safety or submission.
+                        if process_state in self._WEBUI_POST_INFERENCE_STATES:
+                            progress = 100
+                        else:
+                            progress = process.last_heartbeat_percent_complete
                         break
+
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": 100,
-                    "state": state,
-                    "is_complete": False,
+                    "progress": progress if progress is not None else 0,
+                    "state": state or "Processing",
+                    "is_complete": state == "INFERENCE_COMPLETE" if state else False,
                     "batch_size": job.payload.n_iter if job.payload else None,
                     "steps": job.payload.ddim_steps if job.payload else None,
                     "width": job.payload.width if job.payload else None,
@@ -6224,9 +6232,6 @@ class HordeWorkerProcessManager:
                         else None
                     ),
                 }
-            except (IndexError, AttributeError):
-                # Pending submit list may have been modified, ignore and show no current job
-                pass
 
         # Get job queue (exclude jobs that are currently in progress)
         job_queue = []
