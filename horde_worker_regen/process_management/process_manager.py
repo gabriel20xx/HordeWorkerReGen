@@ -982,17 +982,14 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                     )
                     if process_info.last_job_referenced.payload.n_iter > 1:
                         percent_detail += f" ({process_info.last_job_referenced.payload.n_iter}x batch)"
-                    # During post-processing the process state advances beyond INFERENCE_PROCESSING
-                    # but last_heartbeat_percent_complete stays at 100 %.  Include the state name
-                    # so the console reflects the same job/process state as the webui.
-                    if process_info.last_process_state in (
-                        HordeProcessState.POST_PROCESSING_STARTING,
-                        HordeProcessState.INFERENCE_POST_PROCESSING,
-                        HordeProcessState.POST_PROCESSING_COMPLETE,
-                    ):
-                        process_state_detail = f"{process_info.last_process_state.name} ({percent_detail})"
-                    else:
+                    # During post-processing and other non-processing states, the process state
+                    # advances beyond INFERENCE_PROCESSING but last_heartbeat_percent_complete
+                    # can stay at 100 %.  Include the state name so the console reflects the same
+                    # job/process state as the webui.
+                    if process_info.last_process_state == HordeProcessState.INFERENCE_PROCESSING:
                         process_state_detail = percent_detail
+                    else:
+                        process_state_detail = f"{process_info.last_process_state.name} ({percent_detail})"
 
                 horde_model_name_and_baseline = (
                     f"<u>{process_info.loaded_horde_model_name}</u> {process_info.loaded_horde_model_baseline})"
