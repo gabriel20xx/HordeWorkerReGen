@@ -784,7 +784,11 @@ class WorkerWebUI:
         [data-theme="dark"] .topbar .theme-toggle { border-color: #2d3f55; color: #94a3b8; }
         [data-theme="dark"] .topbar .theme-toggle:hover { background: #2d3f55; }
         [data-theme="dark"] .topbar-res-chip { background: #151e2e; border-color: #2d3f55; color: #94a3b8; }
-        [data-theme="dark"] .stat-card-value { color: #f1f5f9; }
+        [data-theme="dark"] .stat-card-value:not(.success):not(.accent):not(.warning):not(.error) { color: #f1f5f9; }
+        [data-theme="dark"] .stat-card-value.success { color: #34d399; }
+        [data-theme="dark"] .stat-card-value.accent  { color: #818cf8; }
+        [data-theme="dark"] .stat-card-value.warning { color: #fbbf24; }
+        [data-theme="dark"] .stat-card-value.error   { color: #f87171; }
         [data-theme="dark"] .stat-card-label { color: #94a3b8; }
         [data-theme="dark"] .stat-label { color: #94a3b8; }
         [data-theme="dark"] .stat-value { color: #f1f5f9; }
@@ -886,14 +890,8 @@ class WorkerWebUI:
             <a class="nav-item" onclick="scrollToSection('images-section', this)">
                 <span class="nav-icon">&#128444;</span> Images
             </a>
-            <a class="nav-item" onclick="scrollToSection('logs-section', this); showLogTab('console')">
-                <span class="nav-icon">&#128203;</span> Console
-            </a>
-            <a class="nav-item" onclick="scrollToSection('logs-section', this); showLogTab('faulted')">
-                <span class="nav-icon">&#9888;</span> Faulted Jobs
-            </a>
-            <a class="nav-item" onclick="scrollToSection('logs-section', this); showLogTab('errors')">
-                <span class="nav-icon">&#10060;</span> Errors
+            <a class="nav-item" onclick="scrollToSection('logs-section', this)">
+                <span class="nav-icon">&#128203;</span> Logs
             </a>
         </nav>
         <div class="sidebar-footer">
