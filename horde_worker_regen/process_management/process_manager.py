@@ -22,7 +22,6 @@ from io import BytesIO
 from multiprocessing.context import BaseContext
 from multiprocessing.synchronize import BoundedSemaphore
 from multiprocessing.synchronize import Lock as Lock_MultiProcessing
-from multiprocessing.synchronize import Semaphore
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -1441,7 +1440,7 @@ class HordeWorkerProcessManager:
     semaphore release, so the existing handlers prevent any permit inflation.
     """
 
-    _vae_decode_semaphore: Semaphore
+    _vae_decode_semaphore: BoundedSemaphore
 
     _disk_lock: Lock_MultiProcessing
     """A lock to prevent multiple processes from accessing the disk at once."""
@@ -1526,7 +1525,7 @@ class HordeWorkerProcessManager:
         if self.bridge_data.high_memory_mode:
             vae_decode_semaphore_max = self.max_inference_processes
 
-        self._vae_decode_semaphore = Semaphore(vae_decode_semaphore_max, ctx=ctx)
+        self._vae_decode_semaphore = BoundedSemaphore(vae_decode_semaphore_max, ctx=ctx)
 
         self._lru = LRUCache(self.max_inference_processes)
 
@@ -2079,14 +2078,19 @@ class HordeWorkerProcessManager:
             except ValueError:
                 logger.debug("Disk lock already released")
 
-        if process_info.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING:
+        if process_info.last_process_state in (
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+        ):
             # The VAE decode semaphore was acquired in the progress callback before
-            # INFERENCE_POST_PROCESSING was emitted.  Release it here so that the
-            # replacement process (and any other process) is not blocked from acquiring
-            # it for up to VAE_SEMAPHORE_TIMEOUT seconds.
+            # POST_PROCESSING_STARTING / INFERENCE_POST_PROCESSING was emitted. Release it
+            # here so that the replacement process (and any other process) is not blocked
+            # from acquiring it for up to VAE_SEMAPHORE_TIMEOUT seconds.
+            # BoundedSemaphore raises ValueError on over-release (child already released
+            # it normally or never acquired), which is the benign case.
             try:
                 self._vae_decode_semaphore.release()
-            except Exception:
+            except ValueError:
                 logger.debug("VAE decode semaphore already released")
 
         elif process_info.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL:
@@ -2282,19 +2286,19 @@ class HordeWorkerProcessManager:
                     # POST_PROCESSING_STARTING is also included because the VAE decode semaphore
                     # may have been acquired between the state message and the INFERENCE_POST_PROCESSING
                     # state being sent (if the child crashed after acquiring the semaphore but before
-                    # emitting INFERENCE_POST_PROCESSING).  Over-releasing a regular Semaphore is safe
-                    # as it just increments the counter; the child's finally block also releases it
-                    # when it runs normally (keeping the count correct).
+                    # emitting INFERENCE_POST_PROCESSING).  The VAE decode semaphore is a
+                    # BoundedSemaphore; over-releasing raises ValueError, which is the benign case
+                    # where the child never held (or already released) the permit.
                     if prior_process_state in (
                         HordeProcessState.INFERENCE_POST_PROCESSING,
                         HordeProcessState.POST_PROCESSING_STARTING,
                     ):
                         try:
                             self._vae_decode_semaphore.release()
-                        except Exception:
+                        except ValueError:
                             logger.debug(
                                 f"VAE decode semaphore already released for process {message.process_id} "
-                                "on PROCESS_ENDING"
+                                "on PROCESS_ENDING (child released it normally or never acquired it)"
                             )
                     # If the process is ending but still has a job in progress, fault the job
                     # so it is not silently lost. This can happen if an exception occurs in the

@@ -2244,7 +2244,7 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
         ctx = multiprocessing.get_context("spawn")
-        vae_sem = multiprocessing.Semaphore(1)
+        vae_sem = ctx.BoundedSemaphore(1)
         if vae_semaphore_acquired:
             vae_sem.acquire()
 
@@ -2329,17 +2329,19 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
     def test_vae_semaphore_over_release_safe_when_already_released(self) -> None:
         """When PROCESS_ENDING arrives from INFERENCE_POST_PROCESSING and the child had
         already released the VAE semaphore via its finally block, the defensive release
-        must not raise an exception.
+        must not raise an exception and must not inflate permits.
         """
         # vae_semaphore_acquired=False: child already released via its finally block
         _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
             prior_state=HordeProcessState.INFERENCE_POST_PROCESSING,
             vae_semaphore_acquired=False,
         )
-        # If we get here without an exception the test passes (no ValueError raised)
-        # We can also verify the semaphore is still available.
-        acquired = vae_sem.acquire(block=False)
-        assert acquired, "VAE semaphore should have its permit after the defensive release"
+        # The semaphore is a BoundedSemaphore: over-release raises ValueError (caught),
+        # so permits must remain at exactly 1 — not inflated to 2.
+        first_acquired = vae_sem.acquire(block=False)
+        assert first_acquired, "VAE semaphore should have its permit after the defensive release"
+        second_acquired = vae_sem.acquire(block=False)
+        assert not second_acquired, "Defensive release must not inflate VAE semaphore permits"
 
 
 class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
@@ -2364,7 +2366,7 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
 
         ctx = multiprocessing.get_context("spawn")
 
-        vae_sem = multiprocessing.Semaphore(1)
+        vae_sem = ctx.BoundedSemaphore(1)
         if vae_semaphore_acquired:
             vae_sem.acquire()
 
@@ -2401,6 +2403,37 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
             "INFERENCE_POST_PROCESSING — the stuck process holds the semaphore and other processes "
             "would be blocked for up to VAE_SEMAPHORE_TIMEOUT without this release"
         )
+
+    def test_vae_semaphore_released_when_replacing_post_processing_starting(self) -> None:
+        """When a process in POST_PROCESSING_STARTING is replaced, the VAE decode semaphore
+        must also be released — the child may have already acquired it before crashing.
+        """
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.POST_PROCESSING_STARTING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore must be released by _replace_inference_process when state is "
+            "POST_PROCESSING_STARTING — the child may have acquired it before crashing"
+        )
+
+    def test_vae_semaphore_over_release_safe_when_replacing_post_processing(self) -> None:
+        """When _replace_inference_process() is called for INFERENCE_POST_PROCESSING and the
+        child had already released the VAE semaphore, the defensive release must not inflate
+        permits beyond max=1 (BoundedSemaphore raises ValueError, which is caught).
+        """
+        # vae_semaphore_acquired=False: child already released via its finally block
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=False,
+        )
+
+        first_acquired = vae_sem.acquire(block=False)
+        assert first_acquired, "VAE semaphore should have its permit (unchanged) after safe double-release"
+        second_acquired = vae_sem.acquire(block=False)
+        assert not second_acquired, "Defensive release must not inflate VAE semaphore permits"
 
     def test_vae_semaphore_not_released_when_replacing_inference_processing(self) -> None:
         """When a process in INFERENCE_PROCESSING is replaced, the VAE decode semaphore
