@@ -812,8 +812,45 @@ class WorkerWebUI:
         [data-theme="dark"] .faulted-job-value { color: #cbd5e1; }
         [data-theme="dark"] .faulted-job-label { color: #64748b; }
         [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
-        [data-theme="dark"] .pagination-controls button:disabled { background: #4338ca; opacity: 0.5; }
-        [data-theme="dark"] .pagination-info { color: #94a3b8; }
+        /* ---- Log tabs ---- */
+        .log-tabs {
+            display: flex;
+            gap: 0;
+            margin-top: 12px;
+            border-bottom: none;
+        }
+        .log-tab {
+            background: #e2e8f0;
+            border: 1px solid var(--border);
+            border-bottom: none;
+            color: #475569;
+            font-size: 0.82rem;
+            font-weight: 600;
+            padding: 8px 18px;
+            cursor: pointer;
+            border-radius: 8px 8px 0 0;
+            margin-right: 4px;
+            transition: background 0.15s, color 0.15s;
+            white-space: nowrap;
+        }
+        .log-tab:hover { background: #cbd5e1; }
+        .log-tab.active { background: var(--card-bg); color: var(--accent); border-color: var(--border); }
+        .tab-count {
+            background: #cbd5e1;
+            color: #475569;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 1px 7px;
+            border-radius: 20px;
+            margin-left: 4px;
+        }
+        .log-tab.active .tab-count { background: #e0e7ff; color: var(--accent); }
+        [data-theme="dark"] .log-tab { background: #151e2e; border-color: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .log-tab:hover { background: #1e2d42; }
+        [data-theme="dark"] .log-tab.active { background: var(--card-bg); color: var(--accent); }
+        [data-theme="dark"] .tab-count { background: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .log-tab.active .tab-count { background: #312e81; color: #a5b4fc; }
+
     </style>
 </head>
 <body>
@@ -846,25 +883,16 @@ class WorkerWebUI:
             <a class="nav-item active" onclick="scrollToSection('overview', this)">
                 <span class="nav-icon">&#128202;</span> Overview
             </a>
-            <a class="nav-item" onclick="scrollToSection('overview', this)">
-                <span class="nav-icon">&#9889;</span> Current Job
-            </a>
-            <a class="nav-item" onclick="scrollToSection('resources-section', this)">
-                <span class="nav-icon">&#128190;</span> Resources
-            </a>
-            <a class="nav-item" onclick="scrollToSection('processes-section', this)">
-                <span class="nav-icon">&#9881;</span> Processes
-            </a>
             <a class="nav-item" onclick="scrollToSection('images-section', this)">
                 <span class="nav-icon">&#128444;</span> Images
             </a>
-            <a class="nav-item" onclick="scrollToSection('console-section', this)">
+            <a class="nav-item" onclick="scrollToSection('logs-section', this); showLogTab('console')">
                 <span class="nav-icon">&#128203;</span> Console
             </a>
-            <a class="nav-item" onclick="scrollToSection('faulted-section', this)">
+            <a class="nav-item" onclick="scrollToSection('logs-section', this); showLogTab('faulted')">
                 <span class="nav-icon">&#9888;</span> Faulted Jobs
             </a>
-            <a class="nav-item" onclick="scrollToSection('errors-section', this)">
+            <a class="nav-item" onclick="scrollToSection('logs-section', this); showLogTab('errors')">
                 <span class="nav-icon">&#10060;</span> Errors
             </a>
         </nav>
@@ -994,7 +1022,7 @@ class WorkerWebUI:
                         </div>
                     </div>
 
-                    <!-- Current Generation + Last Image -->
+                    <!-- Current Job + Last Image -->
                     <div class="grid-2" style="margin-top: 14px;">
                         <div class="card">
                             <div class="card-header">
@@ -1022,59 +1050,55 @@ class WorkerWebUI:
                             </div>
                         </div>
                     </div>
-                </section>
 
-                <!-- RESOURCES -->
-                <section class="section" id="resources-section">
-                    <div class="section-header">
-                        <span class="section-title">&#128190; Resources</span>
-                    </div>
-                    <div class="card">
-                        <div class="stat-row" style="margin-bottom: 14px;">
-                            <span class="stat-label">RAM Usage</span>
-                            <span class="stat-value" id="ram-usage">-</span>
+                    <!-- Resources + Processes -->
+                    <div class="grid-2" style="margin-top: 14px;">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#128190; Resources</span>
+                            </div>
+                            <div class="stat-row" style="margin-bottom: 14px;">
+                                <span class="stat-label">RAM Usage</span>
+                                <span class="stat-value" id="ram-usage">-</span>
+                            </div>
+                            <div class="progress-section">
+                                <div class="progress-header">
+                                    <span class="progress-label" id="cpu-label">CPU</span>
+                                    <span class="progress-value" id="cpu-progress-text">0%</span>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="cpu-progress" style="width:0%"></div>
+                                </div>
+                            </div>
+                            <div class="progress-section">
+                                <div class="progress-header">
+                                    <span class="progress-label">GPU</span>
+                                    <span class="progress-value" id="gpu-progress-text">0%</span>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="gpu-progress" style="width:0%"></div>
+                                </div>
+                            </div>
+                            <div class="progress-section">
+                                <div class="progress-header">
+                                    <span class="progress-label" id="vram-label">VRAM</span>
+                                    <span class="progress-value" id="vram-progress-text">0%</span>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="vram-progress" style="width:0%"></div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="progress-section">
-                            <div class="progress-header">
-                                <span class="progress-label" id="cpu-label">CPU</span>
-                                <span class="progress-value" id="cpu-progress-text">0%</span>
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#9881; Processes</span>
+                                <span class="section-count" id="process-count">0</span>
                             </div>
-                            <div class="progress-bar-container">
-                                <div class="progress-bar" id="cpu-progress" style="width:0%"></div>
-                            </div>
-                        </div>
-                        <div class="progress-section">
-                            <div class="progress-header">
-                                <span class="progress-label">GPU</span>
-                                <span class="progress-value" id="gpu-progress-text">0%</span>
-                            </div>
-                            <div class="progress-bar-container">
-                                <div class="progress-bar" id="gpu-progress" style="width:0%"></div>
-                            </div>
-                        </div>
-                        <div class="progress-section">
-                            <div class="progress-header">
-                                <span class="progress-label" id="vram-label">VRAM</span>
-                                <span class="progress-value" id="vram-progress-text">0%</span>
-                            </div>
-                            <div class="progress-bar-container">
-                                <div class="progress-bar" id="vram-progress" style="width:0%"></div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- PROCESSES -->
-                <section class="section" id="processes-section">
-                    <div class="section-header">
-                        <span class="section-title">&#9881; Processes</span>
-                        <span class="section-count" id="process-count">0</span>
-                    </div>
-                    <div class="card">
-                        <div id="processes">
-                            <div class="empty-state">
-                                <span class="empty-state-icon">&#9881;</span>
-                                No process info
+                            <div id="processes" class="scrollable-tall">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#9881;</span>
+                                    No process info
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1098,51 +1122,45 @@ class WorkerWebUI:
                     </div>
                 </section>
 
-                <!-- CONSOLE -->
-                <section class="section" id="console-section">
-                    <div class="section-header">
-                        <span class="section-title">&#128203; Console Output</span>
+                <!-- LOGS (Console + Faulted Jobs + Errors combined) -->
+                <section class="section" id="logs-section">
+                    <div class="section-header" style="margin-bottom: 0;">
+                        <span class="section-title">&#128203; Logs</span>
                     </div>
-                    <div class="card">
-                        <div id="console-logs" class="console-container">
-                            <div style="text-align:center;color:#475569;padding:18px;">No logs available</div>
-                        </div>
+                    <div class="log-tabs">
+                        <button class="log-tab active" id="tab-console" onclick="showLogTab('console')">&#128203; Console</button>
+                        <button class="log-tab" id="tab-faulted" onclick="showLogTab('faulted')">&#9888; Faulted Jobs <span class="tab-count" id="faulted-jobs-count">0</span></button>
+                        <button class="log-tab" id="tab-errors" onclick="showLogTab('errors')">&#10060; Errors <span class="tab-count" id="errors-count">0</span></button>
                     </div>
-                </section>
-
-                <!-- FAULTED JOBS -->
-                <section class="section" id="faulted-section">
-                    <div class="section-header">
-                        <span class="section-title">&#9888; Faulted Jobs</span>
-                        <span class="section-count" id="faulted-jobs-count">0</span>
-                    </div>
-                    <div class="card">
-                        <div id="faulted-jobs" class="faulted-jobs-list scrollable-tall">
-                            <div class="empty-state">
-                                <span class="empty-state-icon">&#10003;</span>
-                                No faulted jobs
+                    <div class="card" style="border-top-left-radius: 0; border-top-right-radius: 0; border-top: none;">
+                        <!-- Console tab -->
+                        <div id="log-panel-console">
+                            <div id="console-logs" class="console-container">
+                                <div style="text-align:center;color:#475569;padding:18px;">No logs available</div>
                             </div>
                         </div>
-                    </div>
-                </section>
-
-                <!-- ERRORS -->
-                <section class="section" id="errors-section">
-                    <div class="section-header">
-                        <span class="section-title">&#10060; Errors</span>
-                        <span class="section-count" id="errors-count">0</span>
-                    </div>
-                    <div class="card">
-                        <div id="errors-history" class="errors-list">
-                            <div class="empty-state">
-                                <span class="empty-state-icon">&#10003;</span>
-                                No errors
+                        <!-- Faulted Jobs tab -->
+                        <div id="log-panel-faulted" style="display:none;">
+                            <div id="faulted-jobs" class="faulted-jobs-list scrollable-tall">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#10003;</span>
+                                    No faulted jobs
+                                </div>
                             </div>
                         </div>
-                        <div class="pagination-controls" id="errors-pagination" style="display: none;">
-                            <button id="errors-prev" onclick="errorsChangePage(-1)" disabled>&#8249; Prev</button>
-                            <span class="pagination-info" id="errors-page-info">Page 1 of 1</span>
-                            <button id="errors-next" onclick="errorsChangePage(1)">Next &#8250;</button>
+                        <!-- Errors tab -->
+                        <div id="log-panel-errors" style="display:none;">
+                            <div id="errors-history" class="errors-list">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#10003;</span>
+                                    No errors
+                                </div>
+                            </div>
+                            <div class="pagination-controls" id="errors-pagination" style="display: none;">
+                                <button id="errors-prev" onclick="errorsChangePage(-1)" disabled>&#8249; Prev</button>
+                                <span class="pagination-info" id="errors-page-info">Page 1 of 1</span>
+                                <button id="errors-next" onclick="errorsChangePage(1)">Next &#8250;</button>
+                            </div>
                         </div>
                     </div>
                 </section>
@@ -1181,6 +1199,14 @@ class WorkerWebUI:
             document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
             if (navEl) navEl.classList.add('active');
             if (window.innerWidth < 768) closeSidebar();
+        }
+
+        // ---- Log tabs ----
+        function showLogTab(tab) {
+            ['console', 'faulted', 'errors'].forEach(function(t) {
+                document.getElementById('log-panel-' + t).style.display = t === tab ? '' : 'none';
+                document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+            });
         }
 
         // ---- Theme toggle ----
@@ -1311,7 +1337,8 @@ class WorkerWebUI:
 
         // Helper function to escape HTML to prevent XSS
         function escapeHtml(str) {
-            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            if (str === null || str === undefined) { return ''; }
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
         // ANSI color code to HTML converter
