@@ -657,6 +657,7 @@ class TestIsStuckOnInference:
         last_heartbeat_timestamp: float,
         last_heartbeat_delta: float = 0.0,
         heartbeats_inference_steps: int = 0,
+        last_progress_value: int | None = None,
     ) -> MagicMock:
         """Create a mock process map entry with configurable timestamps."""
         entry = MagicMock()
@@ -665,6 +666,7 @@ class TestIsStuckOnInference:
         entry.last_heartbeat_timestamp = last_heartbeat_timestamp
         entry.last_heartbeat_delta = last_heartbeat_delta
         entry.heartbeats_inference_steps = heartbeats_inference_steps
+        entry.last_progress_value = last_progress_value
         return entry
 
     def _make_process_map(self, entry: MagicMock) -> MagicMock:
@@ -854,6 +856,89 @@ class TestIsStuckOnInference:
         # 150s > no_step_heartbeat_timeout=120, but state is INFERENCE_STARTING → not stuck
         # (still below the full inference_step_timeout of 600s)
         assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is False
+
+    def test_inference_processing_at_100_with_recent_heartbeat_not_stuck(self) -> None:
+        """At 100% progress in INFERENCE_PROCESSING with recent heartbeat the process is not stuck.
+
+        When all diffusion steps complete (progress = 100 %), the background heartbeat thread
+        sends periodic PIPELINE_STATE_CHANGE heartbeats at 100 %.  Because the progress value
+        never changes from 100, last_progress_timestamp is not refreshed.  Without the 100 %
+        exemption, is_stuck_on_inference() would fire the progress-stalled check after
+        inference_step_timeout seconds even though the process is actively running VAE decode
+        (a false positive).  The fix skips check 1 when last_progress_value == 100.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale — 100% never changes
+            last_heartbeat_timestamp=time.time() - 10,  # heartbeats arriving normally
+            heartbeats_inference_steps=0,  # reset by PIPELINE_STATE_CHANGE
+            last_progress_value=100,
+        )
+        process_map = self._make_process_map(entry)
+        # Even though progress_timestamp is stale, check 1 must be skipped at 100%.
+        # Heartbeat is recent → checks 2 and 3 also don't fire → not stuck.
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_processing_at_100_no_heartbeat_is_stuck(self) -> None:
+        """At 100% progress in INFERENCE_PROCESSING, a dead process (no heartbeats) is stuck.
+
+        If the process dies during VAE decode, the background heartbeat thread also stops.
+        Even with the 100 % exemption for check 1, checks 2/3 must still detect this case.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale — 100% never changes
+            last_heartbeat_timestamp=time.time() - 9999,  # no heartbeats — process is dead
+            heartbeats_inference_steps=0,
+            last_progress_value=100,
+        )
+        process_map = self._make_process_map(entry)
+        # Check 1 skipped (at 100%), but check 3 fires because no heartbeat for >600s.
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_processing_at_100_no_step_heartbeat_timeout_detects_dead_process(self) -> None:
+        """At 100%, no_step_heartbeat_timeout detects a dead process sooner than inference_step_timeout.
+
+        When the process dies during VAE decode, the no_step_heartbeat_timeout (shorter)
+        should fire before the full inference_step_timeout, as intended for fast recovery.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale
+            last_heartbeat_timestamp=time.time() - 350,  # no heartbeats for 350s > 300s timeout
+            heartbeats_inference_steps=0,
+            last_progress_value=100,
+        )
+        process_map = self._make_process_map(entry)
+        # Check 1 skipped (100%), check 3 doesn't fire (350s < 600s), but check 2 fires
+        # because heartbeats_inference_steps==0 and 350s > no_step_heartbeat_timeout=300s.
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is True
+
+    def test_inference_processing_below_100_still_uses_progress_stalled_check(self) -> None:
+        """Below 100%, a job with stalled progress and recent heartbeats is still detected as stuck.
+
+        The 100 % exemption must not be applied when progress is below 100 %: a process sending
+        heartbeats but making no diffusion progress (e.g., GPU hung at 50 %) should still be
+        detected and replaced.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale progress (stuck at 50 %)
+            last_heartbeat_timestamp=time.time() - 10,  # heartbeats arriving
+            heartbeats_inference_steps=5,
+            last_progress_value=50,
+        )
+        process_map = self._make_process_map(entry)
+        # progress_value != 100, so check 1 must still fire.
+        assert process_map.is_stuck_on_inference(0, 600) is True
 
 
 class TestInferenceSemaphoreBoundedSemaphore:
