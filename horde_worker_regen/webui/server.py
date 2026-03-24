@@ -238,8 +238,8 @@ class WorkerWebUI:
         .image-grid-item .image-timestamp { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #e2e8f0; font-size: 0.65rem; padding: 3px 6px; text-align: center; border-radius: 0 0 8px 8px; opacity: 0; transition: opacity 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .image-grid-item:hover .image-timestamp { opacity: 1; }
 
-        .last-image-container { display: flex; align-items: center; justify-content: center; min-height: 160px; }
-        .single-image { max-width: 100%; max-height: 380px; width: auto; height: auto; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .last-image-container { display: flex; align-items: center; justify-content: center; min-height: 160px; overflow: hidden; border-radius: 8px; }
+        .single-image { max-width: 100%; max-height: 380px; width: 100%; height: auto; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
         .single-image:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
 
         /* ---- Image overlay ---- */
@@ -455,7 +455,7 @@ class WorkerWebUI:
                         <div class="card">
                             <div class="card-header"><span class="card-title">&#128444; Last Images</span></div>
                             <div style="font-size:0.75rem;color:#94a3b8;margin-bottom:10px;"><span id="overview-image-time">No image generated yet</span></div>
-                            <div id="overview-image-container" style="display:flex;align-items:center;justify-content:center;min-height:120px;"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
+                            <div id="overview-image-container" class="last-image-container"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
                         </div>
                     </div>
                     <div class="grid-2">
@@ -776,10 +776,10 @@ class WorkerWebUI:
                     if (data.last_image_base64 && data.last_image_base64.length > 0) {
                         if (data.last_image_base64.length === 1) {
                             const s = 'data:image/png;base64,'+data.last_image_base64[0];
-                            oic.innerHTML = '<img src="'+s+'" style="max-width:100%;max-height:200px;width:auto;height:auto;object-fit:contain;border-radius:8px;cursor:pointer;display:block;margin:0 auto;" alt="Last generated image" data-fullsize="'+s+'" />';
+                            oic.innerHTML = '<img src="'+s+'" class="single-image" alt="Last generated image" data-fullsize="'+s+'" />';
                         } else {
-                            const gh = data.last_image_base64.slice(0,4).map((b,i) => { const s='data:image/png;base64,'+b; return '<div class="image-grid-item" style="max-height:100px;"><img src="'+s+'" alt="Generated image '+(i+1)+'" data-fullsize="'+s+'" /></div>'; }).join('');
-                            oic.innerHTML = '<div class="image-grid" style="grid-template-columns:repeat(auto-fill,minmax(90px,1fr));">'+gh+'</div>';
+                            const gh = data.last_image_base64.slice(0,4).map((b,i) => { const s='data:image/png;base64,'+b; return '<div class="image-grid-item"><img src="'+s+'" alt="Generated image '+(i+1)+'" data-fullsize="'+s+'" /></div>'; }).join('');
+                            oic.innerHTML = '<div class="image-grid" style="grid-template-columns:repeat(2,1fr);">'+gh+'</div>';
                         }
                         oic.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize')); }; });
                     } else {
