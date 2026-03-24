@@ -165,6 +165,12 @@ class WorkerWebUI:
             cursor: pointer;
             border-left: 3px solid transparent;
             user-select: none;
+            background: none;
+            border-top: none;
+            border-right: none;
+            border-bottom: none;
+            width: 100%;
+            text-align: left;
         }
 
         .nav-item:hover {
@@ -885,15 +891,15 @@ class WorkerWebUI:
         </div>
         <nav class="sidebar-nav" aria-label="Page sections">
             <div class="nav-section-label">Navigation</div>
-            <a class="nav-item active" onclick="scrollToSection('overview', this)">
+            <button class="nav-item active" onclick="scrollToSection('overview', this)">
                 <span class="nav-icon">&#128202;</span> Overview
-            </a>
-            <a class="nav-item" onclick="scrollToSection('images-section', this)">
+            </button>
+            <button class="nav-item" onclick="scrollToSection('images-section', this)">
                 <span class="nav-icon">&#128444;</span> Images
-            </a>
-            <a class="nav-item" onclick="scrollToSection('logs-section', this)">
+            </button>
+            <button class="nav-item" onclick="scrollToSection('logs-section', this)">
                 <span class="nav-icon">&#128203;</span> Logs
-            </a>
+            </button>
         </nav>
         <div class="sidebar-footer">
             <p id="sidebar-update-time">Last updated: Never</p>
@@ -1182,6 +1188,16 @@ class WorkerWebUI:
         function closeSidebar() {
             document.getElementById('sidebar').classList.remove('open');
             document.getElementById('sidebar-overlay').classList.remove('active');
+        }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function scrollToSection(sectionId, navEl) {
@@ -1529,46 +1545,46 @@ class WorkerWebUI:
                     const overviewJobDiv = document.getElementById('overview-current-job');
                     if (data.current_job) {
                         const job = data.current_job;
-                        const stateDisplay = job.state || 'N/A';
+                        const stateDisplay = escapeHtml(job.state || 'N/A');
                         const progressValue = (job.progress !== null && job.progress !== undefined) ? job.progress : 0;
 
                         overviewJobDiv.innerHTML = `
                             <div class="stat-row">
                                 <span class="stat-label">Job ID:</span>
-                                <span class="stat-value" style="font-family:monospace;font-size:0.8rem;">${job.id || 'N/A'}</span>
+                                <span class="stat-value" style="font-family:monospace;font-size:0.8rem;">${escapeHtml(job.id || 'N/A')}</span>
                             </div>
                             <div class="stat-row">
                                 <span class="stat-label">Model:</span>
-                                <span class="stat-value">${job.model || 'N/A'}</span>
+                                <span class="stat-value">${escapeHtml(job.model || 'N/A')}</span>
                             </div>
                             ${job.batch_size !== null && job.batch_size !== undefined ? `
                             <div class="stat-row">
                                 <span class="stat-label">Batch Size:</span>
-                                <span class="stat-value">${job.batch_size}x</span>
+                                <span class="stat-value">${escapeHtml(job.batch_size)}x</span>
                             </div>
                             ` : ''}
                             ${job.steps !== null && job.steps !== undefined ? `
                             <div class="stat-row">
                                 <span class="stat-label">Steps:</span>
-                                <span class="stat-value">${job.steps}</span>
+                                <span class="stat-value">${escapeHtml(job.steps)}</span>
                             </div>
                             ` : ''}
                             ${job.width !== null && job.width !== undefined && job.height !== null && job.height !== undefined ? `
                             <div class="stat-row">
                                 <span class="stat-label">Image Size:</span>
-                                <span class="stat-value">${job.width}x${job.height}</span>
+                                <span class="stat-value">${escapeHtml(job.width)}x${escapeHtml(job.height)}</span>
                             </div>
                             ` : ''}
                             ${job.sampler !== null && job.sampler !== undefined ? `
                             <div class="stat-row">
                                 <span class="stat-label">Sampler:</span>
-                                <span class="stat-value">${job.sampler}</span>
+                                <span class="stat-value">${escapeHtml(job.sampler)}</span>
                             </div>
                             ` : ''}
                             ${job.loras !== null && job.loras !== undefined && job.loras.length > 0 ? `
                             <div class="stat-row">
                                 <span class="stat-label">LoRAs:</span>
-                                <span class="stat-value">${job.loras.map(lora => lora.name || 'Unknown').join(', ')}</span>
+                                <span class="stat-value">${job.loras.map(lora => escapeHtml(lora.name || 'Unknown')).join(', ')}</span>
                             </div>
                             ` : ''}
                             <div class="stat-row">
@@ -1578,10 +1594,10 @@ class WorkerWebUI:
                             <div style="margin-top:14px;">
                                 <div class="progress-header">
                                     <span class="progress-label">Progress</span>
-                                    <span class="progress-value">${progressValue}%</span>
+                                    <span class="progress-value">${escapeHtml(progressValue)}%</span>
                                 </div>
                                 <div class="progress-bar-container" style="height:12px;">
-                                    <div class="progress-bar" style="width:${progressValue}%;height:100%;border-radius:6px;"></div>
+                                    <div class="progress-bar" style="width:${escapeHtml(progressValue)}%;height:100%;border-radius:6px;"></div>
                                 </div>
                             </div>
                         `;
@@ -1614,10 +1630,10 @@ class WorkerWebUI:
 
                     if (data.job_queue.length > 0) {
                         queueDiv.innerHTML = data.job_queue.map(job => {
-                            const batchInfo = job.batch_size && job.batch_size > 1 ? ` (${job.batch_size}x batch)` : '';
+                            const batchInfo = job.batch_size && job.batch_size > 1 ? ` (${escapeHtml(job.batch_size)}x batch)` : '';
                             return `
                                 <div class="job-item">
-                                    <span class="job-id">${job.id || 'N/A'}</span>: ${job.model || 'Unknown model'}${batchInfo}
+                                    <span class="job-id">${escapeHtml(job.id || 'N/A')}</span>: ${escapeHtml(job.model || 'Unknown model')}${batchInfo}
                                 </div>
                             `;
                         }).join('');
@@ -1629,7 +1645,7 @@ class WorkerWebUI:
                     const modelsDiv = document.getElementById('models-loaded');
                     if (data.models_loaded.length > 0) {
                         modelsDiv.innerHTML = data.models_loaded.map(model =>
-                            `<div class="model-badge">${model}</div>`
+                            `<div class="model-badge">${escapeHtml(model)}</div>`
                         ).join('');
                     } else {
                         modelsDiv.innerHTML = '<span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span>';
@@ -1645,22 +1661,22 @@ class WorkerWebUI:
                             // Build second line with model, batch size, and progress
                             let secondLine = [];
                             if (proc.model) {
-                                secondLine.push(`Model: ${proc.model}`);
+                                secondLine.push(`Model: ${escapeHtml(proc.model)}`);
                             }
                             if (proc.batch_size !== null && proc.batch_size !== undefined) {
-                                secondLine.push(`Batch: ${proc.batch_size}x`);
+                                secondLine.push(`Batch: ${escapeHtml(proc.batch_size)}x`);
                             }
                             if (proc.progress !== null && proc.progress !== undefined) {
-                                secondLine.push(`Progress: ${proc.progress}%`);
+                                secondLine.push(`Progress: ${escapeHtml(proc.progress)}%`);
                             }
                             const secondLineText = secondLine.length > 0 ? secondLine.join(' | ') : 'Idle';
 
                             return `
                             <div class="process-item">
                                 <div class="process-id-row">
-                                    <span class="process-id">Process #${proc.id}</span>
-                                    <span class="process-type-badge">${proc.type}</span>
-                                    <span class="process-state-badge">${proc.state}</span>
+                                    <span class="process-id">Process #${escapeHtml(proc.id)}</span>
+                                    <span class="process-type-badge">${escapeHtml(proc.type)}</span>
+                                    <span class="process-state-badge">${escapeHtml(proc.state)}</span>
                                 </div>
                                 <div class="process-detail-text">${secondLineText}</div>
                             </div>
