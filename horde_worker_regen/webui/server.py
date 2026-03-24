@@ -955,28 +955,28 @@ class WorkerWebUI:
                             <div class="stat-card-value accent" id="kudos-per-hour">0</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-card-label">Jobs Completed</div>
-                            <div class="stat-card-value success" id="jobs-completed">0</div>
+                            <div class="stat-card-label">Jobs Popped</div>
+                            <div class="stat-card-value accent" id="jobs-popped">0</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-card-label">Jobs Faulted</div>
-                            <div class="stat-card-value error" id="jobs-faulted">0</div>
+                            <div class="stat-card-label">Jobs Completed</div>
+                            <div class="stat-card-value success" id="jobs-completed">0</div>
                         </div>
                     </div>
 
                     <!-- Row 2: 3 stat cards -->
                     <div class="grid-3 grid-3-popped" style="margin-bottom: 14px;">
                         <div class="stat-card">
-                            <div class="stat-card-label">Jobs Popped</div>
-                            <div class="stat-card-value accent" id="jobs-popped">0</div>
+                            <div class="stat-card-label">Jobs Queued</div>
+                            <div class="stat-card-value" id="jobs-queued">0</div>
                         </div>
                         <div class="stat-card">
                             <div class="stat-card-label">Jobs Recovered</div>
                             <div class="stat-card-value warning" id="processes-recovered">0</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-card-label">Jobs Queued</div>
-                            <div class="stat-card-value" id="jobs-queued">0</div>
+                            <div class="stat-card-label">Jobs Faulted</div>
+                            <div class="stat-card-value error" id="jobs-faulted">0</div>
                         </div>
                     </div>
 
