@@ -77,412 +77,479 @@ class WorkerWebUI:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Horde Worker Status</title>
+    <title>Horde Worker Admin</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --sidebar-width: 260px;
+            --sidebar-bg: #1a1d2e;
+            --sidebar-hover: #2d3148;
+            --accent: #6366f1;
+            --accent-hover: #4f46e5;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --text-muted: #94a3b8;
+            --text-light: #e2e8f0;
+            --main-bg: #f1f5f9;
+            --card-bg: #ffffff;
+            --border: #e2e8f0;
         }
+
+        html { scroll-behavior: smooth; }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #333;
-            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--main-bg);
+            color: #334155;
             min-height: 100vh;
+            display: flex;
         }
 
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
+        /* ---- Sidebar ---- */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--sidebar-bg);
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+            overflow-y: auto;
         }
 
-        h1 {
-            color: white;
-            text-align: center;
-            margin-bottom: 30px;
-            font-size: 2.5em;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        .sidebar-logo {
+            padding: 22px 20px 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+            flex-shrink: 0;
         }
 
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
+        .sidebar-logo h1 {
+            color: var(--text-light);
+            font-size: 1.15rem;
+            font-weight: 700;
+            letter-spacing: 0.3px;
         }
 
-        .card {
+        .sidebar-logo p {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 3px;
+        }
+
+        .sidebar-nav { flex: 1; padding: 12px 0; }
+
+        .nav-section-label {
+            color: var(--text-muted);
+            font-size: 0.67rem;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            padding: 10px 20px 4px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 20px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            user-select: none;
+            background: none;
+            border-top: none;
+            border-right: none;
+            border-bottom: none;
+            width: 100%;
+            text-align: left;
+        }
+
+        .nav-item:hover {
+            background: var(--sidebar-hover);
+            color: var(--text-light);
+        }
+
+        .nav-item.active {
+            background: var(--sidebar-hover);
+            color: var(--text-light);
+            border-left-color: var(--accent);
+        }
+
+        .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+
+        .sidebar-footer {
+            padding: 14px 20px;
+            border-top: 1px solid rgba(255,255,255,0.07);
+            flex-shrink: 0;
+        }
+
+        .sidebar-footer p { color: var(--text-muted); font-size: 0.72rem; }
+
+        /* ---- Sidebar overlay (mobile) ---- */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.55);
+            z-index: 99;
+            backdrop-filter: blur(1px);
+        }
+        .sidebar-overlay.active { display: block; }
+
+        /* ---- Mobile top navbar ---- */
+        .mobile-navbar {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 54px;
+            background: var(--sidebar-bg);
+            align-items: center;
+            padding: 0 14px;
+            z-index: 200;
+            gap: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        }
+
+        .hamburger-btn {
+            background: none;
+            border: none;
+            color: var(--text-light);
+            font-size: 1.3rem;
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 6px;
+            line-height: 1;
+            transition: background 0.15s;
+        }
+        .hamburger-btn:hover { background: rgba(255,255,255,0.08); }
+
+        .mobile-title { color: var(--text-light); font-size: 0.95rem; font-weight: 600; flex: 1; }
+
+        /* ---- Main content ---- */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            flex: 1;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        /* ---- Top bar (desktop) ---- */
+        .topbar {
             background: white;
+            border-bottom: 1px solid var(--border);
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            flex-shrink: 0;
+        }
+
+        .topbar-worker { flex: 1; min-width: 0; }
+        .topbar-worker-name {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #1e293b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .topbar-worker-sub { font-size: 0.82rem; color: #64748b; margin-top: 2px; }
+        .topbar-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .topbar-uptime { font-size: 0.82rem; color: #64748b; }
+
+        /* ---- Status badges ---- */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        .status-badge::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-active { background: #d1fae5; color: #065f46; }
+        .status-active::before { background: #10b981; }
+        .status-maintenance { background: #fef3c7; color: #92400e; }
+        .status-maintenance::before { background: #f59e0b; animation: pulse-dot 1.5s ease-in-out infinite; }
+
+        @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        /* ---- Content area ---- */
+        .content-area { padding: 22px 24px; flex: 1; }
+
+        /* ---- Section ---- */
+        .section { margin-bottom: 30px; scroll-margin-top: 24px; }
+        .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+        .section-title {
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .section-count {
+            background: #e2e8f0;
+            color: #475569;
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 20px;
+        }
+
+        /* ---- Card ---- */
+        .card {
+            background: var(--card-bg);
             border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 18px 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+            border: 1px solid var(--border);
+        }
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .card-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
         }
 
-        .card h2 {
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 1.3em;
-            border-bottom: 2px solid #667eea;
-            padding-bottom: 8px;
-        }
+        /* ---- Grid layouts ---- */
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 
-        .stat {
+        /* ---- Stat card (big overview numbers) ---- */
+        .stat-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 18px 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+            border: 1px solid var(--border);
+        }
+        .stat-card-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 8px;
+        }
+        .stat-card-value {
+            font-size: 1.7rem;
+            font-weight: 700;
+            color: #1e293b;
+            line-height: 1;
+        }
+        .stat-card-value.success { color: var(--success); }
+        .stat-card-value.warning { color: var(--warning); }
+        .stat-card-value.error   { color: var(--error); }
+        .stat-card-value.accent  { color: var(--accent); }
+
+        /* ---- Stat row (label: value) ---- */
+        .stat-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 0;
-            border-bottom: 1px solid #f0f0f0;
+            padding: 9px 0;
+            border-bottom: 1px solid #f8fafc;
         }
-
-        .stat:last-child {
-            border-bottom: none;
-        }
-
-        .stat-label {
-            color: #666;
-            font-weight: 500;
-        }
-
+        .stat-row:last-child { border-bottom: none; }
+        .stat-label { color: #64748b; font-size: 0.85rem; font-weight: 500; }
         .stat-value {
-            color: #333;
+            color: #1e293b;
             font-weight: 600;
-            font-size: 1.1em;
+            font-size: 0.9rem;
+            text-align: right;
+            max-width: 62%;
+            word-break: break-word;
         }
+        .stat-value.success { color: var(--success); }
+        .stat-value.warning { color: var(--warning); }
+        .stat-value.error   { color: var(--error); }
 
-        .stat-value.success {
-            color: #10b981;
-        }
-
-        .stat-value.warning {
-            color: #f59e0b;
-        }
-
-        .stat-value.error {
-            color: #ef4444;
-        }
-
+        /* ---- Progress bars ---- */
+        .progress-section { margin-bottom: 14px; }
+        .progress-section:last-child { margin-bottom: 0; }
+        .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+        .progress-label { font-size: 0.83rem; font-weight: 500; color: #475569; }
+        .progress-value { font-size: 0.83rem; font-weight: 700; color: #1e293b; }
         .progress-bar-container {
             width: 100%;
-            height: 24px;
-            background: #f0f0f0;
-            border-radius: 12px;
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
             overflow: hidden;
-            margin: 5px 0;
-            position: relative;
         }
-
         .progress-bar {
             height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            transition: width 0.3s ease;
+            background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%);
+            border-radius: 4px;
+            transition: width 0.4s ease;
+            min-width: 0;
+        }
+
+        /* ---- Job state badge ---- */
+        .job-state-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            background: #e0e7ff;
+            color: #4338ca;
+        }
+
+        /* ---- Process items ---- */
+        .process-item {
+            background: #f8fafc;
+            border: 1px solid #e8eef4;
+            border-left: 3px solid var(--accent);
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-bottom: 8px;
+        }
+        .process-item:last-child { margin-bottom: 0; }
+        .process-id-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 3px; }
+        .process-id { font-weight: 700; color: var(--accent); font-size: 0.88rem; }
+        .process-type-badge {
+            font-size: 0.72rem;
+            background: #e0e7ff;
+            color: #4338ca;
+            padding: 1px 7px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        .process-state-badge {
+            font-size: 0.72rem;
+            background: #f0fdf4;
+            color: #166534;
+            padding: 1px 7px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        .process-detail-text { font-size: 0.8rem; color: #64748b; }
+
+        /* ---- Job queue items ---- */
+        .job-item {
+            background: #f8fafc;
+            border: 1px solid #e8eef4;
+            border-radius: 7px;
+            padding: 7px 12px;
+            margin-bottom: 5px;
+            font-size: 0.83rem;
+        }
+        .job-item:last-child { margin-bottom: 0; }
+        .job-id { font-family: 'Courier New', monospace; color: var(--accent); font-weight: 600; font-size: 0.8rem; }
+
+        /* ---- Model badges ---- */
+        .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
+
+        /* ---- Console ---- */
+        .console-container {
+            background: #0f172a;
+            border-radius: 8px;
+            padding: 12px 14px;
+            max-height: 440px;
+            overflow-y: auto;
+            font-family: 'Courier New', Consolas, 'Lucida Console', monospace;
+            font-size: 0.8rem;
+            color: #e2e8f0;
+            line-height: 1.55;
+        }
+
+        /* ---- Images ---- */
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            width: 100%;
+        }
+        .image-grid-item {
+            position: relative;
+            overflow: hidden;
+            border-radius: 8px;
+            background: #f1f5f9;
+            aspect-ratio: 1;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 0.9em;
         }
-
-        .process-list {
-            overflow-y: auto;
-        }
-
-        .process-item {
-            background: #f8f9fa;
-            padding: 10px;
-            margin: 8px 0;
+        .image-grid-item img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
             border-radius: 8px;
-            border-left: 4px solid #667eea;
-        }
-
-        .process-id {
-            font-weight: 600;
-            color: #667eea;
-        }
-
-        .process-state {
-            color: #666;
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
-
-        .job-queue {
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .job-item {
-            background: #f8f9fa;
-            padding: 8px 12px;
-            margin: 6px 0;
-            border-radius: 6px;
-            font-size: 0.9em;
-        }
-
-        .job-id {
-            font-family: monospace;
-            color: #667eea;
-            font-weight: 600;
-        }
-
-        .faulted-jobs-list {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .faulted-job-item {
-            background: #fff5f5;
-            border: 1px solid #fecaca;
-            border-left: 4px solid #dc2626;
-            padding: 12px;
-            border-radius: 6px;
-            font-size: 0.9em;
-        }
-
-        .faulted-job-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid #fecaca;
-        }
-
-        .faulted-job-id {
-            font-family: monospace;
-            color: #dc2626;
-            font-weight: 700;
-            font-size: 0.95em;
-        }
-
-        .faulted-job-time {
-            color: #666;
-            font-size: 0.85em;
-        }
-
-        .faulted-job-details {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 8px;
-            margin-top: 8px;
-        }
-
-        .faulted-job-detail {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .faulted-job-label {
-            color: #666;
-            font-size: 0.8em;
-            font-weight: 600;
-            text-transform: uppercase;
-            margin-bottom: 2px;
-        }
-
-        .faulted-job-value {
-            color: #333;
-            font-weight: 500;
-        }
-
-        .faulted-job-lora {
-            background: #fef3c7;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.85em;
-            display: inline-block;
-            margin: 2px;
-        }
-
-        .faulted-job-controlnet {
-            background: #dbeafe;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.85em;
-            display: inline-block;
-            color: #1e40af;
-            font-weight: 600;
-        }
-
-        .faulted-job-section {
-            margin-top: 8px;
-        }
-
-        .faulted-job-section-label {
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
             display: block;
-            margin-bottom: 4px;
         }
-
-        .status-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .status-active {
-            background: #d1fae5;
-            color: #065f46;
-        }
-
-        .status-maintenance {
-            background: #fef3c7;
-            color: #92400e;
-        }
-
-        .update-time {
-            text-align: center;
-            color: white;
-            margin-top: 20px;
-            font-size: 0.9em;
-            opacity: 0.9;
-        }
-
-        .model-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-
-        .model-badge {
-            background: #e0e7ff;
-            color: #4338ca;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 0.85em;
-            font-weight: 500;
-        }
-
-        .loading {
-            text-align: center;
-            color: white;
-            font-size: 1.2em;
-            margin-top: 50px;
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .wide-card {
-            grid-column: 1 / -1;
-        }
-
-        .span-1 {
-            grid-column: span 1;
-        }
-
-        .span-2 {
-            grid-column: span 2;
-        }
+        .image-grid-item img:hover { transform: scale(1.04); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
 
         .last-image-container {
             display: flex;
             align-items: center;
             justify-content: center;
-            min-height: 200px;
+            min-height: 160px;
         }
 
-        /* Image grid for batch jobs */
-        .image-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 10px;
-            width: 100%;
-            max-height: 400px;
-        }
-
-        .image-grid-item {
-            position: relative;
-            overflow: hidden;
-            border-radius: 8px;
-            background: #f8f9fa;
-            aspect-ratio: 1 / 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .image-grid-item img {
+        .single-image {
             max-width: 100%;
-            max-height: 100%;
+            max-height: 380px;
             width: auto;
             height: auto;
             object-fit: contain;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             display: block;
             cursor: pointer;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
+        .single-image:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
 
-        .image-grid-item img:hover {
-            transform: scale(1.05);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        }
-
-        /* Single image display (for non-batch jobs) */
-        .last-image-container .single-image {
-            max-width: 100%;
-            max-height: 400px;
-            width: auto;
-            height: auto;
-            object-fit: contain;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            display: block;
-            cursor: pointer;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .last-image-container .single-image:hover {
-            transform: scale(1.02);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        }
-
-        .subsection-heading {
-            color: #667eea;
-            font-size: 1.1em;
-            margin-bottom: 10px;
-            border-bottom: 1px solid #e0e7ff;
-            padding-bottom: 5px;
-        }
-
-        /* Responsive column spanning for smaller screens */
-        @media (max-width: 900px) {
-            .span-1, .span-2 {
-                grid-column: span 1;
-            }
-        }
-
-        /* Full resolution image overlay */
+        /* ---- Image overlay ---- */
         .image-overlay {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.9);
+            inset: 0;
+            background: rgba(0,0,0,0.92);
             z-index: 1000;
             justify-content: center;
             align-items: center;
             padding: 20px;
         }
-
-        .image-overlay.active {
-            display: flex;
-        }
-
+        .image-overlay.active { display: flex; }
         .image-overlay-content {
             position: relative;
             max-width: 95%;
@@ -491,262 +558,694 @@ class WorkerWebUI:
             justify-content: center;
             align-items: center;
         }
-
         .image-overlay img {
             max-width: 100%;
             max-height: 90vh;
-            width: auto;
-            height: auto;
             object-fit: contain;
             border-radius: 8px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            box-shadow: 0 8px 40px rgba(0,0,0,0.6);
         }
-
         .image-overlay-close {
             position: absolute;
-            top: -40px;
+            top: -44px;
             right: 0;
-            background: #667eea;
+            background: var(--accent);
             color: white;
             border: none;
-            padding: 10px 20px;
-            font-size: 1.1em;
+            padding: 8px 18px;
+            font-size: 0.9rem;
             font-weight: 600;
             border-radius: 8px;
             cursor: pointer;
-            transition: background 0.3s ease;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: background 0.2s;
         }
+        .image-overlay-close:hover { background: var(--accent-hover); }
 
-        .image-overlay-close:hover {
-            background: #764ba2;
+        /* ---- Faulted jobs ---- */
+        .faulted-jobs-list { display: flex; flex-direction: column; gap: 0; }
+        .faulted-job-item {
+            background: #fff5f5;
+            border: 1px solid #fecaca;
+            border-left: 3px solid var(--error);
+            border-radius: 8px;
+            padding: 13px;
+            margin-bottom: 10px;
         }
-
-        .errors-list {
+        .faulted-job-item:last-child { margin-bottom: 0; }
+        .faulted-job-header {
             display: flex;
-            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 9px;
+            padding-bottom: 7px;
+            border-bottom: 1px solid #fecaca;
+            flex-wrap: wrap;
             gap: 6px;
         }
+        .faulted-job-id { font-family: monospace; color: #dc2626; font-weight: 700; font-size: 0.85rem; word-break: break-all; }
+        .faulted-job-time { color: #94a3b8; font-size: 0.78rem; flex-shrink: 0; }
+        .faulted-job-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+        .faulted-job-detail { display: flex; flex-direction: column; }
+        .faulted-job-label {
+            color: #94a3b8;
+            font-size: 0.68rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
+        }
+        .faulted-job-value { color: #334155; font-weight: 500; font-size: 0.85rem; word-break: break-word; }
+        .faulted-job-lora { background: #fef3c7; color: #92400e; padding: 2px 7px; border-radius: 4px; font-size: 0.78rem; display: inline-block; margin: 2px; }
+        .faulted-job-controlnet { background: #dbeafe; color: #1e40af; padding: 2px 7px; border-radius: 4px; font-size: 0.78rem; display: inline-block; font-weight: 600; }
+        .faulted-job-section { margin-top: 8px; }
+        .faulted-job-section-label { display: block; margin-bottom: 4px; }
 
+        /* ---- Errors ---- */
+        .errors-list { display: flex; flex-direction: column; }
         .error-item {
             background: #fff5f5;
             border: 1px solid #fecaca;
-            border-left: 4px solid #dc2626;
-            padding: 8px 12px;
+            border-left: 3px solid var(--error);
             border-radius: 6px;
-            font-family: monospace;
-            font-size: 0.85em;
+            padding: 9px 13px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.78rem;
             color: #7f1d1d;
             white-space: pre-wrap;
             word-break: break-word;
+            margin-bottom: 5px;
         }
+        .error-item:last-child { margin-bottom: 0; }
 
         .pagination-controls {
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 10px;
-            margin-top: 10px;
+            margin-top: 12px;
             flex-wrap: wrap;
         }
-
         .pagination-controls button {
-            background: #667eea;
-            color: #fff;
+            background: var(--accent);
+            color: white;
             border: none;
             border-radius: 6px;
             padding: 6px 14px;
             cursor: pointer;
-            font-size: 0.9em;
+            font-size: 0.82rem;
+            font-weight: 500;
+            transition: background 0.15s;
+        }
+        .pagination-controls button:hover:not(:disabled) { background: var(--accent-hover); }
+        .pagination-controls button:disabled { background: #c7d2fe; cursor: default; }
+        .pagination-info { font-size: 0.82rem; color: #64748b; }
+
+        /* ---- Scrollable ---- */
+        .scrollable { max-height: 260px; overflow-y: auto; }
+        .scrollable-tall { max-height: 400px; overflow-y: auto; }
+
+        /* ---- Loading ---- */
+        #loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 80vh;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .loading-spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid #e2e8f0;
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.75s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { color: #64748b; font-size: 0.9rem; }
+
+        /* ---- Misc ---- */
+        #update-time { font-size: 0.73rem; color: #94a3b8; text-align: right; margin-bottom: 10px; }
+        .empty-state { text-align: center; padding: 24px 16px; color: #94a3b8; font-size: 0.87rem; }
+        .empty-state-icon { font-size: 1.8rem; margin-bottom: 6px; display: block; }
+
+        /* ---- Scrollbar ---- */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 1200px) {
+            .grid-4 { grid-template-columns: repeat(2, 1fr); }
+            .grid-3 { grid-template-columns: repeat(2, 1fr); }
         }
 
-        .pagination-controls button:disabled {
-            background: #c7d2fe;
-            cursor: default;
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); }
+            .sidebar.open { transform: translateX(0); }
+            .mobile-navbar { display: flex; }
+            .mobile-resources { display: flex; }
+            .main-content { margin-left: 0; padding-top: 80px; }
+            .topbar { display: none; }
+            .content-area { padding: 14px 12px; }
+            .grid-4 { grid-template-columns: repeat(2, 1fr); }
+            .grid-3 { grid-template-columns: 1fr; }
+            .grid-2 { grid-template-columns: 1fr; }
+            .grid-3-popped { grid-template-columns: repeat(2, 1fr); }
         }
 
-        .pagination-info {
-            font-size: 0.9em;
-            color: #555;
+        @media (max-width: 480px) {
+            .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+            .stat-card-value { font-size: 1.4rem; }
         }
+
+        /* ---- Theme toggle button ---- */
+        .theme-toggle {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.18);
+            color: var(--text-light);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 5px 9px;
+            border-radius: 8px;
+            line-height: 1;
+            transition: background 0.15s;
+            flex-shrink: 0;
+        }
+        .theme-toggle:hover { background: rgba(255,255,255,0.08); }
+        .topbar .theme-toggle {
+            background: none;
+            border: 1px solid #e2e8f0;
+            color: #475569;
+        }
+        .topbar .theme-toggle:hover { background: #f1f5f9; }
+
+        /* ---- Topbar resource chips ---- */
+        .topbar-resources { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .topbar-res-chip {
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            color: #475569;
+            font-size: 0.74rem;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 20px;
+            font-family: 'Courier New', monospace;
+            white-space: nowrap;
+        }
+
+        /* ---- Mobile resources sub-bar ---- */
+        .mobile-resources {
+            display: none;
+            position: fixed;
+            top: 54px; left: 0; right: 0;
+            height: 26px;
+            background: #12162a;
+            align-items: center;
+            padding: 0 14px;
+            gap: 14px;
+            z-index: 199;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .mobile-res-chip {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* ---- Dark mode ---- */
+        [data-theme="dark"] {
+            --main-bg: #0f172a;
+            --card-bg: #1e293b;
+            --border: #2d3f55;
+            --sidebar-bg: #0d1117;
+            --sidebar-hover: #161e2e;
+        }
+        [data-theme="dark"] body { color: #cbd5e1; }
+        [data-theme="dark"] .topbar { background: #1e293b; border-bottom-color: #2d3f55; }
+        [data-theme="dark"] .topbar-worker-name { color: #f1f5f9; }
+        [data-theme="dark"] .topbar-worker-sub,
+        [data-theme="dark"] .topbar-uptime { color: #94a3b8; }
+        [data-theme="dark"] .topbar .theme-toggle { border-color: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .topbar .theme-toggle:hover { background: #2d3f55; }
+        [data-theme="dark"] .topbar-res-chip { background: #151e2e; border-color: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .stat-card-value:not(.success):not(.accent):not(.warning):not(.error) { color: #f1f5f9; }
+        [data-theme="dark"] .stat-card-value.success { color: #34d399; }
+        [data-theme="dark"] .stat-card-value.accent  { color: #818cf8; }
+        [data-theme="dark"] .stat-card-value.warning { color: #fbbf24; }
+        [data-theme="dark"] .stat-card-value.error   { color: #f87171; }
+        [data-theme="dark"] .stat-card-label { color: #94a3b8; }
+        [data-theme="dark"] .stat-label { color: #94a3b8; }
+        [data-theme="dark"] .stat-value { color: #f1f5f9; }
+        [data-theme="dark"] .stat-row { border-bottom-color: #2d3f55; }
+        [data-theme="dark"] .card-header { border-bottom-color: #2d3f55; }
+        [data-theme="dark"] .card-title { color: #94a3b8; }
+        [data-theme="dark"] .progress-label { color: #94a3b8; }
+        [data-theme="dark"] .progress-value { color: #f1f5f9; }
+        [data-theme="dark"] .progress-bar-container { background: #2d3f55; }
+        [data-theme="dark"] .section-title { color: #94a3b8; }
+        [data-theme="dark"] .section-count { background: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .process-item { background: #151e2e; border-color: #2d3f55; }
+        [data-theme="dark"] .process-type-badge { background: #312e81; color: #a5b4fc; }
+        [data-theme="dark"] .process-state-badge { background: #14532d; color: #86efac; }
+        [data-theme="dark"] .process-detail-text { color: #94a3b8; }
+        [data-theme="dark"] .job-item { background: #151e2e; border-color: #2d3f55; }
+        [data-theme="dark"] .model-badge { background: #312e81; color: #a5b4fc; }
+        [data-theme="dark"] .job-state-badge { background: #312e81; color: #a5b4fc; }
+        [data-theme="dark"] .loading-text { color: #94a3b8; }
+        [data-theme="dark"] .loading-spinner { border-color: #2d3f55; border-top-color: var(--accent); }
+        [data-theme="dark"] #update-time { color: #64748b; }
+        [data-theme="dark"] .empty-state { color: #64748b; }
+        [data-theme="dark"] .image-grid-item { background: #151e2e; }
+        [data-theme="dark"] .faulted-job-item { background: #1a1010; border-color: #7f1d1d; }
+        [data-theme="dark"] .faulted-job-value { color: #cbd5e1; }
+        [data-theme="dark"] .faulted-job-label { color: #64748b; }
+        [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
+        /* ---- Log tabs ---- */
+        .log-tabs {
+            display: flex;
+            gap: 0;
+            margin-top: 12px;
+            border-bottom: none;
+        }
+        .log-tab {
+            background: #e2e8f0;
+            border: 1px solid var(--border);
+            border-bottom: none;
+            color: #475569;
+            font-size: 0.82rem;
+            font-weight: 600;
+            padding: 8px 18px;
+            cursor: pointer;
+            border-radius: 8px 8px 0 0;
+            margin-right: 4px;
+            transition: background 0.15s, color 0.15s;
+            white-space: nowrap;
+        }
+        .log-tab:hover { background: #cbd5e1; }
+        .log-tab.active { background: var(--card-bg); color: var(--accent); border-color: var(--border); }
+        .tab-count {
+            background: #cbd5e1;
+            color: #475569;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 1px 7px;
+            border-radius: 20px;
+            margin-left: 4px;
+        }
+        .log-tab.active .tab-count { background: #e0e7ff; color: var(--accent); }
+        [data-theme="dark"] .log-tab { background: #151e2e; border-color: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .log-tab:hover { background: #1e2d42; }
+        [data-theme="dark"] .log-tab.active { background: var(--card-bg); color: var(--accent); }
+        [data-theme="dark"] .tab-count { background: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .log-tab.active .tab-count { background: #312e81; color: #a5b4fc; }
+
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🎨 Horde Worker Status</h1>
-        <div id="loading" class="loading">Loading status...</div>
-        <div id="content" style="display: none;">
-            <div class="grid">
-                <div class="card">
-                    <h2>Current Job</h2>
-                    <div id="current-job">
-                        <div style="text-align: center; color: #999; padding: 20px;">No job in progress</div>
-                    </div>
-                </div>
+    <!-- Mobile top navbar -->
+    <nav class="mobile-navbar" aria-label="Mobile navigation">
+        <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
+        <span class="mobile-title">&#127912; Horde Worker</span>
+        <span id="mobile-status-badge"></span>
+        <button class="theme-toggle" onclick="toggleTheme()" id="mobile-theme-toggle" aria-label="Toggle theme">&#127769;</button>
+    </nav>
 
-                <div class="card">
-                    <h2>Resources</h2>
-                    <div class="stat">
-                        <span class="stat-label">RAM:</span>
-                        <span class="stat-value" id="ram-usage">-</span>
-                    </div>
-                    <div>
-                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;" id="cpu-label">CPU:</div>
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" id="cpu-progress" style="width: 0%">0%</div>
-                        </div>
-                    </div>
-                    <div>
-                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;">GPU:</div>
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" id="gpu-progress" style="width: 0%">0%</div>
-                        </div>
-                    </div>
-                    <div>
-                        <div style="margin-top: 10px; margin-bottom: 3px; color: #666; font-weight: 500;" id="vram-label">VRAM:</div>
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" id="vram-progress" style="width: 0%">0%</div>
-                        </div>
-                    </div>
-                </div>
+    <!-- Mobile resources sub-bar -->
+    <div class="mobile-resources" aria-label="Resource usage">
+        <span class="mobile-res-chip" id="mobile-cpu">CPU 0%</span>
+        <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
+        <span class="mobile-res-chip" id="mobile-vram">VRAM 0%</span>
+    </div>
 
-                <div class="card">
-                    <h2>Last Generated Image(s)</h2>
-                    <div style="margin-bottom: 10px; color: #999; font-size: 14px;">
-                        <span id="last-image-time">No image generated yet</span>
-                    </div>
-                    <div id="last-image-container" class="last-image-container">
-                        <div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>
-                    </div>
-                </div>
+    <!-- Sidebar overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <h1>&#127912; Horde Worker</h1>
+            <p>AI Image Generation</p>
+        </div>
+        <nav class="sidebar-nav" aria-label="Page sections">
+            <div class="nav-section-label">Navigation</div>
+            <button class="nav-item active" onclick="scrollToSection('overview', this)">
+                <span class="nav-icon">&#128202;</span> Overview
+            </button>
+            <button class="nav-item" onclick="scrollToSection('images-section', this)">
+                <span class="nav-icon">&#128444;</span> Images
+            </button>
+            <button class="nav-item" onclick="scrollToSection('logs-section', this)">
+                <span class="nav-icon">&#128203;</span> Logs
+            </button>
+        </nav>
+        <div class="sidebar-footer">
+            <p id="sidebar-update-time">Last updated: Never</p>
+        </div>
+    </aside>
+
+    <!-- Main content -->
+    <div class="main-content">
+        <!-- Top bar (desktop only) -->
+        <div class="topbar">
+            <div class="topbar-worker">
+                <div class="topbar-worker-name" id="topbar-worker-name">Horde Worker</div>
+                <div class="topbar-worker-sub" id="topbar-worker-sub">Loading...</div>
             </div>
-
-            <div class="grid">
-                <div class="card">
-                    <h2>Horde Info</h2>
-                    <div class="stat">
-                        <span class="stat-label">Worker Name:</span>
-                        <span class="stat-value" id="worker-name">-</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Horde Username:</span>
-                        <span class="stat-value" id="horde-username">-</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Status:</span>
-                        <span id="worker-status-badge">-</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Uptime:</span>
-                        <span class="stat-value" id="uptime">-</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Total Kudos:</span>
-                        <span class="stat-value success" id="user-kudos-total">-</span>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>Session Stats</h2>
-                    <div class="stat">
-                        <span class="stat-label">Jobs Popped:</span>
-                        <span class="stat-value" id="jobs-popped">0</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Jobs Completed:</span>
-                        <span class="stat-value success" id="jobs-completed">0</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Jobs Faulted:</span>
-                        <span class="stat-value error" id="jobs-faulted">0</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Jobs Recovered:</span>
-                        <span class="stat-value" id="processes-recovered">0</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Jobs Total:</span>
-                        <span class="stat-value" id="jobs-queued">0</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Kudos/Hour:</span>
-                        <span class="stat-value success" id="kudos-per-hour">0</span>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>Job Queue & Active Models</h2>
-                    <div style="margin-bottom: 20px;">
-                        <h3 class="subsection-heading">
-                            Job Queue (<span id="queue-count">0</span>)
-                        </h3>
-                        <div id="job-queue" class="job-queue">
-                            <div style="text-align: center; color: #999; padding: 20px;">Queue is empty</div>
-                        </div>
-                    </div>
-                    <div>
-                        <h3 class="subsection-heading">
-                            Active Models
-                        </h3>
-                        <div id="models-loaded" class="model-list">
-                            <div style="color: #999;">No models loaded</div>
-                        </div>
-                    </div>
-                </div>
+            <div class="topbar-resources">
+                <span class="topbar-res-chip" id="topbar-cpu">CPU 0%</span>
+                <span class="topbar-res-chip" id="topbar-gpu">GPU 0%</span>
+                <span class="topbar-res-chip" id="topbar-vram">VRAM 0%</span>
             </div>
-
-            <div class="grid">
-                <div class="card">
-                    <h2>Processes (<span id="process-count">0</span>)</h2>
-                    <div id="processes" class="process-list">
-                        <div style="text-align: center; color: #999; padding: 20px;">No process info</div>
-                    </div>
-                </div>
-
-                <div class="card span-2">
-                    <h2>Console Output</h2>
-                    <div id="console-logs" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.85em; background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 6px;">
-                        <div style="text-align: center; color: #999; padding: 20px;">No logs available</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="card wide-card">
-                    <h2>Faulted Jobs (<span id="faulted-jobs-count">0</span>)</h2>
-                    <div id="faulted-jobs" class="faulted-jobs-list">
-                        <div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="card wide-card">
-                    <h2>Errors (<span id="errors-count">0</span>)</h2>
-                    <div id="errors-history" class="errors-list">
-                        <div style="text-align: center; color: #999; padding: 20px;">No errors</div>
-                    </div>
-                    <div class="pagination-controls" id="errors-pagination" style="display: none;">
-                        <button id="errors-prev" onclick="errorsChangePage(-1)" disabled>&#8249; Prev</button>
-                        <span class="pagination-info" id="errors-page-info">Page 1 of 1</span>
-                        <button id="errors-next" onclick="errorsChangePage(1)">Next &#8250;</button>
-                    </div>
-                </div>
+            <div class="topbar-meta">
+                <span id="worker-status-badge"></span>
+                <span class="topbar-uptime">&#9201; <span id="uptime">--</span></span>
+                <button class="theme-toggle" onclick="toggleTheme()" id="topbar-theme-toggle" aria-label="Toggle theme">&#127769;</button>
             </div>
         </div>
-        <div class="update-time" id="update-time">Last updated: Never</div>
-    </div>
+
+        <!-- Content area -->
+        <div class="content-area">
+            <!-- Loading state -->
+            <div id="loading">
+                <div class="loading-spinner"></div>
+                <span class="loading-text">Connecting to worker...</span>
+            </div>
+
+            <!-- Main content (hidden until data loads) -->
+            <div id="content" style="display: none;">
+                <div id="update-time">Last updated: Never</div>
+
+                <!-- OVERVIEW -->
+                <section class="section" id="overview">
+                    <div class="section-header">
+                        <span class="section-title">&#128202; Overview</span>
+                    </div>
+
+                    <!-- Row 1: 4 stat cards -->
+                    <div class="grid-4" style="margin-bottom: 14px;">
+                        <div class="stat-card">
+                            <div class="stat-card-label">Total Kudos</div>
+                            <div class="stat-card-value success" id="user-kudos-total">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-label">Kudos / Hour</div>
+                            <div class="stat-card-value accent" id="kudos-per-hour">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-label">Jobs Popped</div>
+                            <div class="stat-card-value accent" id="jobs-popped">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-label">Jobs Completed</div>
+                            <div class="stat-card-value success" id="jobs-completed">0</div>
+                        </div>
+                    </div>
+
+                    <!-- Row 2: 3 stat cards -->
+                    <div class="grid-3 grid-3-popped" style="margin-bottom: 14px;">
+                        <div class="stat-card">
+                            <div class="stat-card-label">Jobs Queued</div>
+                            <div class="stat-card-value" id="jobs-queued">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-label">Jobs Recovered</div>
+                            <div class="stat-card-value warning" id="processes-recovered">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-label">Jobs Faulted</div>
+                            <div class="stat-card-value error" id="jobs-faulted">0</div>
+                        </div>
+                    </div>
+
+                    <!-- Horde Info + Queue/Models -->
+                    <div class="grid-2">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#127760; Horde Info</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">Worker Name</span>
+                                <span class="stat-value" id="worker-name">-</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">Username</span>
+                                <span class="stat-value" id="horde-username">-</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">Status</span>
+                                <span id="horde-info-status-badge">-</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">Uptime</span>
+                                <span class="stat-value" id="horde-info-uptime">-</span>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#128230; Job Queue &amp; Models</span>
+                            </div>
+                            <div style="margin-bottom: 14px;">
+                                <div style="font-size:0.75rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:7px;">
+                                    Queue (<span id="queue-count">0</span>)
+                                </div>
+                                <div id="job-queue" class="scrollable">
+                                    <div class="empty-state">Queue is empty</div>
+                                </div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.75rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:7px;">
+                                    Active Models
+                                </div>
+                                <div id="models-loaded" class="model-list">
+                                    <span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Current Job + Last Image -->
+                    <div class="grid-2" style="margin-top: 14px;">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#9889; Current Job</span>
+                            </div>
+                            <div id="overview-current-job">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#9203;</span>
+                                    No job in progress
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#128444; Last Image</span>
+                            </div>
+                            <div style="font-size:0.75rem;color:#94a3b8;margin-bottom:10px;">
+                                <span id="overview-image-time">No image generated yet</span>
+                            </div>
+                            <div id="overview-image-container" style="display:flex;align-items:center;justify-content:center;min-height:120px;">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#128444;</span>
+                                    No image generated yet
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Resources + Processes -->
+                    <div class="grid-2" style="margin-top: 14px;">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#128190; Resources</span>
+                            </div>
+                            <div class="stat-row" style="margin-bottom: 14px;">
+                                <span class="stat-label">RAM Usage</span>
+                                <span class="stat-value" id="ram-usage">-</span>
+                            </div>
+                            <div class="progress-section">
+                                <div class="progress-header">
+                                    <span class="progress-label" id="cpu-label">CPU</span>
+                                    <span class="progress-value" id="cpu-progress-text">0%</span>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="cpu-progress" style="width:0%"></div>
+                                </div>
+                            </div>
+                            <div class="progress-section">
+                                <div class="progress-header">
+                                    <span class="progress-label">GPU</span>
+                                    <span class="progress-value" id="gpu-progress-text">0%</span>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="gpu-progress" style="width:0%"></div>
+                                </div>
+                            </div>
+                            <div class="progress-section">
+                                <div class="progress-header">
+                                    <span class="progress-label" id="vram-label">VRAM</span>
+                                    <span class="progress-value" id="vram-progress-text">0%</span>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="vram-progress" style="width:0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">&#9881; Processes</span>
+                                <span class="section-count" id="process-count">0</span>
+                            </div>
+                            <div id="processes" class="scrollable-tall">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#9881;</span>
+                                    No process info
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- IMAGES -->
+                <section class="section" id="images-section">
+                    <div class="section-header">
+                        <span class="section-title">&#128444; Last Generated Image(s)</span>
+                    </div>
+                    <div class="card">
+                        <div style="font-size:0.78rem;color:#94a3b8;margin-bottom:12px;">
+                            <span id="last-image-time">No image generated yet</span>
+                        </div>
+                        <div id="last-image-container" class="last-image-container">
+                            <div class="empty-state">
+                                <span class="empty-state-icon">&#128444;</span>
+                                No image generated yet
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- LOGS (Console + Faulted Jobs + Errors combined) -->
+                <section class="section" id="logs-section">
+                    <div class="section-header" style="margin-bottom: 0;">
+                        <span class="section-title">&#128203; Logs</span>
+                    </div>
+                    <div class="log-tabs">
+                        <button class="log-tab active" id="tab-console" onclick="showLogTab('console')">&#128203; Console</button>
+                        <button class="log-tab" id="tab-faulted" onclick="showLogTab('faulted')">&#9888; Faulted Jobs <span class="tab-count" id="faulted-jobs-count">0</span></button>
+                        <button class="log-tab" id="tab-errors" onclick="showLogTab('errors')">&#10060; Errors <span class="tab-count" id="errors-count">0</span></button>
+                    </div>
+                    <div class="card" style="border-top-left-radius: 0; border-top-right-radius: 0; border-top: none;">
+                        <!-- Console tab -->
+                        <div id="log-panel-console">
+                            <div id="console-logs" class="console-container">
+                                <div style="text-align:center;color:#475569;padding:18px;">No logs available</div>
+                            </div>
+                        </div>
+                        <!-- Faulted Jobs tab -->
+                        <div id="log-panel-faulted" style="display:none;">
+                            <div id="faulted-jobs" class="faulted-jobs-list scrollable-tall">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#10003;</span>
+                                    No faulted jobs
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Errors tab -->
+                        <div id="log-panel-errors" style="display:none;">
+                            <div id="errors-history" class="errors-list">
+                                <div class="empty-state">
+                                    <span class="empty-state-icon">&#10003;</span>
+                                    No errors
+                                </div>
+                            </div>
+                            <div class="pagination-controls" id="errors-pagination" style="display: none;">
+                                <button id="errors-prev" onclick="errorsChangePage(-1)" disabled>&#8249; Prev</button>
+                                <span class="pagination-info" id="errors-page-info">Page 1 of 1</span>
+                                <button id="errors-next" onclick="errorsChangePage(1)">Next &#8250;</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+            </div><!-- /#content -->
+        </div><!-- /.content-area -->
+    </div><!-- /.main-content -->
 
     <!-- Full resolution image overlay -->
     <div id="image-overlay" class="image-overlay">
         <div class="image-overlay-content">
-            <button class="image-overlay-close" onclick="closeImageOverlay()">✕ Close</button>
+            <button class="image-overlay-close" onclick="closeImageOverlay()">&#10005; Close</button>
             <img id="overlay-image" src="" alt="Full resolution image" />
         </div>
     </div>
 
     <script>
-        // Image overlay functions
+        // ---- Sidebar / mobile ----
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('sidebar-overlay').classList.toggle('active');
+        }
+
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebar-overlay').classList.remove('active');
+        }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function scrollToSection(sectionId, navEl) {
+            const section = document.getElementById(sectionId);
+            if (section) {
+                const offset = window.innerWidth < 768 ? 62 : 20;
+                const top = section.getBoundingClientRect().top + window.scrollY - offset;
+                window.scrollTo({ top: top, behavior: 'smooth' });
+            }
+            document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
+            if (navEl) navEl.classList.add('active');
+            if (window.innerWidth < 768) closeSidebar();
+        }
+
+        // ---- Log tabs ----
+        function showLogTab(tab) {
+            ['console', 'faulted', 'errors'].forEach(function(t) {
+                document.getElementById('log-panel-' + t).style.display = t === tab ? '' : 'none';
+                document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+            });
+        }
+
+        // ---- Theme toggle ----
+        function initTheme() {
+            const saved = localStorage.getItem('horde-theme') || 'light';
+            document.documentElement.setAttribute('data-theme', saved);
+            const icon = saved === 'dark' ? '&#9728;' : '&#127769;';
+            document.getElementById('topbar-theme-toggle').innerHTML = icon;
+            document.getElementById('mobile-theme-toggle').innerHTML = icon;
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme') || 'light';
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('horde-theme', next);
+            const icon = next === 'dark' ? '&#9728;' : '&#127769;';
+            document.getElementById('topbar-theme-toggle').innerHTML = icon;
+            document.getElementById('mobile-theme-toggle').innerHTML = icon;
+        }
+
+        initTheme();
+
+        // ---- Image overlay ----
         function openImageOverlay(imageSrc) {
             const overlay = document.getElementById('image-overlay');
             const overlayImage = document.getElementById('overlay-image');
@@ -759,20 +1258,19 @@ class WorkerWebUI:
             overlay.classList.remove('active');
         }
 
-        // Close overlay when clicking outside the image
         document.getElementById('image-overlay').addEventListener('click', function(e) {
             if (e.target === this) {
                 closeImageOverlay();
             }
         });
 
-        // Close overlay with Escape key
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeImageOverlay();
             }
         });
 
+        // ---- Utility functions ----
         function formatUptime(seconds) {
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
@@ -823,7 +1321,7 @@ class WorkerWebUI:
             const pagination = document.getElementById('errors-pagination');
 
             if (errorsData.length === 0) {
-                errorsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No errors</div>';
+                errorsDiv.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#10003;</span>No errors</div>';
                 pagination.style.display = 'none';
                 return;
             }
@@ -854,7 +1352,8 @@ class WorkerWebUI:
 
         // Helper function to escape HTML to prevent XSS
         function escapeHtml(str) {
-            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            if (str === null || str === undefined) { return ''; }
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
         // ANSI color code to HTML converter
@@ -903,12 +1402,12 @@ class WorkerWebUI:
                             // Reset all styles
                             currentStyles = [];
                         } else if (code === '1') {
-                            // Bold - check if not already applied
+                            // Bold
                             if (!currentStyles.some(s => s.startsWith('font-weight:'))) {
                                 currentStyles.push('font-weight:bold');
                             }
                         } else if (code === '2') {
-                            // Dim/faint - reduce opacity
+                            // Dim/faint
                             if (!currentStyles.some(s => s.startsWith('opacity:'))) {
                                 currentStyles.push('opacity:0.6');
                             }
@@ -923,11 +1422,11 @@ class WorkerWebUI:
                                 currentStyles.push('text-decoration:underline');
                             }
                         } else if (colors[code]) {
-                            // Foreground color - replace existing color
+                            // Foreground color
                             currentStyles = currentStyles.filter(s => !s.startsWith('color:'));
                             currentStyles.push('color:' + colors[code]);
                         } else if (bgColors[code]) {
-                            // Background color - replace existing bg color
+                            // Background color
                             currentStyles = currentStyles.filter(s => !s.startsWith('background-color:'));
                             currentStyles.push('background-color:' + bgColors[code]);
                         }
@@ -973,29 +1472,40 @@ class WorkerWebUI:
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('content').style.display = 'block';
 
-                    // Horde Info
-                    document.getElementById('worker-name').textContent = data.worker_name;
+                    // Worker identity
+                    const workerName = data.worker_name || 'Unknown';
+                    document.getElementById('worker-name').textContent = workerName;
                     document.getElementById('horde-username').textContent = data.horde_username;
+                    document.getElementById('topbar-worker-name').textContent = workerName;
+                    document.getElementById('topbar-worker-sub').textContent = `@${data.horde_username}`;
 
-                    const statusBadge = document.getElementById('worker-status-badge');
-                    if (data.maintenance_mode) {
-                        statusBadge.innerHTML = '<span class="status-badge status-maintenance">Maintenance</span>';
-                    } else {
-                        statusBadge.innerHTML = '<span class="status-badge status-active">Active</span>';
-                    }
+                    // Status badge
+                    const badgeHtml = data.maintenance_mode
+                        ? '<span class="status-badge status-maintenance">Maintenance</span>'
+                        : '<span class="status-badge status-active">Active</span>';
+                    document.getElementById('worker-status-badge').innerHTML = badgeHtml;
+                    document.getElementById('horde-info-status-badge').innerHTML = badgeHtml;
+                    document.getElementById('mobile-status-badge').innerHTML = data.maintenance_mode
+                        ? '<span class="status-badge status-maintenance" style="font-size:0.68rem;padding:2px 7px;">Maint.</span>'
+                        : '<span class="status-badge status-active" style="font-size:0.68rem;padding:2px 7px;">Active</span>';
 
-                    document.getElementById('uptime').textContent = formatUptime(data.uptime);
+                    // Uptime
+                    const uptimeStr = formatUptime(data.uptime);
+                    document.getElementById('uptime').textContent = uptimeStr;
+                    document.getElementById('horde-info-uptime').textContent = uptimeStr;
+
+                    // Kudos
                     document.getElementById('user-kudos-total').textContent =
                         data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
+                    document.getElementById('kudos-per-hour').textContent =
+                        data.kudos_per_hour.toLocaleString(undefined, {maximumFractionDigits: 2});
 
                     // Session Stats
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
-                    document.getElementById('jobs-queued').textContent = data.jobs_queued;
                     document.getElementById('jobs-completed').textContent = data.jobs_completed;
                     document.getElementById('jobs-faulted').textContent = data.jobs_faulted;
                     document.getElementById('processes-recovered').textContent = data.processes_recovered;
-                    document.getElementById('kudos-per-hour').textContent =
-                        data.kudos_per_hour.toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('jobs-queued').textContent = data.jobs_queued;
 
                     // Resources
                     document.getElementById('ram-usage').textContent = formatBytes(data.ram_usage_mb * 1024 * 1024);
@@ -1003,24 +1513,24 @@ class WorkerWebUI:
                     const cpuPercent = Math.min(100, Math.round(data.cpu_usage_percent));
                     const cpuProgress = document.getElementById('cpu-progress');
                     cpuProgress.style.width = cpuPercent + '%';
-                    cpuProgress.textContent = cpuPercent + '%';
+                    document.getElementById('cpu-progress-text').textContent = cpuPercent + '%';
 
                     // Update CPU label with cores count
                     const cpuLabel = document.getElementById('cpu-label');
                     const cpuCoresText = data.cpu_cores_count > 0 ? ` (${data.cpu_cores_count} cores)` : '';
-                    cpuLabel.textContent = `CPU:${cpuCoresText}`;
+                    cpuLabel.textContent = `CPU${cpuCoresText}`;
 
                     const gpuPercent = Math.min(100, Math.round(data.gpu_usage_percent));
                     const gpuProgress = document.getElementById('gpu-progress');
                     gpuProgress.style.width = gpuPercent + '%';
-                    gpuProgress.textContent = gpuPercent + '%';
+                    document.getElementById('gpu-progress-text').textContent = gpuPercent + '%';
 
                     const vramPercent = data.total_vram_mb > 0
                         ? Math.min(100, Math.round((data.vram_usage_mb / data.total_vram_mb) * 100))
                         : 0;
                     const vramProgress = document.getElementById('vram-progress');
                     vramProgress.style.width = vramPercent + '%';
-                    vramProgress.textContent = vramPercent + '%';
+                    document.getElementById('vram-progress-text').textContent = vramPercent + '%';
 
                     // Update VRAM label with absolute usage
                     const vramLabel = document.getElementById('vram-label');
@@ -1028,67 +1538,94 @@ class WorkerWebUI:
                     const vramTotal = formatBytes(data.total_vram_mb * 1024 * 1024);
                     vramLabel.textContent = `VRAM: ${vramUsed} / ${vramTotal}`;
 
-                    // Current Job
-                    const currentJobDiv = document.getElementById('current-job');
+                    // Header resource chips (topbar + mobile)
+                    document.getElementById('topbar-cpu').textContent = `CPU ${cpuPercent}%`;
+                    document.getElementById('topbar-gpu').textContent = `GPU ${gpuPercent}%`;
+                    document.getElementById('topbar-vram').textContent = `VRAM ${vramPercent}%`;
+                    document.getElementById('mobile-cpu').textContent = `CPU ${cpuPercent}%`;
+                    document.getElementById('mobile-gpu').textContent = `GPU ${gpuPercent}%`;
+                    document.getElementById('mobile-vram').textContent = `VRAM ${vramPercent}%`;
+
+                    // Current Job (rendered in overview card)
+                    const overviewJobDiv = document.getElementById('overview-current-job');
                     if (data.current_job) {
                         const job = data.current_job;
-                        // Use raw state value to match process state display
-                        const stateDisplay = job.state || 'N/A';
-
+                        const stateDisplay = escapeHtml(job.state || 'N/A');
                         const progressValue = (job.progress !== null && job.progress !== undefined) ? job.progress : 0;
 
-                        currentJobDiv.innerHTML = `
-                            <div class="stat">
+                        overviewJobDiv.innerHTML = `
+                            <div class="stat-row">
                                 <span class="stat-label">Job ID:</span>
-                                <span class="stat-value job-id">${job.id || 'N/A'}</span>
+                                <span class="stat-value" style="font-family:monospace;font-size:0.8rem;">${escapeHtml(job.id || 'N/A')}</span>
                             </div>
-                            <div class="stat">
+                            <div class="stat-row">
                                 <span class="stat-label">Model:</span>
-                                <span class="stat-value">${job.model || 'N/A'}</span>
+                                <span class="stat-value">${escapeHtml(job.model || 'N/A')}</span>
                             </div>
                             ${job.batch_size !== null && job.batch_size !== undefined ? `
-                            <div class="stat">
+                            <div class="stat-row">
                                 <span class="stat-label">Batch Size:</span>
-                                <span class="stat-value">${job.batch_size}x</span>
+                                <span class="stat-value">${escapeHtml(job.batch_size)}x</span>
                             </div>
                             ` : ''}
                             ${job.steps !== null && job.steps !== undefined ? `
-                            <div class="stat">
+                            <div class="stat-row">
                                 <span class="stat-label">Steps:</span>
-                                <span class="stat-value">${job.steps}</span>
+                                <span class="stat-value">${escapeHtml(job.steps)}</span>
                             </div>
                             ` : ''}
                             ${job.width !== null && job.width !== undefined && job.height !== null && job.height !== undefined ? `
-                            <div class="stat">
+                            <div class="stat-row">
                                 <span class="stat-label">Image Size:</span>
-                                <span class="stat-value">${job.width}x${job.height}</span>
+                                <span class="stat-value">${escapeHtml(job.width)}x${escapeHtml(job.height)}</span>
                             </div>
                             ` : ''}
                             ${job.sampler !== null && job.sampler !== undefined ? `
-                            <div class="stat">
+                            <div class="stat-row">
                                 <span class="stat-label">Sampler:</span>
-                                <span class="stat-value">${job.sampler}</span>
+                                <span class="stat-value">${escapeHtml(job.sampler)}</span>
                             </div>
                             ` : ''}
                             ${job.loras !== null && job.loras !== undefined && job.loras.length > 0 ? `
-                            <div class="stat">
+                            <div class="stat-row">
                                 <span class="stat-label">LoRAs:</span>
-                                <span class="stat-value">${job.loras.map(lora => lora.name || 'Unknown').join(', ')}</span>
+                                <span class="stat-value">${job.loras.map(lora => escapeHtml(lora.name || 'Unknown')).join(', ')}</span>
                             </div>
                             ` : ''}
-                            <div class="stat">
+                            <div class="stat-row">
                                 <span class="stat-label">State:</span>
-                                <span class="stat-value">${stateDisplay}</span>
+                                <span class="job-state-badge">${stateDisplay}</span>
                             </div>
-                            <div style="margin-top: 10px;">
-                                <div style="margin-bottom: 5px; color: #666;">Progress:</div>
-                                <div class="progress-bar-container">
-                                    <div class="progress-bar" style="width: ${progressValue}%">${progressValue}%</div>
+                            <div style="margin-top:14px;">
+                                <div class="progress-header">
+                                    <span class="progress-label">Progress</span>
+                                    <span class="progress-value">${escapeHtml(progressValue)}%</span>
+                                </div>
+                                <div class="progress-bar-container" style="height:12px;">
+                                    <div class="progress-bar" style="width:${escapeHtml(progressValue)}%;height:100%;border-radius:6px;"></div>
                                 </div>
                             </div>
                         `;
                     } else {
-                        currentJobDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No job in progress</div>';
+                        overviewJobDiv.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
+                    }
+
+                    // Overview: last image thumbnail
+                    document.getElementById('overview-image-time').textContent = formatTimeAgo(data.last_image_submission_timestamp);
+                    const overviewImgContainer = document.getElementById('overview-image-container');
+                    if (data.last_image_base64 && data.last_image_base64.length > 0) {
+                        const oImgSrc = `data:image/png;base64,${data.last_image_base64[0]}`;
+                        overviewImgContainer.innerHTML = `
+                            <img src="${oImgSrc}"
+                                 style="max-width:100%;max-height:200px;width:auto;height:auto;object-fit:contain;border-radius:8px;cursor:pointer;display:block;margin:0 auto;"
+                                 alt="Last generated image"
+                                 data-fullsize="${oImgSrc}" />
+                        `;
+                        overviewImgContainer.querySelector('img[data-fullsize]').onclick = function() {
+                            openImageOverlay(this.getAttribute('data-fullsize'));
+                        };
+                    } else {
+                        overviewImgContainer.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
                     }
 
                     // Job Queue
@@ -1098,25 +1635,25 @@ class WorkerWebUI:
 
                     if (data.job_queue.length > 0) {
                         queueDiv.innerHTML = data.job_queue.map(job => {
-                            const batchInfo = job.batch_size && job.batch_size > 1 ? ` (${job.batch_size}x batch)` : '';
+                            const batchInfo = job.batch_size && job.batch_size > 1 ? ` (${escapeHtml(job.batch_size)}x batch)` : '';
                             return `
                                 <div class="job-item">
-                                    <span class="job-id">${job.id || 'N/A'}</span>: ${job.model || 'Unknown model'}${batchInfo}
+                                    <span class="job-id">${escapeHtml(job.id || 'N/A')}</span>: ${escapeHtml(job.model || 'Unknown model')}${batchInfo}
                                 </div>
                             `;
                         }).join('');
                     } else {
-                        queueDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">Queue is empty</div>';
+                        queueDiv.innerHTML = '<div class="empty-state">Queue is empty</div>';
                     }
 
                     // Models
                     const modelsDiv = document.getElementById('models-loaded');
                     if (data.models_loaded.length > 0) {
                         modelsDiv.innerHTML = data.models_loaded.map(model =>
-                            `<div class="model-badge">${model}</div>`
+                            `<div class="model-badge">${escapeHtml(model)}</div>`
                         ).join('');
                     } else {
-                        modelsDiv.innerHTML = '<div style="color: #999;">No models loaded</div>';
+                        modelsDiv.innerHTML = '<span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span>';
                     }
 
                     // Processes
@@ -1129,25 +1666,29 @@ class WorkerWebUI:
                             // Build second line with model, batch size, and progress
                             let secondLine = [];
                             if (proc.model) {
-                                secondLine.push(`Model: ${proc.model}`);
+                                secondLine.push(`Model: ${escapeHtml(proc.model)}`);
                             }
                             if (proc.batch_size !== null && proc.batch_size !== undefined) {
-                                secondLine.push(`Batch: ${proc.batch_size}x`);
+                                secondLine.push(`Batch: ${escapeHtml(proc.batch_size)}x`);
                             }
                             if (proc.progress !== null && proc.progress !== undefined) {
-                                secondLine.push(`Progress: ${proc.progress}%`);
+                                secondLine.push(`Progress: ${escapeHtml(proc.progress)}%`);
                             }
                             const secondLineText = secondLine.length > 0 ? secondLine.join(' | ') : 'Idle';
 
                             return `
                             <div class="process-item">
-                                <div class="process-id">Process #${proc.id}: ${proc.type} - ${proc.state}</div>
-                                <div class="process-state">${secondLineText}</div>
+                                <div class="process-id-row">
+                                    <span class="process-id">Process #${escapeHtml(proc.id)}</span>
+                                    <span class="process-type-badge">${escapeHtml(proc.type)}</span>
+                                    <span class="process-state-badge">${escapeHtml(proc.state)}</span>
+                                </div>
+                                <div class="process-detail-text">${secondLineText}</div>
                             </div>
                         `;
                         }).join('');
                     } else {
-                        processesDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No process info</div>';
+                        processesDiv.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div>';
                     }
 
                     // Faulted Jobs
@@ -1180,7 +1721,7 @@ class WorkerWebUI:
                                 detailsHtml += `
                                     <div class="faulted-job-detail">
                                         <span class="faulted-job-label">Fault Phase</span>
-                                        <span class="faulted-job-value" style="color: #dc2626; font-weight: 600;">${escapeHtml(job.fault_phase)}</span>
+                                        <span class="faulted-job-value" style="color:#ef4444;font-weight:600;">${escapeHtml(job.fault_phase)}</span>
                                     </div>
                                 `;
                             }
@@ -1264,7 +1805,7 @@ class WorkerWebUI:
                         }).join('');
                     } else {
                         faultedJobsCount.textContent = '0';
-                        faultedJobsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No faulted jobs</div>';
+                        faultedJobsDiv.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#10003;</span>No faulted jobs</div>';
                     }
 
                     // Errors History
@@ -1318,7 +1859,7 @@ class WorkerWebUI:
                             };
                         });
                     } else {
-                        lastImageContainer.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No image generated yet</div>';
+                        lastImageContainer.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
                     }
 
                     // Console Logs
@@ -1334,12 +1875,13 @@ class WorkerWebUI:
                             consoleLogsDiv.scrollTop = consoleLogsDiv.scrollHeight;
                         }
                     } else {
-                        consoleLogsDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No logs available</div>';
+                        consoleLogsDiv.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>';
                     }
 
                     // Update time
-                    document.getElementById('update-time').textContent =
-                        'Last updated: ' + new Date().toLocaleTimeString();
+                    const nowStr = new Date().toLocaleTimeString();
+                    document.getElementById('update-time').textContent = 'Last updated: ' + nowStr;
+                    document.getElementById('sidebar-update-time').textContent = 'Last updated: ' + nowStr;
                 })
                 .catch(error => {
                     // Ignore aborted requests (these are intentional cancellations)
