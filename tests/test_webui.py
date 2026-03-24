@@ -349,6 +349,40 @@ def test_webui_last_image_submission_timestamp() -> None:
     assert webui.status_data["last_image_submission_timestamp"] == old_timestamp
 
 
+def test_webui_images_history() -> None:
+    """Test that WorkerWebUI handles gallery images via add_gallery_image / /api/gallery."""
+    webui = WorkerWebUI(port=0)
+
+    # Test default state: no images_history in status_data; images_count starts at 0
+    assert "images_history" not in webui.status_data
+    assert webui.status_data["images_count"] == 0
+    assert webui._gallery_data == []
+
+    # Test adding a single image entry
+    test_image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067205.0, "model": "stable_diffusion_xl"})
+    assert len(webui._gallery_data) == 1
+    assert webui.status_data["images_count"] == 1
+    assert webui._gallery_data[0]["model"] == "stable_diffusion_xl"
+
+    # Test adding multiple image entries
+    webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067210.0, "model": "stable_diffusion_2_1"})
+    webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067215.0, "model": None})
+    assert len(webui._gallery_data) == 3
+    assert webui.status_data["images_count"] == 3
+    assert webui._gallery_data[1]["model"] == "stable_diffusion_2_1"
+    assert webui._gallery_data[2]["model"] is None
+
+    # Test that gallery is bounded at 200 entries
+    for i in range(200):
+        webui.add_gallery_image({"base64": test_image_b64, "timestamp": float(i), "model": "sdxl"})
+    assert len(webui._gallery_data) == 200
+    assert webui.status_data["images_count"] == 200
+
+    # Verify /api/status does NOT include base64 image data
+    assert "images_history" not in webui.status_data
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
@@ -404,6 +438,9 @@ if __name__ == "__main__":
 
     test_webui_last_image_submission_timestamp()
     print("✓ WebUI last image submission timestamp test passed")
+
+    test_webui_images_history()
+    print("✓ WebUI images history test passed")
 
     # Run async test
     asyncio.run(test_webui_start_stop())

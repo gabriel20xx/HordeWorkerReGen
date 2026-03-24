@@ -2737,6 +2737,17 @@ class HordeWorkerProcessManager:
                                 images_base64.append(base64.b64encode(image_data).decode("utf-8"))
                         self._last_image_base64 = images_base64
                         self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                        # Add each image to the WebUI gallery
+                        for img_b64 in images_base64:
+                            self.webui.add_gallery_image(
+                                {
+                                    "base64": img_b64,
+                                    "timestamp": completed_job_info.inference_completed_timestamp,
+                                    "model": completed_job_info.sdk_api_job_info.model
+                                    if completed_job_info.sdk_api_job_info
+                                    else None,
+                                },
+                            )
                     except (FileNotFoundError, OSError) as e:
                         logger.warning(f"Failed to read saved images for webui preview: {e}")
                         # Don't fallback to job_image_results to avoid showing censored placeholders
@@ -5299,6 +5310,10 @@ class HordeWorkerProcessManager:
         while True:
             with logger.catch():
                 try:
+                    # Retry quickly until the client session is ready (startup race)
+                    if self.horde_client_session is None:
+                        await asyncio.sleep(1)
+                        continue
                     await self.api_get_user_info()
                     if self.is_time_for_shutdown() or self._shut_down:
                         break
@@ -6320,8 +6335,8 @@ class HordeWorkerProcessManager:
         self.webui.update_status(
             worker_name=self.bridge_data.dreamer_worker_name,
             horde_username=horde_username,
-            jobs_popped=self.num_jobs_total,
-            jobs_queued=self.total_num_jobs_queued,
+            jobs_popped=self.total_num_jobs_queued,
+            jobs_queued=len(self.jobs_pending_inference),
             jobs_completed=self.total_num_completed_jobs,
             jobs_faulted=self._num_jobs_faulted,
             processes_recovered=self._num_process_recoveries,
