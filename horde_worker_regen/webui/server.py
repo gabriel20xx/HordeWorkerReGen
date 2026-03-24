@@ -364,6 +364,10 @@ class WorkerWebUI:
         [data-theme="dark"] .faulted-job-label { color: #64748b; }
         [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
 
+        /* ---- Gallery new-images banner ---- */
+        #gallery-new-banner { display: none; background: #dbeafe; border: 1px solid #93c5fd; border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 500; color: #1d4ed8; }
+        [data-theme="dark"] #gallery-new-banner { background: #1e3a5f; border-color: #2d5fa0; color: #93c5fd; }
+
     </style>
 </head>
 <body>
@@ -479,6 +483,7 @@ class WorkerWebUI:
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128444; Gallery</span><span class="section-count" id="gallery-count">0</span></div>
                         <div class="card">
+                            <div id="gallery-new-banner" role="button" tabindex="0" onclick="fetchGalleryPage(1)" onkeydown="if(event.key==='Enter'||event.key===' '){fetchGalleryPage(1);event.preventDefault();}">&#128444; New images available &#8212; click to view latest</div>
                             <div id="gallery-empty" class="empty-state"><span class="empty-state-icon">&#128444;</span>No images generated yet</div>
                             <div id="gallery-grid" class="image-grid" style="display:none;"></div>
                             <div class="pagination-controls" id="gallery-pagination" style="display:none;">
@@ -536,15 +541,34 @@ class WorkerWebUI:
             if (str === null || str === undefined) return '';
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
-        function showPage(pageId, navEl) {
+        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'horde', 'logs']);
+        function showPage(pageId, navEl, push) {
+            if (!VALID_PAGES.includes(pageId)) pageId = 'overview';
             document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
             var page = document.getElementById('page-' + pageId);
             if (page) page.classList.add('active');
             document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
-            if (navEl) navEl.classList.add('active');
+            var activeNav = navEl || document.getElementById('nav-' + pageId);
+            if (activeNav) activeNav.classList.add('active');
             if (window.innerWidth < 768) closeSidebar();
+            var newHash = '#' + pageId;
+            if (push !== false) {
+                if (location.hash !== newHash) history.pushState({page: pageId}, '', newHash);
+            }
             if (pageId === 'gallery') fetchGalleryPage(galleryCurrentPage);
         }
+        window.addEventListener('popstate', function() {
+            var hash = location.hash.replace('#', '');
+            showPage(VALID_PAGES.includes(hash) ? hash : 'overview', null, false);
+        });
+        (function() {
+            var hash = location.hash.replace('#', '');
+            if (hash && VALID_PAGES.includes(hash)) {
+                showPage(hash, null, false);
+            } else {
+                history.replaceState({page: 'overview'}, '', '#overview');
+            }
+        })();
         function initTheme() {
             const saved = localStorage.getItem('horde-theme') || 'light';
             document.documentElement.setAttribute('data-theme', saved);
@@ -644,6 +668,7 @@ class WorkerWebUI:
         }
         const GALLERY_PAGE_SIZE = 20;
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
+        let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
         function renderGalleryPage(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
@@ -651,6 +676,7 @@ class WorkerWebUI:
                   nb = document.getElementById('gallery-next'), pag = document.getElementById('gallery-pagination'),
                   cnt = document.getElementById('gallery-count');
             cnt.textContent = total;
+            if (page === 1) { const bnr = document.getElementById('gallery-new-banner'); if (bnr) bnr.style.display = 'none'; }
             if (images.length === 0) {
                 grid.style.display = 'none'; grid.innerHTML = ''; empty.style.display = '';
                 pag.style.display = 'none'; return;
@@ -815,6 +841,25 @@ class WorkerWebUI:
                         }).join('');
                     } else { pd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div>'; }
                     document.getElementById('gallery-count').textContent = data.images_count || 0;
+                    const newImagesCount = data.images_count || 0;
+                    const hasNewImages = lastKnownImagesCount >= 0 && newImagesCount > lastKnownImagesCount;
+                    const galleryPageActive = document.getElementById('page-gallery').classList.contains('active');
+                    if (hasNewImages && galleryPageActive) {
+                        if (galleryCurrentPage === 1) {
+                            if (!galleryFetchInProgress) {
+                                fetchGalleryPage(1);
+                                lastKnownImagesCount = newImagesCount;
+                            }
+                            // If a fetch is already in progress, don't update lastKnownImagesCount so
+                            // the next poll can still detect the new images and retry the refresh.
+                        } else {
+                            const gbn = document.getElementById('gallery-new-banner');
+                            if (gbn) gbn.style.display = '';
+                            lastKnownImagesCount = newImagesCount;
+                        }
+                    } else {
+                        lastKnownImagesCount = newImagesCount;
+                    }
                     const fjd = document.getElementById('faulted-jobs'), fjc = document.getElementById('faulted-jobs-count');
                     if (data.faulted_jobs_history && data.faulted_jobs_history.length > 0) {
                         fjc.textContent = data.faulted_jobs_history.length;
