@@ -5314,6 +5314,10 @@ class HordeWorkerProcessManager:
         while True:
             with logger.catch():
                 try:
+                    # Retry quickly until the client session is ready (startup race)
+                    if self.horde_client_session is None:
+                        await asyncio.sleep(1)
+                        continue
                     await self.api_get_user_info()
                     if self.is_time_for_shutdown() or self._shut_down:
                         break
