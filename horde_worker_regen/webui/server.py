@@ -540,13 +540,13 @@ class WorkerWebUI:
         </div>
     </div>
     <div id="image-overlay" class="image-overlay">
-        <button id="overlay-prev" class="image-overlay-nav prev" onclick="overlayNavigate(-1)">&#8249;</button>
+        <button id="overlay-prev" class="image-overlay-nav prev" onclick="overlayNavigate(-1)" aria-label="Previous image" title="Previous image">&#8249;</button>
         <div class="image-overlay-content">
             <button class="image-overlay-close" onclick="closeImageOverlay()">&#10005; Close</button>
             <img id="overlay-image" src="" alt="Full resolution image" />
             <div id="overlay-counter" class="image-overlay-counter"></div>
         </div>
-        <button id="overlay-next" class="image-overlay-nav next" onclick="overlayNavigate(1)">&#8250;</button>
+        <button id="overlay-next" class="image-overlay-nav next" onclick="overlayNavigate(1)" aria-label="Next image" title="Next image">&#8250;</button>
     </div>
     <script>
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebar-overlay').classList.toggle('active'); }
@@ -591,8 +591,12 @@ class WorkerWebUI:
             else { ctr.textContent = ''; }
         }
         function openImageOverlay(imageSrc, images, index) {
-            if (images && typeof index === 'number') { overlayImages = images; overlayIndex = index; }
-            else { overlayImages = []; overlayIndex = -1; }
+            if (Array.isArray(images) && Number.isFinite(index) && images.length > 0) {
+                const len = images.length;
+                const safeIndex = Math.min(Math.max(Math.trunc(index), 0), len - 1);
+                overlayImages = images;
+                overlayIndex = safeIndex;
+            } else { overlayImages = []; overlayIndex = -1; }
             document.getElementById('overlay-image').src = imageSrc;
             document.getElementById('image-overlay').classList.add('active');
             _updateOverlayNav();
@@ -608,9 +612,14 @@ class WorkerWebUI:
         document.getElementById('image-overlay').addEventListener('click', function(e) { if (e.target === this) closeImageOverlay(); });
         document.addEventListener('keydown', function(e) {
             const overlayActive = document.getElementById('image-overlay').classList.contains('active');
-            if (e.key === 'Escape') closeImageOverlay();
-            else if (overlayActive && e.key === 'ArrowLeft') overlayNavigate(-1);
-            else if (overlayActive && e.key === 'ArrowRight') overlayNavigate(1);
+            if (e.key === 'Escape') {
+                if (overlayActive) { e.preventDefault(); e.stopPropagation(); }
+                closeImageOverlay();
+            } else if (overlayActive && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+                e.preventDefault();
+                e.stopPropagation();
+                overlayNavigate(e.key === 'ArrowLeft' ? -1 : 1);
+            }
         });
         function formatUptime(seconds) {
             const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = Math.floor(seconds % 60);
