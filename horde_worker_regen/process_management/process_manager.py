@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from enum import auto
 from io import BytesIO
 from multiprocessing.context import BaseContext
-from multiprocessing.synchronize import BoundedSemaphore, Semaphore
+from multiprocessing.synchronize import BoundedSemaphore
 from multiprocessing.synchronize import Lock as Lock_MultiProcessing
 from typing import TYPE_CHECKING, Any
 
@@ -72,6 +72,7 @@ from horde_worker_regen.consts import (
 from horde_worker_regen.logger_config import create_level_format_function
 from horde_worker_regen.process_management._aliased_types import ProcessQueue
 from horde_worker_regen.process_management.horde_process import HordeProcessType
+from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 from horde_worker_regen.process_management.messages import (
     HordeAuxModelStateChangeMessage,
     HordeControlFlag,
@@ -93,7 +94,6 @@ from horde_worker_regen.process_management.messages import (
     ModelInfo,
     ModelLoadState,
 )
-from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 from horde_worker_regen.process_management.worker_entry_points import start_inference_process, start_safety_process
 
 if TYPE_CHECKING:
@@ -694,10 +694,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         ):
             return True
 
-        if time_since_heartbeat > inference_step_timeout:
-            return True
-
-        return False
+        return time_since_heartbeat > inference_step_timeout
 
     def num_inference_processes(self) -> int:
         """Return the number of inference processes."""
@@ -2322,7 +2319,7 @@ class HordeWorkerProcessManager:
                         except ValueError:
                             logger.debug(
                                 f"VAE decode semaphore already released for process {message.process_id} "
-                                "on PROCESS_ENDING (child released it normally or never acquired it)"
+                                "on PROCESS_ENDING (child released it normally or never acquired it)",
                             )
                     # If the process is ending but still has a job in progress, fault the job
                     # so it is not silently lost. This can happen if an exception occurs in the
@@ -3807,8 +3804,6 @@ class HordeWorkerProcessManager:
                         "incorrect kudos/second calculation.",
                     )
                     time_popped = time.time()
-
-            time_taken = round(time.time() - time_popped, 2)
 
             kudos_per_second = 0.0
 
@@ -6803,7 +6798,8 @@ class HordeWorkerProcessManager:
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
                     and process_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
-                    and (now - process_info.last_heartbeat_timestamp) > max(self.bridge_data.process_timeout, HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT)
+                    and (now - process_info.last_heartbeat_timestamp)
+                    > max(self.bridge_data.process_timeout, HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT)
                 ):
                     logger.error(
                         f"{process_info} has been idle in WAITING_FOR_JOB for "
@@ -6829,14 +6825,16 @@ class HordeWorkerProcessManager:
                         time_elapsed_starting,
                         now - process_info.last_heartbeat_timestamp,
                     )
-                    if time_elapsed_starting > self.bridge_data.preload_timeout:
-                        if not any_active_inference_processing:
-                            logger.error(
-                                f"{process_info} seems to be stuck in INFERENCE_STARTING "
-                                "with no active inference process holding the semaphore; replacing it",
-                            )
-                            self._replace_inference_process(process_info)
-                            any_replaced = any_process_replaced = True
+                    if (
+                        time_elapsed_starting > self.bridge_data.preload_timeout
+                        and not any_active_inference_processing
+                    ):
+                        logger.error(
+                            f"{process_info} seems to be stuck in INFERENCE_STARTING "
+                            "with no active inference process holding the semaphore; replacing it",
+                        )
+                        self._replace_inference_process(process_info)
+                        any_replaced = any_process_replaced = True
 
         # If any subprocesses were actually replaced and we are not already inside a recovery
         # window, start the cascading-recovery guard timer.  Soft corrective actions such as
