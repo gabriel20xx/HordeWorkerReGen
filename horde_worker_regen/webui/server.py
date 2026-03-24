@@ -249,6 +249,12 @@ class WorkerWebUI:
         .image-overlay img { max-width: 100%; max-height: 90vh; object-fit: contain; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
         .image-overlay-close { position: absolute; top: -44px; right: 0; background: var(--accent); color: white; border: none; padding: 8px 18px; font-size: 0.9rem; font-weight: 600; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
         .image-overlay-close:hover { background: var(--accent-hover); }
+        .image-overlay-nav { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.5); color: white; border: none; padding: 12px 18px; font-size: 1.8rem; font-weight: 700; border-radius: 8px; cursor: pointer; transition: background 0.2s; z-index: 1001; user-select: none; line-height: 1; display: none; }
+        .image-overlay-nav:hover { background: rgba(0,0,0,0.85); }
+        .image-overlay-nav:disabled { opacity: 0.3; cursor: default; }
+        .image-overlay-nav.prev { left: 12px; }
+        .image-overlay-nav.next { right: 12px; }
+        .image-overlay-counter { position: absolute; bottom: -32px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.8); font-size: 0.85rem; white-space: nowrap; font-weight: 500; }
 
         /* ---- Faulted jobs ---- */
         .faulted-jobs-list { display: flex; flex-direction: column; gap: 0; }
@@ -386,9 +392,6 @@ class WorkerWebUI:
             <button class="nav-item" onclick="showPage('gallery', this)" id="nav-gallery">
                 <span class="nav-icon">&#128444;</span> Gallery
             </button>
-            <button class="nav-item" onclick="showPage('horde', this)" id="nav-horde">
-                <span class="nav-icon">&#127760;</span> Horde
-            </button>
             <button class="nav-item" onclick="showPage('logs', this)" id="nav-logs">
                 <span class="nav-icon">&#128203;</span> Logs
             </button>
@@ -487,19 +490,6 @@ class WorkerWebUI:
                     </div>
                 </div>
 
-                <!-- HORDE PAGE -->
-                <div class="page" id="page-horde">
-                    <div class="section">
-                        <div class="section-header"><span class="section-title">&#127760; Horde Info</span></div>
-                        <div class="card">
-                            <div class="stat-row"><span class="stat-label">Worker Name</span><span class="stat-value" id="horde-worker-name">-</span></div>
-                            <div class="stat-row"><span class="stat-label">Username</span><span class="stat-value" id="horde-username">-</span></div>
-                            <div class="stat-row"><span class="stat-label">Status</span><span id="horde-info-status-badge">-</span></div>
-                            <div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value" id="horde-info-uptime">-</span></div>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- LOGS PAGE -->
                 <div class="page" id="page-logs">
                     <div class="section">
@@ -531,10 +521,13 @@ class WorkerWebUI:
         </div>
     </div>
     <div id="image-overlay" class="image-overlay">
+        <button id="overlay-prev" class="image-overlay-nav prev" onclick="overlayNavigate(-1)" aria-label="Previous image" title="Previous image">&#8249;</button>
         <div class="image-overlay-content">
             <button class="image-overlay-close" onclick="closeImageOverlay()">&#10005; Close</button>
             <img id="overlay-image" src="" alt="Full resolution image" />
+            <div id="overlay-counter" class="image-overlay-counter"></div>
         </div>
+        <button id="overlay-next" class="image-overlay-nav next" onclick="overlayNavigate(1)" aria-label="Next image" title="Next image">&#8250;</button>
     </div>
     <script>
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebar-overlay').classList.toggle('active'); }
@@ -569,13 +562,46 @@ class WorkerWebUI:
             document.getElementById('mobile-theme-toggle').innerHTML = icon;
         }
         initTheme();
-        function openImageOverlay(imageSrc) {
+        let overlayImages = [], overlayIndex = -1;
+        function _updateOverlayNav() {
+            const hasList = overlayImages.length > 1;
+            const pb = document.getElementById('overlay-prev'), nb = document.getElementById('overlay-next');
+            const ctr = document.getElementById('overlay-counter');
+            pb.style.display = nb.style.display = hasList ? 'block' : 'none';
+            if (hasList) { pb.disabled = overlayIndex <= 0; nb.disabled = overlayIndex >= overlayImages.length - 1; ctr.textContent = (overlayIndex + 1) + ' / ' + overlayImages.length; }
+            else { ctr.textContent = ''; }
+        }
+        function openImageOverlay(imageSrc, images, index) {
+            if (Array.isArray(images) && Number.isFinite(index) && images.length > 0) {
+                const len = images.length;
+                const safeIndex = Math.min(Math.max(Math.trunc(index), 0), len - 1);
+                overlayImages = images;
+                overlayIndex = safeIndex;
+            } else { overlayImages = []; overlayIndex = -1; }
             document.getElementById('overlay-image').src = imageSrc;
             document.getElementById('image-overlay').classList.add('active');
+            _updateOverlayNav();
         }
-        function closeImageOverlay() { document.getElementById('image-overlay').classList.remove('active'); }
+        function overlayNavigate(delta) {
+            const ni = overlayIndex + delta;
+            if (ni < 0 || ni >= overlayImages.length) return;
+            overlayIndex = ni;
+            document.getElementById('overlay-image').src = overlayImages[overlayIndex];
+            _updateOverlayNav();
+        }
+        function closeImageOverlay() { document.getElementById('image-overlay').classList.remove('active'); overlayImages = []; overlayIndex = -1; }
         document.getElementById('image-overlay').addEventListener('click', function(e) { if (e.target === this) closeImageOverlay(); });
-        document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeImageOverlay(); });
+        document.addEventListener('keydown', function(e) {
+            const overlayActive = document.getElementById('image-overlay').classList.contains('active');
+            if (e.key === 'Escape') {
+                if (overlayActive) { e.preventDefault(); e.stopPropagation(); }
+                closeImageOverlay();
+            } else if (overlayActive && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+                e.preventDefault();
+                e.stopPropagation();
+                overlayNavigate(e.key === 'ArrowLeft' ? -1 : 1);
+            }
+        });
         function formatUptime(seconds) {
             const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = Math.floor(seconds % 60);
             return h+'h '+m+'m '+s+'s';
@@ -630,14 +656,15 @@ class WorkerWebUI:
                 pag.style.display = 'none'; return;
             }
             empty.style.display = 'none'; grid.style.display = '';
-            grid.innerHTML = images.map(img => {
-                const src = 'data:image/png;base64,'+img.base64;
+            const gallerySrcs = images.map(img => 'data:image/png;base64,'+img.base64);
+            grid.innerHTML = images.map((img, idx) => {
+                const src = gallerySrcs[idx];
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
-                return '<div class="image-grid-item"><img src="'+src+'" alt="Generated image" data-fullsize="'+src+'" />'+
+                return '<div class="image-grid-item"><img src="'+src+'" alt="Generated image" data-fullsize="'+src+'" data-idx="'+idx+'" />'+
                     (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
-            grid.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize')); }; });
+            grid.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize'), gallerySrcs, parseInt(this.getAttribute('data-idx') || '0', 10)); }; });
             const tp = Math.max(1, totalPages);
             pi.textContent = 'Page '+page+' of '+tp;
             pb.disabled = page <= 1; nb.disabled = page >= tp;
@@ -694,21 +721,17 @@ class WorkerWebUI:
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('content').style.display = 'block';
                     const workerName = data.worker_name || 'Unknown';
-                    document.getElementById('horde-worker-name').textContent = workerName;
-                    document.getElementById('horde-username').textContent = data.horde_username;
                     document.getElementById('topbar-worker-name').textContent = workerName;
                     document.getElementById('topbar-worker-sub').textContent = '@'+data.horde_username;
                     const badgeHtml = data.maintenance_mode
                         ? '<span class="status-badge status-maintenance">Maintenance</span>'
                         : '<span class="status-badge status-active">Active</span>';
                     document.getElementById('worker-status-badge').innerHTML = badgeHtml;
-                    document.getElementById('horde-info-status-badge').innerHTML = badgeHtml;
                     document.getElementById('mobile-status-badge').innerHTML = data.maintenance_mode
                         ? '<span class="status-badge status-maintenance" style="font-size:0.68rem;padding:2px 7px;">Maint.</span>'
                         : '<span class="status-badge status-active" style="font-size:0.68rem;padding:2px 7px;">Active</span>';
                     const uptimeStr = formatUptime(data.uptime);
                     document.getElementById('uptime').textContent = uptimeStr;
-                    document.getElementById('horde-info-uptime').textContent = uptimeStr;
                     document.getElementById('user-kudos-total').textContent = data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
                     document.getElementById('kudos-per-hour').textContent = data.kudos_per_hour.toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
