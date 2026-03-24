@@ -1,5 +1,6 @@
 """Web server for the Horde Worker status UI."""
 
+import math
 import time
 from typing import Any
 
@@ -53,8 +54,12 @@ class WorkerWebUI:
             "console_logs": [],
             "faulted_jobs_history": [],
             "errors_history": [],
-            "images_history": [],
+            "images_count": 0,
         }
+
+        # Gallery image data stored separately – NOT included in /api/status to avoid
+        # sending large base64 payloads on every poll.  Served via /api/gallery instead.
+        self._gallery_data: list[dict[str, Any]] = []
 
         self._setup_routes()
 
@@ -62,6 +67,7 @@ class WorkerWebUI:
         """Set up the web server routes."""
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/api/status", self._handle_status)
+        self.app.router.add_get("/api/gallery", self._handle_gallery)
         self.app.router.add_get("/api/config", self._handle_config)
         self.app.router.add_get("/health", self._handle_health)
 
@@ -547,6 +553,7 @@ class WorkerWebUI:
             document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
             if (navEl) navEl.classList.add('active');
             if (window.innerWidth < 768) closeSidebar();
+            if (pageId === 'gallery') fetchGalleryPage(galleryCurrentPage);
         }
         function initTheme() {
             const saved = localStorage.getItem('horde-theme') || 'light';
@@ -613,21 +620,20 @@ class WorkerWebUI:
             renderErrorsPage();
         }
         const GALLERY_PAGE_SIZE = 20;
-        let galleryCurrentPage = 1, galleryData = [];
-        function renderGalleryPage() {
+        let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
+        function renderGalleryPage(images, total, page, totalPages) {
+            galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
                   pi = document.getElementById('gallery-page-info'), pb = document.getElementById('gallery-prev'),
                   nb = document.getElementById('gallery-next'), pag = document.getElementById('gallery-pagination'),
                   cnt = document.getElementById('gallery-count');
-            if (galleryData.length === 0) {
+            cnt.textContent = total;
+            if (images.length === 0) {
                 grid.style.display = 'none'; grid.innerHTML = ''; empty.style.display = '';
-                pag.style.display = 'none'; cnt.textContent = '0'; return;
+                pag.style.display = 'none'; return;
             }
-            empty.style.display = 'none'; grid.style.display = ''; cnt.textContent = galleryData.length;
-            const tp = Math.max(1, Math.ceil(galleryData.length / GALLERY_PAGE_SIZE));
-            galleryCurrentPage = Math.min(Math.max(1, galleryCurrentPage), tp);
-            const start = (galleryCurrentPage - 1) * GALLERY_PAGE_SIZE;
-            grid.innerHTML = galleryData.slice(start, start + GALLERY_PAGE_SIZE).map(img => {
+            empty.style.display = 'none'; grid.style.display = '';
+            grid.innerHTML = images.map(img => {
                 const src = 'data:image/png;base64,'+img.base64;
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
@@ -635,13 +641,23 @@ class WorkerWebUI:
                     (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
             grid.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize')); }; });
-            pi.textContent = 'Page '+galleryCurrentPage+' of '+tp;
-            pb.disabled = galleryCurrentPage <= 1; nb.disabled = galleryCurrentPage >= tp;
+            const tp = Math.max(1, totalPages);
+            pi.textContent = 'Page '+page+' of '+tp;
+            pb.disabled = page <= 1; nb.disabled = page >= tp;
             pag.style.display = tp > 1 ? 'flex' : 'none';
         }
+        function fetchGalleryPage(page) {
+            if (galleryFetchInProgress) return;
+            galleryFetchInProgress = true;
+            fetch('/api/gallery?page='+page+'&page_size='+GALLERY_PAGE_SIZE)
+                .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                .then(data => { renderGalleryPage(data.images, data.total, data.page, data.total_pages); })
+                .catch(err => { console.error('Gallery fetch error:', err); })
+                .finally(() => { galleryFetchInProgress = false; });
+        }
         function galleryChangePage(delta) {
-            galleryCurrentPage = Math.min(Math.max(1, galleryCurrentPage + delta), Math.max(1, Math.ceil(galleryData.length / GALLERY_PAGE_SIZE)));
-            renderGalleryPage();
+            const newPage = Math.min(Math.max(1, galleryCurrentPage + delta), Math.max(1, galleryTotalPages));
+            fetchGalleryPage(newPage);
         }
         function isScrolledToBottom(el, tol) { return el.scrollHeight - el.clientHeight <= el.scrollTop + tol; }
         function ansiToHtml(text) {
@@ -768,8 +784,7 @@ class WorkerWebUI:
                             return '<div class="process-item"><div class="process-id-row"><span class="process-id">Process #'+escapeHtml(proc.id)+'</span><span class="process-type-badge">'+escapeHtml(proc.type)+'</span><span class="process-state-badge">'+escapeHtml(proc.state)+'</span></div><div class="process-detail-text">'+(sl.length>0?sl.join(' | '):'Idle')+'</div></div>';
                         }).join('');
                     } else { pd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div>'; }
-                    galleryData = (data.images_history && data.images_history.length > 0) ? data.images_history.slice().reverse() : [];
-                    renderGalleryPage();
+                    document.getElementById('gallery-count').textContent = data.images_count || 0;
                     const fjd = document.getElementById('faulted-jobs'), fjc = document.getElementById('faulted-jobs-count');
                     if (data.faulted_jobs_history && data.faulted_jobs_history.length > 0) {
                         fjc.textContent = data.faulted_jobs_history.length;
@@ -839,6 +854,49 @@ class WorkerWebUI:
         """Handle health check request."""
         return web.json_response({"status": "ok"})
 
+    async def _handle_gallery(self, request: web.Request) -> web.Response:
+        """Return a paginated slice of the gallery image history.
+
+        Query parameters:
+            page: 1-based page number (default: 1)
+            page_size: images per page (default: 20, max: 100)
+        """
+        try:
+            page = max(1, int(request.rel_url.query.get("page", "1")))
+        except ValueError:
+            page = 1
+        try:
+            page_size = min(100, max(1, int(request.rel_url.query.get("page_size", "20"))))
+        except ValueError:
+            page_size = 20
+
+        # Gallery is stored oldest-first; serve newest-first to the UI.
+        images_reversed = list(reversed(self._gallery_data))
+        total = len(images_reversed)
+        total_pages = max(1, math.ceil(total / page_size))
+        page = min(page, total_pages)
+        start = (page - 1) * page_size
+        return web.json_response(
+            {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "images": images_reversed[start : start + page_size],
+            }
+        )
+
+    def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
+        """Append one image entry to the gallery and keep at most 200 entries.
+
+        Args:
+            image_entry: dict with keys ``base64``, ``timestamp``, and ``model``.
+        """
+        self._gallery_data.append(image_entry)
+        if len(self._gallery_data) > 200:
+            self._gallery_data = self._gallery_data[-200:]
+        self.status_data["images_count"] = len(self._gallery_data)
+
     def update_status(
         self,
         worker_name: str | None = None,
@@ -867,7 +925,6 @@ class WorkerWebUI:
         console_logs: list[str] | None = None,
         faulted_jobs_history: list[dict[str, Any]] | None = None,
         errors_history: list[str] | None = None,
-        images_history: list[dict[str, Any]] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -898,7 +955,6 @@ class WorkerWebUI:
             console_logs: Recent console log messages
             faulted_jobs_history: List of faulted jobs with details
             errors_history: List of recent error messages
-            images_history: History of all generated images for gallery view
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -952,8 +1008,6 @@ class WorkerWebUI:
             self.status_data["faulted_jobs_history"] = faulted_jobs_history
         if errors_history is not None:
             self.status_data["errors_history"] = list(errors_history)
-        if images_history is not None:
-            self.status_data["images_history"] = list(images_history)
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]

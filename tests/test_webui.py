@@ -350,39 +350,37 @@ def test_webui_last_image_submission_timestamp() -> None:
 
 
 def test_webui_images_history() -> None:
-    """Test that WorkerWebUI handles images_history for the gallery view."""
+    """Test that WorkerWebUI handles gallery images via add_gallery_image / /api/gallery."""
     webui = WorkerWebUI(port=0)
 
-    # Test default value (empty list)
-    assert webui.status_data["images_history"] == []
+    # Test default state: no images_history in status_data; images_count starts at 0
+    assert "images_history" not in webui.status_data
+    assert webui.status_data["images_count"] == 0
+    assert webui._gallery_data == []
 
-    # Test updating with a single image entry
+    # Test adding a single image entry
     test_image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-    test_history = [
-        {"base64": test_image_b64, "timestamp": 1704067205.0, "model": "stable_diffusion_xl"},
-    ]
-    webui.update_status(images_history=test_history)
-    assert webui.status_data["images_history"] == test_history
-    assert len(webui.status_data["images_history"]) == 1
-    assert webui.status_data["images_history"][0]["model"] == "stable_diffusion_xl"
+    webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067205.0, "model": "stable_diffusion_xl"})
+    assert len(webui._gallery_data) == 1
+    assert webui.status_data["images_count"] == 1
+    assert webui._gallery_data[0]["model"] == "stable_diffusion_xl"
 
-    # Test updating with multiple image entries
-    test_history_multi = [
-        {"base64": test_image_b64, "timestamp": 1704067205.0, "model": "stable_diffusion_xl"},
-        {"base64": test_image_b64, "timestamp": 1704067210.0, "model": "stable_diffusion_2_1"},
-        {"base64": test_image_b64, "timestamp": 1704067215.0, "model": None},
-    ]
-    webui.update_status(images_history=test_history_multi)
-    assert len(webui.status_data["images_history"]) == 3
-    assert webui.status_data["images_history"][1]["model"] == "stable_diffusion_2_1"
-    assert webui.status_data["images_history"][2]["model"] is None
+    # Test adding multiple image entries
+    webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067210.0, "model": "stable_diffusion_2_1"})
+    webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067215.0, "model": None})
+    assert len(webui._gallery_data) == 3
+    assert webui.status_data["images_count"] == 3
+    assert webui._gallery_data[1]["model"] == "stable_diffusion_2_1"
+    assert webui._gallery_data[2]["model"] is None
 
-    # Test that history is a copy (not reference)
-    test_history_ref = [{"base64": test_image_b64, "timestamp": 1704067220.0, "model": "sdxl"}]
-    webui.update_status(images_history=test_history_ref)
-    test_history_ref.append({"base64": test_image_b64, "timestamp": 1704067225.0, "model": "sd2"})
-    # The stored history should not change
-    assert len(webui.status_data["images_history"]) == 1
+    # Test that gallery is bounded at 200 entries
+    for i in range(200):
+        webui.add_gallery_image({"base64": test_image_b64, "timestamp": float(i), "model": "sdxl"})
+    assert len(webui._gallery_data) == 200
+    assert webui.status_data["images_count"] == 200
+
+    # Verify /api/status does NOT include base64 image data
+    assert "images_history" not in webui.status_data
 
 
 @pytest.mark.asyncio

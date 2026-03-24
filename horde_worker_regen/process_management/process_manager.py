@@ -1682,8 +1682,6 @@ class HordeWorkerProcessManager:
         """The last generated images in base64 format for webui preview (supports batch jobs)."""
         self._last_image_job_timestamp: float = 0.0
         """Timestamp when the last preview image was set, to prevent older jobs from overwriting newer ones."""
-        self._images_history: list[dict] = []
-        """History of all generated images for the gallery view (list of dicts with base64 and timestamp)."""
         self._console_logs: list[str] = []
         """Recent console logs for webui display."""
         self._log_handler_id: int | None = None
@@ -2739,9 +2737,9 @@ class HordeWorkerProcessManager:
                                 images_base64.append(base64.b64encode(image_data).decode("utf-8"))
                         self._last_image_base64 = images_base64
                         self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
-                        # Append to images history for gallery view (keep last 200 entries)
+                        # Add each image to the WebUI gallery
                         for img_b64 in images_base64:
-                            self._images_history.append(
+                            self.webui.add_gallery_image(
                                 {
                                     "base64": img_b64,
                                     "timestamp": completed_job_info.inference_completed_timestamp,
@@ -2750,8 +2748,6 @@ class HordeWorkerProcessManager:
                                     else None,
                                 },
                             )
-                        if len(self._images_history) > 200:
-                            self._images_history = self._images_history[-200:]
                     except (FileNotFoundError, OSError) as e:
                         logger.warning(f"Failed to read saved images for webui preview: {e}")
                         # Don't fallback to job_image_results to avoid showing censored placeholders
@@ -6363,7 +6359,6 @@ class HordeWorkerProcessManager:
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
             errors_history=self._errors_history[: self._WEBUI_ERRORS_HISTORY_LIMIT],
-            images_history=list(self._images_history),
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
