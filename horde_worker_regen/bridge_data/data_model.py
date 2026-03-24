@@ -61,7 +61,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
     """The maximum amount of time to allow a model to load before it is killed"""
     inference_step_timeout: int = Field(default=600, ge=60, le=1800)
     """The maximum amount of time (in seconds) to allow for inference progress before detecting a stuck job.
-    
+
     Recommended settings based on GPU performance:
     - High-end GPUs (RTX 4090, A100): 300-600 seconds (5-10 minutes)
     - Mid-range GPUs (RTX 3080, 4070): 600-900 seconds (10-15 minutes)

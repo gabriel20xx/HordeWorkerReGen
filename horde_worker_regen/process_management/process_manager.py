@@ -2,6 +2,7 @@ import asyncio
 import asyncio.exceptions
 import base64
 import collections
+import contextlib
 import enum
 import json
 import math
@@ -71,6 +72,7 @@ from horde_worker_regen.consts import (
 from horde_worker_regen.logger_config import create_level_format_function
 from horde_worker_regen.process_management._aliased_types import ProcessQueue
 from horde_worker_regen.process_management.horde_process import HordeProcessType
+from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 from horde_worker_regen.process_management.messages import (
     HordeAuxModelStateChangeMessage,
     HordeControlFlag,
@@ -92,7 +94,6 @@ from horde_worker_regen.process_management.messages import (
     ModelInfo,
     ModelLoadState,
 )
-from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 from horde_worker_regen.process_management.worker_entry_points import start_inference_process, start_safety_process
 
 if TYPE_CHECKING:
@@ -316,7 +317,7 @@ class HordeProcessInfo:
             if not _caught_signal:
                 logger.debug(
                     f"Failed to send message to process {self.process_id}: "
-                    f"{type(e).__name__}: {e}"
+                    f"{type(e).__name__}: {e}",
                 )
             return False
 
@@ -438,11 +439,9 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             self[process_id].heartbeats_inference_steps = 0
 
         # Update progress tracking to detect stalled jobs
-        if percent_complete is not None:
-            # Check if progress has actually advanced
-            if self[process_id].last_progress_value != percent_complete:
-                self[process_id].last_progress_timestamp = time.time()
-                self[process_id].last_progress_value = percent_complete
+        if percent_complete is not None and self[process_id].last_progress_value != percent_complete:
+            self[process_id].last_progress_timestamp = time.time()
+            self[process_id].last_progress_value = percent_complete
 
         self[process_id].last_heartbeat_percent_complete = percent_complete
 
@@ -695,10 +694,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         ):
             return True
 
-        if time_since_heartbeat > inference_step_timeout:
-            return True
-
-        return False
+        return time_since_heartbeat > inference_step_timeout
 
     def num_inference_processes(self) -> int:
         """Return the number of inference processes."""
@@ -1681,7 +1677,7 @@ class HordeWorkerProcessManager:
                 time.sleep(5)
 
         # Initialize web UI if enabled
-        self.webui: WorkerWebUI | None = None
+        self.webui: WorkerWebUI | None = None  # noqa: F823
         self._last_image_base64: list[str] = []
         """The last generated images in base64 format for webui preview (supports batch jobs)."""
         self._last_image_job_timestamp: float = 0.0
@@ -2303,7 +2299,7 @@ class HordeWorkerProcessManager:
                         except ValueError:
                             logger.debug(
                                 f"Inference semaphore already released for process {message.process_id} "
-                                "on PROCESS_ENDING (child released it normally via finally block)"
+                                "on PROCESS_ENDING (child released it normally via finally block)",
                             )
                     # When INFERENCE_POST_PROCESSING ends unexpectedly the child's finally block
                     # may not have run (e.g. OOM kill), leaving the VAE decode semaphore held.
@@ -2323,7 +2319,7 @@ class HordeWorkerProcessManager:
                         except ValueError:
                             logger.debug(
                                 f"VAE decode semaphore already released for process {message.process_id} "
-                                "on PROCESS_ENDING (child released it normally or never acquired it)"
+                                "on PROCESS_ENDING (child released it normally or never acquired it)",
                             )
                     # If the process is ending but still has a job in progress, fault the job
                     # so it is not silently lost. This can happen if an exception occurs in the
@@ -2343,7 +2339,8 @@ class HordeWorkerProcessManager:
                         )
                         logger.error(
                             f"Problem loading model {process_info_ending.loaded_horde_model_name} "
-                            f"on process {message.process_id}: the process ended unexpectedly while {phase_description}. "
+                            f"on process {message.process_id}: the process ended unexpectedly"
+                            f" while {phase_description}. "
                             "Check the logs above for details.",
                         )
                     if (
@@ -2601,7 +2598,8 @@ class HordeWorkerProcessManager:
                     if message.job_image_results and len(message.job_image_results) > 0:
                         current_time = time.time()
                         job_info.inference_completed_timestamp = current_time
-                        # Note: Images will be displayed after safety check using disk-saved versions (not here to avoid flickering)
+                        # Note: Images will be displayed after safety check using disk-saved versions
+                        # (not here to avoid flickering)
 
                     self.jobs_pending_safety_check.append(job_info)
                 else:
@@ -2726,24 +2724,25 @@ class HordeWorkerProcessManager:
                     and len(completed_job_info.job_image_results) > 0
                     and completed_job_info.inference_completed_timestamp is not None
                     and completed_job_info.inference_completed_timestamp >= self._last_image_job_timestamp
+                    and message.saved_images
+                    and len(message.saved_images) > 0
                 ):
                     # Use the saved disk images instead of the submitted images
-                    if message.saved_images and len(message.saved_images) > 0:
-                        try:
-                            # Read all saved images from disk and convert to base64
-                            images_base64 = []
-                            for saved_image in message.saved_images:
-                                with open(saved_image.path, "rb") as image_file:
-                                    image_data = image_file.read()
-                                    images_base64.append(base64.b64encode(image_data).decode("utf-8"))
-                            self._last_image_base64 = images_base64
-                            self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
-                        except (FileNotFoundError, OSError) as e:
-                            logger.warning(f"Failed to read saved images for webui preview: {e}")
-                            # Don't fallback to job_image_results to avoid showing censored placeholders and causing flickering
-                            logger.debug("WebUI preview will not be updated for this job (no disk images available)")
-                    # Note: We intentionally don't update WebUI if no saved images are available
-                    # We don't want to show potentially censored images from job_image_results
+                    try:
+                        # Read all saved images from disk and convert to base64
+                        images_base64 = []
+                        for saved_image in message.saved_images:
+                            with open(saved_image.path, "rb") as image_file:
+                                image_data = image_file.read()
+                                images_base64.append(base64.b64encode(image_data).decode("utf-8"))
+                        self._last_image_base64 = images_base64
+                        self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                    except (FileNotFoundError, OSError) as e:
+                        logger.warning(f"Failed to read saved images for webui preview: {e}")
+                        # Don't fallback to job_image_results to avoid showing censored placeholders
+                        logger.debug("WebUI preview will not be updated for this job (no disk images available)")
+                # Note: We intentionally don't update WebUI if no saved images are available
+                # We don't want to show potentially censored images from job_image_results
 
                 # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
                 self.jobs_pending_submit.append(completed_job_info)
@@ -3806,8 +3805,6 @@ class HordeWorkerProcessManager:
                     )
                     time_popped = time.time()
 
-            time_taken = round(time.time() - time_popped, 2)
-
             kudos_per_second = 0.0
 
             if new_submit.completed_job_info.time_to_generate is None:
@@ -4013,7 +4010,8 @@ class HordeWorkerProcessManager:
                 )
                 logger.warning(
                     f"{job_ref} took longer than is ideal; if this persists "
-                    "consider lowering your max_power, using less threads, disabling post processing and/or controlnets.",
+                    "consider lowering your max_power, using less threads, "
+                    "disabling post processing and/or controlnets.",
                 )
                 logger.warning("Be sure your models are on an SSD. Freeing up RAM or VRAM may also help.")
 
@@ -4266,8 +4264,9 @@ class HordeWorkerProcessManager:
                 # Retry the job once
                 job_info.retry_count += 1
                 fault_detail = f": {fault_info}" if fault_info else ""
+                proc_id = process_info.process_id if process_info else "unknown"
                 logger.warning(
-                    f"Job {faulted_job.id_} faulted on process {process_info.process_id if process_info else 'unknown'}"
+                    f"Job {faulted_job.id_} faulted on process {proc_id}"
                     f"{fault_detail}, retrying (attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})",
                 )
 
@@ -5863,16 +5862,8 @@ class HordeWorkerProcessManager:
 
             minutes_allowed_without_jobs = self.bridge_data.minutes_allowed_without_jobs
             seconds_allowed_without_jobs = minutes_allowed_without_jobs * 60
-            cur_session_minutes = (cur_time - self.session_start_time) / 60
             if self._time_spent_no_jobs_available > seconds_allowed_without_jobs:
                 if not self.bridge_data.suppress_speed_warnings:
-                    # Disable spent without jobs warning spamming console/logs
-                    # logger.warning(
-                    #    f"Your worker spent more than {minutes_allowed_without_jobs} minutes combined throughout this "
-                    #    f"session ({self._time_spent_no_jobs_available/60:.2f}/{cur_session_minutes:.2f} minutes) "
-                    #    "without jobs. This may be due to low demand. However, offering more models or increasing "
-                    #    "your max_power may help increase the number of jobs you receive and reduce downtime.",
-                    # )
                     pass
                 else:
                     logger.debug(
@@ -6299,11 +6290,8 @@ class HordeWorkerProcessManager:
                 for i in range(device_count):
                     # Get GPU utilization using nvidia-smi via torch
                     # Note: torch.cuda.utilization() returns GPU utilization percentage
-                    try:
+                    with contextlib.suppress(Exception):
                         total_util += torch.cuda.utilization(i)
-                    except Exception:
-                        # If utilization() is not available, we skip
-                        pass
                 if device_count > 0 and total_util > 0:
                     gpu_usage_percent = total_util / device_count
         except Exception:
@@ -6810,7 +6798,8 @@ class HordeWorkerProcessManager:
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
                     and process_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
-                    and (now - process_info.last_heartbeat_timestamp) > max(self.bridge_data.process_timeout, HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT)
+                    and (now - process_info.last_heartbeat_timestamp)
+                    > max(self.bridge_data.process_timeout, HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT)
                 ):
                     logger.error(
                         f"{process_info} has been idle in WAITING_FOR_JOB for "
@@ -6836,14 +6825,16 @@ class HordeWorkerProcessManager:
                         time_elapsed_starting,
                         now - process_info.last_heartbeat_timestamp,
                     )
-                    if time_elapsed_starting > self.bridge_data.preload_timeout:
-                        if not any_active_inference_processing:
-                            logger.error(
-                                f"{process_info} seems to be stuck in INFERENCE_STARTING "
-                                "with no active inference process holding the semaphore; replacing it",
-                            )
-                            self._replace_inference_process(process_info)
-                            any_replaced = any_process_replaced = True
+                    if (
+                        time_elapsed_starting > self.bridge_data.preload_timeout
+                        and not any_active_inference_processing
+                    ):
+                        logger.error(
+                            f"{process_info} seems to be stuck in INFERENCE_STARTING "
+                            "with no active inference process holding the semaphore; replacing it",
+                        )
+                        self._replace_inference_process(process_info)
+                        any_replaced = any_process_replaced = True
 
         # If any subprocesses were actually replaced and we are not already inside a recovery
         # window, start the cascading-recovery guard timer.  Soft corrective actions such as
