@@ -93,6 +93,7 @@ from horde_worker_regen.process_management.messages import (
     ModelInfo,
     ModelLoadState,
 )
+from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 from horde_worker_regen.process_management.worker_entry_points import start_inference_process, start_safety_process
 
 if TYPE_CHECKING:
@@ -515,6 +516,13 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             ):
                 self[process_id].last_heartbeat_percent_complete = 100
 
+        # Reset progress to 0% when a new inference is starting
+        if new_state == HordeProcessState.INFERENCE_STARTING:
+            self[process_id].last_heartbeat_percent_complete = 0
+            # Also reset progress tracking so stall detection starts fresh
+            self[process_id].last_progress_timestamp = time.time()
+            self[process_id].last_progress_value = None
+
     def on_last_job_reference_change(
         self,
         process_id: int,
@@ -617,6 +625,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         self,
         process_id: int,
         inference_step_timeout: int,
+        no_step_heartbeat_timeout: int | None = None,
     ) -> bool:
         """Return true if the process is actively doing inference but progress has stalled.
 
@@ -627,17 +636,35 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         Detecting INFERENCE_PROCESSING stalls is critical: a process holding the inference semaphore
         while stuck prevents other processes from acquiring it, leaving them permanently stuck in
         INFERENCE_STARTING while waiting on the semaphore.
+
+        Args:
+            process_id: The ID of the process to check.
+            inference_step_timeout: Timeout (seconds) for the progress-stalled and between-step
+                heartbeat checks.
+            no_step_heartbeat_timeout: If provided, and the process is in INFERENCE_PROCESSING with
+                zero step-heartbeats received so far, use this shorter timeout for the no-heartbeat
+                check instead of ``inference_step_timeout``.  This catches two cases quickly:
+                (a) the process crashed before completing even one diffusion step, and
+                (b) the process is in the VAE decode / post-processing phase after all steps
+                    completed and sent a 100 % PIPELINE_STATE_CHANGE heartbeat that reset the
+                    step counter.
+                Do NOT apply this to INFERENCE_STARTING: a process blocked on semaphore
+                acquisition cannot send heartbeats and would be a false positive.
         """
-        if self[process_id].last_process_state not in (
+        state = self[process_id].last_process_state
+        if state not in (
             HordeProcessState.INFERENCE_STARTING,
             HordeProcessState.INFERENCE_PROCESSING,
         ):
             return False
 
-        # Check if we're getting heartbeats but progress isn't advancing
-        # This catches jobs stuck at a specific progress percentage, including the last step
+        # Check if we're getting heartbeats but progress isn't advancing.
+        # Skip this check when progress is already at 100 %: once all diffusion steps are
+        # complete no further progress increments are expected (the process is in the VAE
+        # decode phase), so a stalled 100 % value is normal behaviour.  The heartbeat-based
+        # checks below are sufficient to detect genuine failures at that stage.
         time_since_progress = time.time() - self[process_id].last_progress_timestamp
-        if time_since_progress > inference_step_timeout:
+        if time_since_progress > inference_step_timeout and self[process_id].last_progress_value != 100:
             # Progress hasn't advanced in too long - job is stuck
             return True
 
@@ -647,7 +674,30 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         # stays at its previous (normal) value when the process stops responding entirely.
         # Note: We check all heartbeat types, not just INFERENCE_STEP, to catch
         # jobs stuck in the last step (VAE decode) which send PIPELINE_STATE_CHANGE heartbeats
-        return (time.time() - self[process_id].last_heartbeat_timestamp) > inference_step_timeout
+        time_since_heartbeat = time.time() - self[process_id].last_heartbeat_timestamp
+
+        # When the process is in INFERENCE_PROCESSING and has not yet received any step-level
+        # heartbeats (heartbeats_inference_steps == 0), it is either:
+        #   * stuck before the first diffusion step (e.g. crashed / hung right after acquiring
+        #     the semaphore), or
+        #   * in the VAE decode phase (all steps done; the 100 % PIPELINE_STATE_CHANGE heartbeat
+        #     reset the counter to 0).
+        # In both cases the last heartbeat timestamp was just refreshed, so we time out from
+        # that fresh baseline.  Use the shorter no_step_heartbeat_timeout if provided.
+        # We deliberately skip this for INFERENCE_STARTING because a process that is blocked
+        # waiting to acquire the semaphore is unable to send heartbeats and would falsely trigger.
+        if (
+            state == HordeProcessState.INFERENCE_PROCESSING
+            and self[process_id].heartbeats_inference_steps == 0
+            and no_step_heartbeat_timeout is not None
+            and time_since_heartbeat > no_step_heartbeat_timeout
+        ):
+            return True
+
+        if time_since_heartbeat > inference_step_timeout:
+            return True
+
+        return False
 
     def num_inference_processes(self) -> int:
         """Return the number of inference processes."""
@@ -877,8 +927,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         for p in self.values():
             if (
                 p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
+                or p.last_process_state == HordeProcessState.POST_PROCESSING_STARTING
             ):
                 count += 1
         return count
@@ -887,10 +936,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """Return the number of processes that are preloading models."""
         count = 0
         for p in self.values():
-            if (
-                p.last_process_state == HordeProcessState.MODEL_PRELOADING
-                or p.last_process_state == HordeProcessState.MODEL_PRELOADING
-            ):
+            if p.last_process_state == HordeProcessState.MODEL_PRELOADING:
                 count += 1
         return count
 
@@ -898,10 +944,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """Return the number of processes that have preloaded models."""
         count = 0
         for p in self.values():
-            if (
-                p.last_process_state == HordeProcessState.MODEL_PRELOADED
-                or p.last_process_state == HordeProcessState.MODEL_PRELOADED
-            ):
+            if p.last_process_state == HordeProcessState.MODEL_PRELOADED:
                 count += 1
         return count
 
@@ -930,13 +973,21 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                     process_info.last_heartbeat_percent_complete is not None
                     and process_info.last_job_referenced is not None
                 ):
-                    process_state_detail = (
+                    percent_detail = (
                         f"{process_info.last_heartbeat_percent_complete}% of "
                         f"{process_info.last_job_referenced.payload.ddim_steps} steps "
                         f"using {process_info.last_job_referenced.payload.sampler_name}"
                     )
                     if process_info.last_job_referenced.payload.n_iter > 1:
-                        process_state_detail += f" ({process_info.last_job_referenced.payload.n_iter}x batch)"
+                        percent_detail += f" ({process_info.last_job_referenced.payload.n_iter}x batch)"
+                    # During post-processing and other non-processing states, the process state
+                    # advances beyond INFERENCE_PROCESSING but last_heartbeat_percent_complete
+                    # can stay at 100 %.  Include the state name so the console reflects the same
+                    # job/process state as the webui.
+                    if process_info.last_process_state == HordeProcessState.INFERENCE_PROCESSING:
+                        process_state_detail = percent_detail
+                    else:
+                        process_state_detail = f"{process_info.last_process_state.name} ({percent_detail})"
 
                 horde_model_name_and_baseline = (
                     f"<u>{process_info.loaded_horde_model_name}</u> {process_info.loaded_horde_model_baseline})"
@@ -1202,6 +1253,26 @@ class HordeWorkerProcessManager:
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
+    _MAX_ERRORS_HISTORY = 1000  # Maximum number of error messages to keep in history (memory safety cap)
+    _WEBUI_ERRORS_HISTORY_LIMIT = 200  # Number of recent errors to send to webui per poll
+
+    # States that indicate inference is done and the result is being post-processed or submitted.
+    # In all these states the progress bar must be pinned at 100% so it never goes backwards.
+    _WEBUI_POST_INFERENCE_STATES: frozenset[HordeProcessState] = frozenset(
+        {
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+            HordeProcessState.INFERENCE_COMPLETE,
+            HordeProcessState.POST_PROCESSING_COMPLETE,
+            HordeProcessState.SAFETY_STARTING,
+            HordeProcessState.SAFETY_EVALUATING,
+            HordeProcessState.SAFETY_COMPLETE,
+            HordeProcessState.IMAGE_SAVING,
+            HordeProcessState.IMAGE_SAVED,
+            HordeProcessState.IMAGE_SUBMITTING,
+            HordeProcessState.IMAGE_SUBMITTED,
+        },
+    )
 
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
@@ -1294,6 +1365,9 @@ class HordeWorkerProcessManager:
     """A list of faulted jobs with their details for display in the webui."""
     _max_faulted_jobs_history: int = 20
     """Maximum number of faulted jobs to keep in history."""
+
+    _errors_history: list[str]
+    """A list of recent error messages for display in the webui."""
 
     jobs_pending_submit: list[HordeJobInfo]
     """A list of HordeJobInfo objects containing the job, the state, and whether or not the job was censored."""
@@ -1390,7 +1464,7 @@ class HordeWorkerProcessManager:
     semaphore release, so the existing handlers prevent any permit inflation.
     """
 
-    _vae_decode_semaphore: Semaphore
+    _vae_decode_semaphore: BoundedSemaphore
 
     _disk_lock: Lock_MultiProcessing
     """A lock to prevent multiple processes from accessing the disk at once."""
@@ -1475,7 +1549,7 @@ class HordeWorkerProcessManager:
         if self.bridge_data.high_memory_mode:
             vae_decode_semaphore_max = self.max_inference_processes
 
-        self._vae_decode_semaphore = Semaphore(vae_decode_semaphore_max, ctx=ctx)
+        self._vae_decode_semaphore = BoundedSemaphore(vae_decode_semaphore_max, ctx=ctx)
 
         self._lru = LRUCache(self.max_inference_processes)
 
@@ -1501,6 +1575,7 @@ class HordeWorkerProcessManager:
         self.jobs_being_safety_checked = []
         self.job_faults = {}
         self._faulted_jobs_history = []
+        self._errors_history: list[str] = []
 
         self._jobs_safety_check_lock = Lock_Asyncio()
 
@@ -1651,6 +1726,15 @@ class HordeWorkerProcessManager:
             # Keep only the last N logs
             if len(self._console_logs) > self._MAX_CONSOLE_LOGS_BUFFER:
                 self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER :]
+
+            # Also capture ERROR and CRITICAL level messages into errors_history
+            log_record = getattr(message, "record", None)
+            level = log_record.get("level") if log_record is not None else None
+            if level is not None and level.no >= logger.level("ERROR").no:
+                self._errors_history.insert(0, clean_message)
+                # Prevent unbounded growth of the errors history buffer
+                if len(self._errors_history) > self._MAX_ERRORS_HISTORY:
+                    del self._errors_history[self._MAX_ERRORS_HISTORY :]
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -2007,6 +2091,7 @@ class HordeWorkerProcessManager:
         if process_info.last_process_state in (
             HordeProcessState.INFERENCE_STARTING,
             HordeProcessState.INFERENCE_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
         ):
             try:
                 self._inference_semaphore.release()
@@ -2016,6 +2101,21 @@ class HordeWorkerProcessManager:
                 self._disk_lock.release()
             except ValueError:
                 logger.debug("Disk lock already released")
+
+        if process_info.last_process_state in (
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+        ):
+            # The VAE decode semaphore was acquired in the progress callback before
+            # POST_PROCESSING_STARTING / INFERENCE_POST_PROCESSING was emitted. Release it
+            # here so that the replacement process (and any other process) is not blocked
+            # from acquiring it for up to VAE_SEMAPHORE_TIMEOUT seconds.
+            # BoundedSemaphore raises ValueError on over-release (child already released
+            # it normally or never acquired), which is the benign case.
+            try:
+                self._vae_decode_semaphore.release()
+            except ValueError:
+                logger.debug("VAE decode semaphore already released")
 
         elif process_info.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL:
             try:
@@ -2033,7 +2133,7 @@ class HordeWorkerProcessManager:
         if process_info.loaded_horde_model_name is not None:
             self._horde_model_map.expire_entry(process_info.loaded_horde_model_name)
 
-        if job_to_remove is not None:
+        if job_to_remove is not None and job_to_remove in self.jobs_in_progress:
             self.handle_job_fault(faulted_job=job_to_remove, process_info=process_info)
 
         self._end_inference_process(process_info)
@@ -2203,6 +2303,26 @@ class HordeWorkerProcessManager:
                             logger.debug(
                                 f"Inference semaphore already released for process {message.process_id} "
                                 "on PROCESS_ENDING (child released it normally via finally block)",
+                            )
+                    # When INFERENCE_POST_PROCESSING ends unexpectedly the child's finally block
+                    # may not have run (e.g. OOM kill), leaving the VAE decode semaphore held.
+                    # Release it defensively here so other processes are not blocked.
+                    # POST_PROCESSING_STARTING is also included because the VAE decode semaphore
+                    # may have been acquired between the state message and the INFERENCE_POST_PROCESSING
+                    # state being sent (if the child crashed after acquiring the semaphore but before
+                    # emitting INFERENCE_POST_PROCESSING).  The VAE decode semaphore is a
+                    # BoundedSemaphore; over-releasing raises ValueError, which is the benign case
+                    # where the child never held (or already released) the permit.
+                    if prior_process_state in (
+                        HordeProcessState.INFERENCE_POST_PROCESSING,
+                        HordeProcessState.POST_PROCESSING_STARTING,
+                    ):
+                        try:
+                            self._vae_decode_semaphore.release()
+                        except ValueError:
+                            logger.debug(
+                                f"VAE decode semaphore already released for process {message.process_id} "
+                                "on PROCESS_ENDING (child released it normally or never acquired it)"
                             )
                     # If the process is ending but still has a job in progress, fault the job
                     # so it is not silently lost. This can happen if an exception occurs in the
@@ -2795,9 +2915,23 @@ class HordeWorkerProcessManager:
                     process_id=available_process.process_id,
                     new_state=HordeProcessState.MODEL_PRELOADING,
                 )
+            else:
+                # safe_send_message() failed (the exception is stored in last_send_error).
+                # Replace the process immediately so that the next loop iteration selects a
+                # healthy process instead of retrying the same send indefinitely (which would
+                # block start_inference() from ever being called and leave jobs stuck in the queue).
+                send_error = available_process.last_send_error
+                send_error_detail = (
+                    f" ({type(send_error).__name__}: {send_error})" if send_error is not None else ""
+                )
+                job_id = getattr(job, "id_", None) or getattr(job, "ids", None)
+                logger.error(
+                    f"Failed to send preload model message for model {job.model!r}"
+                    f"{f' (job_id={job_id})' if job_id is not None else ''} "
+                    f"to process {available_process.process_id}{send_error_detail}",
+                )
+                self._replace_inference_process(available_process)
 
-            # Even if the message fails to send, we still want to return True so that we can let the main loop
-            # catch up and potentially replace the process.
             return True
 
         return False
@@ -2912,7 +3046,7 @@ class HordeWorkerProcessManager:
                 self.post_process_job_overlap_allowed
                 and (
                     process_with_model.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
-                    or process_with_model.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
+                    or process_with_model.last_process_state == HordeProcessState.POST_PROCESSING_STARTING
                 )
             ):
                 # If any of the next n jobs (other than this one) aren't using the same model, see if that job
@@ -3601,107 +3735,129 @@ class HordeWorkerProcessManager:
                 )
                 break
 
-        job_submit_response = None
         try:
-            job_submit_response = await asyncio.wait_for(
-                self.horde_client_session.submit_request(
-                    submit_job_request,
-                    JobSubmitResponse,
-                ),
-                timeout=10 + 1,
-            )
-        except _async_client_exceptions:
-            logger.error(f"Job {new_submit.job_id} submission timed out")
-            new_submit.retry()
-            return new_submit
-        except Exception as e:
-            logger.error(f"Failed to submit job {new_submit.job_id}: {e}")
-            new_submit.retry()
-            return new_submit
-
-        # If the job submit response is an error,
-        # log it and increment the number of consecutive failed job submits
-        if isinstance(job_submit_response, RequestErrorResponse):
-            if (
-                "Processing Job with ID" in job_submit_response.message
-                and "does not exist" in job_submit_response.message
-            ):
-                logger.warning(f"Job {new_submit.job_id} does not exist, removing from completed jobs")
-                new_submit.fault()
+            job_submit_response = None
+            try:
+                job_submit_response = await asyncio.wait_for(
+                    self.horde_client_session.submit_request(
+                        submit_job_request,
+                        JobSubmitResponse,
+                    ),
+                    timeout=10 + 1,
+                )
+            except _async_client_exceptions:
+                logger.error(f"Job {new_submit.job_id} submission timed out")
+                new_submit.retry()
+                return new_submit
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to submit job {new_submit.job_id}: {e}")
+                new_submit.retry()
                 return new_submit
 
-            if "already submitted" in job_submit_response.message:
-                logger.debug(
-                    f"Job {new_submit.job_id} has already been submitted, removing from completed jobs",
+            # If the job submit response is an error,
+            # log it and increment the number of consecutive failed job submits
+            if isinstance(job_submit_response, RequestErrorResponse):
+                if (
+                    "Processing Job with ID" in job_submit_response.message
+                    and "does not exist" in job_submit_response.message
+                ):
+                    logger.warning(f"Job {new_submit.job_id} does not exist, removing from completed jobs")
+                    new_submit.fault()
+                    return new_submit
+
+                if "already submitted" in job_submit_response.message:
+                    logger.debug(
+                        f"Job {new_submit.job_id} has already been submitted, removing from completed jobs",
+                    )
+                    new_submit.fault()
+                    return new_submit
+
+                if "Please check your worker speed" in job_submit_response.message:
+                    logger.error(job_submit_response.message)
+                    new_submit.fault()
+                    return new_submit
+
+                error_string = (
+                    f"Failed to submit job (API Error) " f"{new_submit.retry_attempts_string}: {job_submit_response}"
                 )
-                new_submit.fault()
+                logger.error(error_string)
+                new_submit.retry()
                 return new_submit
 
-            if "Please check your worker speed" in job_submit_response.message:
-                logger.error(job_submit_response.message)
-                new_submit.fault()
+            if job_submit_response is None:
+                logger.error(f"Failed to submit job {new_submit.job_id}")
+                new_submit.retry()
                 return new_submit
 
-            error_string = (
-                f"Failed to submit job (API Error) " f"{new_submit.retry_attempts_string}: {job_submit_response}"
-            )
-            logger.error(error_string)
-            new_submit.retry()
-            return new_submit
+            # Get the time the job was popped from the job deque
+            async with self._job_pop_timestamps_lock:
+                time_popped = self.job_pop_timestamps.get(new_submit.completed_job_info.sdk_api_job_info)
+                if time_popped is None:
+                    logger.warning(
+                        f"Failed to get time_popped for job {new_submit.completed_job_info.sdk_api_job_info.id_}. "
+                        "This is likely a bug.",
+                    )
+                    time_popped = time.time()
 
-        if job_submit_response is None:
-            logger.error(f"Failed to submit job {new_submit.job_id}")
-            new_submit.retry()
-            return new_submit
+                elif time_popped == -1:
+                    logger.warning(
+                        f"Job {new_submit.completed_job_info.sdk_api_job_info.id_} will have an "
+                        "incorrect kudos/second calculation.",
+                    )
+                    time_popped = time.time()
 
-        # Get the time the job was popped from the job deque
-        async with self._job_pop_timestamps_lock:
-            time_popped = self.job_pop_timestamps.get(new_submit.completed_job_info.sdk_api_job_info)
-            if time_popped is None:
-                logger.warning(
-                    f"Failed to get time_popped for job {new_submit.completed_job_info.sdk_api_job_info.id_}. "
-                    "This is likely a bug.",
+            time_taken = round(time.time() - time_popped, 2)
+
+            kudos_per_second = 0.0
+
+            if new_submit.completed_job_info.time_to_generate is None:
+                logger.error(
+                    f"Job {new_submit.job_id} has no time_to_generate, ignoring.",
                 )
-                time_popped = time.time()
+                new_submit.completed_job_info.time_to_generate = 0.0
+            else:
+                kudos_per_second = job_submit_response.reward / new_submit.completed_job_info.time_to_generate
 
-            elif time_popped == -1:
-                logger.warning(
-                    f"Job {new_submit.completed_job_info.sdk_api_job_info.id_} will have an incorrect kudos/second "
-                    "calculation.",
+            # Logging is now done at the batch level in api_submit_job()
+            # Track slowdowns and faults
+            if new_submit.completed_job_info.state != GENERATION_STATE.faulted:
+                kudos_per_second_for_batch = kudos_per_second * new_submit.batch_count
+                if kudos_per_second_for_batch < 0.4:
+                    self._num_job_slowdowns += 1
+            else:
+                self._num_jobs_faulted += 1
+
+            self.kudos_generated_this_session += job_submit_response.reward
+            self.kudos_events.append((time.time(), job_submit_response.reward))
+            new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
+
+            # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
+            if handling_process_id is not None:
+                self._process_map.on_process_state_change(
+                    process_id=handling_process_id,
+                    new_state=HordeProcessState.WAITING_FOR_JOB,
                 )
-                time_popped = time.time()
 
-        kudos_per_second = 0.0
-
-        if new_submit.completed_job_info.time_to_generate is None:
-            logger.error(
-                f"Job {new_submit.job_id} has no time_to_generate, ignoring.",
-            )
-            new_submit.completed_job_info.time_to_generate = 0.0
-        else:
-            kudos_per_second = job_submit_response.reward / new_submit.completed_job_info.time_to_generate
-
-        # Logging is now done at the batch level in api_submit_job()
-        # Track slowdowns and faults
-        if new_submit.completed_job_info.state != GENERATION_STATE.faulted:
-            kudos_per_second_for_batch = kudos_per_second * new_submit.batch_count
-            if kudos_per_second_for_batch < 0.4:
-                self._num_job_slowdowns += 1
-        else:
-            self._num_jobs_faulted += 1
-
-        self.kudos_generated_this_session += job_submit_response.reward
-        self.kudos_events.append((time.time(), job_submit_response.reward))
-        new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
-
-        # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
-        if handling_process_id is not None:
-            self._process_map.on_process_state_change(
-                process_id=handling_process_id,
-                new_state=HordeProcessState.WAITING_FOR_JOB,
-            )
-
-        return new_submit
+            return new_submit
+        finally:
+            # Ensure the process is never left stuck in IMAGE_SUBMITTING after any failure path.
+            # On success the state has already been set to WAITING_FOR_JOB above, so the check
+            # below is a no-op in that case.  The specific submission error is logged by the
+            # individual except/error-response branches above.
+            if handling_process_id is not None:
+                stuck_proc = self._process_map.get(handling_process_id)
+                if stuck_proc is not None and stuck_proc.last_process_state == HordeProcessState.IMAGE_SUBMITTING:
+                    logger.warning(
+                        f"Process {handling_process_id} was left in IMAGE_SUBMITTING after a failed "
+                        f"submission for job {new_submit.job_id}; "
+                        "resetting to WAITING_FOR_JOB to unblock job scheduling",
+                    )
+                    self._process_map.on_process_state_change(
+                        process_id=handling_process_id,
+                        new_state=HordeProcessState.WAITING_FOR_JOB,
+                    )
 
     def _discard_broken_job(self, completed_job_info: HordeJobInfo) -> None:
         """Remove a job that cannot be submitted from all tracking structures to prevent queue blocking.
@@ -5721,9 +5877,9 @@ class HordeWorkerProcessManager:
                     )
 
             if self._shutting_down:
-                logger.warning("<red>" + "=" * 80 + "</red>")
-                logger.warning("<red>SHUTTING DOWN - Finishing current jobs...</red>")
-                logger.warning("<red>" + "=" * 80 + "</red>")
+                logger.opt(ansi=True).warning("<red>" + "=" * 80 + "</>")
+                logger.opt(ansi=True).warning("<red>SHUTTING DOWN - Finishing current jobs...</>")
+                logger.opt(ansi=True).warning("<red>" + "=" * 80 + "</>")
                 self._status_message_frequency = 5.0
 
             self._last_status_message_time = cur_time
@@ -5926,31 +6082,32 @@ class HordeWorkerProcessManager:
             return
 
         # Get current job info
+        # Priority order: jobs furthest along the pipeline are shown first so the progress
+        # bar stays active (at 100%) for the current job until it is fully submitted before
+        # resetting to 0% for the next generation.
         current_job = None
-        if len(self.jobs_in_progress) > 0:
-            job = self.jobs_in_progress[0]
-            job_info = self.jobs_lookup.get(job)
-            if job_info:
-                # Find the process handling this job
-                progress = None
-                state = None
+        if self.jobs_pending_submit:
+            # Show a job that has passed safety check and is waiting to be submitted to the API.
+            # Checked first so the progress bar stays at 100% until submission completes, even
+            # if a new inference job has already been dispatched and sits at 0%.
+            try:
+                job_info = self.jobs_pending_submit[0]
+                job = job_info.sdk_api_job_info
+                # Find the process that handled this job so we can show its most recent state.
+                # Default to a manager-centric label indicating that the job is queued for submission.
+                state = "PENDING_SUBMIT"
                 for process in self._process_map.values():
                     if process.last_job_referenced == job:
-                        # Calculate granular progress based on stage
-                        inference_progress = process.last_heartbeat_percent_complete
-                        progress = self._calculate_granular_progress(
-                            process.last_process_state,
-                            inference_progress,
-                        )
-                        state = process.last_process_state.name if process.last_process_state else None
+                        # Use the actual last process state name if available.
+                        if process.last_process_state is not None:
+                            state = process.last_process_state.name
                         break
-
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": progress,
-                    "state": state or "Processing",
-                    "is_complete": state == "INFERENCE_COMPLETE" if state else False,
+                    "progress": 100,
+                    "state": state,
+                    "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
                     "steps": job.payload.ddim_steps if job.payload else None,
                     "width": job.payload.width if job.payload else None,
@@ -5962,13 +6119,14 @@ class HordeWorkerProcessManager:
                         else None
                     ),
                 }
+            except (IndexError, AttributeError):
+                # Pending submit list may have been modified, ignore and show no current job
+                pass
         elif self.jobs_being_safety_checked:
-            # Show job currently being safety checked (80-90%)
+            # Show job currently being safety checked – inference is complete, progress stays at 100%
             try:
                 job_info = self.jobs_being_safety_checked[0]
                 job = job_info.sdk_api_job_info
-                # Find the safety process state to determine exact progress
-                safety_progress = 85  # Default mid-point
                 state = "SAFETY_EVALUATING"
                 for process in self._process_map.values():
                     if process.last_process_state in (
@@ -5976,17 +6134,13 @@ class HordeWorkerProcessManager:
                         HordeProcessState.SAFETY_EVALUATING,
                         HordeProcessState.SAFETY_COMPLETE,
                     ):
-                        safety_progress = self._calculate_granular_progress(
-                            process.last_process_state,
-                            None,
-                        )
                         state = process.last_process_state.name
                         break
 
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": safety_progress,
+                    "progress": 100,
                     "state": state,
                     "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
@@ -6004,16 +6158,25 @@ class HordeWorkerProcessManager:
                 # Safety check list may have been modified, ignore and show no current job
                 pass
         elif self.jobs_pending_safety_check:
-            # Show recently completed job in safety check awaiting submission (90%+)
-            # This ensures users see the job progress through final stages
+            # Show recently completed job awaiting safety check – inference is complete, progress stays at 100%
             try:
                 job_info = self.jobs_pending_safety_check[0]
                 job = job_info.sdk_api_job_info
+                # Look up the actual process state for accurate display; fall back to
+                # INFERENCE_COMPLETE since the job has not yet entered safety evaluation.
+                state = "INFERENCE_COMPLETE"
+                for process in self._process_map.values():
+                    if (
+                        process.last_job_referenced == job
+                        and process.last_process_state in self._WEBUI_POST_INFERENCE_STATES
+                    ):
+                        state = process.last_process_state.name
+                        break
                 current_job = {
                     "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                     "model": job.model,
-                    "progress": 90,  # Safety complete, ready for submission
-                    "state": "SAFETY_COMPLETE",
+                    "progress": 100,
+                    "state": state,
                     "is_complete": False,
                     "batch_size": job.payload.n_iter if job.payload else None,
                     "steps": job.payload.ddim_steps if job.payload else None,
@@ -6029,6 +6192,42 @@ class HordeWorkerProcessManager:
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
                 pass
+        elif len(self.jobs_in_progress) > 0:
+            job = self.jobs_in_progress[0]
+            job_info = self.jobs_lookup.get(job)
+            if job_info:
+                # Find the process handling this job
+                progress = None
+                state = None
+                for process in self._process_map.values():
+                    if process.last_job_referenced == job:
+                        process_state = process.last_process_state
+                        state = process_state.name if process_state else None
+                        # After inference completes pin progress at 100 % so the bar never
+                        # goes backwards during post-processing, safety or submission.
+                        if process_state in self._WEBUI_POST_INFERENCE_STATES:
+                            progress = 100
+                        else:
+                            progress = process.last_heartbeat_percent_complete
+                        break
+
+                current_job = {
+                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                    "model": job.model,
+                    "progress": progress if progress is not None else 0,
+                    "state": state or "Processing",
+                    "is_complete": state == "INFERENCE_COMPLETE" if state else False,
+                    "batch_size": job.payload.n_iter if job.payload else None,
+                    "steps": job.payload.ddim_steps if job.payload else None,
+                    "width": job.payload.width if job.payload else None,
+                    "height": job.payload.height if job.payload else None,
+                    "sampler": job.payload.sampler_name if job.payload else None,
+                    "loras": (
+                        self._serialize_loras_for_webui(job.payload.loras)
+                        if job.payload and job.payload.loras
+                        else None
+                    ),
+                }
 
         # Get job queue (exclude jobs that are currently in progress)
         job_queue = []
@@ -6149,6 +6348,7 @@ class HordeWorkerProcessManager:
             last_image_submission_timestamp=self._last_image_job_timestamp,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
+            errors_history=self._errors_history[: self._WEBUI_ERRORS_HISTORY_LIMIT],
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
@@ -6294,10 +6494,6 @@ class HordeWorkerProcessManager:
         responding, they will spend much longer in the queue than they should while the server waits for the worker
         to respond (and ultimately times out).
         """
-        # Remember which jobs were pending before we start faulting jobs in progress
-        # This allows us to preserve jobs that are re-queued for retry
-        jobs_pending_before_fault = set(self.jobs_pending_inference)
-
         # Mark all jobs currently in progress as faulted before clearing them
         # Note: handle_job_fault may re-queue some jobs to jobs_pending_inference for retry
         if len(self.jobs_in_progress) > 0:
@@ -6305,13 +6501,22 @@ class HordeWorkerProcessManager:
                 self.handle_job_fault(faulted_job=job, process_info=None)
             logger.error("Cleared jobs in progress")
 
-        # Clear only the jobs that were already pending, not the ones added for retry
+        # Keep only jobs that have already been retried at least once (retry_count > 0).
+        # These were faulted in a prior cycle and are awaiting their retry attempt; discarding
+        # them would permanently lose the job without ever giving it a second chance.
+        # Fresh pending jobs (retry_count == 0) are cleared — the server will re-queue them.
         if len(self.jobs_pending_inference) > 0:
-            # Filter out old pending jobs, keep only retry jobs
-            # Convert back to deque to maintain the original data structure
-            self.jobs_pending_inference = deque(
-                [job for job in self.jobs_pending_inference if job not in jobs_pending_before_fault],
-            )
+            kept = []
+            for job in self.jobs_pending_inference:
+                job_info = self.jobs_lookup.get(job)
+                if job_info is None:
+                    logger.warning(
+                        f"Job {job.id_} is in jobs_pending_inference but missing from jobs_lookup "
+                        "(state inconsistency); dropping it during purge.",
+                    )
+                elif job_info.retry_count > 0:
+                    kept.append(job)
+            self.jobs_pending_inference = deque(kept)
             self._last_job_submitted_time = time.time()
 
             # Log how many jobs were kept for retry
@@ -6340,6 +6545,8 @@ class HordeWorkerProcessManager:
         if self._skipped_line_next_job_and_process is not None:
             self._skipped_line_next_job_and_process = None
             logger.error("Cleared skipped line next job and process")
+
+        self._invalidate_megapixelsteps_cache()
 
     def _hard_kill_processes(
         self,
@@ -6433,9 +6640,15 @@ class HordeWorkerProcessManager:
         """Replaces processes that haven't checked in since `process_timeout` seconds in bridgeData.
 
         The ``_recently_recovered`` guard is applied *selectively*:
-        - ``is_stuck_on_inference`` and ``INFERENCE_STARTING`` checks are skipped while the flag
-          is set, to prevent cascading replacements immediately after an inference recovery.
-        - ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
+        - INFERENCE_PROCESSING stuck detection is **always** evaluated regardless of the flag.
+          A process holding the inference semaphore in INFERENCE_PROCESSING that stops responding
+          blocks every other process from starting inference.  Newly-replaced processes start in
+          PROCESS_STARTING (never INFERENCE_PROCESSING), so there is no false-positive risk from
+          a recently-recovered slot.
+        - The ``INFERENCE_STARTING`` check is skipped while the flag is set, to prevent cascading
+          replacements: a process blocked waiting to acquire the semaphore cannot send heartbeats
+          and would falsely appear stuck immediately after a prior replacement freed the semaphore.
+        - ``MODEL_PRELOADING``, ``MODEL_PRELOADED``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
           ``PROCESS_STARTING`` are **always** evaluated, so a process that is genuinely stuck in
           one of those states is recovered even when a different process was recently replaced.
         """
@@ -6454,13 +6667,50 @@ class HordeWorkerProcessManager:
         )
 
         any_replaced = False
+        # Tracks only actual subprocess replacements (via _replace_inference_process /
+        # _check_and_replace_process).  Used exclusively for the _recently_recovered cooldown
+        # so that a soft corrective action (e.g. resetting IMAGE_SUBMITTING state) does not
+        # start the cascading-recovery guard unnecessarily.
+        any_process_replaced = False
+        no_local_work = len(self.jobs_pending_inference) == 0 and len(self.jobs_in_progress) == 0
         for process_info in self._process_map.values():
-            # Guard inference-stuck detection against cascading recoveries: skip when a
-            # replacement was made recently so the new process has time to initialise.
-            if not self._recently_recovered and self._process_map.is_stuck_on_inference(
-                process_info.process_id,
-                self.bridge_data.inference_step_timeout,
-            ):
+            # Determine whether this process appears stuck on inference.
+            #
+            # INFERENCE_PROCESSING: always check, no _recently_recovered guard.
+            #   A process that holds the inference semaphore and stops responding blocks all
+            #   other processes.  Newly-replaced processes start in PROCESS_STARTING, so there
+            #   is no risk of a false-positive cascading replacement here.
+            #   Pass a no_step_heartbeat_timeout so that a crash before any diffusion step is
+            #   caught more quickly than the full inference_step_timeout.
+            #
+            #   The timeout must be >= the VAE decode semaphore timeout
+            #   (HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT) because when all diffusion steps
+            #   finish the 100 % PIPELINE_STATE_CHANGE heartbeat resets heartbeats_inference_steps
+            #   to 0, and the process then blocks on vae_decode_semaphore.acquire() without sending
+            #   further heartbeats.  Using a value shorter than VAE_SEMAPHORE_TIMEOUT would kill a
+            #   legitimately-running VAE decode.
+            #
+            # INFERENCE_STARTING: guard with _recently_recovered.
+            #   After replacing a stuck INFERENCE_PROCESSING process the semaphore is released
+            #   and any waiting INFERENCE_STARTING process may immediately acquire it.  While it
+            #   is blocked on acquire() it cannot send heartbeats; without the guard we would
+            #   falsely declare it stuck right away.
+            is_stuck_inference = False
+            if process_info.last_process_state == HordeProcessState.INFERENCE_PROCESSING:
+                # Use VAE_SEMAPHORE_TIMEOUT from HordeInferenceProcess as the source of truth.
+                no_step_timeout = HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT
+                is_stuck_inference = self._process_map.is_stuck_on_inference(
+                    process_info.process_id,
+                    self.bridge_data.inference_step_timeout,
+                    no_step_heartbeat_timeout=no_step_timeout,
+                )
+            elif not self._recently_recovered:
+                is_stuck_inference = self._process_map.is_stuck_on_inference(
+                    process_info.process_id,
+                    self.bridge_data.inference_step_timeout,
+                )
+
+            if is_stuck_inference:
                 # Enhanced logging for stuck job detection
                 time_since_heartbeat = now - process_info.last_heartbeat_timestamp
                 time_since_progress = now - process_info.last_progress_timestamp
@@ -6477,7 +6727,7 @@ class HordeWorkerProcessManager:
                     f"Job: {process_info.last_job_referenced.id_ if process_info.last_job_referenced else 'None'}",
                 )
                 self._replace_inference_process(process_info)
-                any_replaced = True
+                any_replaced = any_process_replaced = True
             else:
                 # Check PROCESS_STARTING first - this should always be checked regardless of job availability
                 # since processes should complete initialization even when no jobs are available
@@ -6487,10 +6737,12 @@ class HordeWorkerProcessManager:
                     HordeProcessState.PROCESS_STARTING,
                     "seems to be stuck starting",
                 ):
-                    any_replaced = True
+                    any_replaced = any_process_replaced = True
 
-                # Skip other state checks if no jobs are available since those states are job-related
-                if self._last_pop_no_jobs_available:
+                # Skip other state checks if no jobs are available since those states are job-related.
+                # But if there are already jobs pending in our local queue or in-progress,
+                # always run these checks so that stuck processes don't block local work.
+                if self._last_pop_no_jobs_available and no_local_work:
                     continue
 
                 # Check job-related states that only matter when jobs are being processed
@@ -6499,6 +6751,11 @@ class HordeWorkerProcessManager:
                         self.bridge_data.preload_timeout,
                         HordeProcessState.MODEL_PRELOADING,
                         "seems to be stuck preloading a model",
+                    ),
+                    (
+                        self.bridge_data.preload_timeout,
+                        HordeProcessState.MODEL_PRELOADED,
+                        "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
                     ),
                     (
                         self.bridge_data.download_timeout,
@@ -6514,7 +6771,29 @@ class HordeWorkerProcessManager:
 
                 for timeout, state, error_message in conditions:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
-                        any_replaced = True
+                        any_replaced = any_process_replaced = True
+
+                # IMAGE_SUBMITTING is managed by the process manager, not the subprocess.
+                # Killing the subprocess is not appropriate here; just reset the state so
+                # the process can accept new jobs.  The primary fix is in
+                # submit_single_generation() (try/finally), but this serves as a safety net
+                # for any edge cases that slip through.
+                _image_submit_stuck_timeout = 60.0
+                if (
+                    process_info.process_type == HordeProcessType.INFERENCE
+                    and process_info.last_process_state == HordeProcessState.IMAGE_SUBMITTING
+                    and (now - process_info.last_received_timestamp) > _image_submit_stuck_timeout
+                ):
+                    logger.error(
+                        f"{process_info} has been stuck in IMAGE_SUBMITTING for "
+                        f"{now - process_info.last_received_timestamp:.0f}s; "
+                        "resetting to WAITING_FOR_JOB to unblock job scheduling",
+                    )
+                    self._process_map.on_process_state_change(
+                        process_id=process_info.process_id,
+                        new_state=HordeProcessState.WAITING_FOR_JOB,
+                    )
+                    any_replaced = True
 
                 # Check for WAITING_FOR_JOB inference processes with stale heartbeats when
                 # jobs are pending.  These processes may have died silently without sending
@@ -6524,14 +6803,14 @@ class HordeWorkerProcessManager:
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
                     and process_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
-                    and (now - process_info.last_heartbeat_timestamp) > self.bridge_data.process_timeout
+                    and (now - process_info.last_heartbeat_timestamp) > max(self.bridge_data.process_timeout, HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT)
                 ):
                     logger.error(
                         f"{process_info} has been idle in WAITING_FOR_JOB for "
-                        f"{now - process_info.last_heartbeat_timestamp:.0f}s with pending jobs; replacing it",
+                        f"{now - process_info.last_heartbeat_timestamp:.0f}s with local work pending; replacing it",
                     )
                     self._replace_inference_process(process_info)
-                    any_replaced = True
+                    any_replaced = any_process_replaced = True
 
                 # Check if an INFERENCE_STARTING process is stuck because the semaphore is
                 # unavailable even though no other process is actively running inference.
@@ -6550,23 +6829,23 @@ class HordeWorkerProcessManager:
                         time_elapsed_starting,
                         now - process_info.last_heartbeat_timestamp,
                     )
-                    if (
-                        time_elapsed_starting > self.bridge_data.preload_timeout
-                        and not any_active_inference_processing
-                    ):
-                        logger.error(
-                            f"{process_info} seems to be stuck in INFERENCE_STARTING "
-                            "with no active inference process holding the semaphore; replacing it",
-                        )
-                        self._replace_inference_process(process_info)
-                        any_replaced = True
+                    if time_elapsed_starting > self.bridge_data.preload_timeout:
+                        if not any_active_inference_processing:
+                            logger.error(
+                                f"{process_info} seems to be stuck in INFERENCE_STARTING "
+                                "with no active inference process holding the semaphore; replacing it",
+                            )
+                            self._replace_inference_process(process_info)
+                            any_replaced = any_process_replaced = True
 
-        # If any processes were replaced and we are not already inside a recovery window,
-        # start the cascading-recovery guard timer.  When _recently_recovered is already True
-        # (because an earlier recovery is still cooling down) we still perform the replacements
-        # above (e.g. MODEL_PRELOADING) but we do NOT start a second timer thread, which would
+        # If any subprocesses were actually replaced and we are not already inside a recovery
+        # window, start the cascading-recovery guard timer.  Soft corrective actions such as
+        # resetting IMAGE_SUBMITTING state do not count as process replacements and therefore
+        # do not trigger the cooldown.  When _recently_recovered is already True (because an
+        # earlier recovery is still cooling down) we still perform the replacements above
+        # (e.g. MODEL_PRELOADING) but we do NOT start a second timer thread, which would
         # extend the blocked window unnecessarily.
-        if any_replaced and not self._recently_recovered:
+        if any_process_replaced and not self._recently_recovered:
             self._recently_recovered = True
             threading.Thread(target=timed_unset_recently_recovered).start()
 

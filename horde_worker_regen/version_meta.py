@@ -82,7 +82,8 @@ def do_version_check() -> None:
                 f"{version_meta.required_min_version}. "
                 f"Please update to the required version by 00:00 {version_meta.required_min_version_update_date} UTC.",
             )
-            logger.warning(reason_for_update_str)
+            if reason_for_update_str:
+                logger.warning(reason_for_update_str)
 
             os.environ["AIWORKER_NOT_REQUIRED_VERSION"] = "1"
 
@@ -94,7 +95,8 @@ def do_version_check() -> None:
                 "by running `git pull` and `update-runtime` (or the appropriate `pip install` "
                 "if you're using your own venv.)",
             )
-            logger.error(reason_for_update_str)
+            if reason_for_update_str:
+                logger.error(reason_for_update_str)
 
             input("Press Enter to continue...")
             exit(1)

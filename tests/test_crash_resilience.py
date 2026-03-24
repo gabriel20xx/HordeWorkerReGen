@@ -79,6 +79,7 @@ class TestReplaceHungProcessesAnyReplaced:
 
         mock_process = MagicMock()
         mock_process.process_id = 0
+        mock_process.last_process_state = HordeProcessState.INFERENCE_PROCESSING
         mock_process.last_heartbeat_percent_complete = 50
         mock_process.last_job_referenced = None
         mock_process.last_heartbeat_delta = 9999
@@ -98,6 +99,94 @@ class TestReplaceHungProcessesAnyReplaced:
 
         assert result is True
         mock_manager._replace_inference_process.assert_called_once_with(mock_process)
+
+    def test_inference_processing_detected_even_when_recently_recovered(self) -> None:
+        """INFERENCE_PROCESSING stuck detection must fire even when _recently_recovered is True.
+
+        Scenario: a previous recovery set _recently_recovered=True (e.g. after one of several
+        prior stuck-process recoveries).  An INFERENCE_PROCESSING process that stops sending
+        heartbeats must still be detected and replaced; the _recently_recovered guard must NOT
+        block it.
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = True  # guard is active
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.process_timeout = 30
+
+        import time
+
+        mock_process = MagicMock()
+        mock_process.process_id = 0
+        mock_process.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        mock_process.last_heartbeat_percent_complete = None
+        mock_process.last_job_referenced = None
+        mock_process.last_heartbeat_delta = 9999
+        mock_process.last_progress_timestamp = time.time() - 9999
+        mock_process.last_received_timestamp = time.time() - 9999
+        mock_process.last_heartbeat_timestamp = time.time() - 9999
+
+        mock_manager._process_map.values.return_value = [mock_process]
+        mock_manager._process_map.is_stuck_on_inference.return_value = True
+
+        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+
+        with patch("threading.Thread"):
+            result = bound_method()
+
+        assert result is True, (
+            "replace_hung_processes must return True for a stuck INFERENCE_PROCESSING process "
+            "even when _recently_recovered is True"
+        )
+        mock_manager._replace_inference_process.assert_called_once_with(mock_process)
+
+    def test_inference_starting_not_detected_when_recently_recovered(self) -> None:
+        """INFERENCE_STARTING detection must be suppressed when _recently_recovered is True.
+
+        After replacing a stuck INFERENCE_PROCESSING process the semaphore is released.  Any
+        INFERENCE_STARTING process that was blocked waiting for the semaphore may have a stale
+        heartbeat timestamp (it could not send heartbeats while blocked).  The _recently_recovered
+        guard prevents a cascading false-positive replacement.
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = True  # guard is active
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.process_timeout = 30
+
+        import time
+
+        mock_process = MagicMock()
+        mock_process.process_id = 0
+        mock_process.last_process_state = HordeProcessState.INFERENCE_STARTING
+        mock_process.last_heartbeat_percent_complete = None
+        mock_process.last_job_referenced = None
+        mock_process.last_heartbeat_delta = 9999
+        mock_process.last_progress_timestamp = time.time() - 9999
+        mock_process.last_received_timestamp = time.time() - 9999
+        mock_process.last_heartbeat_timestamp = time.time() - 9999
+
+        mock_manager._process_map.values.return_value = [mock_process]
+        # is_stuck_on_inference returns True but the guard should block the replacement
+        mock_manager._process_map.is_stuck_on_inference.return_value = True
+
+        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+
+        with patch("threading.Thread"):
+            bound_method()
+
+        # Should NOT replace the INFERENCE_STARTING process while recently recovered
+        mock_manager._replace_inference_process.assert_not_called()
 
 
 class TestBridgeDataLoopExceptionHandling:
@@ -567,6 +656,8 @@ class TestIsStuckOnInference:
         last_progress_timestamp: float,
         last_heartbeat_timestamp: float,
         last_heartbeat_delta: float = 0.0,
+        heartbeats_inference_steps: int = 0,
+        last_progress_value: int | None = None,
     ) -> MagicMock:
         """Create a mock process map entry with configurable timestamps."""
         entry = MagicMock()
@@ -574,6 +665,8 @@ class TestIsStuckOnInference:
         entry.last_progress_timestamp = last_progress_timestamp
         entry.last_heartbeat_timestamp = last_heartbeat_timestamp
         entry.last_heartbeat_delta = last_heartbeat_delta
+        entry.heartbeats_inference_steps = heartbeats_inference_steps
+        entry.last_progress_value = last_progress_value
         return entry
 
     def _make_process_map(self, entry: MagicMock) -> MagicMock:
@@ -688,6 +781,164 @@ class TestIsStuckOnInference:
             assert process_map.is_stuck_on_inference(0, 600) is False, (
                 f"Expected False for state {state.name}"
             )
+
+    def test_inference_processing_no_step_heartbeats_uses_shorter_timeout(self) -> None:
+        """INFERENCE_PROCESSING with no step heartbeats triggers on no_step_heartbeat_timeout.
+
+        Scenario: the process sent the initial PIPELINE_STATE_CHANGE heartbeat (heartbeats_inference_steps=0)
+        and then went completely silent (crash before any diffusion step, or stall during VAE decode).
+        With no_step_heartbeat_timeout=120 and time_since_heartbeat=150, the process must be
+        detected as stuck even though inference_step_timeout=600 has not elapsed.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 150,
+            heartbeats_inference_steps=0,
+        )
+        process_map = self._make_process_map(entry)
+        # Without no_step_heartbeat_timeout, 150s < 600s inference_step_timeout → not stuck
+        assert process_map.is_stuck_on_inference(0, 600) is False
+        # With no_step_heartbeat_timeout=120, 150s > 120s → stuck
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is True
+
+    def test_inference_processing_no_step_heartbeats_not_yet_timed_out(self) -> None:
+        """INFERENCE_PROCESSING with no step heartbeats is NOT stuck if shorter timeout not elapsed."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 50,
+            heartbeats_inference_steps=0,
+        )
+        process_map = self._make_process_map(entry)
+        # 50s < no_step_heartbeat_timeout=120 → not yet stuck
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is False
+
+    def test_inference_processing_with_step_heartbeats_ignores_shorter_timeout(self) -> None:
+        """When step heartbeats have been received, no_step_heartbeat_timeout is ignored.
+
+        A process that has completed at least one diffusion step uses inference_step_timeout,
+        not the shorter no_step_heartbeat_timeout, for the heartbeat check.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 150,
+            heartbeats_inference_steps=5,  # steps have been received
+        )
+        process_map = self._make_process_map(entry)
+        # 150s > no_step_heartbeat_timeout=120, but heartbeats_inference_steps > 0 so short
+        # timeout must NOT apply.  150s < inference_step_timeout=600 → not stuck.
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is False
+
+    def test_inference_starting_no_step_heartbeats_does_not_use_shorter_timeout(self) -> None:
+        """no_step_heartbeat_timeout must NOT apply to INFERENCE_STARTING.
+
+        A process blocked on semaphore acquisition cannot send heartbeats.  Applying the shorter
+        timeout to INFERENCE_STARTING would create false positives right after a prior replacement
+        frees the semaphore (cascading recovery).
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 150,
+            heartbeats_inference_steps=0,
+        )
+        process_map = self._make_process_map(entry)
+        # 150s > no_step_heartbeat_timeout=120, but state is INFERENCE_STARTING → not stuck
+        # (still below the full inference_step_timeout of 600s)
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=120) is False
+
+    def test_inference_processing_at_100_with_recent_heartbeat_not_stuck(self) -> None:
+        """At 100% progress in INFERENCE_PROCESSING with recent heartbeat the process is not stuck.
+
+        When all diffusion steps complete (progress = 100 %), the background heartbeat thread
+        sends periodic PIPELINE_STATE_CHANGE heartbeats at 100 %.  Because the progress value
+        never changes from 100, last_progress_timestamp is not refreshed.  Without the 100 %
+        exemption, is_stuck_on_inference() would fire the progress-stalled check after
+        inference_step_timeout seconds even though the process is actively running VAE decode
+        (a false positive).  The fix skips check 1 when last_progress_value == 100.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale — 100% never changes
+            last_heartbeat_timestamp=time.time() - 10,  # heartbeats arriving normally
+            heartbeats_inference_steps=0,  # reset by PIPELINE_STATE_CHANGE
+            last_progress_value=100,
+        )
+        process_map = self._make_process_map(entry)
+        # Even though progress_timestamp is stale, check 1 must be skipped at 100%.
+        # Heartbeat is recent → checks 2 and 3 also don't fire → not stuck.
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_processing_at_100_no_heartbeat_is_stuck(self) -> None:
+        """At 100% progress in INFERENCE_PROCESSING, a dead process (no heartbeats) is stuck.
+
+        If the process dies during VAE decode, the background heartbeat thread also stops.
+        Even with the 100 % exemption for check 1, checks 2/3 must still detect this case.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale — 100% never changes
+            last_heartbeat_timestamp=time.time() - 9999,  # no heartbeats — process is dead
+            heartbeats_inference_steps=0,
+            last_progress_value=100,
+        )
+        process_map = self._make_process_map(entry)
+        # Check 1 skipped (at 100%), but check 3 fires because no heartbeat for >600s.
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_processing_at_100_no_step_heartbeat_timeout_detects_dead_process(self) -> None:
+        """At 100%, no_step_heartbeat_timeout detects a dead process sooner than inference_step_timeout.
+
+        When the process dies during VAE decode, the no_step_heartbeat_timeout (shorter)
+        should fire before the full inference_step_timeout, as intended for fast recovery.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale
+            last_heartbeat_timestamp=time.time() - 350,  # no heartbeats for 350s > 300s timeout
+            heartbeats_inference_steps=0,
+            last_progress_value=100,
+        )
+        process_map = self._make_process_map(entry)
+        # Check 1 skipped (100%), check 3 doesn't fire (350s < 600s), but check 2 fires
+        # because heartbeats_inference_steps==0 and 350s > no_step_heartbeat_timeout=300s.
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is True
+
+    def test_inference_processing_below_100_still_uses_progress_stalled_check(self) -> None:
+        """Below 100%, a job with stalled progress and recent heartbeats is still detected as stuck.
+
+        The 100 % exemption must not be applied when progress is below 100 %: a process sending
+        heartbeats but making no diffusion progress (e.g., GPU hung at 50 %) should still be
+        detected and replaced.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale progress (stuck at 50 %)
+            last_heartbeat_timestamp=time.time() - 10,  # heartbeats arriving
+            heartbeats_inference_steps=5,
+            last_progress_value=50,
+        )
+        process_map = self._make_process_map(entry)
+        # progress_value != 100, so check 1 must still fire.
+        assert process_map.is_stuck_on_inference(0, 600) is True
 
 
 class TestInferenceSemaphoreBoundedSemaphore:
@@ -1966,6 +2217,298 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         assert acquired, "Semaphore should have 1 permit (unchanged) after safe double-release"
         second_acquired = sem.acquire(block=False)
         assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
+
+
+class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
+    """Tests that the VAE decode semaphore is released when PROCESS_ENDING is received for
+    a process that was in INFERENCE_POST_PROCESSING or POST_PROCESSING_STARTING.
+
+    When the child is killed (e.g., OOM) while it holds the VAE decode semaphore, its
+    finally block may not run.  The PROCESS_ENDING handler must release the semaphore
+    defensively so that subsequent processes are not blocked for up to VAE_SEMAPHORE_TIMEOUT.
+    """
+
+    def _run_process_ending_with_vae_semaphore(
+        self,
+        prior_state: HordeProcessState,
+        *,
+        vae_semaphore_acquired: bool = True,
+    ) -> tuple[MagicMock, object]:
+        """Run receive_and_handle_process_messages with PROCESS_ENDING and a real VAE semaphore.
+
+        Returns (mock_manager, vae_semaphore) so callers can inspect the semaphore state.
+        """
+        import multiprocessing
+        import queue as queue_mod
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+        vae_sem = ctx.BoundedSemaphore(1)
+        if vae_semaphore_acquired:
+            vae_sem.acquire()
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = prior_state
+        process_info.last_job_referenced = None
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+        # Use a no-op BoundedSemaphore for the inference semaphore (not under test here)
+        mock_manager._inference_semaphore = ctx.BoundedSemaphore(1)
+        mock_manager._vae_decode_semaphore = vae_sem
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+        return mock_manager, vae_sem
+
+    def test_vae_semaphore_released_when_process_ending_from_inference_post_processing(self) -> None:
+        """When PROCESS_ENDING arrives for a process in INFERENCE_POST_PROCESSING, the VAE
+        decode semaphore must be released so that other processes are not blocked for up to
+        VAE_SEMAPHORE_TIMEOUT seconds waiting to acquire it.
+        """
+        _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
+            prior_state=HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore should be acquirable after PROCESS_ENDING from "
+            "INFERENCE_POST_PROCESSING — the handler must release it to unblock other processes"
+        )
+
+    def test_vae_semaphore_released_when_process_ending_from_post_processing_starting(self) -> None:
+        """When PROCESS_ENDING arrives for a process in POST_PROCESSING_STARTING, the VAE
+        decode semaphore must be released defensively in case the child acquired it but crashed
+        before emitting INFERENCE_POST_PROCESSING.
+        """
+        _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
+            prior_state=HordeProcessState.POST_PROCESSING_STARTING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore should be acquirable after PROCESS_ENDING from "
+            "POST_PROCESSING_STARTING — defensive release should unblock other processes"
+        )
+
+    def test_vae_semaphore_not_released_when_process_ending_from_inference_processing(self) -> None:
+        """When PROCESS_ENDING arrives for a process in INFERENCE_PROCESSING, the VAE decode
+        semaphore must NOT be released — the process did not hold it at that point.
+        """
+        _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
+            prior_state=HordeProcessState.INFERENCE_PROCESSING,
+            vae_semaphore_acquired=True,
+        )
+
+        # The VAE semaphore was pre-acquired (simulating another process holding it)
+        # and must NOT have been released by the PROCESS_ENDING handler.
+        acquired = vae_sem.acquire(block=False)
+        assert not acquired, (
+            "VAE decode semaphore must not be released when PROCESS_ENDING is from "
+            "INFERENCE_PROCESSING — the process did not hold the VAE semaphore at that state"
+        )
+
+    def test_vae_semaphore_over_release_safe_when_already_released(self) -> None:
+        """When PROCESS_ENDING arrives from INFERENCE_POST_PROCESSING and the child had
+        already released the VAE semaphore via its finally block, the defensive release
+        must not raise an exception and must not inflate permits.
+        """
+        # vae_semaphore_acquired=False: child already released via its finally block
+        _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
+            prior_state=HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=False,
+        )
+        # The semaphore is a BoundedSemaphore: over-release raises ValueError (caught),
+        # so permits must remain at exactly 1 — not inflated to 2.
+        first_acquired = vae_sem.acquire(block=False)
+        assert first_acquired, "VAE semaphore should have its permit after the defensive release"
+        second_acquired = vae_sem.acquire(block=False)
+        assert not second_acquired, "Defensive release must not inflate VAE semaphore permits"
+
+
+class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
+    """Tests that _replace_inference_process() releases the VAE decode semaphore when the
+    process state is INFERENCE_POST_PROCESSING.
+
+    A process stuck in INFERENCE_POST_PROCESSING holds the VAE decode semaphore.  When the
+    manager forcibly replaces it (via _check_and_replace_process / replace_hung_processes),
+    the semaphore must be released so that the replacement process can acquire it.
+    """
+
+    def _run_replace_inference_process(
+        self,
+        state: HordeProcessState,
+        *,
+        vae_semaphore_acquired: bool = True,
+    ) -> object:
+        """Call _replace_inference_process() with the given state and return the VAE semaphore."""
+        import multiprocessing
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+
+        vae_sem = ctx.BoundedSemaphore(1)
+        if vae_semaphore_acquired:
+            vae_sem.acquire()
+
+        process_info = MagicMock()
+        process_info.last_process_state = state
+        process_info.last_job_referenced = None
+        process_info.loaded_horde_model_name = None
+
+        mock_manager = MagicMock()
+        mock_manager._inference_semaphore = ctx.BoundedSemaphore(1)
+        mock_manager._vae_decode_semaphore = vae_sem
+        mock_manager._disk_lock = ctx.Lock()
+        mock_manager.jobs_lookup = {}
+        mock_manager.jobs_in_progress = []
+
+        bound = HordeWorkerProcessManager._replace_inference_process.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound(process_info)
+        return vae_sem
+
+    def test_vae_semaphore_released_when_replacing_inference_post_processing(self) -> None:
+        """When a process stuck in INFERENCE_POST_PROCESSING is replaced, the VAE decode
+        semaphore must be released so that other processes can proceed.
+        """
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore must be released by _replace_inference_process when state is "
+            "INFERENCE_POST_PROCESSING — the stuck process holds the semaphore and other processes "
+            "would be blocked for up to VAE_SEMAPHORE_TIMEOUT without this release"
+        )
+
+    def test_vae_semaphore_released_when_replacing_post_processing_starting(self) -> None:
+        """When a process in POST_PROCESSING_STARTING is replaced, the VAE decode semaphore
+        must also be released — the child may have already acquired it before crashing.
+        """
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.POST_PROCESSING_STARTING,
+            vae_semaphore_acquired=True,
+        )
+
+        acquired = vae_sem.acquire(block=False)
+        assert acquired, (
+            "VAE decode semaphore must be released by _replace_inference_process when state is "
+            "POST_PROCESSING_STARTING — the child may have acquired it before crashing"
+        )
+
+    def test_vae_semaphore_over_release_safe_when_replacing_post_processing(self) -> None:
+        """When _replace_inference_process() is called for INFERENCE_POST_PROCESSING and the
+        child had already released the VAE semaphore, the defensive release must not inflate
+        permits beyond max=1 (BoundedSemaphore raises ValueError, which is caught).
+        """
+        # vae_semaphore_acquired=False: child already released via its finally block
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_semaphore_acquired=False,
+        )
+
+        first_acquired = vae_sem.acquire(block=False)
+        assert first_acquired, "VAE semaphore should have its permit (unchanged) after safe double-release"
+        second_acquired = vae_sem.acquire(block=False)
+        assert not second_acquired, "Defensive release must not inflate VAE semaphore permits"
+
+    def test_vae_semaphore_not_released_when_replacing_inference_processing(self) -> None:
+        """When a process in INFERENCE_PROCESSING is replaced, the VAE decode semaphore
+        must NOT be released — it has not been acquired at that state.
+        """
+        vae_sem = self._run_replace_inference_process(
+            HordeProcessState.INFERENCE_PROCESSING,
+            vae_semaphore_acquired=True,
+        )
+
+        # The VAE semaphore was pre-acquired (simulating another process holding it)
+        # and must NOT have been released.
+        acquired = vae_sem.acquire(block=False)
+        assert not acquired, (
+            "VAE decode semaphore must not be released for INFERENCE_PROCESSING state "
+            "— the VAE semaphore is not held at that stage"
+        )
+
+
+class TestNumBusyWithPostProcessing:
+    """Tests that num_busy_with_post_processing() counts both INFERENCE_POST_PROCESSING
+    and POST_PROCESSING_STARTING states.
+    """
+
+    def _make_process_map(self, states: list[HordeProcessState]) -> object:
+        from horde_worker_regen.process_management.process_manager import HordeProcessType, ProcessMap
+
+        process_map = ProcessMap({})
+        for i, state in enumerate(states):
+            info = MagicMock()
+            info.process_type = HordeProcessType.INFERENCE
+            info.last_process_state = state
+            process_map[i] = info
+        return process_map
+
+    def test_inference_post_processing_counted(self) -> None:
+        """A process in INFERENCE_POST_PROCESSING must be counted."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pm = self._make_process_map([HordeProcessState.INFERENCE_POST_PROCESSING])
+        assert isinstance(pm, ProcessMap)
+        assert pm.num_busy_with_post_processing() == 1
+
+    def test_post_processing_starting_counted(self) -> None:
+        """A process in POST_PROCESSING_STARTING must also be counted — it is transitioning
+        into post-processing and is effectively busy.
+        """
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pm = self._make_process_map([HordeProcessState.POST_PROCESSING_STARTING])
+        assert isinstance(pm, ProcessMap)
+        assert pm.num_busy_with_post_processing() == 1
+
+    def test_inference_processing_not_counted(self) -> None:
+        """A process in INFERENCE_PROCESSING is not in post-processing and must not be counted."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pm = self._make_process_map([HordeProcessState.INFERENCE_PROCESSING])
+        assert isinstance(pm, ProcessMap)
+        assert pm.num_busy_with_post_processing() == 0
+
+    def test_mixed_states_counted_correctly(self) -> None:
+        """With multiple processes in different states, only post-processing states are counted."""
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pm = self._make_process_map(
+            [
+                HordeProcessState.INFERENCE_POST_PROCESSING,
+                HordeProcessState.POST_PROCESSING_STARTING,
+                HordeProcessState.INFERENCE_PROCESSING,
+                HordeProcessState.WAITING_FOR_JOB,
+            ]
+        )
+        assert isinstance(pm, ProcessMap)
+        assert pm.num_busy_with_post_processing() == 2
 
 
 class TestCanAcceptJobPostProcessingComplete:
@@ -3389,12 +3932,12 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
 
 
 class TestReplaceHungWaitingForJob:
-    """Tests for the new per-process WAITING_FOR_JOB stale-heartbeat recovery.
+    """Tests for the per-process WAITING_FOR_JOB stale-heartbeat recovery.
 
     When an inference process has been in WAITING_FOR_JOB with no heartbeat for longer than
-    process_timeout and there are pending jobs, it should be replaced automatically even while
-    _recently_recovered is True (a freshly replaced process starts in PROCESS_STARTING with a
-    fresh timestamp, so it will never immediately re-match this condition).
+    max(process_timeout, 300) seconds and there are pending jobs, it should be replaced
+    automatically even while _recently_recovered is True (a freshly replaced process starts in
+    PROCESS_STARTING with a fresh timestamp, so it will never immediately re-match this condition).
     """
 
     def _make_manager(
@@ -3410,6 +3953,8 @@ class TestReplaceHungWaitingForJob:
         mock_manager._recently_recovered = recently_recovered
         mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
         mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 100
@@ -3447,11 +3992,13 @@ class TestReplaceHungWaitingForJob:
         return proc
 
     def test_stale_waiting_for_job_process_replaced_when_jobs_pending(self) -> None:
-        """A WAITING_FOR_JOB process whose heartbeat is older than process_timeout must be
+        """A WAITING_FOR_JOB process whose heartbeat is older than 300s must be
         replaced when there are pending jobs (not _last_pop_no_jobs_available).
+        The threshold is max(process_timeout, 300) so even high-performance-mode workers
+        (process_timeout=100s) wait at least 300s before being replaced.
         """
-        # 200s stale, process_timeout=100s → should trigger
-        proc = self._make_inference_process(1, time_elapsed=200.0)
+        # 400s stale, effective threshold=max(100, 300)=300s → should trigger
+        proc = self._make_inference_process(1, time_elapsed=400.0)
         mock_manager = self._make_manager([proc])
 
         with patch("threading.Thread"):
@@ -3480,9 +4027,23 @@ class TestReplaceHungWaitingForJob:
 
     def test_fresh_waiting_for_job_process_not_replaced(self) -> None:
         """A WAITING_FOR_JOB process with a recent heartbeat must not be replaced."""
-        # Only 10s stale, well below process_timeout=100s
+        # Only 10s stale, well below effective threshold of max(100, 300)=300s
         proc = self._make_inference_process(1, time_elapsed=10.0)
         mock_manager = self._make_manager([proc])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+    def test_waiting_for_job_not_replaced_below_300s_threshold(self) -> None:
+        """Even with process_timeout=100 (high_performance_mode), a process idle for only 200s
+        must NOT be replaced because the effective threshold is max(process_timeout, 300)=300s.
+        """
+        # 200s stale, effective threshold=max(100, 300)=300s → must NOT trigger
+        proc = self._make_inference_process(1, time_elapsed=200.0)
+        mock_manager = self._make_manager([proc])  # process_timeout=100
 
         with patch("threading.Thread"):
             result = mock_manager._bound_replace_hung()
@@ -3505,3 +4066,1147 @@ class TestReplaceHungWaitingForJob:
 
         mock_manager._replace_inference_process.assert_not_called()
         assert result is False
+
+
+class TestImageSubmittingStuckRecovery:
+    """Tests for the IMAGE_SUBMITTING stuck-process fixes.
+
+    Two complementary guards are tested:
+    1. submit_single_generation() try/finally resets the state to WAITING_FOR_JOB on every
+       failure path so the process never stays in IMAGE_SUBMITTING after a failed submission.
+    2. replace_hung_processes() resets any process that remains in IMAGE_SUBMITTING for longer
+       than 60 s as a safety net, without killing the subprocess.
+    """
+
+    # -------------------------------------------------------------------------
+    # Helpers shared by the submit_single_generation tests
+    # -------------------------------------------------------------------------
+
+    def _make_process_map(self, process_id: int, initial_state: HordeProcessState) -> tuple[MagicMock, MagicMock]:
+        """Return a (ProcessMap-like mock, process_info mock) pair that tracks state changes."""
+        process_info = MagicMock()
+        process_info.last_process_state = initial_state
+
+        def on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
+            process_info.last_process_state = new_state
+
+        process_map = MagicMock()
+        process_map.items.return_value = [(process_id, process_info)]
+        process_map.get.return_value = process_info
+        process_map.on_process_state_change.side_effect = on_state_change
+
+        return process_map, process_info
+
+    def _make_submit_manager(
+        self,
+        process_id: int,
+        *,
+        initial_state: HordeProcessState = HordeProcessState.IMAGE_SAVED,
+    ) -> tuple[MagicMock, MagicMock]:
+        """Build a minimal mock manager suitable for calling submit_single_generation."""
+        process_map, process_info = self._make_process_map(process_id, initial_state)
+        mock_manager = MagicMock()
+        mock_manager._process_map = process_map
+        return mock_manager, process_info
+
+    def _make_new_submit(self, process_info: MagicMock) -> MagicMock:
+        """Build a faulted PendingSubmitJob mock whose job reference matches the process.
+
+        Using is_faulted=True (faulted job, no image) lets the function bypass the
+        image-upload section and proceed directly to setting IMAGE_SUBMITTING and
+        calling the API, which is what we want to exercise.
+        """
+        sdk_job = MagicMock()
+        # payload.seed must look like an integer so int() doesn't raise
+        sdk_job.payload.seed = 0
+
+        completed_job_info = MagicMock()
+        completed_job_info.sdk_api_job_info = sdk_job
+        completed_job_info.state = "faulted"
+
+        new_submit = MagicMock()
+        new_submit.is_faulted = True   # faulted → skip "no image result" early return
+        new_submit.image_result = None  # faulted job has no image
+        new_submit.completed_job_info = completed_job_info
+
+        # Make process_info.last_job_referenced match so handling_process_id is found
+        process_info.last_job_referenced = sdk_job
+
+        return new_submit
+
+    # -------------------------------------------------------------------------
+    # submit_single_generation tests
+    # -------------------------------------------------------------------------
+
+    def test_state_reset_to_waiting_on_api_timeout(self) -> None:
+        """Process state must be reset to WAITING_FOR_JOB when the API call times out."""
+        import asyncio
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        manager, proc_info = self._make_submit_manager(0)
+        new_submit = self._make_new_submit(proc_info)
+
+        # Simulate an asyncio.TimeoutError coming from the API call
+        async def _timeout(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise asyncio.TimeoutError
+
+        manager.horde_client_session.submit_request.side_effect = _timeout
+
+        bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
+        asyncio.run(bound(new_submit))
+
+        assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
+
+    def test_state_reset_to_waiting_on_unexpected_exception(self) -> None:
+        """Process state must be reset to WAITING_FOR_JOB when submit_request raises unexpectedly."""
+        import asyncio
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        manager, proc_info = self._make_submit_manager(0)
+        new_submit = self._make_new_submit(proc_info)
+
+        async def _fail(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise RuntimeError("unexpected error")
+
+        manager.horde_client_session.submit_request.side_effect = _fail
+
+        bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
+        asyncio.run(bound(new_submit))
+
+        assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
+
+    def test_state_reset_to_waiting_on_api_error_response(self) -> None:
+        """Process state must be reset to WAITING_FOR_JOB when the API returns a RequestErrorResponse."""
+        import asyncio
+
+        from horde_sdk import RequestErrorResponse
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        manager, proc_info = self._make_submit_manager(0)
+        new_submit = self._make_new_submit(proc_info)
+
+        error_response = MagicMock(spec=RequestErrorResponse)
+        error_response.message = "Some unexpected API error"
+
+        async def _return_error(*args, **kwargs) -> object:  # noqa: ANN002, ANN003
+            return error_response
+
+        # Bypass asyncio.wait_for so the coroutine runs directly and returns the error
+        async def _wait_for_passthrough(coro, timeout) -> object:  # noqa: ANN001, ANN002
+            return await coro
+
+        with patch("asyncio.wait_for", side_effect=_wait_for_passthrough):
+            manager.horde_client_session.submit_request = _return_error
+            bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
+            asyncio.run(bound(new_submit))
+
+        assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
+
+    # -------------------------------------------------------------------------
+    # replace_hung_processes safety-net tests
+    # -------------------------------------------------------------------------
+
+    def _make_hung_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        last_pop_no_jobs: bool = False,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._check_and_replace_process.return_value = False
+        mock_manager._process_map.values.return_value = processes
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def _make_image_submitting_process(
+        self,
+        process_id: int,
+        *,
+        time_elapsed: float,
+    ) -> MagicMock:
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.IMAGE_SUBMITTING
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_image_submitting_stuck_over_60s_resets_state(self) -> None:
+        """A process stuck in IMAGE_SUBMITTING for >60 s must have its state reset to WAITING_FOR_JOB."""
+        proc = self._make_image_submitting_process(2, time_elapsed=90.0)
+        mock_manager = self._make_hung_manager([proc])
+
+        state_changes: list[HordeProcessState] = []
+
+        def _on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
+            proc.last_process_state = new_state
+            state_changes.append(new_state)
+
+        mock_manager._process_map.on_process_state_change.side_effect = _on_state_change
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        assert HordeProcessState.WAITING_FOR_JOB in state_changes
+        # The subprocess must NOT have been killed
+        mock_manager._replace_inference_process.assert_not_called()
+
+    def test_image_submitting_not_reset_within_60s(self) -> None:
+        """A process in IMAGE_SUBMITTING for <60 s must not be touched (submission still in progress)."""
+        proc = self._make_image_submitting_process(2, time_elapsed=30.0)
+        mock_manager = self._make_hung_manager([proc])
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is False
+        mock_manager._replace_inference_process.assert_not_called()
+        mock_manager._process_map.on_process_state_change.assert_not_called()
+
+    def test_image_submitting_stuck_not_reset_when_no_jobs_available(self) -> None:
+        """IMAGE_SUBMITTING timeout check must be skipped when no jobs are available.
+
+        The check is inside the _last_pop_no_jobs_available guard, so it should not
+        trigger when the server has no work.
+        """
+        proc = self._make_image_submitting_process(2, time_elapsed=9999.0)
+        mock_manager = self._make_hung_manager([proc], last_pop_no_jobs=True)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is False
+        mock_manager._replace_inference_process.assert_not_called()
+
+    def test_image_submitting_reset_does_not_trigger_recently_recovered(self) -> None:
+        """Resetting IMAGE_SUBMITTING state must NOT set _recently_recovered.
+
+        IMAGE_SUBMITTING recovery is a soft state reset — the subprocess is NOT killed.
+        Setting _recently_recovered would incorrectly suppress INFERENCE_STARTING detection
+        and other legitimate checks for inference_step_timeout seconds after every submission
+        timeout, which is far too conservative.  Only actual subprocess replacements should
+        start the cascading-recovery cooldown.
+        """
+        proc = self._make_image_submitting_process(2, time_elapsed=90.0)
+        mock_manager = self._make_hung_manager([proc])
+
+        thread_started = False
+
+        class _TrackThread:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                nonlocal thread_started
+                thread_started = True
+
+            def start(self) -> None:
+                pass
+
+        with patch("threading.Thread", _TrackThread):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        # The subprocess must NOT have been killed
+        mock_manager._replace_inference_process.assert_not_called()
+        # The cascading-recovery guard must NOT have been activated
+        assert mock_manager._recently_recovered is False
+        assert not thread_started, "_recently_recovered timer thread must not be started for a state reset"
+
+
+
+class TestReplaceHungModelPreloaded:
+    """Tests that MODEL_PRELOADED stuck detection fires after ``preload_timeout`` seconds.
+
+    A process that is stuck in MODEL_PRELOADED (the model has been loaded into RAM but
+    the job was never dispatched, e.g. because ``start_inference()`` was never called due
+    to ``preload_models()`` blocking it) should be replaced just like MODEL_PRELOADING.
+    """
+
+    def _make_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        recently_recovered: bool = False,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager,
+        )
+        return mock_manager
+
+    def _make_process(
+        self,
+        process_id: int,
+        state: HordeProcessState,
+        *,
+        time_elapsed: float = 9999.0,
+    ) -> MagicMock:
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = state
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def _fake_check_and_replace(self, mock_manager: MagicMock) -> object:
+        """Return a ``_check_and_replace_process`` implementation that actually checks the state."""
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        return fake_check_and_replace
+
+    def test_model_preloaded_replaced_after_timeout(self) -> None:
+        """A process stuck in MODEL_PRELOADED for longer than preload_timeout must be replaced."""
+        proc = self._make_process(1, HordeProcessState.MODEL_PRELOADED, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=False)
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+    def test_model_preloaded_replaced_even_when_recently_recovered(self) -> None:
+        """MODEL_PRELOADED stuck detection must fire even when _recently_recovered is True.
+
+        A process that cannot receive its START_INFERENCE message (e.g. because
+        ``preload_models()`` keeps returning True and blocks ``start_inference()``)
+        must be recovered regardless of whether a prior recovery recently ran.
+        """
+        proc = self._make_process(1, HordeProcessState.MODEL_PRELOADED, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=True)
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
+
+        with patch("threading.Thread") as mock_thread:
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+        mock_thread.assert_not_called()
+
+    def test_model_preloaded_not_replaced_before_timeout(self) -> None:
+        """A process that just entered MODEL_PRELOADED (time_elapsed < preload_timeout).
+
+        Must NOT be replaced, since it is expected to receive START_INFERENCE shortly.
+        """
+        # 10 seconds elapsed — well below preload_timeout (80 s)
+        proc = self._make_process(1, HordeProcessState.MODEL_PRELOADED, time_elapsed=10.0)
+        mock_manager = self._make_manager([proc], recently_recovered=False)
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+    def test_model_preloaded_not_replaced_when_no_jobs_available(self) -> None:
+        """A stale MODEL_PRELOADED process must NOT be replaced when no jobs are available.
+
+        When _last_pop_no_jobs_available is True, job-related stuck checks (including
+        MODEL_PRELOADED) are skipped to avoid pointless process churn.
+        """
+        proc = self._make_process(1, HordeProcessState.MODEL_PRELOADED, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=False)
+        mock_manager._last_pop_no_jobs_available = True
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+
+class TestPreloadModelsPipeBroken:
+    """Tests that a broken pipe in ``preload_models()`` causes immediate process replacement.
+
+    When ``safe_send_message()`` returns False for the PRELOAD_MODEL message,
+    ``_replace_inference_process`` must be called on the dead process immediately.
+    Without this, ``preload_models()`` would return True every cycle (because neither
+    the model map nor the process map state was updated), permanently blocking
+    ``start_inference()`` and leaving any MODEL_PRELOADED process stuck waiting for
+    a job that will never arrive.
+    """
+
+    def _make_manager_preload_send_failure(self) -> MagicMock:
+        """Build a minimal mock for the pipe-failure path of ``preload_models()``."""
+        from horde_worker_regen.process_management.process_manager import (
+            HordeWorkerProcessManager,
+        )
+
+        # Pending job for model "Juggernaut XL" (not yet loaded)
+        pending_job = MagicMock()
+        pending_job.model = "Juggernaut XL"
+        pending_job.payload = MagicMock()
+        pending_job.payload.loras = None
+        pending_job.payload.tiling = None
+
+        # The process whose pipe is broken
+        available_process = MagicMock()
+        available_process.process_id = 2
+        available_process.safe_send_message.return_value = False
+        available_process.last_send_error = BrokenPipeError("simulated broken pipe")
+        available_process.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        available_process.loaded_horde_model_name = None
+
+        # Model map reports "Juggernaut XL" not loaded (so the preload is attempted)
+        mock_model_map = MagicMock()
+        mock_model_map.root = {}  # empty → LOADING check returns "not loaded"
+        mock_model_map_values = []
+        mock_model_map.values.return_value = mock_model_map_values
+
+        mock_process_map = MagicMock()
+        mock_process_map.values.return_value = []
+        mock_process_map.get_first_available_inference_process.return_value = available_process
+        mock_process_map.num_loaded_inference_processes.return_value = 3
+        mock_process_map.num_preloading_processes.return_value = 0
+
+        mock_manager = MagicMock()
+        mock_manager._horde_model_map = mock_model_map
+        mock_manager._process_map = mock_process_map
+        mock_manager.jobs_pending_inference = [pending_job]
+        mock_manager.jobs_in_progress = []
+        mock_manager._shutting_down = False
+        mock_manager._preload_delay_notified = False
+        mock_manager._max_concurrent_inference_processes = 3
+        mock_manager.bridge_data.very_fast_disk_mode = False
+        mock_manager.bridge_data.cycle_process_on_model_change = False
+        mock_manager.get_model_baseline.return_value = None
+
+        mock_manager._preload_models = HordeWorkerProcessManager.preload_models.__get__(
+            mock_manager, HordeWorkerProcessManager,
+        )
+        return mock_manager, available_process
+
+    def test_replace_inference_process_called_on_pipe_failure(self) -> None:
+        """When safe_send_message returns False for PRELOAD_MODEL.
+
+        _replace_inference_process must be called immediately on the dead process.
+        """
+        mock_manager, available_process = self._make_manager_preload_send_failure()
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage",
+        ):
+            mock_manager._preload_models()
+
+        mock_manager._replace_inference_process.assert_called_once_with(available_process)
+
+    def test_model_map_not_updated_on_pipe_failure(self) -> None:
+        """When safe_send_message fails, model map entry must NOT be created.
+
+        This ensures the next cycle can select a new healthy process for preloading.
+        """
+        mock_manager, _ = self._make_manager_preload_send_failure()
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage",
+        ):
+            mock_manager._preload_models()
+
+        # update_entry must not have been called (model map not polluted with stale LOADING state)
+        mock_manager._horde_model_map.update_entry.assert_not_called()
+
+    def test_preload_models_still_returns_true_on_pipe_failure(self) -> None:
+        """preload_models() returns True even on pipe failure.
+
+        The main loop knows a preload was attempted and will retry next cycle with a fresh process.
+        """
+        mock_manager, _ = self._make_manager_preload_send_failure()
+
+        with patch(
+            "horde_worker_regen.process_management.process_manager.HordePreloadInferenceModelMessage",
+        ):
+            result = mock_manager._preload_models()
+
+        assert result is True
+
+
+class TestReplaceInferenceProcessDoesNotDoubleFault:
+    """Tests that _replace_inference_process does not fault a job that was already re-queued for retry.
+
+    When _purge_jobs() is called first (e.g. all processes timed out), it faults each in-progress
+    job and re-queues eligible ones to jobs_pending_inference.  Afterwards _replace_inference_process
+    is called for each crashed process.  Without the guard, _replace_inference_process would call
+    handle_job_fault a second time for the same job — consuming the single retry budget and marking
+    the job permanently faulted before it ever gets its second chance.
+    """
+
+    def _make_manager_with_job_state(
+        self,
+        *,
+        job_in_progress: bool,
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Return (mock_manager, job, process_info) with the job either in jobs_in_progress or not.
+
+        The returned mock_manager has _replace_inference_process bound to the real
+        implementation so we can exercise the actual guard.
+        """
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = MagicMock()
+        job.id_ = "aaaabbbb-0000-0000-0000-000000000001"
+
+        mock_manager = MagicMock()
+        mock_manager.jobs_in_progress = [job] if job_in_progress else []
+        mock_manager.jobs_lookup = {job: MagicMock()}
+
+        # Bind the real method so it exercises the actual code path
+        bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
+
+        process_info = MagicMock()
+        process_info.last_job_referenced = job
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.loaded_horde_model_name = None
+        mock_manager._inference_semaphore.release.side_effect = ValueError
+        mock_manager._disk_lock.release.side_effect = ValueError
+
+        bound(process_info)
+        return mock_manager, job, process_info
+
+    def test_handle_job_fault_called_when_job_is_in_progress(self) -> None:
+        """_replace_inference_process must call handle_job_fault when the job is still in-progress."""
+        mock_manager, job, process_info = self._make_manager_with_job_state(job_in_progress=True)
+        mock_manager.handle_job_fault.assert_called_once_with(
+            faulted_job=job,
+            process_info=process_info,
+        )
+
+    def test_handle_job_fault_skipped_when_job_already_requeued_for_retry(self) -> None:
+        """_replace_inference_process must NOT call handle_job_fault when the job is no longer in jobs_in_progress.
+
+        This happens when _purge_jobs() already moved the job to jobs_pending_inference for its
+        retry attempt.  A second call would exhaust the retry budget and permanently fault the job.
+        """
+        mock_manager, _job, _process_info = self._make_manager_with_job_state(job_in_progress=False)
+        mock_manager.handle_job_fault.assert_not_called()
+
+
+class TestPurgeJobsRetryCount:
+    """Tests that _purge_jobs keeps retry-eligible jobs and discards fresh ones.
+
+    The key invariants:
+    - Jobs already faulted and re-queued (retry_count > 0) survive the purge.
+    - Fresh pending jobs (retry_count == 0) are cleared.
+    - In-progress jobs get faulted via handle_job_fault (which increments retry_count),
+      so they end up in jobs_pending_inference with retry_count > 0 and survive.
+    """
+
+    def _make_job(self, job_id: str) -> MagicMock:
+        job = MagicMock()
+        job.id_ = job_id
+        return job
+
+    def _make_job_info(self, retry_count: int) -> MagicMock:
+        job_info = MagicMock()
+        job_info.retry_count = retry_count
+        return job_info
+
+    def _make_manager(
+        self,
+        *,
+        jobs_in_progress: list,
+        jobs_pending_inference: list,
+        jobs_lookup: dict,
+    ) -> MagicMock:
+        import types
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager.jobs_in_progress = list(jobs_in_progress)
+        mock_manager.jobs_pending_inference = deque(jobs_pending_inference)
+        mock_manager.jobs_lookup = dict(jobs_lookup)
+        mock_manager.jobs_being_safety_checked = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_pending_submit = []
+        mock_manager._skipped_line_next_job_and_process = None
+
+        # handle_job_fault is real: we want _purge_jobs to drive it, so bind the real one.
+        # But to avoid side effects we use a side_effect that just appends to jobs_pending_inference
+        # as the real implementation would for a retry-eligible job.
+        max_retries = HordeWorkerProcessManager.MAX_JOB_RETRIES
+
+        def fake_handle_job_fault(faulted_job: MagicMock, process_info: MagicMock) -> None:
+            job_info = mock_manager.jobs_lookup.get(faulted_job)
+            if job_info is not None and job_info.retry_count < max_retries:
+                job_info.retry_count += 1
+                if faulted_job not in mock_manager.jobs_pending_inference:
+                    mock_manager.jobs_pending_inference.append(faulted_job)
+                if faulted_job in mock_manager.jobs_in_progress:
+                    mock_manager.jobs_in_progress.remove(faulted_job)
+
+        mock_manager.handle_job_fault = fake_handle_job_fault
+        mock_manager._last_job_submitted_time = 0.0
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+
+        bound = types.MethodType(HordeWorkerProcessManager._purge_jobs, mock_manager)
+        mock_manager._bound_purge = bound
+        return mock_manager
+
+    def test_fresh_pending_job_is_cleared(self) -> None:
+        """A pending job that has never been retried (retry_count == 0) must be removed."""
+        job = self._make_job("fresh-job")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[job],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job not in mock_manager.jobs_pending_inference
+
+    def test_already_retried_pending_job_is_kept(self) -> None:
+        """A pending job with retry_count > 0 (already faulted once and re-queued) must be kept.
+
+        This covers the scenario where a prior PROCESS_ENDING handler already retried the job
+        before _purge_jobs runs.  The old snapshot-based filter would discard this job because
+        it was already in jobs_pending_inference at snapshot time.
+        """
+        job = self._make_job("retried-job")
+        job_info = self._make_job_info(retry_count=1)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[job],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job in mock_manager.jobs_pending_inference
+
+    def test_in_progress_job_retried_and_kept(self) -> None:
+        """A job that was in progress (retry_count == 0) gets retried by the purge and survives.
+
+        _purge_jobs calls handle_job_fault for each in-progress job; handle_job_fault moves the
+        job to jobs_pending_inference with retry_count == 1.  The subsequent filter must keep it.
+        """
+        job = self._make_job("in-progress-job")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_pending_inference=[],
+            jobs_lookup={job: job_info},
+        )
+        mock_manager._bound_purge()
+
+        assert job in mock_manager.jobs_pending_inference
+        assert job_info.retry_count == 1
+
+    def test_mixed_pending_jobs_only_retried_ones_kept(self) -> None:
+        """With a mix of fresh and retried pending jobs, only retried ones must survive."""
+        fresh = self._make_job("fresh")
+        retried = self._make_job("retried")
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[fresh, retried],
+            jobs_lookup={
+                fresh: self._make_job_info(retry_count=0),
+                retried: self._make_job_info(retry_count=1),
+            },
+        )
+        mock_manager._bound_purge()
+
+        assert fresh not in mock_manager.jobs_pending_inference
+        assert retried in mock_manager.jobs_pending_inference
+
+
+class TestReplaceHungProcessesLocalJobsPending:
+    """Tests that replace_hung_processes() runs job-related stuck checks when local jobs are queued.
+
+    Regression tests for the bug where the _last_pop_no_jobs_available guard skipped
+    MODEL_PRELOADING and WAITING_FOR_JOB stuck-process checks even when jobs were already
+    sitting in the local jobs_pending_inference queue. A stuck process in those states would
+    never be replaced, leaving queued jobs unable to make progress.
+    """
+
+    def _make_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        recently_recovered: bool = False,
+        last_pop_no_jobs: bool = False,
+        jobs_pending_inference: list | None = None,
+        jobs_in_progress: list | None = None,
+    ) -> MagicMock:
+        """Build a minimal mock manager wired for replace_hung_processes()."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 100
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._check_and_replace_process.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+        mock_manager.jobs_pending_inference = (
+            jobs_pending_inference if jobs_pending_inference is not None else []
+        )
+        mock_manager.jobs_in_progress = jobs_in_progress if jobs_in_progress is not None else []
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager,
+        )
+        return mock_manager
+
+    def _make_model_preloading_process(self, process_id: int) -> MagicMock:
+        """Return a mock process stuck in MODEL_PRELOADING with a stale heartbeat."""
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.MODEL_PRELOADING
+        proc.last_received_timestamp = _time.time() - 9999
+        proc.last_heartbeat_timestamp = _time.time() - 9999
+        proc.last_progress_timestamp = _time.time() - 9999
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def _make_waiting_for_job_process(self, process_id: int, *, time_elapsed: float) -> MagicMock:
+        """Return a mock inference process in WAITING_FOR_JOB with a stale heartbeat."""
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_model_preloading_check_runs_when_local_jobs_pending(self) -> None:
+        """MODEL_PRELOADING stuck check must run when jobs are in the local queue.
+
+        Before the fix, the guard ``if _last_pop_no_jobs_available: continue`` was
+        unconditional and skipped the MODEL_PRELOADING check even when jobs were
+        already pending locally, causing stuck preloading processes to be ignored.
+        """
+        proc = self._make_model_preloading_process(0)
+        job = MagicMock()
+
+        mock_manager = self._make_manager(
+            [proc],
+            last_pop_no_jobs=True,
+            jobs_pending_inference=[job],
+        )
+
+        with patch("threading.Thread"):
+            mock_manager._bound_replace_hung()
+
+        called_states = [call.args[2] for call in mock_manager._check_and_replace_process.call_args_list]
+        assert HordeProcessState.MODEL_PRELOADING in called_states, (
+            "MODEL_PRELOADING check must run when local jobs are pending, "
+            "even when _last_pop_no_jobs_available is True"
+        )
+
+    def test_model_preloading_check_skipped_when_no_jobs_anywhere(self) -> None:
+        """MODEL_PRELOADING stuck check must be skipped when there is no work anywhere.
+
+        When the horde API reports no new jobs AND the local queue is also empty,
+        skipping the check avoids unnecessary churn (preserving the original guard intent).
+        """
+        proc = self._make_model_preloading_process(0)
+
+        mock_manager = self._make_manager(
+            [proc],
+            last_pop_no_jobs=True,
+            jobs_pending_inference=[],
+            jobs_in_progress=[],
+        )
+
+        with patch("threading.Thread"):
+            mock_manager._bound_replace_hung()
+
+        called_states = [call.args[2] for call in mock_manager._check_and_replace_process.call_args_list]
+        assert HordeProcessState.MODEL_PRELOADING not in called_states, (
+            "MODEL_PRELOADING check must be skipped when no jobs are available anywhere"
+        )
+
+    def test_stale_waiting_for_job_replaced_when_no_horde_jobs_but_local_jobs_pending(self) -> None:
+        """A stale WAITING_FOR_JOB process must be replaced when local jobs are pending.
+
+        Scenario: _last_pop_no_jobs_available=True (the horde API has no new jobs to offer),
+        but jobs_pending_inference already has a job waiting. The stuck WAITING_FOR_JOB
+        process must be replaced so that job can eventually reach start_inference().
+        """
+        # 9999s stale — well above the max(process_timeout=100, VAE_SEMAPHORE_TIMEOUT=300)=300s threshold
+        proc = self._make_waiting_for_job_process(0, time_elapsed=9999.0)
+        job = MagicMock()
+
+        mock_manager = self._make_manager(
+            [proc],
+            last_pop_no_jobs=True,
+            jobs_pending_inference=[job],
+        )
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+    def test_stale_waiting_for_job_not_replaced_when_no_jobs_anywhere(self) -> None:
+        """A stale WAITING_FOR_JOB process must NOT be replaced when there is no work anywhere.
+
+        WAITING_FOR_JOB is the expected idle state when there is nothing to do; replacing
+        processes in that state would cause unnecessary churn.
+        """
+        proc = self._make_waiting_for_job_process(0, time_elapsed=9999.0)
+
+        mock_manager = self._make_manager(
+            [proc],
+            last_pop_no_jobs=True,
+            jobs_pending_inference=[],
+            jobs_in_progress=[],
+        )
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
+    def test_jobs_in_progress_alone_also_overrides_guard(self) -> None:
+        """The guard must also be bypassed when jobs_in_progress is non-empty.
+
+        Even if jobs_pending_inference is empty, an in-progress job means work is
+        actively happening. A WAITING_FOR_JOB process that stops heartbeating while
+        a job is in-progress should still be detected and replaced.
+        """
+        proc = self._make_waiting_for_job_process(0, time_elapsed=9999.0)
+        in_progress_job = MagicMock()
+
+        mock_manager = self._make_manager(
+            [proc],
+            last_pop_no_jobs=True,
+            jobs_pending_inference=[],
+            jobs_in_progress=[in_progress_job],
+        )
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+
+class TestInferenceBackgroundHeartbeat:
+    """Tests for the background heartbeat thread introduced to prevent false
+    stuck-process detection during long-running computation phases (e.g., VAE decode).
+    """
+
+    def _make_proc(self) -> "MagicMock":
+        """Create a minimal mock of HordeInferenceProcess for start_inference tests."""
+        import multiprocessing
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._is_busy = False
+        proc._in_post_processing = False
+        proc._vae_acquire_attempted = False
+        proc._vae_lock_was_acquired = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_sanitized_negative_prompt = None
+        proc._last_inference_percent = None
+        proc._active_model_name = "TestModel"
+        proc.VAE_SEMAPHORE_TIMEOUT = 5
+        proc._INFERENCE_HEARTBEAT_INTERVAL = 30.0
+        proc._inference_semaphore = multiprocessing.Semaphore(1)
+        proc._vae_decode_semaphore = multiprocessing.Semaphore(1)
+        proc.send_process_state_change_message = MagicMock()
+        proc.send_heartbeat_message = MagicMock()
+        return proc
+
+    def test_heartbeat_thread_started_and_stopped(self) -> None:
+        """The background heartbeat thread must be started before basic_inference()
+        and stopped (via Event.set + join) after it returns.
+        """
+        import threading as _threading
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc()
+        fake_result = MagicMock()
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = [fake_result]
+
+        job_info = MagicMock()
+        job_info.payload.prompt = "test"
+        job_info.extra_source_images = None
+        job_info.source_image = None
+        job_info.source_mask = None
+        job_info.ids = []
+
+        threads_created: list[_threading.Thread] = []
+        real_thread_cls = _threading.Thread
+
+        def capturing_thread(*args: object, **kwargs: object) -> _threading.Thread:
+            t = real_thread_cls(*args, **kwargs)
+            threads_created.append(t)
+            return t
+
+        with patch("horde_worker_regen.process_management.inference_process.threading.Thread", capturing_thread):
+            result = HordeInferenceProcess.start_inference(proc, job_info)
+
+        assert result is not None, "start_inference must return results"
+        # At least one thread was created for the heartbeat
+        assert len(threads_created) >= 1, "A background heartbeat thread must be created during inference"
+        # The thread must have finished (was joined)
+        heartbeat_threads = [t for t in threads_created if "heartbeat" in (t.name or "")]
+        assert heartbeat_threads, "A thread named with 'heartbeat' must be created during inference"
+        assert not heartbeat_threads[0].is_alive(), "The heartbeat thread must be stopped after inference"
+
+    def test_heartbeat_thread_is_daemon(self) -> None:
+        """The background heartbeat thread must be a daemon thread so it does not
+        prevent the process from exiting if it is somehow not stopped cleanly.
+        """
+        import threading as _threading
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = self._make_proc()
+        fake_result = MagicMock()
+        proc._horde = MagicMock()
+        proc._horde.basic_inference.return_value = [fake_result]
+
+        job_info = MagicMock()
+        job_info.payload.prompt = "test"
+        job_info.extra_source_images = None
+        job_info.source_image = None
+        job_info.source_mask = None
+        job_info.ids = []
+
+        daemon_values: list[bool | None] = []
+
+        real_thread_init = _threading.Thread.__init__
+
+        def patched_init(self_t: _threading.Thread, *args: object, **kwargs: object) -> None:  # noqa: ANN001
+            real_thread_init(self_t, *args, **kwargs)
+            daemon_values.append(self_t.daemon)
+
+        with patch.object(_threading.Thread, "__init__", patched_init):
+            HordeInferenceProcess.start_inference(proc, job_info)
+
+        assert daemon_values, "At least one Thread must be created during inference"
+        assert daemon_values[-1] is True, "The inference heartbeat thread must be a daemon thread"
+
+    def test_inference_heartbeat_loop_sends_heartbeat(self) -> None:
+        """_inference_heartbeat_loop must call send_heartbeat_message with
+        PIPELINE_STATE_CHANGE and the last known inference percent before the
+        stop event fires.
+        """
+        import threading as _threading
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+        from horde_worker_regen.process_management.messages import HordeHeartbeatType
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._last_inference_percent = 97
+        proc._INFERENCE_HEARTBEAT_INTERVAL = 0.01  # fire almost immediately
+
+        stop_event = _threading.Event()
+
+        # Let the loop fire once, then stop it
+        call_counts: list[int] = [0]
+
+        def track_heartbeat(**kwargs: object) -> None:
+            call_counts[0] += 1
+            stop_event.set()  # stop after first call
+
+        proc.send_heartbeat_message = MagicMock(side_effect=track_heartbeat)
+
+        HordeInferenceProcess._inference_heartbeat_loop(proc, stop_event)
+
+        assert call_counts[0] >= 1, "_inference_heartbeat_loop must send at least one heartbeat"
+        proc.send_heartbeat_message.assert_called_with(
+            heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+            percent_complete=97,
+        )
+
+    def test_inference_heartbeat_loop_suppresses_when_no_progress(self) -> None:
+        """When _last_inference_percent is None (no real progress yet), the heartbeat
+        loop must NOT call send_heartbeat_message, preserving the process manager's
+        no_step_heartbeat_timeout fast-path for early crash detection.
+        """
+        import threading as _threading
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._last_inference_percent = None
+        proc._INFERENCE_HEARTBEAT_INTERVAL = 0.01  # fire almost immediately
+
+        stop_event = _threading.Event()
+
+        # Let the loop fire once then stop, by setting the event after a brief wait
+        def stop_after_one_tick() -> None:
+            import time as _time
+            _time.sleep(0.05)
+            stop_event.set()
+
+        import threading as _threading2
+        stopper = _threading2.Thread(target=stop_after_one_tick, daemon=True)
+        stopper.start()
+
+        HordeInferenceProcess._inference_heartbeat_loop(proc, stop_event)
+        stopper.join(timeout=1.0)
+
+        proc.send_heartbeat_message.assert_not_called()
+
+    def test_last_inference_percent_updated_on_zero_fallback(self) -> None:
+        """When comfyui_progress is absent and the fallback 0% heartbeat is sent,
+        _last_inference_percent must be set to 0 so the background heartbeat thread
+        can report meaningful (not None) progress.
+        """
+        from hordelib.horde import ProgressReport, ProgressState
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._in_post_processing = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_inference_percent = None
+        proc.send_heartbeat_message = MagicMock()
+        proc._active_model_name = "TestModel"
+        proc._start_inference_time = 0.0
+
+        # Report with no comfyui_progress → triggers the fallback 0% path
+        report = MagicMock(spec=ProgressReport)
+        report.hordelib_progress_state = ProgressState.progress
+        report.comfyui_progress = None
+
+        HordeInferenceProcess._progress_callback_impl(proc, report)
+
+        assert proc._last_inference_percent == 0, (
+            "_last_inference_percent must be set to 0 when the fallback 0% heartbeat fires"
+        )
+
+    def test_last_inference_percent_updated_on_inference_step(self) -> None:
+        """_last_inference_percent must be updated to the step's percentage when
+        an INFERENCE_STEP heartbeat is sent in _progress_callback_impl.
+        """
+        from hordelib.horde import ProgressReport, ProgressState
+        from hordelib.utils.ioredirect import ComfyUIProgress
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        proc = MagicMock(spec=HordeInferenceProcess)
+        proc._in_post_processing = False
+        proc._current_job_inference_steps_complete = False
+        proc._last_inference_percent = None
+        proc.send_heartbeat_message = MagicMock()
+        proc.send_memory_report_message = MagicMock()
+        proc._active_model_name = "TestModel"
+        proc._start_inference_time = 0.0
+
+        # Build a progress report for step 29/30 → 97%
+        comfy_progress = MagicMock(spec=ComfyUIProgress)
+        comfy_progress.current_step = 29
+        comfy_progress.total_steps = 30
+        comfy_progress.percent = 96.67
+        comfy_progress.rate = 1.96
+        from hordelib.utils.ioredirect import ComfyUIProgressUnit
+        comfy_progress.rate_unit = ComfyUIProgressUnit.ITERATIONS_PER_SECOND
+
+        report = MagicMock(spec=ProgressReport)
+        report.hordelib_progress_state = ProgressState.progress
+        report.comfyui_progress = comfy_progress
+
+        HordeInferenceProcess._progress_callback_impl(proc, report)
+
+        assert proc._last_inference_percent == 96, (
+            "_last_inference_percent must be updated to int(96.67) == 96 after an INFERENCE_STEP"
+        )
