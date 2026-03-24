@@ -6217,6 +6217,25 @@ class HordeWorkerProcessManager:
                         # goes backwards during post-processing, safety or submission.
                         if process_state in self._WEBUI_POST_INFERENCE_STATES:
                             progress = 100
+                        elif process_state in (
+                            HordeProcessState.INFERENCE_STARTING,
+                            HordeProcessState.INFERENCE_PROCESSING,
+                        ):
+                            # Use the higher of the raw step-based percent and the granular
+                            # stage-based progress so that the bar never shows 0% at the very
+                            # start of a new inference.  The granular mapping returns at least
+                            # 20 for INFERENCE_STARTING / early INFERENCE_PROCESSING, which
+                            # prevents the jarring 100% → 0% → 100% jump when one job finishes
+                            # submission and the next job just begins.  For mid/late inference
+                            # (raw_progress > ~40%) the raw step value is the larger number and
+                            # takes over, so actual step-level progress is still shown.
+                            raw_progress = process.last_heartbeat_percent_complete
+                            granular = self._calculate_granular_progress(
+                                process_state, raw_progress
+                            )
+                            progress = (
+                                max(granular, raw_progress) if raw_progress is not None else granular
+                            )
                         else:
                             progress = process.last_heartbeat_percent_complete
                         break

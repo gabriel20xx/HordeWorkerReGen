@@ -76,6 +76,14 @@ def _invoke_update_webui_status(
     # Bind class constants/sets
     mock_manager._WEBUI_POST_INFERENCE_STATES = HordeWorkerProcessManager._WEBUI_POST_INFERENCE_STATES
 
+    # Bind _calculate_granular_progress so the jobs_in_progress branch can compute
+    # the non-zero floor for INFERENCE_STARTING / early INFERENCE_PROCESSING.
+    mock_manager._calculate_granular_progress = (
+        HordeWorkerProcessManager._calculate_granular_progress.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+    )
+
     # Bind lora serialiser so the elif body doesn't fail
     mock_manager._serialize_loras_for_webui.return_value = None
 
@@ -148,8 +156,11 @@ def test_pending_submit_shown_over_inference_job() -> None:
 
 
 def test_no_pending_submit_shows_inference_job() -> None:
-    """When there is no pending-submit job, the inference job is shown with its
-    actual progress (0% at INFERENCE_STARTING)."""
+    """When there is no pending-submit job, the inference job is shown.
+
+    At INFERENCE_STARTING with 0% raw progress the granular floor of 20% is applied
+    so the progress bar never jumps to 0% at the very start of a new generation.
+    """
     job2 = _make_mock_job("b2b2b2b2")
     inference_process = _make_mock_process(job2, HordeProcessState.INFERENCE_STARTING, percent_complete=0)
 
@@ -163,8 +174,10 @@ def test_no_pending_submit_shows_inference_job() -> None:
     )
 
     assert current_job is not None, "Expected a current_job but got None"
-    assert current_job["progress"] == 0, (
-        f"Expected progress=0 for fresh inference job, got {current_job['progress']}"
+    # The granular-progress floor maps INFERENCE_STARTING (0%) → 20% to prevent the
+    # 100% → 0% → 100% jump when a previous job just finished and the new job begins.
+    assert current_job["progress"] == 20, (
+        f"Expected progress=20 (granular floor) for fresh inference job, got {current_job['progress']}"
     )
     assert "b2b2" in current_job["id"], f"Expected job2's id, got {current_job['id']!r}"
 
@@ -260,4 +273,90 @@ def test_inference_progress_shown_when_pipeline_is_clear() -> None:
     assert current_job is not None
     assert current_job["progress"] == 65, (
         f"Expected progress=65 for mid-inference job, got {current_job['progress']}"
+    )
+
+
+def test_no_zero_percent_flash_at_inference_start() -> None:
+    """Progress bar must never show 0% when a new inference job is at its very beginning.
+
+    The 100% → 0% → 100% pattern occurs when a previous job just finished submission
+    (progress=100%) and the next job is dispatched but has not yet completed even one
+    diffusion step (raw percent_complete=0).  The granular-progress floor of 20% for
+    INFERENCE_STARTING prevents this jump to 0%.
+    """
+    job = _make_mock_job("newjob1")
+    # Simulate the very start of inference: INFERENCE_STARTING with 0% raw progress.
+    process = _make_mock_process(job, HordeProcessState.INFERENCE_STARTING, percent_complete=0)
+
+    current_job = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[job],
+        jobs_lookup={job: MagicMock()},
+        process_list=[process],
+    )
+
+    assert current_job is not None
+    assert current_job["progress"] > 0, (
+        f"Progress must be > 0% at INFERENCE_STARTING to avoid 100%→0%→100% flash, "
+        f"got {current_job['progress']}%"
+    )
+    assert current_job["progress"] == 20, (
+        f"Expected granular floor of 20% for INFERENCE_STARTING(0%), got {current_job['progress']}%"
+    )
+
+
+def test_no_zero_percent_flash_at_early_inference_processing() -> None:
+    """Progress bar must never show 0% during the very first steps of INFERENCE_PROCESSING.
+
+    Even after the state transitions from INFERENCE_STARTING to INFERENCE_PROCESSING,
+    the first few progress callbacks may still report 0% (step 0 of N).  The granular
+    floor of 20% must hold until the raw step-based percentage rises above it.
+    """
+    job = _make_mock_job("newjob2")
+    # Simulate INFERENCE_PROCESSING at step 0 (first callback hasn't progressed yet).
+    process = _make_mock_process(job, HordeProcessState.INFERENCE_PROCESSING, percent_complete=0)
+
+    current_job = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[job],
+        jobs_lookup={job: MagicMock()},
+        process_list=[process],
+    )
+
+    assert current_job is not None
+    assert current_job["progress"] > 0, (
+        f"Progress must be > 0% at INFERENCE_PROCESSING(0%) to avoid flash, "
+        f"got {current_job['progress']}%"
+    )
+    assert current_job["progress"] == 20, (
+        f"Expected granular floor of 20% for INFERENCE_PROCESSING(0%), got {current_job['progress']}%"
+    )
+
+
+def test_raw_progress_used_for_mid_inference() -> None:
+    """When raw inference progress is above the granular floor, the raw value wins.
+
+    For inference > ~40% the raw step-based progress is higher than the granular mapping
+    (20 + raw*0.5), so the actual step percentage is shown to give users accurate feedback.
+    """
+    job = _make_mock_job("midjob")
+    process = _make_mock_process(job, HordeProcessState.INFERENCE_PROCESSING, percent_complete=65)
+
+    current_job = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[job],
+        jobs_lookup={job: MagicMock()},
+        process_list=[process],
+    )
+
+    assert current_job is not None
+    # At 65% raw: granular = 20 + int(65*0.5) = 52; max(52, 65) = 65
+    assert current_job["progress"] == 65, (
+        f"Expected raw progress=65 for mid-inference job, got {current_job['progress']}%"
     )
