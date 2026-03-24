@@ -389,9 +389,6 @@ class WorkerWebUI:
             <button class="nav-item" onclick="showPage('gallery', this)" id="nav-gallery">
                 <span class="nav-icon">&#128444;</span> Gallery
             </button>
-            <button class="nav-item" onclick="showPage('horde', this)" id="nav-horde">
-                <span class="nav-icon">&#127760;</span> Horde
-            </button>
             <button class="nav-item" onclick="showPage('logs', this)" id="nav-logs">
                 <span class="nav-icon">&#128203;</span> Logs
             </button>
@@ -486,19 +483,6 @@ class WorkerWebUI:
                                 <span class="pagination-info" id="gallery-page-info">Page 1 of 1</span>
                                 <button id="gallery-next" onclick="galleryChangePage(1)">Next &#8250;</button>
                             </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- HORDE PAGE -->
-                <div class="page" id="page-horde">
-                    <div class="section">
-                        <div class="section-header"><span class="section-title">&#127760; Horde Info</span></div>
-                        <div class="card">
-                            <div class="stat-row"><span class="stat-label">Worker Name</span><span class="stat-value" id="horde-worker-name">-</span></div>
-                            <div class="stat-row"><span class="stat-label">Username</span><span class="stat-value" id="horde-username">-</span></div>
-                            <div class="stat-row"><span class="stat-label">Status</span><span id="horde-info-status-badge">-</span></div>
-                            <div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value" id="horde-info-uptime">-</span></div>
                         </div>
                     </div>
                 </div>
@@ -696,21 +680,17 @@ class WorkerWebUI:
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('content').style.display = 'block';
                     const workerName = data.worker_name || 'Unknown';
-                    document.getElementById('horde-worker-name').textContent = workerName;
-                    document.getElementById('horde-username').textContent = data.horde_username;
                     document.getElementById('topbar-worker-name').textContent = workerName;
                     document.getElementById('topbar-worker-sub').textContent = '@'+data.horde_username;
                     const badgeHtml = data.maintenance_mode
                         ? '<span class="status-badge status-maintenance">Maintenance</span>'
                         : '<span class="status-badge status-active">Active</span>';
                     document.getElementById('worker-status-badge').innerHTML = badgeHtml;
-                    document.getElementById('horde-info-status-badge').innerHTML = badgeHtml;
                     document.getElementById('mobile-status-badge').innerHTML = data.maintenance_mode
                         ? '<span class="status-badge status-maintenance" style="font-size:0.68rem;padding:2px 7px;">Maint.</span>'
                         : '<span class="status-badge status-active" style="font-size:0.68rem;padding:2px 7px;">Active</span>';
                     const uptimeStr = formatUptime(data.uptime);
                     document.getElementById('uptime').textContent = uptimeStr;
-                    document.getElementById('horde-info-uptime').textContent = uptimeStr;
                     document.getElementById('user-kudos-total').textContent = data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
                     document.getElementById('kudos-per-hour').textContent = data.kudos_per_hour.toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
