@@ -483,7 +483,7 @@ class WorkerWebUI:
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128444; Gallery</span><span class="section-count" id="gallery-count">0</span></div>
                         <div class="card">
-                            <div id="gallery-new-banner" onclick="fetchGalleryPage(1)">&#128444; New images available &#8212; click to view latest</div>
+                            <div id="gallery-new-banner" role="button" tabindex="0" onclick="fetchGalleryPage(1)" onkeydown="if(event.key==='Enter'||event.key===' '){fetchGalleryPage(1);event.preventDefault();}">&#128444; New images available &#8212; click to view latest</div>
                             <div id="gallery-empty" class="empty-state"><span class="empty-state-icon">&#128444;</span>No images generated yet</div>
                             <div id="gallery-grid" class="image-grid" style="display:none;"></div>
                             <div class="pagination-controls" id="gallery-pagination" style="display:none;">
@@ -552,7 +552,7 @@ class WorkerWebUI:
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
         const VALID_PAGES = Object.freeze(['overview', 'gallery', 'horde', 'logs']);
-        function showPage(pageId, navEl) {
+        function showPage(pageId, navEl, push) {
             if (!VALID_PAGES.includes(pageId)) pageId = 'overview';
             document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
             var page = document.getElementById('page-' + pageId);
@@ -562,16 +562,22 @@ class WorkerWebUI:
             if (activeNav) activeNav.classList.add('active');
             if (window.innerWidth < 768) closeSidebar();
             var newHash = '#' + pageId;
-            if (location.hash !== newHash) history.pushState({page: pageId}, '', newHash);
+            if (push !== false) {
+                if (location.hash !== newHash) history.pushState({page: pageId}, '', newHash);
+            }
             if (pageId === 'gallery') fetchGalleryPage(galleryCurrentPage);
         }
         window.addEventListener('popstate', function() {
             var hash = location.hash.replace('#', '');
-            showPage(VALID_PAGES.includes(hash) ? hash : 'overview', null);
+            showPage(VALID_PAGES.includes(hash) ? hash : 'overview', null, false);
         });
         (function() {
             var hash = location.hash.replace('#', '');
-            if (hash && VALID_PAGES.includes(hash)) showPage(hash, null);
+            if (hash && VALID_PAGES.includes(hash)) {
+                showPage(hash, null, false);
+            } else {
+                history.replaceState({page: 'overview'}, '', '#overview');
+            }
         })();
         function initTheme() {
             const saved = localStorage.getItem('horde-theme') || 'light';
@@ -806,13 +812,24 @@ class WorkerWebUI:
                     } else { pd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div>'; }
                     document.getElementById('gallery-count').textContent = data.images_count || 0;
                     const newImagesCount = data.images_count || 0;
-                    if (lastKnownImagesCount >= 0 && newImagesCount > lastKnownImagesCount) {
-                        if (document.getElementById('page-gallery').classList.contains('active')) {
-                            if (galleryCurrentPage === 1) { fetchGalleryPage(1); }
-                            else { const gbn = document.getElementById('gallery-new-banner'); if (gbn) gbn.style.display = ''; }
+                    const hasNewImages = lastKnownImagesCount >= 0 && newImagesCount > lastKnownImagesCount;
+                    const galleryPageActive = document.getElementById('page-gallery').classList.contains('active');
+                    if (hasNewImages && galleryPageActive) {
+                        if (galleryCurrentPage === 1) {
+                            if (!galleryFetchInProgress) {
+                                fetchGalleryPage(1);
+                                lastKnownImagesCount = newImagesCount;
+                            }
+                            // If a fetch is already in progress, don't update lastKnownImagesCount so
+                            // the next poll can still detect the new images and retry the refresh.
+                        } else {
+                            const gbn = document.getElementById('gallery-new-banner');
+                            if (gbn) gbn.style.display = '';
+                            lastKnownImagesCount = newImagesCount;
                         }
+                    } else {
+                        lastKnownImagesCount = newImagesCount;
                     }
-                    lastKnownImagesCount = newImagesCount;
                     const fjd = document.getElementById('faulted-jobs'), fjc = document.getElementById('faulted-jobs-count');
                     if (data.faulted_jobs_history && data.faulted_jobs_history.length > 0) {
                         fjc.textContent = data.faulted_jobs_history.length;
