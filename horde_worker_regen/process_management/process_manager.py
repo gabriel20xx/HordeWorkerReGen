@@ -1242,6 +1242,12 @@ class HordeWorkerProcessManager:
     # Constants for worker config display
     WORKER_CONFIG_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
 
+    # Minimum time (seconds) a WAITING_FOR_JOB process can be heartbeat-silent before it
+    # is considered hung and replaced (when local work is pending).  The effective threshold
+    # is max(bridge_data.process_timeout, _WAITING_FOR_JOB_STALE_THRESHOLD) so that workers
+    # with a high process_timeout are not replaced prematurely.
+    _WAITING_FOR_JOB_STALE_THRESHOLD = 600  # 10 minutes
+
     # Constants for job retry logic
     MAX_JOB_RETRIES = 1  # Number of retries for faulted jobs
 
@@ -6810,11 +6816,14 @@ class HordeWorkerProcessManager:
                 # PROCESS_ENDING.  A freshly replaced process starts in PROCESS_STARTING (with
                 # a fresh timestamp) so it will never match this condition immediately after a
                 # recovery — no need to gate this check on _recently_recovered.
+                # The effective threshold is max(process_timeout, _WAITING_FOR_JOB_STALE_THRESHOLD)
+                # so that even workers with a short process_timeout wait at least
+                # _WAITING_FOR_JOB_STALE_THRESHOLD seconds before a replacement is triggered.
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
                     and process_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
                     and (now - process_info.last_heartbeat_timestamp)
-                    > max(self.bridge_data.process_timeout, HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT)
+                    > max(self.bridge_data.process_timeout, HordeWorkerProcessManager._WAITING_FOR_JOB_STALE_THRESHOLD)
                 ):
                     logger.error(
                         f"{process_info} has been idle in WAITING_FOR_JOB for "
