@@ -727,8 +727,6 @@ class WorkerWebUI:
                     document.getElementById('topbar-gpu-bar').style.width = gpu+'%';
                     document.getElementById('topbar-vram-pct').textContent = vram+'%';
                     document.getElementById('topbar-vram-bar').style.width = vram+'%';
-                    const vu = Math.floor(data.vram_usage_mb||0), vt = Math.floor(data.total_vram_mb||0);
-                    document.getElementById('topbar-vram-label').textContent = vt > 0 ? 'VRAM '+vu+'/'+vt+'MB' : 'VRAM';
                     document.getElementById('mobile-cpu').textContent = 'CPU '+cpu+'%';
                     document.getElementById('mobile-gpu').textContent = 'GPU '+gpu+'%';
                     document.getElementById('mobile-vram').textContent = 'VRAM '+vram+'%';
