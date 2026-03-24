@@ -349,6 +349,42 @@ def test_webui_last_image_submission_timestamp() -> None:
     assert webui.status_data["last_image_submission_timestamp"] == old_timestamp
 
 
+def test_webui_images_history() -> None:
+    """Test that WorkerWebUI handles images_history for the gallery view."""
+    webui = WorkerWebUI(port=0)
+
+    # Test default value (empty list)
+    assert webui.status_data["images_history"] == []
+
+    # Test updating with a single image entry
+    test_image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    test_history = [
+        {"base64": test_image_b64, "timestamp": 1704067205.0, "model": "stable_diffusion_xl"},
+    ]
+    webui.update_status(images_history=test_history)
+    assert webui.status_data["images_history"] == test_history
+    assert len(webui.status_data["images_history"]) == 1
+    assert webui.status_data["images_history"][0]["model"] == "stable_diffusion_xl"
+
+    # Test updating with multiple image entries
+    test_history_multi = [
+        {"base64": test_image_b64, "timestamp": 1704067205.0, "model": "stable_diffusion_xl"},
+        {"base64": test_image_b64, "timestamp": 1704067210.0, "model": "stable_diffusion_2_1"},
+        {"base64": test_image_b64, "timestamp": 1704067215.0, "model": None},
+    ]
+    webui.update_status(images_history=test_history_multi)
+    assert len(webui.status_data["images_history"]) == 3
+    assert webui.status_data["images_history"][1]["model"] == "stable_diffusion_2_1"
+    assert webui.status_data["images_history"][2]["model"] is None
+
+    # Test that history is a copy (not reference)
+    test_history_ref = [{"base64": test_image_b64, "timestamp": 1704067220.0, "model": "sdxl"}]
+    webui.update_status(images_history=test_history_ref)
+    test_history_ref.append({"base64": test_image_b64, "timestamp": 1704067225.0, "model": "sd2"})
+    # The stored history should not change
+    assert len(webui.status_data["images_history"]) == 1
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
@@ -404,6 +440,9 @@ if __name__ == "__main__":
 
     test_webui_last_image_submission_timestamp()
     print("✓ WebUI last image submission timestamp test passed")
+
+    test_webui_images_history()
+    print("✓ WebUI images history test passed")
 
     # Run async test
     asyncio.run(test_webui_start_stop())
