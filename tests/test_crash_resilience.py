@@ -5210,3 +5210,227 @@ class TestInferenceBackgroundHeartbeat:
         assert proc._last_inference_percent == 96, (
             "_last_inference_percent must be updated to int(96.67) == 96 after an INFERENCE_STEP"
         )
+
+
+class TestRecordFaultedJobHistory:
+    """Tests for the _record_faulted_job_history helper method.
+
+    Verifies that the helper adds entries to _faulted_jobs_history correctly, deduplicates,
+    and enforces the max-history cap.
+    """
+
+    def _make_faulted_job(self, job_id: str = "test-job-id") -> MagicMock:
+        """Return a minimal mock ImageGenerateJobPopResponse."""
+        job = MagicMock()
+        job.id_ = job_id
+        job.model = "TestModel"
+        job.payload = MagicMock()
+        job.payload.width = 512
+        job.payload.height = 512
+        job.payload.ddim_steps = 30
+        job.payload.sampler_name = "euler_a"
+        job.payload.n_iter = 1
+        job.payload.workflow = None
+        job.payload.loras = []
+        return job
+
+    def _make_manager(self) -> MagicMock:
+        """Return a minimal mock manager with _record_faulted_job_history bound."""
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._faulted_jobs_history = []
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        bound = types.MethodType(HordeWorkerProcessManager._record_faulted_job_history, mock_manager)
+        mock_manager._bound_record = bound
+        return mock_manager
+
+    def test_adds_entry_to_history(self) -> None:
+        """A new faulted job must be prepended to _faulted_jobs_history."""
+        mock_manager = self._make_manager()
+        job = self._make_faulted_job("job-abc")
+
+        mock_manager._bound_record(job, fault_phase="During Inference")
+
+        assert len(mock_manager._faulted_jobs_history) == 1
+        entry = mock_manager._faulted_jobs_history[0]
+        assert entry["job_id"] == "job-abc"
+        assert entry["model"] == "TestModel"
+        assert entry["fault_phase"] == "During Inference"
+        assert entry["width"] == 512
+        assert entry["height"] == 512
+        assert entry["steps"] == 30
+        assert entry["sampler"] == "euler_a"
+
+    def test_newest_entry_is_first(self) -> None:
+        """Entries must be prepended so the most recent fault is at index 0."""
+        mock_manager = self._make_manager()
+        job_old = self._make_faulted_job("job-old")
+        job_new = self._make_faulted_job("job-new")
+
+        mock_manager._bound_record(job_old)
+        mock_manager._bound_record(job_new)
+
+        assert mock_manager._faulted_jobs_history[0]["job_id"] == "job-new"
+        assert mock_manager._faulted_jobs_history[1]["job_id"] == "job-old"
+
+    def test_duplicate_job_id_is_not_added(self) -> None:
+        """Calling _record_faulted_job_history twice for the same job_id must add only one entry."""
+        mock_manager = self._make_manager()
+        job = self._make_faulted_job("job-dup")
+
+        mock_manager._bound_record(job, fault_phase="During Inference")
+        mock_manager._bound_record(job, fault_phase="During Inference")
+
+        assert len(mock_manager._faulted_jobs_history) == 1
+
+    def test_max_history_cap_is_enforced(self) -> None:
+        """After reaching _max_faulted_jobs_history entries, the oldest entry is evicted."""
+        mock_manager = self._make_manager()
+        max_n = mock_manager._max_faulted_jobs_history
+
+        for i in range(max_n + 2):
+            job = self._make_faulted_job(f"job-{i:05d}")
+            mock_manager._bound_record(job)
+
+        assert len(mock_manager._faulted_jobs_history) == max_n
+
+    def test_none_fault_phase_stored_correctly(self) -> None:
+        """When fault_phase is None the entry must still be added with fault_phase=None."""
+        mock_manager = self._make_manager()
+        job = self._make_faulted_job("job-no-phase")
+
+        mock_manager._bound_record(job, fault_phase=None)
+
+        assert mock_manager._faulted_jobs_history[0]["fault_phase"] is None
+
+
+class TestHandleJobFaultRecordsHistory:
+    """Tests that handle_job_fault correctly records permanently faulted jobs.
+
+    These tests exercise the real handle_job_fault implementation (not mocked) to verify
+    that _record_faulted_job_history is called for jobs that exhaust their retry budget
+    and for jobs whose job_info is unexpectedly missing from jobs_lookup.
+    """
+
+    def _make_faulted_job(self, job_id: str = "test-job-id") -> MagicMock:
+        job = MagicMock()
+        job.id_ = job_id
+        job.model = "TestModel"
+        job.payload = MagicMock()
+        job.payload.width = 512
+        job.payload.height = 512
+        job.payload.ddim_steps = 30
+        job.payload.sampler_name = "euler_a"
+        job.payload.n_iter = 1
+        job.payload.workflow = None
+        job.payload.loras = []
+        return job
+
+    def _make_job_info(self, retry_count: int) -> MagicMock:
+        ji = MagicMock()
+        ji.retry_count = retry_count
+        return ji
+
+    def _make_manager_with_real_handle_job_fault(
+        self,
+        *,
+        job: MagicMock,
+        retry_count: int,
+    ) -> MagicMock:
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        job_info = self._make_job_info(retry_count=retry_count)
+        mock_manager.jobs_lookup = {job: job_info}
+        mock_manager.jobs_in_progress = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_pending_submit = []
+        mock_manager.jobs_pending_inference = []
+        mock_manager._faulted_jobs_history = []
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        mock_manager._skipped_line_next_job_and_process = None
+        mock_manager._failed_models = {}
+        mock_manager.bridge_data.process_timeout = 60
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+        # Bind the real implementations
+        mock_manager._record_faulted_job_history = types.MethodType(
+            HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager.handle_job_fault = types.MethodType(
+            HordeWorkerProcessManager.handle_job_fault,
+            mock_manager,
+        )
+        return mock_manager
+
+    def test_permanently_faulted_job_added_to_history(self) -> None:
+        """When a job has exhausted all retries it must be added to _faulted_jobs_history."""
+        job = self._make_faulted_job("perm-fault-job")
+        # retry_count already at MAX_JOB_RETRIES so this call permanently faults the job
+        mock_manager = self._make_manager_with_real_handle_job_fault(
+            job=job,
+            retry_count=1,
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert len(mock_manager._faulted_jobs_history) == 1
+        assert mock_manager._faulted_jobs_history[0]["job_id"] == "perm-fault-job"
+
+    def test_retried_job_not_added_to_history(self) -> None:
+        """When a job still has retries remaining it must NOT be added to _faulted_jobs_history."""
+        job = self._make_faulted_job("retry-job")
+        mock_manager = self._make_manager_with_real_handle_job_fault(
+            job=job,
+            retry_count=0,
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert len(mock_manager._faulted_jobs_history) == 0
+
+    def test_job_not_in_lookup_still_added_to_history(self) -> None:
+        """When job_info is missing from jobs_lookup the job must still appear in history."""
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = self._make_faulted_job("missing-lookup-job")
+        mock_manager = MagicMock()
+        mock_manager.jobs_lookup = {}  # job not in lookup
+        mock_manager._faulted_jobs_history = []
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager._record_faulted_job_history = types.MethodType(
+            HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager.handle_job_fault = types.MethodType(
+            HordeWorkerProcessManager.handle_job_fault,
+            mock_manager,
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert len(mock_manager._faulted_jobs_history) == 1
+        assert mock_manager._faulted_jobs_history[0]["job_id"] == "missing-lookup-job"
+
+    def test_fault_phase_from_process_state_recorded(self) -> None:
+        """The fault_phase must reflect the process state at the time of the fault."""
+        job = self._make_faulted_job("phase-job")
+        mock_manager = self._make_manager_with_real_handle_job_fault(
+            job=job,
+            retry_count=1,
+        )
+
+        process_info = MagicMock()
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=process_info)
+
+        assert mock_manager._faulted_jobs_history[0]["fault_phase"] == "During Inference"
