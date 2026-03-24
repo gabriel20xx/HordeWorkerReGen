@@ -2755,6 +2755,15 @@ class HordeWorkerProcessManager:
                 # Note: We intentionally don't update WebUI if no saved images are available
                 # We don't want to show potentially censored images from job_image_results
 
+                # Record in faulted jobs history if the safety evaluation faulted this job.
+                # Jobs that ended as csam/censored are excluded (state != faulted) since they
+                # were submitted successfully via a different state code path.
+                if completed_job_info.state == GENERATION_STATE.faulted:
+                    self._record_faulted_job_history(
+                        completed_job_info.sdk_api_job_info,
+                        fault_phase="Safety Check",
+                    )
+
                 # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
                 self.jobs_pending_submit.append(completed_job_info)
 
@@ -4250,6 +4259,61 @@ class HordeWorkerProcessManager:
 
     _consecutive_failed_jobs = 0
 
+    def _record_faulted_job_history(
+        self,
+        faulted_job: ImageGenerateJobPopResponse,
+        fault_phase: str | None = None,
+    ) -> None:
+        """Add a permanently faulted job to the webui display history.
+
+        This is a helper used by handle_job_fault and any other fault path that bypasses it
+        (e.g. safety-evaluation failures) to ensure all permanently faulted jobs appear in
+        the Logs → Faulted Jobs container in the webui.
+
+        Duplicate job IDs are silently ignored, and the history is capped at
+        ``_max_faulted_jobs_history`` entries (oldest entry evicted when the cap is reached).
+
+        Args:
+            faulted_job: The job that faulted.
+            fault_phase: A human-readable description of when the fault occurred.
+        """
+        job_id_str = str(faulted_job.id_)
+        if any(entry["job_id"] == job_id_str for entry in self._faulted_jobs_history):
+            logger.debug(f"Job {job_id_str} already in faulted_jobs_history, skipping duplicate entry")
+            return
+
+        faulted_job_details: dict[str, Any] = {
+            "job_id": job_id_str,
+            "model": faulted_job.model or "Unknown",
+            "time_faulted": time.time(),
+            "width": faulted_job.payload.width if faulted_job.payload else None,
+            "height": faulted_job.payload.height if faulted_job.payload else None,
+            "steps": faulted_job.payload.ddim_steps if faulted_job.payload else None,
+            "sampler": faulted_job.payload.sampler_name if faulted_job.payload else None,
+            "batch_size": faulted_job.payload.n_iter if faulted_job.payload else None,
+            "fault_phase": fault_phase,
+            "loras": [],
+            "controlnet": None,
+            "workflow": faulted_job.payload.workflow if faulted_job.payload else None,
+        }
+
+        if faulted_job.payload and faulted_job.payload.loras:
+            for lora in faulted_job.payload.loras:
+                faulted_job_details["loras"].append(
+                    {
+                        "name": lora.name if hasattr(lora, "name") else str(lora),
+                        "model": lora.model if hasattr(lora, "model") else None,
+                        "clip": lora.clip if hasattr(lora, "clip") else None,
+                    },
+                )
+
+        if faulted_job.payload and faulted_job.payload.workflow in KNOWN_CONTROLNET_WORKFLOWS:
+            faulted_job_details["controlnet"] = faulted_job.payload.workflow
+
+        self._faulted_jobs_history.insert(0, faulted_job_details)
+        if len(self._faulted_jobs_history) > self._max_faulted_jobs_history:
+            self._faulted_jobs_history = self._faulted_jobs_history[: self._max_faulted_jobs_history]
+
     def handle_job_fault(
         self,
         faulted_job: ImageGenerateJobPopResponse,
@@ -4269,6 +4333,9 @@ class HordeWorkerProcessManager:
 
         if job_info is None:
             logger.error(f"Job {faulted_job.id_} not found in jobs_lookup")
+            # Record in history even when the job_info cannot be found so the fault is
+            # still visible in the webui (fault_phase is unknown in this edge case).
+            self._record_faulted_job_history(faulted_job)
         else:
             # Check if the job should be retried
             if job_info.retry_count < self.MAX_JOB_RETRIES:
@@ -4348,49 +4415,7 @@ class HordeWorkerProcessManager:
                 else:
                     fault_phase = state.name.replace("_", " ").title()
 
-            faulted_job_details = {
-                "job_id": str(faulted_job.id_),
-                "model": faulted_job.model or "Unknown",
-                "time_faulted": time.time(),
-                "width": faulted_job.payload.width if faulted_job.payload else None,
-                "height": faulted_job.payload.height if faulted_job.payload else None,
-                "steps": faulted_job.payload.ddim_steps if faulted_job.payload else None,
-                "sampler": faulted_job.payload.sampler_name if faulted_job.payload else None,
-                "batch_size": faulted_job.payload.n_iter if faulted_job.payload else None,
-                "fault_phase": fault_phase,
-                "loras": [],
-                "controlnet": None,
-                "workflow": faulted_job.payload.workflow if faulted_job.payload else None,
-            }
-
-            # Extract LoRA information
-            if faulted_job.payload and faulted_job.payload.loras:
-                for lora in faulted_job.payload.loras:
-                    faulted_job_details["loras"].append(
-                        {
-                            "name": lora.name if hasattr(lora, "name") else str(lora),
-                            "model": lora.model if hasattr(lora, "model") else None,
-                            "clip": lora.clip if hasattr(lora, "clip") else None,
-                        },
-                    )
-
-            # Check for controlnet (via workflow)
-            if faulted_job.payload and faulted_job.payload.workflow in KNOWN_CONTROLNET_WORKFLOWS:
-                faulted_job_details["controlnet"] = faulted_job.payload.workflow
-
-            # Add to history (keep only the last N)
-            # Check if this job_id already exists in the history to prevent duplicates
-            job_id_str = str(faulted_job.id_)
-            job_already_in_history = any(entry["job_id"] == job_id_str for entry in self._faulted_jobs_history)
-
-            if job_already_in_history:
-                # Job already exists in history, don't add duplicate
-                logger.debug(f"Job {job_id_str} already in faulted_jobs_history, skipping duplicate entry")
-            else:
-                # Add new entry to history
-                self._faulted_jobs_history.insert(0, faulted_job_details)
-                if len(self._faulted_jobs_history) > self._max_faulted_jobs_history:
-                    self._faulted_jobs_history = self._faulted_jobs_history[: self._max_faulted_jobs_history]
+            self._record_faulted_job_history(faulted_job, fault_phase)
 
             if process_info is not None:
                 logger.error(f"Job {faulted_job.id_} faulted due to process {process_info.process_id} crashing")
