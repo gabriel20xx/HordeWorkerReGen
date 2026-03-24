@@ -315,10 +315,7 @@ class WorkerWebUI:
         .topbar-res-pill { background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569; font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 8px; white-space: nowrap; display: flex; flex-direction: column; gap: 3px; min-width: 80px; }
         .topbar-res-pill-label { display: flex; justify-content: space-between; align-items: center; font-family: 'Courier New', monospace; }
         .topbar-res-bar-track { width: 100%; height: 4px; background: #cbd5e1; border-radius: 2px; overflow: hidden; }
-        .topbar-res-bar { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
-        .topbar-res-bar.cpu  { background: #6366f1; }
-        .topbar-res-bar.gpu  { background: #10b981; }
-        .topbar-res-bar.vram { background: #f59e0b; }
+        .topbar-res-bar { height: 100%; border-radius: 2px; transition: width 0.4s ease, background-color 0.4s ease; }
 
         /* ---- Mobile resources sub-bar ---- */
         .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); }
@@ -711,6 +708,7 @@ class WorkerWebUI:
         }
         let statusAbortController = null, statusFetchInProgress = false, consecutiveErrors = 0;
         const MAX_CONSECUTIVE_ERRORS = 5;
+        function resBarColor(pct) { return pct >= 80 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#10b981'; }
         function updateStatus() {
             if (statusFetchInProgress) return;
             if (statusAbortController) statusAbortController.abort();
@@ -745,14 +743,25 @@ class WorkerWebUI:
                     const gpu = Math.min(100, Math.round(data.gpu_usage_percent));
                     const vram = data.total_vram_mb > 0 ? Math.min(100, Math.round((data.vram_usage_mb / data.total_vram_mb) * 100)) : 0;
                     document.getElementById('topbar-cpu-pct').textContent = cpu+'%';
-                    document.getElementById('topbar-cpu-bar').style.width = cpu+'%';
+                    const cpuBar = document.getElementById('topbar-cpu-bar');
+                    cpuBar.style.width = cpu+'%';
+                    cpuBar.style.backgroundColor = resBarColor(cpu);
                     document.getElementById('topbar-gpu-pct').textContent = gpu+'%';
-                    document.getElementById('topbar-gpu-bar').style.width = gpu+'%';
+                    const gpuBar = document.getElementById('topbar-gpu-bar');
+                    gpuBar.style.width = gpu+'%';
+                    gpuBar.style.backgroundColor = resBarColor(gpu);
                     document.getElementById('topbar-vram-pct').textContent = vram+'%';
-                    document.getElementById('topbar-vram-bar').style.width = vram+'%';
+                    const vramBar = document.getElementById('topbar-vram-bar');
+                    vramBar.style.width = vram+'%';
+                    vramBar.style.backgroundColor = resBarColor(vram);
+                    const vu = Math.floor(data.vram_usage_mb||0), vt = Math.floor(data.total_vram_mb||0);
+                    document.getElementById('topbar-vram-label').textContent = vt > 0 ? 'VRAM '+vu+'/'+vt+'MB' : 'VRAM';
                     document.getElementById('mobile-cpu').textContent = 'CPU '+cpu+'%';
+                    document.getElementById('mobile-cpu').style.color = resBarColor(cpu);
                     document.getElementById('mobile-gpu').textContent = 'GPU '+gpu+'%';
+                    document.getElementById('mobile-gpu').style.color = resBarColor(gpu);
                     document.getElementById('mobile-vram').textContent = 'VRAM '+vram+'%';
+                    document.getElementById('mobile-vram').style.color = resBarColor(vram);
                     const ojd = document.getElementById('overview-current-job');
                     if (data.current_job) {
                         const job = data.current_job;
@@ -904,7 +913,7 @@ class WorkerWebUI:
                 "page_size": page_size,
                 "total_pages": total_pages,
                 "images": images_reversed[start : start + page_size],
-            }
+            },
         )
 
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
