@@ -238,8 +238,10 @@ class WorkerWebUI:
         .image-grid-item .image-timestamp { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #e2e8f0; font-size: 0.65rem; padding: 3px 6px; text-align: center; border-radius: 0 0 8px 8px; opacity: 0; transition: opacity 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .image-grid-item:hover .image-timestamp { opacity: 1; }
 
-        .last-image-container { display: flex; align-items: center; justify-content: center; min-height: 160px; overflow: hidden; border-radius: 8px; }
-        .single-image { max-width: 100%; max-height: 380px; width: 100%; height: auto; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .last-image-container { display: flex; align-items: center; justify-content: center; height: 320px; overflow: hidden; border-radius: 8px; }
+        .last-image-container .image-grid { display: grid; width: 100%; height: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-content: stretch; }
+        .last-image-container .image-grid-item { aspect-ratio: auto; height: 100%; }
+        .single-image { width: 100%; height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
         .single-image:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
 
         /* ---- Image overlay ---- */
