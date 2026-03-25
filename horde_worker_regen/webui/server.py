@@ -562,6 +562,7 @@ class WorkerWebUI:
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
         const VALID_PAGES = Object.freeze(['overview', 'gallery', 'horde', 'logs']);
+        let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         function showPage(pageId, navEl, push) {
             if (!VALID_PAGES.includes(pageId)) pageId = 'overview';
             document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
@@ -690,7 +691,6 @@ class WorkerWebUI:
         let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
         // Sync the select element's initial value with the JS constant (single source of truth)
         document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
-        let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
         function renderGalleryPage(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
