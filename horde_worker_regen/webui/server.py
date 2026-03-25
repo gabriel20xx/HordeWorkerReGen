@@ -77,6 +77,8 @@ class WorkerWebUI:
         # Gallery image data stored separately – NOT included in /api/status to avoid
         # sending large base64 payloads on every poll.  Served via /api/gallery instead.
         self._gallery_data: list[dict[str, Any]] = []
+        # Monotonically increasing counter used to assign stable gallery_id values.
+        self._next_gallery_id: int = 0
 
         self._setup_routes()
 
@@ -608,9 +610,12 @@ class WorkerWebUI:
         }
         initTheme();
         let overlayImages = [], overlayIndex = -1;
-        // When non-null, holds the absolute (newest-first) gallery indices for the
-        // current overlay page so images can be fetched lazily via /api/gallery/image.
-        let _galleryOverlayIndices = null;
+        // When non-null, holds the stable gallery_id values for the current overlay page
+        // so images can be fetched lazily via /api/gallery/image.
+        let _galleryOverlayIds = null;
+        // AbortController for the in-flight overlay image fetch; prevents stale responses
+        // from overwriting the overlay when the user navigates quickly.
+        let _overlayFetchController = null;
         function _updateOverlayNav() {
             const hasList = overlayImages.length > 1;
             const pb = document.getElementById('overlay-prev'), nb = document.getElementById('overlay-next');
@@ -626,46 +631,55 @@ class WorkerWebUI:
                 overlayImages = images;
                 overlayIndex = safeIndex;
             } else { overlayImages = []; overlayIndex = -1; }
-            _galleryOverlayIndices = null;
+            _galleryOverlayIds = null;
+            if (_overlayFetchController) { _overlayFetchController.abort(); _overlayFetchController = null; }
             document.getElementById('overlay-image').src = imageSrc;
             document.getElementById('image-overlay').classList.add('active');
             _updateOverlayNav();
         }
-        function _loadGalleryOverlayImage(galleryIdx) {
+        function _loadGalleryOverlayImage(galleryId) {
+            if (_overlayFetchController) _overlayFetchController.abort();
+            _overlayFetchController = new AbortController();
+            const ctrl = _overlayFetchController;
             const el = document.getElementById('overlay-image');
             el.style.opacity = '0.35';
-            fetch('/api/gallery/image?idx=' + galleryIdx)
+            fetch('/api/gallery/image?id=' + galleryId, { signal: ctrl.signal })
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-                .then(function(data) { el.src = 'data:image/png;base64,' + data.base64; el.style.opacity = ''; })
-                .catch(function(err) { console.error('Failed to load gallery image:', err); el.style.opacity = ''; });
+                .then(function(data) { if (ctrl !== _overlayFetchController) return; el.src = 'data:image/png;base64,' + data.base64; el.style.opacity = ''; })
+                .catch(function(err) { if (err.name === 'AbortError') return; console.error('Failed to load gallery image:', err); el.style.opacity = ''; });
         }
-        function openGalleryImageOverlay(galleryIdx, galleryIndices, localIdx) {
-            if (Array.isArray(galleryIndices) && galleryIndices.length > 0) {
-                overlayImages = galleryIndices;
+        function openGalleryImageOverlay(galleryId, galleryIds, localIdx) {
+            if (_overlayFetchController) { _overlayFetchController.abort(); _overlayFetchController = null; }
+            if (Array.isArray(galleryIds) && galleryIds.length > 0) {
+                overlayImages = galleryIds;
                 overlayIndex = localIdx;
-                _galleryOverlayIndices = galleryIndices;
+                _galleryOverlayIds = galleryIds;
             } else {
-                overlayImages = [galleryIdx];
+                overlayImages = [galleryId];
                 overlayIndex = 0;
-                _galleryOverlayIndices = [galleryIdx];
+                _galleryOverlayIds = [galleryId];
             }
             document.getElementById('overlay-image').src = '';
             document.getElementById('image-overlay').classList.add('active');
             _updateOverlayNav();
-            _loadGalleryOverlayImage(galleryIdx);
+            _loadGalleryOverlayImage(galleryId);
         }
         function overlayNavigate(delta) {
             const ni = overlayIndex + delta;
             if (ni < 0 || ni >= overlayImages.length) return;
             overlayIndex = ni;
-            if (_galleryOverlayIndices !== null) {
-                _loadGalleryOverlayImage(_galleryOverlayIndices[overlayIndex]);
+            if (_galleryOverlayIds !== null) {
+                _loadGalleryOverlayImage(_galleryOverlayIds[overlayIndex]);
             } else {
                 document.getElementById('overlay-image').src = overlayImages[overlayIndex];
             }
             _updateOverlayNav();
         }
-        function closeImageOverlay() { document.getElementById('image-overlay').classList.remove('active'); overlayImages = []; overlayIndex = -1; _galleryOverlayIndices = null; }
+        function closeImageOverlay() {
+            if (_overlayFetchController) { _overlayFetchController.abort(); _overlayFetchController = null; }
+            document.getElementById('image-overlay').classList.remove('active');
+            overlayImages = []; overlayIndex = -1; _galleryOverlayIds = null;
+        }
         document.getElementById('image-overlay').addEventListener('click', function(e) { if (e.target === this) closeImageOverlay(); });
         document.addEventListener('keydown', function(e) {
             const overlayActive = document.getElementById('image-overlay').classList.contains('active');
@@ -737,23 +751,24 @@ class WorkerWebUI:
                 pag.style.display = 'none'; return;
             }
             empty.style.display = 'none'; grid.style.display = '';
-            // Compute absolute (newest-first) gallery indices for this page slice.
-            const pageStartIdx = (page - 1) * galleryPageSize;
-            const pageGalleryIndices = images.map((_, i) => pageStartIdx + i);
+            // Use stable gallery_id values (assigned at insertion time) rather than
+            // positional indices, so the overlay remains correct even when new images
+            // arrive after the page was rendered.
+            const pageGalleryIds = images.map(img => img.gallery_id);
             grid.innerHTML = images.map((img, idx) => {
                 // Use thumbnail when available; fall back to full base64 if PIL was not installed.
                 const thumbSrc = img.thumbnail ? 'data:image/jpeg;base64,'+img.thumbnail : (img.base64 ? 'data:image/png;base64,'+img.base64 : '');
-                const galleryIdx = pageGalleryIndices[idx];
+                const galleryId = img.gallery_id;
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
-                return '<div class="image-grid-item"><img src="'+thumbSrc+'" alt="Generated image" loading="lazy" data-gallery-idx="'+galleryIdx+'" data-idx="'+idx+'" />'+
+                return '<div class="image-grid-item"><img src="'+thumbSrc+'" alt="Generated image" loading="lazy" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />'+
                     (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
-            grid.querySelectorAll('img[data-gallery-idx]').forEach(img => {
+            grid.querySelectorAll('img[data-gallery-id]').forEach(img => {
                 img.onclick = function() {
-                    const galleryIdx = parseInt(this.getAttribute('data-gallery-idx') || '0', 10);
+                    const galleryId = parseInt(this.getAttribute('data-gallery-id') || '0', 10);
                     const localIdx = parseInt(this.getAttribute('data-idx') || '0', 10);
-                    openGalleryImageOverlay(galleryIdx, pageGalleryIndices, localIdx);
+                    openGalleryImageOverlay(galleryId, pageGalleryIds, localIdx);
                 };
             });
             const tp = Math.max(1, totalPages);
@@ -1110,25 +1125,26 @@ class WorkerWebUI:
         )
 
     async def _handle_gallery_image(self, request: web.Request) -> web.Response:
-        """Return a single full-resolution gallery image by its (newest-first) index.
+        """Return a single full-resolution gallery image by its stable ``gallery_id``.
 
         Used by the overlay viewer to lazily fetch full-resolution images only when
         the user actually opens them, avoiding the cost of including all full-res
         images in the paginated gallery response.
 
         Query parameters:
-            idx: 0-based index into the newest-first gallery list (default: 0)
+            id: stable ``gallery_id`` assigned when the image was added (required)
         """
         try:
-            idx = int(request.rel_url.query.get("idx", "0"))
+            gallery_id = int(request.rel_url.query.get("id", ""))
         except ValueError:
-            raise web.HTTPBadRequest(reason="Invalid idx parameter") from None
+            raise web.HTTPBadRequest(reason="Invalid or missing id parameter") from None
 
-        images_reversed = list(reversed(self._gallery_data))
-        if idx < 0 or idx >= len(images_reversed):
-            raise web.HTTPNotFound(reason="Image index out of range")
+        # _gallery_data is ordered oldest-first; search from newest for speed.
+        for entry in reversed(self._gallery_data):
+            if entry.get("gallery_id") == gallery_id:
+                return web.json_response(entry)
 
-        return web.json_response(images_reversed[idx])
+        raise web.HTTPNotFound(reason="Gallery image not found")
 
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
         """Append one image entry to the gallery and keep at most 200 entries.
@@ -1141,6 +1157,8 @@ class WorkerWebUI:
             image_entry: dict with keys ``base64``, ``timestamp``, and ``model``.
         """
         entry = dict(image_entry)
+        entry["gallery_id"] = self._next_gallery_id
+        self._next_gallery_id += 1
         if _PIL_AVAILABLE and entry.get("base64"):
             try:
                 raw = base64.b64decode(entry["base64"])
