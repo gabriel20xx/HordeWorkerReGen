@@ -240,7 +240,7 @@ class WorkerWebUI:
         .last-image-container > .image-grid-item { aspect-ratio: auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .last-image-container .image-grid-item img { max-width: 100%; height: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: block; }
         .last-image-container .image-grid-item img:hover { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-        .single-image { width: 100%; height: auto; max-height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .single-image { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
         .single-image:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
 
         /* ---- Image overlay ---- */
