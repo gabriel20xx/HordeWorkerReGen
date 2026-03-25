@@ -809,14 +809,14 @@ class WorkerWebUI:
                     document.getElementById('overview-image-time').textContent = formatTimeAgo(data.last_image_submission_timestamp);
                     const oic = document.getElementById('overview-image-container');
                     if (data.last_image_base64 && data.last_image_base64.length > 0) {
-                        if (data.last_image_base64.length === 1) {
-                            const s = 'data:image/png;base64,'+data.last_image_base64[0];
-                            oic.innerHTML = '<img src="'+s+'" class="single-image" alt="Last generated image" data-fullsize="'+s+'" />';
+                        const overviewSrcs = data.last_image_base64.map(b => 'data:image/png;base64,'+b);
+                        if (overviewSrcs.length === 1) {
+                            oic.innerHTML = '<img src="'+overviewSrcs[0]+'" class="single-image" alt="Last generated image" data-fullsize="'+overviewSrcs[0]+'" data-idx="0" />';
                         } else {
-                            const gh = data.last_image_base64.slice(0,4).map((b,i) => { const s='data:image/png;base64,'+b; return '<div class="image-grid-item"><img src="'+s+'" alt="Generated image '+(i+1)+'" data-fullsize="'+s+'" /></div>'; }).join('');
+                            const gh = overviewSrcs.slice(0,4).map((s,i) => '<div class="image-grid-item"><img src="'+s+'" alt="Generated image '+(i+1)+'" data-fullsize="'+s+'" data-idx="'+i+'" /></div>').join('');
                             oic.innerHTML = '<div class="image-grid" style="grid-template-columns:repeat(2,1fr);">'+gh+'</div>';
                         }
-                        oic.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize')); }; });
+                        oic.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize'), overviewSrcs, parseInt(this.getAttribute('data-idx') || '0', 10)); }; });
                     } else {
                         oic.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
                     }
