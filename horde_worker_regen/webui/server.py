@@ -239,7 +239,8 @@ class WorkerWebUI:
         .image-grid-item:hover .image-timestamp { opacity: 1; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; height: 320px; overflow: hidden; border-radius: 8px; }
-        .last-image-container .image-grid { width: 100%; height: 100%; align-content: center; }
+        .last-image-container .image-grid { display: grid; width: 100%; height: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-content: stretch; }
+        .last-image-container .image-grid-item { aspect-ratio: auto; height: 100%; }
         .single-image { width: 100%; height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
         .single-image:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
 
