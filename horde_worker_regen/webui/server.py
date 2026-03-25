@@ -137,8 +137,6 @@ class WorkerWebUI:
         .nav-item:hover { background: var(--sidebar-hover); color: var(--text-light); }
         .nav-item.active { background: var(--sidebar-hover); color: var(--text-light); border-left-color: var(--accent); }
         .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
-        .sidebar-footer { padding: 14px 20px; border-top: 1px solid rgba(255,255,255,0.07); flex-shrink: 0; }
-        .sidebar-footer p { color: var(--text-muted); font-size: 0.72rem; }
         .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 99; backdrop-filter: blur(1px); }
         .sidebar-overlay.active { display: block; }
 
@@ -293,7 +291,6 @@ class WorkerWebUI:
         @keyframes spin { to { transform: rotate(360deg); } }
         .loading-text { color: #64748b; font-size: 0.9rem; }
 
-        #update-time { font-size: 0.73rem; color: #94a3b8; text-align: right; margin-bottom: 10px; }
         .empty-state { text-align: center; padding: 24px 16px; color: #94a3b8; font-size: 0.87rem; }
         .empty-state-icon { font-size: 1.8rem; margin-bottom: 6px; display: block; }
 
@@ -358,7 +355,6 @@ class WorkerWebUI:
         [data-theme="dark"] .job-state-badge { background: #312e81; color: #a5b4fc; }
         [data-theme="dark"] .loading-text { color: #94a3b8; }
         [data-theme="dark"] .loading-spinner { border-color: #2d3f55; border-top-color: var(--accent); }
-        [data-theme="dark"] #update-time { color: #64748b; }
         [data-theme="dark"] .empty-state { color: #64748b; }
         [data-theme="dark"] .image-grid-item { background: #151e2e; }
         [data-theme="dark"] .faulted-job-item { background: #1a1010; border-color: #7f1d1d; }
@@ -402,9 +398,6 @@ class WorkerWebUI:
                 <span class="nav-icon">&#128203;</span> Logs
             </button>
         </nav>
-        <div class="sidebar-footer">
-            <p id="sidebar-update-time">Last updated: Never</p>
-        </div>
     </aside>
     <div class="main-content">
         <div class="topbar">
@@ -435,8 +428,6 @@ class WorkerWebUI:
         <div class="content-area">
             <div id="loading"><div class="loading-spinner"></div><span class="loading-text">Connecting to worker...</span></div>
             <div id="content" style="display: none;">
-                <div id="update-time">Last updated: Never</div>
-
                 <!-- OVERVIEW PAGE -->
                 <div class="page active" id="page-overview">
                     <div class="grid-4" style="margin-bottom: 14px;">
@@ -893,9 +884,6 @@ class WorkerWebUI:
                         cl.innerHTML = data.console_logs.map(log => '<div style="margin: 2px 0; white-space: pre-wrap; word-break: break-word;">'+ansiToHtml(log)+'</div>').join('');
                         if (atb) cl.scrollTop = cl.scrollHeight;
                     } else { cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>'; }
-                    const nowStr = new Date().toLocaleTimeString();
-                    document.getElementById('update-time').textContent = 'Last updated: ' + nowStr;
-                    document.getElementById('sidebar-update-time').textContent = 'Last updated: ' + nowStr;
                 })
                 .catch(error => {
                     if (error.name === 'AbortError') return;
