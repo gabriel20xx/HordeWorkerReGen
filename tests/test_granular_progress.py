@@ -31,10 +31,10 @@ def test_calculate_granular_progress() -> None:
         (HordeProcessState.MODEL_LOADING, None, 10),
         (HordeProcessState.MODEL_PRELOADING, None, 10),
         (HordeProcessState.MODEL_LOADED, None, 20),
-        # Inference stages (20-70%)
-        (HordeProcessState.INFERENCE_STARTING, None, 20),
-        (HordeProcessState.INFERENCE_PROCESSING, 0, 20),  # 0% inference -> 20% overall
-        (HordeProcessState.INFERENCE_PROCESSING, 50, 45),  # 50% inference -> 45% overall
+        # Inference stages (0-70%)
+        (HordeProcessState.INFERENCE_STARTING, None, 0),
+        (HordeProcessState.INFERENCE_PROCESSING, 0, 0),  # 0% inference -> 0% overall
+        (HordeProcessState.INFERENCE_PROCESSING, 50, 35),  # 50% inference -> 35% overall
         (HordeProcessState.INFERENCE_PROCESSING, 100, 70),  # 100% inference -> 70% overall
         # Post-processing stage (70-80%)
         (HordeProcessState.INFERENCE_POST_PROCESSING, None, 75),
@@ -50,7 +50,7 @@ def test_calculate_granular_progress() -> None:
         (HordeProcessState.IMAGE_SUBMITTING, None, 97),
         (HordeProcessState.IMAGE_SUBMITTED, None, 100),
         # Failed states
-        (HordeProcessState.INFERENCE_FAILED, 30, 35),  # Failed at 30% inference
+        (HordeProcessState.INFERENCE_FAILED, 30, 21),  # Failed at 30% inference
         (HordeProcessState.SAFETY_FAILED, None, 85),
     ]
 
@@ -63,7 +63,7 @@ def test_calculate_granular_progress() -> None:
 
 
 def test_inference_progress_scaling() -> None:
-    """Test that inference progress is correctly scaled to 20-70% range."""
+    """Test that inference progress is correctly scaled to 0-70% range."""
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
     mock_manager = MagicMock(spec=HordeWorkerProcessManager)
@@ -72,12 +72,12 @@ def test_inference_progress_scaling() -> None:
     )
 
     # Test boundary conditions for inference scaling
-    # Formula: 20 + (inference_progress * 0.5)
-    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 0) == 20
-    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 10) == 25
-    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 20) == 30
-    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 50) == 45
-    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 80) == 60
+    # Formula: int(inference_progress * 0.7)
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 0) == 0
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 10) == 7
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 20) == 14
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 50) == 35
+    assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 80) == 56
     assert mock_manager._calculate_granular_progress(HordeProcessState.INFERENCE_PROCESSING, 100) == 70
 
 

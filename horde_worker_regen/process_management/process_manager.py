@@ -5998,7 +5998,7 @@ class HordeWorkerProcessManager:
 
         The progress bar is divided into stages:
         - Model Loading: 0-20%
-        - Inference: 20-70%
+        - Inference: 0-70% (resets to 0% when inference begins, rises to 70% at completion)
         - Post-Processing: 70-80%
         - Safety Check: 80-90%
         - Submission: 90-100%
@@ -6034,15 +6034,15 @@ class HordeWorkerProcessManager:
         ):
             return 20  # Model loading complete
 
-        # Inference stages (20-70%)
+        # Inference stages (0-70%)
         if process_state in (
             HordeProcessState.INFERENCE_STARTING,
             HordeProcessState.INFERENCE_PROCESSING,
         ):
             if inference_progress is not None:
-                # Map 0-100% inference progress to 20-70% overall
-                return 20 + int(inference_progress * 0.5)
-            return 20  # Start of inference
+                # Map 0-100% inference progress to 0-70% overall
+                return int(inference_progress * 0.7)
+            return 0  # Start of inference
 
         # Post-processing stage (70-80%)
         if process_state in (
@@ -6084,8 +6084,8 @@ class HordeWorkerProcessManager:
         if process_state == HordeProcessState.INFERENCE_FAILED:
             # Failed during inference, show whatever progress was made
             if inference_progress is not None:
-                return 20 + int(inference_progress * 0.5)
-            return 20
+                return int(inference_progress * 0.7)
+            return 0
         if process_state == HordeProcessState.SAFETY_FAILED:
             return 85  # Failed during safety check
 
