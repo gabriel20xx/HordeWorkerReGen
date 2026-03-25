@@ -236,11 +236,11 @@ class WorkerWebUI:
         .image-grid-item .image-timestamp { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #e2e8f0; font-size: 0.65rem; padding: 3px 6px; text-align: center; border-radius: 0 0 8px 8px; opacity: 0; transition: opacity 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .image-grid-item:hover .image-timestamp { opacity: 1; }
 
-        .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; }
-        .last-image-container > .image-grid-item { aspect-ratio: auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: visible; }
-        .last-image-container .image-grid-item img { max-width: 100%; height: auto; max-height: none; object-fit: contain; border-radius: 4px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: block; }
+        .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 320px; overflow: hidden; }
+        .last-image-container > .image-grid-item { aspect-ratio: auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .last-image-container .image-grid-item img { max-width: 100%; height: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: block; }
         .last-image-container .image-grid-item img:hover { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-        .single-image { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .single-image { width: 100%; height: auto; max-height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
         .single-image:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
 
         /* ---- Image overlay ---- */
@@ -776,21 +776,21 @@ class WorkerWebUI:
                 var gridStyle, items;
                 if (count === 2) {
                     if (allLandscape) {
-                        gridStyle = 'grid-template-columns:1fr;grid-template-rows:auto auto;';
+                        gridStyle = 'grid-template-columns:1fr;grid-template-rows:1fr 1fr;';
                     } else {
-                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:auto;';
+                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
                     }
                     items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
                 } else if (count === 3) {
                     if (allPortrait) {
-                        gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:auto;';
+                        gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
                         items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
                     } else {
-                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:auto auto;';
+                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
                         items = srcs.map(function(s, i) { var span = i === 0 ? ' style="grid-column:1/-1;"' : ''; return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
                     }
                 } else {
-                    gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:auto auto;';
+                    gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
                     items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
                 }
                 oic.style.cssText = 'display:grid;width:100%;gap:4px;' + gridStyle;
