@@ -731,15 +731,20 @@ class WorkerWebUI:
         const MAX_CONSECUTIVE_ERRORS = 5;
         function resBarColor(pct) { return pct >= 80 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#10b981'; }
         let _lastRenderedImageKey = null;
-        function _getImageKey(rawB64) {
+        function _getImageKey(rawB64, timestamp) {
             if (!rawB64 || rawB64.length === 0) return 'empty';
-            // Use count + first 24 chars of the first image as a lightweight change-detection key
-            return rawB64.length + ':' + (rawB64[0] ? rawB64[0].substring(0, 24) : '');
+            // Use count + submission timestamp as the change-detection key.
+            // The first bytes of a PNG base64 string are always a fixed header, so sampling
+            // from the beginning is not reliable. The timestamp changes whenever new images arrive.
+            return rawB64.length + ':' + (timestamp || 0);
         }
-        function renderLastImages(rawB64, oic) {
-            const key = _getImageKey(rawB64);
+        function renderLastImages(rawB64, oic, timestamp) {
+            const key = _getImageKey(rawB64, timestamp);
             if (key === _lastRenderedImageKey) return;
             _lastRenderedImageKey = key;
+            // Capture the render token so async image-load callbacks can detect whether a
+            // newer renderLastImages() call has already superseded this one.
+            const renderToken = key;
             if (!rawB64 || rawB64.length === 0) {
                 oic.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
                 return;
@@ -760,6 +765,8 @@ class WorkerWebUI:
             }
             var imgDims = new Array(count).fill(null), loadedCount = 0;
             function renderGrid() {
+                // Abort if a newer renderLastImages() call has already taken over.
+                if (_lastRenderedImageKey !== renderToken) return;
                 var aspectRatios = imgDims.map(function(d) { return d ? d.w / d.h : 1.0; });
                 // Portrait: AR < 0.85 (taller than wide); Landscape: AR > 1.2 (wider than tall)
                 var allPortrait = aspectRatios.every(function(ar) { return ar < 0.85; });
@@ -865,7 +872,7 @@ class WorkerWebUI:
                         ojd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
                     }
                     document.getElementById('overview-image-time').textContent = formatTimeAgo(data.last_image_submission_timestamp);
-                    renderLastImages(data.last_image_base64, document.getElementById('overview-image-container'));
+                    renderLastImages(data.last_image_base64, document.getElementById('overview-image-container'), data.last_image_submission_timestamp);
                     const qd = document.getElementById('job-queue');
                     document.getElementById('queue-count').textContent = data.job_queue.length;
                     if (data.job_queue.length > 0) {
