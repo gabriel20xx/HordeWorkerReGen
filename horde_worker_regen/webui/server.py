@@ -85,6 +85,7 @@ class WorkerWebUI:
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/api/status", self._handle_status)
         self.app.router.add_get("/api/gallery", self._handle_gallery)
+        self.app.router.add_get("/api/gallery/image", self._handle_gallery_image)
         self.app.router.add_get("/api/config", self._handle_config)
         self.app.router.add_get("/health", self._handle_health)
 
@@ -264,7 +265,7 @@ class WorkerWebUI:
         .image-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 1000; justify-content: center; align-items: center; padding: 20px; }
         .image-overlay.active { display: flex; }
         .image-overlay-content { position: relative; max-width: 95%; max-height: 95%; display: flex; justify-content: center; align-items: center; }
-        .image-overlay img { max-width: 100%; max-height: 90vh; object-fit: contain; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
+        .image-overlay img { max-width: 100%; max-height: 90vh; object-fit: contain; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,0.6); transition: opacity 0.2s ease; }
         .image-overlay-close { position: absolute; top: -44px; right: 0; background: var(--accent); color: white; border: none; padding: 8px 18px; font-size: 0.9rem; font-weight: 600; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
         .image-overlay-close:hover { background: var(--accent-hover); }
         .image-overlay-nav { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.5); color: white; border: none; padding: 12px 18px; font-size: 1.8rem; font-weight: 700; border-radius: 8px; cursor: pointer; transition: background 0.2s; z-index: 1001; user-select: none; line-height: 1; display: none; }
@@ -607,6 +608,9 @@ class WorkerWebUI:
         }
         initTheme();
         let overlayImages = [], overlayIndex = -1;
+        // When non-null, holds the absolute (newest-first) gallery indices for the
+        // current overlay page so images can be fetched lazily via /api/gallery/image.
+        let _galleryOverlayIndices = null;
         function _updateOverlayNav() {
             const hasList = overlayImages.length > 1;
             const pb = document.getElementById('overlay-prev'), nb = document.getElementById('overlay-next');
@@ -622,18 +626,46 @@ class WorkerWebUI:
                 overlayImages = images;
                 overlayIndex = safeIndex;
             } else { overlayImages = []; overlayIndex = -1; }
+            _galleryOverlayIndices = null;
             document.getElementById('overlay-image').src = imageSrc;
             document.getElementById('image-overlay').classList.add('active');
             _updateOverlayNav();
+        }
+        function _loadGalleryOverlayImage(galleryIdx) {
+            const el = document.getElementById('overlay-image');
+            el.style.opacity = '0.35';
+            fetch('/api/gallery/image?idx=' + galleryIdx)
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(data) { el.src = 'data:image/png;base64,' + data.base64; el.style.opacity = ''; })
+                .catch(function(err) { console.error('Failed to load gallery image:', err); el.style.opacity = ''; });
+        }
+        function openGalleryImageOverlay(galleryIdx, galleryIndices, localIdx) {
+            if (Array.isArray(galleryIndices) && galleryIndices.length > 0) {
+                overlayImages = galleryIndices;
+                overlayIndex = localIdx;
+                _galleryOverlayIndices = galleryIndices;
+            } else {
+                overlayImages = [galleryIdx];
+                overlayIndex = 0;
+                _galleryOverlayIndices = [galleryIdx];
+            }
+            document.getElementById('overlay-image').src = '';
+            document.getElementById('image-overlay').classList.add('active');
+            _updateOverlayNav();
+            _loadGalleryOverlayImage(galleryIdx);
         }
         function overlayNavigate(delta) {
             const ni = overlayIndex + delta;
             if (ni < 0 || ni >= overlayImages.length) return;
             overlayIndex = ni;
-            document.getElementById('overlay-image').src = overlayImages[overlayIndex];
+            if (_galleryOverlayIndices !== null) {
+                _loadGalleryOverlayImage(_galleryOverlayIndices[overlayIndex]);
+            } else {
+                document.getElementById('overlay-image').src = overlayImages[overlayIndex];
+            }
             _updateOverlayNav();
         }
-        function closeImageOverlay() { document.getElementById('image-overlay').classList.remove('active'); overlayImages = []; overlayIndex = -1; }
+        function closeImageOverlay() { document.getElementById('image-overlay').classList.remove('active'); overlayImages = []; overlayIndex = -1; _galleryOverlayIndices = null; }
         document.getElementById('image-overlay').addEventListener('click', function(e) { if (e.target === this) closeImageOverlay(); });
         document.addEventListener('keydown', function(e) {
             const overlayActive = document.getElementById('image-overlay').classList.contains('active');
@@ -705,16 +737,25 @@ class WorkerWebUI:
                 pag.style.display = 'none'; return;
             }
             empty.style.display = 'none'; grid.style.display = '';
-            const galleryFullSrcs = images.map(img => 'data:image/png;base64,'+img.base64);
-            const galleryThumbSrcs = images.map((img, idx) => img.thumbnail ? 'data:image/jpeg;base64,'+img.thumbnail : galleryFullSrcs[idx]);
+            // Compute absolute (newest-first) gallery indices for this page slice.
+            const pageStartIdx = (page - 1) * galleryPageSize;
+            const pageGalleryIndices = images.map((_, i) => pageStartIdx + i);
             grid.innerHTML = images.map((img, idx) => {
-                const thumbSrc = galleryThumbSrcs[idx];
+                // Use thumbnail when available; fall back to full base64 if PIL was not installed.
+                const thumbSrc = img.thumbnail ? 'data:image/jpeg;base64,'+img.thumbnail : (img.base64 ? 'data:image/png;base64,'+img.base64 : '');
+                const galleryIdx = pageGalleryIndices[idx];
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
-                return '<div class="image-grid-item"><img src="'+thumbSrc+'" alt="Generated image" data-fullsize="'+galleryFullSrcs[idx]+'" data-idx="'+idx+'" />'+
+                return '<div class="image-grid-item"><img src="'+thumbSrc+'" alt="Generated image" loading="lazy" data-gallery-idx="'+galleryIdx+'" data-idx="'+idx+'" />'+
                     (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
-            grid.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize'), galleryFullSrcs, parseInt(this.getAttribute('data-idx') || '0', 10)); }; });
+            grid.querySelectorAll('img[data-gallery-idx]').forEach(img => {
+                img.onclick = function() {
+                    const galleryIdx = parseInt(this.getAttribute('data-gallery-idx') || '0', 10);
+                    const localIdx = parseInt(this.getAttribute('data-idx') || '0', 10);
+                    openGalleryImageOverlay(galleryIdx, pageGalleryIndices, localIdx);
+                };
+            });
             const tp = Math.max(1, totalPages);
             pi.textContent = 'Page '+page+' of '+tp;
             pb.disabled = page <= 1; nb.disabled = page >= tp;
@@ -1023,6 +1064,11 @@ class WorkerWebUI:
     async def _handle_gallery(self, request: web.Request) -> web.Response:
         """Return a paginated slice of the gallery image history.
 
+        Full-resolution ``base64`` is stripped from entries that have a ``thumbnail``
+        so that the grid payload is small (thumbnails only).  Entries without a
+        thumbnail keep their ``base64`` as a fallback.  The full image can be
+        fetched on demand via ``/api/gallery/image``.
+
         Query parameters:
             page: 1-based page number (default: 1)
             page_size: images per page (default: 48, max: 96)
@@ -1042,15 +1088,47 @@ class WorkerWebUI:
         total_pages = max(1, math.ceil(total / page_size))
         page = min(page, total_pages)
         start = (page - 1) * page_size
+        page_images = images_reversed[start : start + page_size]
+
+        # Strip the full-resolution base64 from entries that already have a thumbnail.
+        # This drastically reduces the response payload for the gallery grid view.
+        # Entries without a thumbnail keep their base64 as a display fallback.
+        # All entries are copied so the originals in _gallery_data are not mutated.
+        page_images = [
+            ({k: v for k, v in entry.items() if k != "base64"} if entry.get("thumbnail") else dict(entry))
+            for entry in page_images
+        ]
+
         return web.json_response(
             {
                 "total": total,
                 "page": page,
                 "page_size": page_size,
                 "total_pages": total_pages,
-                "images": images_reversed[start : start + page_size],
+                "images": page_images,
             },
         )
+
+    async def _handle_gallery_image(self, request: web.Request) -> web.Response:
+        """Return a single full-resolution gallery image by its (newest-first) index.
+
+        Used by the overlay viewer to lazily fetch full-resolution images only when
+        the user actually opens them, avoiding the cost of including all full-res
+        images in the paginated gallery response.
+
+        Query parameters:
+            idx: 0-based index into the newest-first gallery list (default: 0)
+        """
+        try:
+            idx = int(request.rel_url.query.get("idx", "0"))
+        except ValueError:
+            raise web.HTTPBadRequest(reason="Invalid idx parameter") from None
+
+        images_reversed = list(reversed(self._gallery_data))
+        if idx < 0 or idx >= len(images_reversed):
+            raise web.HTTPNotFound(reason="Image index out of range")
+
+        return web.json_response(images_reversed[idx])
 
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
         """Append one image entry to the gallery and keep at most 200 entries.
