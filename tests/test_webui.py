@@ -410,6 +410,127 @@ async def test_webui_start_stop() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_webui_gallery_thumbnail_only() -> None:
+    """Test that /api/gallery strips full-res base64 when a thumbnail is present."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # A minimal 1×1 PNG in base64
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+
+        # Add an entry *without* a thumbnail (simulates PIL not being available)
+        webui._gallery_data.append({"gallery_id": 0, "base64": test_b64, "timestamp": 1.0, "model": "m1"})
+
+        # Add an entry *with* a thumbnail (simulates PIL available; thumbnail_only stripping applies)
+        webui._gallery_data.append(
+            {"gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2"},
+        )
+        webui.status_data["images_count"] = 2
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=48",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["total"] == 2
+        # Newest first: index 0 = entry with thumbnail (base64 should be stripped)
+        entry_with_thumb = data["images"][0]
+        assert "thumbnail" in entry_with_thumb
+        assert "gallery_id" in entry_with_thumb
+        assert "base64" not in entry_with_thumb, "base64 must be stripped when thumbnail exists"
+
+        # index 1 = entry without thumbnail (base64 should be kept as fallback)
+        entry_no_thumb = data["images"][1]
+        assert "base64" in entry_no_thumb, "base64 must be kept when no thumbnail is available"
+        assert "thumbnail" not in entry_no_thumb
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_gallery_image_endpoint() -> None:
+    """Test that /api/gallery/image returns the full-resolution image by stable gallery_id."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+
+        # Use add_gallery_image so gallery_id values are stamped by the server.
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 1.0, "model": "older"})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 2.0, "model": "newer"})
+
+        # Retrieve the gallery_id values from the /api/gallery response.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=48",
+        ) as response:
+            assert response.status == 200
+            gallery_data = await response.json()
+
+        assert gallery_data["total"] == 2
+        newer_id = gallery_data["images"][0]["gallery_id"]  # newest first
+        older_id = gallery_data["images"][1]["gallery_id"]
+
+        # Fetch by stable gallery_id: should return the "newer" image regardless of order.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id={newer_id}",
+        ) as response:
+            assert response.status == 200
+            img = await response.json()
+        assert img["model"] == "newer"
+        assert img["base64"] == test_b64
+
+        # Fetch the older image by its gallery_id.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id={older_id}",
+        ) as response:
+            assert response.status == 200
+            img = await response.json()
+        assert img["model"] == "older"
+
+        # Stable: adding a new image must not shift existing gallery_ids.
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 3.0, "model": "newest"})
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id={older_id}",
+        ) as response:
+            assert response.status == 200
+            img = await response.json()
+        assert img["model"] == "older", "gallery_id must remain stable after new images are added"
+
+        # Non-existent gallery_id should return 404.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id=99999",
+        ) as response:
+            assert response.status == 404
+
+        # Missing id parameter should return 400.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image",
+        ) as response:
+            assert response.status == 400
+
+        # Invalid (non-integer) id should return 400.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id=abc",
+        ) as response:
+            assert response.status == 400
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     # Run simple tests
     test_webui_creation()
