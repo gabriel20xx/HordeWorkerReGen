@@ -1,11 +1,28 @@
 """Web server for the Horde Worker status UI."""
 
+import base64
+import io
 import math
 import time
 from typing import Any
 
 from aiohttp import web
 from loguru import logger
+
+try:
+    from PIL import Image as _PILImage
+
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PILImage = None  # type: ignore[assignment]
+    _PIL_AVAILABLE = False
+    logger.warning(
+        "Pillow is not installed; gallery thumbnails will not be generated. "
+        "Install the 'Pillow' package to enable thumbnail generation in the web UI.",
+    )
+
+_THUMBNAIL_MAX_PX = 256
+"""Maximum pixel dimension (width or height) for gallery thumbnails."""
 
 
 class WorkerWebUI:
@@ -283,6 +300,7 @@ class WorkerWebUI:
         .pagination-controls button:hover:not(:disabled) { background: var(--accent-hover); }
         .pagination-controls button:disabled { background: #c7d2fe; cursor: default; }
         .pagination-info { font-size: 0.82rem; color: #64748b; }
+        .page-size-select { font-size: 0.82rem; color: #334155; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
 
         .scrollable { max-height: 260px; overflow-y: auto; }
         .scrollable-tall { max-height: 400px; overflow-y: auto; }
@@ -485,6 +503,13 @@ class WorkerWebUI:
                                 <button id="gallery-prev" onclick="galleryChangePage(-1)" disabled>&#8249; Prev</button>
                                 <span class="pagination-info" id="gallery-page-info">Page 1 of 1</span>
                                 <button id="gallery-next" onclick="galleryChangePage(1)">Next &#8250;</button>
+                                <label for="gallery-page-size" style="font-size:0.82rem;color:#64748b;">Per page:</label>
+                                <select id="gallery-page-size" class="page-size-select" onchange="galleryChangePageSize(this.value)">
+                                    <option value="12">12</option>
+                                    <option value="24">24</option>
+                                    <option value="48">48</option>
+                                    <option value="96">96</option>
+                                </select>
                             </div>
                         </div>
                     </div>
@@ -661,7 +686,10 @@ class WorkerWebUI:
             errorsCurrentPage = Math.min(Math.max(1, errorsCurrentPage + delta), Math.max(1, Math.ceil(errorsData.length / ERRORS_PAGE_SIZE)));
             renderErrorsPage();
         }
-        const GALLERY_PAGE_SIZE = 20;
+        const GALLERY_DEFAULT_PAGE_SIZE = 48;
+        let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
+        // Sync the select element's initial value with the JS constant (single source of truth)
+        document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
         function renderGalleryPage(images, total, page, totalPages) {
@@ -677,24 +705,25 @@ class WorkerWebUI:
                 pag.style.display = 'none'; return;
             }
             empty.style.display = 'none'; grid.style.display = '';
-            const gallerySrcs = images.map(img => 'data:image/png;base64,'+img.base64);
+            const galleryFullSrcs = images.map(img => 'data:image/png;base64,'+img.base64);
+            const galleryThumbSrcs = images.map((img, idx) => img.thumbnail ? 'data:image/jpeg;base64,'+img.thumbnail : galleryFullSrcs[idx]);
             grid.innerHTML = images.map((img, idx) => {
-                const src = gallerySrcs[idx];
+                const thumbSrc = galleryThumbSrcs[idx];
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
-                return '<div class="image-grid-item"><img src="'+src+'" alt="Generated image" data-fullsize="'+src+'" data-idx="'+idx+'" />'+
+                return '<div class="image-grid-item"><img src="'+thumbSrc+'" alt="Generated image" data-fullsize="'+galleryFullSrcs[idx]+'" data-idx="'+idx+'" />'+
                     (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
-            grid.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize'), gallerySrcs, parseInt(this.getAttribute('data-idx') || '0', 10)); }; });
+            grid.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize'), galleryFullSrcs, parseInt(this.getAttribute('data-idx') || '0', 10)); }; });
             const tp = Math.max(1, totalPages);
             pi.textContent = 'Page '+page+' of '+tp;
             pb.disabled = page <= 1; nb.disabled = page >= tp;
-            pag.style.display = tp > 1 ? 'flex' : 'none';
+            pag.style.display = 'flex';
         }
         function fetchGalleryPage(page) {
             if (galleryFetchInProgress) return;
             galleryFetchInProgress = true;
-            fetch('/api/gallery?page='+page+'&page_size='+GALLERY_PAGE_SIZE)
+            fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize)
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                 .then(data => { renderGalleryPage(data.images, data.total, data.page, data.total_pages); })
                 .catch(err => { console.error('Gallery fetch error:', err); })
@@ -703,6 +732,10 @@ class WorkerWebUI:
         function galleryChangePage(delta) {
             const newPage = Math.min(Math.max(1, galleryCurrentPage + delta), Math.max(1, galleryTotalPages));
             fetchGalleryPage(newPage);
+        }
+        function galleryChangePageSize(val) {
+            galleryPageSize = parseInt(val, 10) || GALLERY_DEFAULT_PAGE_SIZE;
+            fetchGalleryPage(1);
         }
         function isScrolledToBottom(el, tol) { return el.scrollHeight - el.clientHeight <= el.scrollTop + tol; }
         function ansiToHtml(text) {
@@ -992,16 +1025,16 @@ class WorkerWebUI:
 
         Query parameters:
             page: 1-based page number (default: 1)
-            page_size: images per page (default: 20, max: 100)
+            page_size: images per page (default: 48, max: 96)
         """
         try:
             page = max(1, int(request.rel_url.query.get("page", "1")))
         except ValueError:
             page = 1
         try:
-            page_size = min(100, max(1, int(request.rel_url.query.get("page_size", "20"))))
+            page_size = min(96, max(1, int(request.rel_url.query.get("page_size", "48"))))
         except ValueError:
-            page_size = 20
+            page_size = 48
 
         # Gallery is stored oldest-first; serve newest-first to the UI.
         images_reversed = list(reversed(self._gallery_data))
@@ -1022,10 +1055,25 @@ class WorkerWebUI:
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
         """Append one image entry to the gallery and keep at most 200 entries.
 
+        A small JPEG thumbnail is generated and stored under the ``thumbnail`` key so
+        that the gallery grid can load much faster than serving the full-resolution PNG.
+        The original full-resolution ``base64`` value is preserved for the overlay viewer.
+
         Args:
             image_entry: dict with keys ``base64``, ``timestamp``, and ``model``.
         """
-        self._gallery_data.append(image_entry)
+        entry = dict(image_entry)
+        if _PIL_AVAILABLE and entry.get("base64"):
+            try:
+                raw = base64.b64decode(entry["base64"])
+                with io.BytesIO(raw) as img_bytes, _PILImage.open(img_bytes) as img:
+                    img.thumbnail((_THUMBNAIL_MAX_PX, _THUMBNAIL_MAX_PX), _PILImage.LANCZOS)
+                    with io.BytesIO() as buf:
+                        img.convert("RGB").save(buf, format="JPEG", quality=75)
+                        entry["thumbnail"] = base64.b64encode(buf.getvalue()).decode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to generate gallery thumbnail: {}", exc)
+        self._gallery_data.append(entry)
         if len(self._gallery_data) > 200:
             self._gallery_data = self._gallery_data[-200:]
         self.status_data["images_count"] = len(self._gallery_data)
