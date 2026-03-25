@@ -16,6 +16,10 @@ try:
 except ImportError:
     _PILImage = None  # type: ignore[assignment]
     _PIL_AVAILABLE = False
+    logger.warning(
+        "Pillow is not installed; gallery thumbnails will not be generated. "
+        "Install the 'Pillow' package to enable thumbnail generation in the web UI.",
+    )
 
 _THUMBNAIL_MAX_PX = 256
 """Maximum pixel dimension (width or height) for gallery thumbnails."""
@@ -503,7 +507,7 @@ class WorkerWebUI:
                                 <select id="gallery-page-size" class="page-size-select" onchange="galleryChangePageSize(this.value)">
                                     <option value="12">12</option>
                                     <option value="24">24</option>
-                                    <option value="48" selected>48</option>
+                                    <option value="48">48</option>
                                     <option value="96">96</option>
                                 </select>
                             </div>
@@ -684,6 +688,8 @@ class WorkerWebUI:
         }
         const GALLERY_DEFAULT_PAGE_SIZE = 48;
         let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
+        // Sync the select element's initial value with the JS constant (single source of truth)
+        document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
         function renderGalleryPage(images, total, page, totalPages) {
@@ -1060,11 +1066,11 @@ class WorkerWebUI:
         if _PIL_AVAILABLE and entry.get("base64"):
             try:
                 raw = base64.b64decode(entry["base64"])
-                img = _PILImage.open(io.BytesIO(raw))
-                img.thumbnail((_THUMBNAIL_MAX_PX, _THUMBNAIL_MAX_PX), _PILImage.LANCZOS)
-                buf = io.BytesIO()
-                img.convert("RGB").save(buf, format="JPEG", quality=75, optimize=True)
-                entry["thumbnail"] = base64.b64encode(buf.getvalue()).decode("utf-8")
+                with io.BytesIO(raw) as img_bytes, _PILImage.open(img_bytes) as img:
+                    img.thumbnail((_THUMBNAIL_MAX_PX, _THUMBNAIL_MAX_PX), _PILImage.LANCZOS)
+                    with io.BytesIO() as buf:
+                        img.convert("RGB").save(buf, format="JPEG", quality=75)
+                        entry["thumbnail"] = base64.b64encode(buf.getvalue()).decode("utf-8")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate gallery thumbnail: {}", exc)
         self._gallery_data.append(entry)
