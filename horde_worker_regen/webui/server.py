@@ -237,8 +237,10 @@ class WorkerWebUI:
         .image-grid-item:hover .image-timestamp { opacity: 1; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; height: 320px; overflow: hidden; border-radius: 8px; }
-        .last-image-container .image-grid { display: grid; width: 100%; height: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-content: stretch; }
-        .last-image-container .image-grid-item { aspect-ratio: auto; height: 100%; }
+        .last-image-container .image-grid { display: grid; width: 100%; height: 100%; gap: 4px; align-content: stretch; justify-content: stretch; }
+        .last-image-container .image-grid-item { aspect-ratio: auto; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        .last-image-container .image-grid-item img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: block; }
+        .last-image-container .image-grid-item img:hover { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         .single-image { width: 100%; height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
         .single-image:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
 
@@ -728,6 +730,70 @@ class WorkerWebUI:
         let statusAbortController = null, statusFetchInProgress = false, consecutiveErrors = 0;
         const MAX_CONSECUTIVE_ERRORS = 5;
         function resBarColor(pct) { return pct >= 80 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#10b981'; }
+        let _lastRenderedImageKey = null;
+        function _getImageKey(rawB64) {
+            if (!rawB64 || rawB64.length === 0) return 'empty';
+            // Use count + first 24 chars of the first image as a lightweight change-detection key
+            return rawB64.length + ':' + (rawB64[0] ? rawB64[0].substring(0, 24) : '');
+        }
+        function renderLastImages(rawB64, oic) {
+            const key = _getImageKey(rawB64);
+            if (key === _lastRenderedImageKey) return;
+            _lastRenderedImageKey = key;
+            if (!rawB64 || rawB64.length === 0) {
+                oic.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
+                return;
+            }
+            const previewB64 = rawB64.slice(0, 4);
+            const count = previewB64.length;
+            const srcs = previewB64.map(function(b) { return 'data:image/png;base64,' + b; });
+            const allSrcs = rawB64.map(function(b) { return 'data:image/png;base64,' + b; });
+            function attachClicks() {
+                oic.querySelectorAll('img[data-fullsize]').forEach(function(img) {
+                    img.onclick = function() { openImageOverlay(this.getAttribute('data-fullsize'), allSrcs, parseInt(this.getAttribute('data-idx') || '0', 10)); };
+                });
+            }
+            if (count === 1) {
+                oic.innerHTML = '<img src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" />';
+                attachClicks();
+                return;
+            }
+            var imgDims = new Array(count).fill(null), loadedCount = 0;
+            function renderGrid() {
+                var aspectRatios = imgDims.map(function(d) { return d ? d.w / d.h : 1.0; });
+                // Portrait: AR < 0.85 (taller than wide); Landscape: AR > 1.2 (wider than tall)
+                var allPortrait = aspectRatios.every(function(ar) { return ar < 0.85; });
+                var allLandscape = aspectRatios.every(function(ar) { return ar > 1.2; });
+                var gridStyle, items;
+                if (count === 2) {
+                    if (allLandscape) {
+                        gridStyle = 'grid-template-columns:1fr;grid-template-rows:repeat(2,1fr);';
+                    } else {
+                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
+                    }
+                    items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
+                } else if (count === 3) {
+                    if (allPortrait) {
+                        gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
+                        items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
+                    } else {
+                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr);';
+                        items = srcs.map(function(s, i) { var span = i === 0 ? ' style="grid-column:1/-1;"' : ''; return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
+                    }
+                } else {
+                    gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr);';
+                    items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
+                }
+                oic.innerHTML = '<div class="image-grid" style="' + gridStyle + '">' + items + '</div>';
+                attachClicks();
+            }
+            srcs.forEach(function(src, i) {
+                var img = new window.Image();
+                img.onload = function() { imgDims[i] = { w: this.naturalWidth, h: this.naturalHeight }; loadedCount++; if (loadedCount === count) renderGrid(); };
+                img.onerror = function() { imgDims[i] = { w: 1, h: 1 }; loadedCount++; if (loadedCount === count) renderGrid(); };
+                img.src = src;
+            });
+        }
         function updateStatus() {
             if (statusFetchInProgress) return;
             if (statusAbortController) statusAbortController.abort();
@@ -799,21 +865,7 @@ class WorkerWebUI:
                         ojd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
                     }
                     document.getElementById('overview-image-time').textContent = formatTimeAgo(data.last_image_submission_timestamp);
-                    const oic = document.getElementById('overview-image-container');
-                    if (data.last_image_base64 && data.last_image_base64.length > 0) {
-                        const rawB64 = data.last_image_base64;
-                        const previewB64 = rawB64.slice(0, 4);
-                        if (previewB64.length === 1) {
-                            const s = 'data:image/png;base64,'+previewB64[0];
-                            oic.innerHTML = '<img src="'+s+'" class="single-image" alt="Last generated image" data-fullsize="'+s+'" data-idx="0" />';
-                        } else {
-                            const gh = previewB64.map((b,i) => { const s='data:image/png;base64,'+b; return '<div class="image-grid-item"><img src="'+s+'" alt="Generated image '+(i+1)+'" data-fullsize="'+s+'" data-idx="'+i+'" /></div>'; }).join('');
-                            oic.innerHTML = '<div class="image-grid" style="grid-template-columns:repeat(2,1fr);">'+gh+'</div>';
-                        }
-                        oic.querySelectorAll('img[data-fullsize]').forEach(img => { img.onclick = function() { const srcs = rawB64.map(b => 'data:image/png;base64,'+b); openImageOverlay(this.getAttribute('data-fullsize'), srcs, parseInt(this.getAttribute('data-idx') || '0', 10)); }; });
-                    } else {
-                        oic.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
-                    }
+                    renderLastImages(data.last_image_base64, document.getElementById('overview-image-container'));
                     const qd = document.getElementById('job-queue');
                     document.getElementById('queue-count').textContent = data.job_queue.length;
                     if (data.job_queue.length > 0) {
