@@ -1254,8 +1254,8 @@ class HordeWorkerProcessManager:
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-    _MAX_CONSOLE_LOGS_BUFFER = 100  # Maximum number of console logs to keep in memory buffer
-    _WEBUI_CONSOLE_LOGS_LIMIT = 50  # Number of recent logs to send to webui from buffer
+    _MAX_CONSOLE_LOGS_BUFFER = 500  # Maximum number of console logs to keep in memory buffer
+    _WEBUI_CONSOLE_LOGS_LIMIT = 250  # Number of recent logs to send to webui from buffer
     _MAX_ERRORS_HISTORY = 1000  # Maximum number of error messages to keep in history (memory safety cap)
     _WEBUI_ERRORS_HISTORY_LIMIT = 200  # Number of recent errors to send to webui per poll
 

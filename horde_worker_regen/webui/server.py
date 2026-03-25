@@ -226,7 +226,7 @@ class WorkerWebUI:
         .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
 
-        .console-container { background: #0f172a; border-radius: 8px; padding: 12px 14px; max-height: 500px; overflow-y: auto; font-family: 'Courier New', Consolas, 'Lucida Console', monospace; font-size: 0.8rem; color: #e2e8f0; line-height: 1.55; }
+        .console-container { background: #0f172a; border-radius: 8px; padding: 12px 14px; max-height: 800px; overflow-y: auto; font-family: 'Courier New', Consolas, 'Lucida Console', monospace; font-size: 0.8rem; color: #e2e8f0; line-height: 1.55; }
 
         /* ---- Gallery ---- */
         .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; width: 100%; }
