@@ -780,8 +780,7 @@ class WorkerWebUI:
                     const vramBar = document.getElementById('topbar-vram-bar');
                     vramBar.style.width = vram+'%';
                     vramBar.style.backgroundColor = resBarColor(vram);
-                    const vu = Math.floor(data.vram_usage_mb||0), vt = Math.floor(data.total_vram_mb||0);
-                    document.getElementById('topbar-vram-label').textContent = vt > 0 ? 'VRAM '+vu+'/'+vt+'MB' : 'VRAM';
+
                     document.getElementById('mobile-cpu').textContent = 'CPU '+cpu+'%';
                     document.getElementById('mobile-cpu').style.color = resBarColor(cpu);
                     document.getElementById('mobile-gpu').textContent = 'GPU '+gpu+'%';
