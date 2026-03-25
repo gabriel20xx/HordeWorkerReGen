@@ -295,6 +295,7 @@ class WorkerWebUI:
 
         .empty-state { text-align: center; padding: 24px 16px; color: #94a3b8; font-size: 0.87rem; }
         .empty-state-icon { font-size: 1.8rem; margin-bottom: 6px; display: block; }
+        .centered-empty-container { display: flex; align-items: center; justify-content: center; min-height: 320px; }
 
         ::-webkit-scrollbar { width: 5px; height: 5px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -446,11 +447,11 @@ class WorkerWebUI:
                     <div class="grid-2" style="margin-bottom: 14px;">
                         <div class="card">
                             <div class="card-header"><span class="card-title">&#9889; Current Job</span></div>
-                            <div id="overview-current-job"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
+                            <div id="overview-current-job" class="centered-empty-container"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
                         </div>
                         <div class="card">
                             <div class="card-header"><span class="card-title">&#128444; Last Images</span></div>
-                            <div style="font-size:0.75rem;color:#94a3b8;margin-bottom:10px;"><span id="overview-image-time">No image generated yet</span></div>
+                            <div id="overview-image-time-wrapper" style="display:none;font-size:0.75rem;color:#94a3b8;margin-bottom:10px;"><span id="overview-image-time"></span></div>
                             <div id="overview-image-container" class="last-image-container"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
                         </div>
                     </div>
@@ -858,6 +859,7 @@ class WorkerWebUI:
                         const job = data.current_job;
                         const sd = escapeHtml(job.state || 'N/A');
                         const pv = (job.progress !== null && job.progress !== undefined) ? job.progress : 0;
+                        ojd.classList.remove('centered-empty-container');
                         ojd.innerHTML =
                             '<div class="stat-row"><span class="stat-label">Job ID:</span><span class="stat-value" style="font-family:monospace;font-size:0.8rem;">'+escapeHtml(job.id||'N/A')+'</span></div>'+
                             '<div class="stat-row"><span class="stat-label">Model:</span><span class="stat-value">'+escapeHtml(job.model||'N/A')+'</span></div>'+
@@ -869,8 +871,12 @@ class WorkerWebUI:
                             '<div class="stat-row"><span class="stat-label">State:</span><span class="job-state-badge">'+sd+'</span></div>'+
                             '<div style="margin-top:14px;"><div class="progress-header"><span class="progress-label">Progress</span><span class="progress-value">'+escapeHtml(pv)+'%</span></div><div class="progress-bar-container" style="height:12px;"><div class="progress-bar" style="width:'+escapeHtml(pv)+'%;height:100%;border-radius:6px;"></div></div></div>';
                     } else {
+                        ojd.classList.add('centered-empty-container');
                         ojd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
                     }
+                    const itw = document.getElementById('overview-image-time-wrapper');
+                    const hasImage = data.last_image_submission_timestamp && data.last_image_submission_timestamp !== 0;
+                    itw.style.display = hasImage ? 'block' : 'none';
                     document.getElementById('overview-image-time').textContent = formatTimeAgo(data.last_image_submission_timestamp);
                     renderLastImages(data.last_image_base64, document.getElementById('overview-image-container'), data.last_image_submission_timestamp);
                     const qd = document.getElementById('job-queue');
