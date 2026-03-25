@@ -799,7 +799,7 @@ class WorkerWebUI:
                             (job.steps!=null&&job.steps!==undefined?'<div class="stat-row"><span class="stat-label">Steps:</span><span class="stat-value">'+escapeHtml(job.steps)+'</span></div>':'')+
                             (job.width!=null&&job.width!==undefined&&job.height!=null&&job.height!==undefined?'<div class="stat-row"><span class="stat-label">Image Size:</span><span class="stat-value">'+escapeHtml(job.width)+'x'+escapeHtml(job.height)+'</span></div>':'')+
                             (job.sampler!=null&&job.sampler!==undefined?'<div class="stat-row"><span class="stat-label">Sampler:</span><span class="stat-value">'+escapeHtml(job.sampler)+'</span></div>':'')+
-                            (job.loras!=null&&job.loras!==undefined&&job.loras.length>0?'<div class="stat-row"><span class="stat-label">LoRAs:</span><span class="stat-value">'+job.loras.map(l=>escapeHtml(l.name||'Unknown')).join(', ')+'</span></div>':'')+
+                            '<div class="stat-row"><span class="stat-label">LoRAs:</span><span class="stat-value">'+(job.loras!=null&&job.loras!==undefined&&job.loras.length>0?job.loras.map(l=>escapeHtml(l.name||'Unknown')).join(', '):'None')+'</span></div>'+
                             '<div class="stat-row"><span class="stat-label">State:</span><span class="job-state-badge">'+sd+'</span></div>'+
                             '<div style="margin-top:14px;"><div class="progress-header"><span class="progress-label">Progress</span><span class="progress-value">'+escapeHtml(pv)+'%</span></div><div class="progress-bar-container" style="height:12px;"><div class="progress-bar" style="width:'+escapeHtml(pv)+'%;height:100%;border-radius:6px;"></div></div></div>';
                     } else {
