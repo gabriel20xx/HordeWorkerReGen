@@ -237,8 +237,7 @@ class WorkerWebUI:
         .image-grid-item:hover .image-timestamp { opacity: 1; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; height: 320px; overflow: hidden; border-radius: 8px; }
-        .last-image-container .image-grid { display: grid; width: 100%; height: 100%; gap: 4px; align-content: stretch; justify-content: stretch; }
-        .last-image-container .image-grid-item { aspect-ratio: auto; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        .last-image-container > .image-grid-item { aspect-ratio: auto; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
         .last-image-container .image-grid-item img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: block; }
         .last-image-container .image-grid-item img:hover { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         .single-image { width: 100%; height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
@@ -747,6 +746,7 @@ class WorkerWebUI:
             // newer renderLastImages() call has already superseded this one.
             const renderToken = key;
             if (!rawB64 || rawB64.length === 0) {
+                oic.removeAttribute('style');
                 oic.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
                 return;
             }
@@ -760,6 +760,7 @@ class WorkerWebUI:
                 });
             }
             if (count === 1) {
+                oic.removeAttribute('style');
                 oic.innerHTML = '<img src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" />';
                 attachClicks();
                 return;
@@ -792,7 +793,8 @@ class WorkerWebUI:
                     gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr);';
                     items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
                 }
-                oic.innerHTML = '<div class="image-grid" style="' + gridStyle + '">' + items + '</div>';
+                oic.style.cssText = 'display:grid;width:100%;gap:4px;align-content:stretch;justify-content:stretch;' + gridStyle;
+                oic.innerHTML = items;
                 attachClicks();
             }
             srcs.forEach(function(src, i) {
