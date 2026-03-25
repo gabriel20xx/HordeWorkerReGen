@@ -5998,7 +5998,7 @@ class HordeWorkerProcessManager:
 
         The progress bar is divided into stages:
         - Model Loading: 0-20%
-        - Inference: 20-70%
+        - Inference: 1-70% (starts at 1% to avoid a 0% flash, rises to 70% at completion)
         - Post-Processing: 70-80%
         - Safety Check: 80-90%
         - Submission: 90-100%
@@ -6034,15 +6034,16 @@ class HordeWorkerProcessManager:
         ):
             return 20  # Model loading complete
 
-        # Inference stages (20-70%)
+        # Inference stages (1-70%)
         if process_state in (
             HordeProcessState.INFERENCE_STARTING,
             HordeProcessState.INFERENCE_PROCESSING,
         ):
             if inference_progress is not None:
-                # Map 0-100% inference progress to 20-70% overall
-                return 20 + int(inference_progress * 0.5)
-            return 20  # Start of inference
+                # Map 0-100% inference progress to 0-70% overall, with a floor of 1%
+                # to avoid dropping the UI back to 0% at the very start of inference.
+                return max(1, int(inference_progress * 0.7))
+            return 1  # Start of inference - small non-zero baseline to prevent flash
 
         # Post-processing stage (70-80%)
         if process_state in (
@@ -6084,8 +6085,8 @@ class HordeWorkerProcessManager:
         if process_state == HordeProcessState.INFERENCE_FAILED:
             # Failed during inference, show whatever progress was made
             if inference_progress is not None:
-                return 20 + int(inference_progress * 0.5)
-            return 20
+                return max(1, int(inference_progress * 0.7))
+            return 1
         if process_state == HordeProcessState.SAFETY_FAILED:
             return 85  # Failed during safety check
 
@@ -6255,11 +6256,11 @@ class HordeWorkerProcessManager:
                             # Use the higher of the raw step-based percent and the granular
                             # stage-based progress so that the bar never shows 0% at the very
                             # start of a new inference.  The granular mapping returns at least
-                            # 20 for INFERENCE_STARTING / early INFERENCE_PROCESSING, which
+                            # 1% for INFERENCE_STARTING / early INFERENCE_PROCESSING, which
                             # prevents the jarring 100% → 0% → 100% jump when one job finishes
                             # submission and the next job just begins.  For mid/late inference
-                            # (raw_progress > ~40%) the raw step value is the larger number and
-                            # takes over, so actual step-level progress is still shown.
+                            # the raw step value is the larger number and takes over, so actual
+                            # step-level progress is still shown.
                             raw_progress = process.last_heartbeat_percent_complete
                             granular = self._calculate_granular_progress(
                                 process_state, raw_progress
