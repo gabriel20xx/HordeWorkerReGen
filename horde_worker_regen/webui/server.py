@@ -49,6 +49,7 @@ class WorkerWebUI:
             "session_start_time": time.time(),
             "jobs_popped": 0,
             "jobs_queued": 0,
+            "time_without_jobs": 0.0,
             "jobs_completed": 0,
             "jobs_faulted": 0,
             "processes_recovered": 0,
@@ -459,7 +460,8 @@ class WorkerWebUI:
                         <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value accent" id="jobs-popped">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="jobs-completed">0</div></div>
                     </div>
-                    <div class="grid-3 grid-3-popped" style="margin-bottom: 14px;">
+                    <div class="grid-4" style="margin-bottom: 14px;">
+                        <div class="stat-card"><div class="stat-card-label">Time w/o Jobs</div><div class="stat-card-value warning" id="time-without-jobs">0h 0m 0s</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Queued</div><div class="stat-card-value" id="jobs-queued">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Recovered</div><div class="stat-card-value warning" id="processes-recovered">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="jobs-faulted">0</div></div>
@@ -929,6 +931,7 @@ class WorkerWebUI:
                     document.getElementById('jobs-faulted').textContent = data.jobs_faulted;
                     document.getElementById('processes-recovered').textContent = data.processes_recovered;
                     document.getElementById('jobs-queued').textContent = data.jobs_queued;
+                    document.getElementById('time-without-jobs').textContent = formatUptime(data.time_without_jobs || 0);
                     const cpu = Math.min(100, Math.round(data.cpu_usage_percent));
                     const gpu = Math.min(100, Math.round(data.gpu_usage_percent));
                     const vram = data.total_vram_mb > 0 ? Math.min(100, Math.round((data.vram_usage_mb / data.total_vram_mb) * 100)) : 0;
@@ -1184,6 +1187,7 @@ class WorkerWebUI:
         horde_username: str | None = None,
         jobs_popped: int | None = None,
         jobs_queued: int | None = None,
+        time_without_jobs: float | None = None,
         jobs_completed: int | None = None,
         jobs_faulted: int | None = None,
         processes_recovered: int | None = None,
@@ -1214,6 +1218,7 @@ class WorkerWebUI:
             horde_username: The horde username
             jobs_popped: Total number of jobs popped this session
             jobs_queued: Currently queued jobs count
+            time_without_jobs: Total seconds spent with no active jobs this session
             jobs_completed: Total number of jobs completed this session
             jobs_faulted: Total number of jobs faulted this session
             processes_recovered: Total number of jobs recovered this session
@@ -1245,6 +1250,8 @@ class WorkerWebUI:
             self.status_data["jobs_popped"] = jobs_popped
         if jobs_queued is not None:
             self.status_data["jobs_queued"] = jobs_queued
+        if time_without_jobs is not None:
+            self.status_data["time_without_jobs"] = time_without_jobs
         if jobs_completed is not None:
             self.status_data["jobs_completed"] = jobs_completed
         if jobs_faulted is not None:

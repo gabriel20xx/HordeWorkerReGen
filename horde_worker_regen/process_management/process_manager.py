@@ -6388,6 +6388,7 @@ class HordeWorkerProcessManager:
             horde_username=horde_username,
             jobs_popped=self.total_num_jobs_queued,
             jobs_queued=len(self.jobs_pending_inference),
+            time_without_jobs=self._time_spent_no_jobs_available,
             jobs_completed=self.total_num_completed_jobs,
             jobs_faulted=self._num_jobs_faulted,
             processes_recovered=self._num_process_recoveries,
