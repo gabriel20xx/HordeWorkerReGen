@@ -5147,9 +5147,9 @@ class TestInferenceBackgroundHeartbeat:
         proc.send_heartbeat_message.assert_not_called()
 
     def test_last_inference_percent_updated_on_zero_fallback(self) -> None:
-        """When comfyui_progress is absent and the fallback 0% heartbeat is sent,
-        _last_inference_percent must be set to 0 so the background heartbeat thread
-        can report meaningful (not None) progress.
+        """When comfyui_progress is absent and _last_inference_percent is None (very start
+        of inference), a 0% heartbeat is sent and _last_inference_percent is set to 0 so
+        the background heartbeat thread can report meaningful (not None) progress.
         """
         from hordelib.horde import ProgressReport, ProgressState
 
@@ -5163,7 +5163,7 @@ class TestInferenceBackgroundHeartbeat:
         proc._active_model_name = "TestModel"
         proc._start_inference_time = 0.0
 
-        # Report with no comfyui_progress → triggers the fallback 0% path
+        # Report with no comfyui_progress → triggers the fallback path at very start
         report = MagicMock(spec=ProgressReport)
         report.hordelib_progress_state = ProgressState.progress
         report.comfyui_progress = None
@@ -5171,8 +5171,58 @@ class TestInferenceBackgroundHeartbeat:
         HordeInferenceProcess._progress_callback_impl(proc, report)
 
         assert proc._last_inference_percent == 0, (
-            "_last_inference_percent must be set to 0 when the fallback 0% heartbeat fires"
+            "_last_inference_percent must be set to 0 when the fallback fires with no prior progress"
         )
+        # Heartbeat must be sent with 0%
+        proc.send_heartbeat_message.assert_called_once()
+        call_kwargs = proc.send_heartbeat_message.call_args
+        assert call_kwargs.kwargs.get("percent_complete") == 0, (
+            "Heartbeat must carry percent_complete=0 at very start of inference"
+        )
+
+    def test_progress_not_reset_to_zero_between_last_step_and_post_processing(self) -> None:
+        """Progress must NOT drop to 0 % when a no-comfyui_progress callback fires after
+        some inference progress has already been reported.
+
+        This is the regression test for the 1 % flash that occurred between the final
+        denoising step and the first post-processing callback: a transition callback with
+        comfyui_progress=None was incorrectly resetting _last_inference_percent to 0,
+        which the web UI granular floor then displayed as 1 %.
+        """
+        from hordelib.horde import ProgressReport, ProgressState
+
+        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+
+        for prior_percent in (50, 95, 100):
+            proc = MagicMock(spec=HordeInferenceProcess)
+            proc._in_post_processing = False
+            proc._current_job_inference_steps_complete = False
+            # Simulate that we have already seen progress (e.g. 95% after step 19/20)
+            proc._last_inference_percent = prior_percent
+            proc.send_heartbeat_message = MagicMock()
+            proc._active_model_name = "TestModel"
+            proc._start_inference_time = 0.0
+
+            # A transition callback with no comfyui_progress (e.g. during VAE-decode startup)
+            report = MagicMock(spec=ProgressReport)
+            report.hordelib_progress_state = ProgressState.progress
+            report.comfyui_progress = None
+
+            HordeInferenceProcess._progress_callback_impl(proc, report)
+
+            # Progress must NOT drop
+            assert proc._last_inference_percent == prior_percent, (
+                f"_last_inference_percent must stay at {prior_percent} (not reset to 0) "
+                f"when a no-progress callback fires after prior progress was established. "
+                f"Got {proc._last_inference_percent}"
+            )
+            # The heartbeat must carry the preserved percentage (not 0)
+            proc.send_heartbeat_message.assert_called_once()
+            call_kwargs = proc.send_heartbeat_message.call_args
+            assert call_kwargs.kwargs.get("percent_complete") == prior_percent, (
+                f"Heartbeat must carry percent_complete={prior_percent} to prevent the "
+                f"1 % flash in the web UI, got {call_kwargs.kwargs.get('percent_complete')}"
+            )
 
     def test_last_inference_percent_updated_on_inference_step(self) -> None:
         """_last_inference_percent must be updated to the step's percentage when
