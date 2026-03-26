@@ -658,6 +658,7 @@ class TestIsStuckOnInference:
         last_heartbeat_delta: float = 0.0,
         heartbeats_inference_steps: int = 0,
         last_progress_value: int | None = None,
+        last_inference_step_timestamp: float | None = None,
     ) -> MagicMock:
         """Create a mock process map entry with configurable timestamps."""
         entry = MagicMock()
@@ -667,6 +668,7 @@ class TestIsStuckOnInference:
         entry.last_heartbeat_delta = last_heartbeat_delta
         entry.heartbeats_inference_steps = heartbeats_inference_steps
         entry.last_progress_value = last_progress_value
+        entry.last_inference_step_timestamp = last_inference_step_timestamp
         return entry
 
     def _make_process_map(self, entry: MagicMock) -> MagicMock:
@@ -678,6 +680,7 @@ class TestIsStuckOnInference:
         process_map.is_stuck_on_inference = ProcessMap.is_stuck_on_inference.__get__(
             process_map, ProcessMap
         )
+        process_map.MAX_INFERENCE_STEP_TIMEOUT = ProcessMap.MAX_INFERENCE_STEP_TIMEOUT
         return process_map
 
     def test_inference_starting_not_stuck_returns_false(self) -> None:
@@ -939,6 +942,119 @@ class TestIsStuckOnInference:
         process_map = self._make_process_map(entry)
         # progress_value != 100, so check 1 must still fire.
         assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_processing_per_step_timeout_not_yet_elapsed(self) -> None:
+        """A process with a recent INFERENCE_STEP heartbeat is not stuck on a single step.
+
+        The per-step check must not fire when the last step heartbeat arrived recently
+        (within MAX_INFERENCE_STEP_TIMEOUT seconds).
+        """
+        import time
+
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 10,
+            heartbeats_inference_steps=3,
+            last_progress_value=50,
+            last_inference_step_timestamp=time.time() - (ProcessMap.MAX_INFERENCE_STEP_TIMEOUT - 5),
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_processing_per_step_timeout_elapsed_is_stuck(self) -> None:
+        """A process that has not received a new INFERENCE_STEP heartbeat within MAX_INFERENCE_STEP_TIMEOUT
+        seconds is detected as stuck, even though background heartbeats (PIPELINE_STATE_CHANGE) keep
+        refreshing last_heartbeat_timestamp.
+
+        Scenario: GPU hangs between step N and step N+1.  The background heartbeat thread sends
+        PIPELINE_STATE_CHANGE every 30 s (which does NOT update last_inference_step_timestamp), so
+        last_heartbeat_timestamp stays fresh while last_inference_step_timestamp goes stale.
+        """
+        import time
+
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 5,  # fresh — background heartbeat just fired
+            heartbeats_inference_steps=0,  # reset by the background PIPELINE_STATE_CHANGE
+            last_progress_value=50,
+            # last INFERENCE_STEP was received more than MAX_INFERENCE_STEP_TIMEOUT ago
+            last_inference_step_timestamp=time.time() - (ProcessMap.MAX_INFERENCE_STEP_TIMEOUT + 5),
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is True
+
+    def test_inference_processing_per_step_timeout_no_step_yet_not_stuck(self) -> None:
+        """When no INFERENCE_STEP heartbeat has arrived yet (last_inference_step_timestamp is None),
+        the per-step check must NOT fire.
+
+        A process that just transitioned to INFERENCE_PROCESSING and hasn't completed its first
+        diffusion step yet should not be falsely flagged by the per-step check.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 10,
+            heartbeats_inference_steps=0,
+            last_progress_value=None,
+            last_inference_step_timestamp=None,  # no step received yet
+        )
+        process_map = self._make_process_map(entry)
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_processing_per_step_timeout_at_100_percent_not_stuck(self) -> None:
+        """The per-step check must NOT fire when progress is at 100 % (VAE decode phase).
+
+        After all diffusion steps complete, the last INFERENCE_STEP timestamp goes stale while
+        the process performs VAE decoding.  Skipping the check at 100 % prevents false positives;
+        the no_step_heartbeat_timeout / VAE_SEMAPHORE_TIMEOUT path handles genuine stalls there.
+        """
+        import time
+
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 9999,  # stale — 100 % never changes
+            last_heartbeat_timestamp=time.time() - 10,  # background heartbeats still arriving
+            heartbeats_inference_steps=0,  # reset by 100 % PIPELINE_STATE_CHANGE
+            last_progress_value=100,
+            # last step finished a while ago; VAE decode is now running
+            last_inference_step_timestamp=time.time() - (ProcessMap.MAX_INFERENCE_STEP_TIMEOUT + 5),
+        )
+        process_map = self._make_process_map(entry)
+        # Check 1 skipped (100 %), per-step check skipped (100 %), heartbeat checks OK.
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_inference_starting_per_step_timeout_does_not_apply(self) -> None:
+        """The per-step check must NOT fire for INFERENCE_STARTING.
+
+        A process waiting to acquire the inference semaphore cannot send INFERENCE_STEP heartbeats.
+        Applying the per-step check to INFERENCE_STARTING would create false positives.
+        """
+        import time
+
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 10,
+            last_heartbeat_timestamp=time.time() - 10,
+            heartbeats_inference_steps=0,
+            last_progress_value=None,
+            # Simulate a stale step timestamp (should be ignored for INFERENCE_STARTING)
+            last_inference_step_timestamp=time.time() - (ProcessMap.MAX_INFERENCE_STEP_TIMEOUT + 5),
+        )
+        process_map = self._make_process_map(entry)
+        # Per-step check must not fire; heartbeat is recent (10s < 600s) → not stuck.
+        assert process_map.is_stuck_on_inference(0, 600) is False
 
 
 class TestInferenceSemaphoreBoundedSemaphore:

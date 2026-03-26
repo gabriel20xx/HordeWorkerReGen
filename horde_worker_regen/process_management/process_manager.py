@@ -173,6 +173,8 @@ class HordeProcessInfo:
     """Last time progress (percent_complete) actually advanced."""
     last_progress_value: int | None
     """The last progress value to detect if progress is advancing."""
+    last_inference_step_timestamp: float | None
+    """Last time an INFERENCE_STEP heartbeat was received. None until the first step arrives."""
 
     last_received_timestamp: float
     """Last time we updated the process info. If we're regularly working, then this value should change frequently."""
@@ -248,6 +250,7 @@ class HordeProcessInfo:
         # Initialize progress tracking
         self.last_progress_timestamp = time.time()
         self.last_progress_value = None
+        self.last_inference_step_timestamp = None
 
         self.last_job_referenced = None
 
@@ -414,6 +417,11 @@ class ProcessMap(dict[int, HordeProcessInfo]):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    MAX_INFERENCE_STEP_TIMEOUT: int = 30
+    """Maximum seconds allowed between consecutive INFERENCE_STEP heartbeats before a process is
+    considered stuck on a single diffusion step. Must match or exceed the background heartbeat
+    interval so that the background keepalive fires before the per-step check triggers."""
+
     def on_heartbeat(
         self,
         process_id: int,
@@ -435,6 +443,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         self[process_id].last_heartbeat_type = heartbeat_type
         if heartbeat_type == HordeHeartbeatType.INFERENCE_STEP:
             self[process_id].heartbeats_inference_steps += 1
+            self[process_id].last_inference_step_timestamp = time.time()
         else:
             self[process_id].heartbeats_inference_steps = 0
 
@@ -522,6 +531,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             # Also reset progress tracking so stall detection starts fresh
             self[process_id].last_progress_timestamp = time.time()
             self[process_id].last_progress_value = None
+            self[process_id].last_inference_step_timestamp = None
 
     def on_last_job_reference_change(
         self,
@@ -542,6 +552,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             # Reset progress tracking for new job
             self[process_id].last_progress_timestamp = time.time()
             self[process_id].last_progress_value = None
+            self[process_id].last_inference_step_timestamp = None
 
         self[process_id].last_job_referenced = last_job_referenced
         self[process_id].last_received_timestamp = time.time()
@@ -609,6 +620,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         # Reset progress tracking for new job
         self[process_id].last_progress_timestamp = time.time()
         self[process_id].last_progress_value = None
+        self[process_id].last_inference_step_timestamp = None
 
     def delete_safety_processes(self) -> None:
         """Clear all safety processes."""
@@ -631,7 +643,8 @@ class ProcessMap(dict[int, HordeProcessInfo]):
 
         This detects jobs that are stuck in the INFERENCE_STARTING or INFERENCE_PROCESSING state with:
         1. Progress not advancing for timeout period (stuck at same percentage), OR
-        2. No heartbeat received for timeout period (including last step / VAE decode phase)
+        2. A single diffusion step taking longer than MAX_INFERENCE_STEP_TIMEOUT seconds, OR
+        3. No heartbeat received for timeout period (including last step / VAE decode phase)
 
         Detecting INFERENCE_PROCESSING stalls is critical: a process holding the inference semaphore
         while stuck prevents other processes from acquiring it, leaving them permanently stuck in
@@ -666,6 +679,18 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         time_since_progress = time.time() - self[process_id].last_progress_timestamp
         if time_since_progress > inference_step_timeout and self[process_id].last_progress_value != 100:
             # Progress hasn't advanced in too long - job is stuck
+            return True
+
+        # Check if a single diffusion step is taking too long.
+        # last_inference_step_timestamp is set only by INFERENCE_STEP heartbeats, so background
+        # PIPELINE_STATE_CHANGE heartbeats do not mask a stuck step.  Skip this check at 100 %
+        # progress (VAE decode phase) since no further steps are expected after all steps complete.
+        if (
+            state == HordeProcessState.INFERENCE_PROCESSING
+            and self[process_id].last_inference_step_timestamp is not None
+            and self[process_id].last_progress_value != 100
+            and time.time() - self[process_id].last_inference_step_timestamp > self.MAX_INFERENCE_STEP_TIMEOUT
+        ):
             return True
 
         # Check if no heartbeat received for timeout period.
