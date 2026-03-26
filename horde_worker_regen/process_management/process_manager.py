@@ -417,10 +417,11 @@ class ProcessMap(dict[int, HordeProcessInfo]):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    MAX_INFERENCE_STEP_TIMEOUT: int = 30
+    MAX_INFERENCE_STEP_TIMEOUT: float = HordeInferenceProcess._INFERENCE_HEARTBEAT_INTERVAL
     """Maximum seconds allowed between consecutive INFERENCE_STEP heartbeats before a process is
-    considered stuck on a single diffusion step. Must match or exceed the background heartbeat
-    interval so that the background keepalive fires before the per-step check triggers."""
+    considered stuck on a single diffusion step. Derived from and must match or exceed the
+    background heartbeat interval so that the background keepalive fires before the per-step
+    check triggers."""
 
     def on_heartbeat(
         self,
@@ -437,19 +438,20 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             percent_complete (int | None, optional): The percentage of the job that has been completed, \
                 if applicable. Defaults to None.
         """
-        self[process_id].last_heartbeat_delta = time.time() - self[process_id].last_heartbeat_timestamp
-        self[process_id].last_received_timestamp = time.time()
-        self[process_id].last_heartbeat_timestamp = time.time()
+        now = time.time()
+        self[process_id].last_heartbeat_delta = now - self[process_id].last_heartbeat_timestamp
+        self[process_id].last_received_timestamp = now
+        self[process_id].last_heartbeat_timestamp = now
         self[process_id].last_heartbeat_type = heartbeat_type
         if heartbeat_type == HordeHeartbeatType.INFERENCE_STEP:
             self[process_id].heartbeats_inference_steps += 1
-            self[process_id].last_inference_step_timestamp = time.time()
+            self[process_id].last_inference_step_timestamp = now
         else:
             self[process_id].heartbeats_inference_steps = 0
 
         # Update progress tracking to detect stalled jobs
         if percent_complete is not None and self[process_id].last_progress_value != percent_complete:
-            self[process_id].last_progress_timestamp = time.time()
+            self[process_id].last_progress_timestamp = now
             self[process_id].last_progress_value = percent_complete
 
         self[process_id].last_heartbeat_percent_complete = percent_complete
