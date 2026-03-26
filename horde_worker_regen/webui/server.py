@@ -470,8 +470,7 @@ class WorkerWebUI:
                             <div id="overview-current-job" class="centered-empty-container"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128444; Last Images</span></div>
-                            <div id="overview-image-time-wrapper" style="display:none;font-size:0.75rem;color:#94a3b8;margin-bottom:10px;"><span id="overview-image-time"></span></div>
+                            <div class="card-header"><span class="card-title">&#128444; Last Result</span><span id="overview-image-time" style="margin-left:auto;font-size:0.75rem;color:#94a3b8;"></span></div>
                             <div id="overview-image-container" class="last-image-container"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
                         </div>
                     </div>
@@ -972,10 +971,8 @@ class WorkerWebUI:
                         ojd.classList.add('centered-empty-container');
                         ojd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
                     }
-                    const itw = document.getElementById('overview-image-time-wrapper');
                     const hasImage = data.last_image_submission_timestamp && data.last_image_submission_timestamp !== 0;
-                    itw.style.display = hasImage ? 'block' : 'none';
-                    document.getElementById('overview-image-time').textContent = formatTimeAgo(data.last_image_submission_timestamp);
+                    document.getElementById('overview-image-time').textContent = hasImage ? formatTimeAgo(data.last_image_submission_timestamp) : '';
                     renderLastImages(data.last_image_base64, document.getElementById('overview-image-container'), data.last_image_submission_timestamp);
                     const qd = document.getElementById('job-queue');
                     document.getElementById('queue-count').textContent = data.job_queue.length;
