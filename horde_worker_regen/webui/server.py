@@ -257,7 +257,7 @@ class WorkerWebUI:
         .image-grid-item:hover .image-timestamp { opacity: 1; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 320px; overflow: hidden; }
-        .last-image-container > .image-grid-item { aspect-ratio: auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .last-image-container > .image-grid-item { aspect-ratio: auto; min-height: 0; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .last-image-container .image-grid-item img { max-width: 100%; height: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: block; }
         .last-image-container .image-grid-item img:hover { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         .single-image { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
@@ -854,35 +854,42 @@ class WorkerWebUI:
                 attachClicks();
                 return;
             }
+            function makeItem(s, i, spanFull) {
+                var span = spanFull ? ' style="grid-column:1/-1;"' : '';
+                return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>';
+            }
             var imgDims = new Array(count).fill(null), loadedCount = 0;
             function renderGrid() {
-                // Abort if a newer renderLastImages() call has already taken over.
                 if (_lastRenderedImageKey !== renderToken) return;
-                var aspectRatios = imgDims.map(function(d) { return d ? d.w / d.h : 1.0; });
-                // Portrait: AR < 0.85 (taller than wide); Landscape: AR > 1.2 (wider than tall)
-                var allPortrait = aspectRatios.every(function(ar) { return ar < 0.85; });
-                var allLandscape = aspectRatios.every(function(ar) { return ar > 1.2; });
+                var containerAR = (oic.offsetWidth || 320) / (oic.offsetHeight || 320);
+                var avgImgAR = imgDims.reduce(function(sum, d) { return sum + (d ? d.w / d.h : 1.0); }, 0) / count;
                 var gridStyle, items;
                 if (count === 2) {
-                    if (allLandscape) {
-                        gridStyle = 'grid-template-columns:1fr;grid-template-rows:1fr 1fr;';
-                    } else {
-                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
-                    }
-                    items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
+                    // Always side by side for 2 images
+                    gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
+                    items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                 } else if (count === 3) {
-                    if (allPortrait) {
+                    // 1×3: ideal cell AR = containerAR/3; 2+1: ideal cell AR = containerAR
+                    // Use 1×3 when image AR is closer to the narrow 1×3 cells (portrait images)
+                    if (Math.abs(avgImgAR - containerAR / 3) <= Math.abs(avgImgAR - containerAR)) {
                         gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
-                        items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
+                        items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                     } else {
                         gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
-                        items = srcs.map(function(s, i) { var span = i === 0 ? ' style="grid-column:1/-1;"' : ''; return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
+                        items = srcs.map(function(s, i) { return makeItem(s, i, i === 0); }).join('');
                     }
                 } else {
-                    gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
-                    items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
+                    // 1×4: ideal cell AR = containerAR/4; 2×2: ideal cell AR = containerAR
+                    // Use 1×4 when image AR is closer to the narrow 1×4 cells (portrait images)
+                    if (Math.abs(avgImgAR - containerAR / 4) <= Math.abs(avgImgAR - containerAR)) {
+                        gridStyle = 'grid-template-columns:repeat(4,1fr);grid-template-rows:1fr;';
+                        items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
+                    } else {
+                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
+                        items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
+                    }
                 }
-                oic.style.cssText = 'display:grid;width:100%;gap:4px;' + gridStyle;
+                oic.style.cssText = 'display:grid;width:100%;gap:4px;align-items:stretch;' + gridStyle;
                 oic.innerHTML = items;
                 attachClicks();
             }
