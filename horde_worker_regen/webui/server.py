@@ -882,7 +882,7 @@ class WorkerWebUI:
                     gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
                     items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
                 }
-                oic.style.cssText = 'display:grid;width:100%;height:100%;gap:4px;align-items:stretch;' + gridStyle;
+                oic.style.cssText = 'display:grid;width:100%;gap:4px;align-items:stretch;' + gridStyle;
                 oic.innerHTML = items;
                 attachClicks();
             }
