@@ -854,44 +854,20 @@ class WorkerWebUI:
                 attachClicks();
                 return;
             }
-            var imgDims = new Array(count).fill(null), loadedCount = 0;
-            function renderGrid() {
-                // Abort if a newer renderLastImages() call has already taken over.
-                if (_lastRenderedImageKey !== renderToken) return;
-                var aspectRatios = imgDims.map(function(d) { return d ? d.w / d.h : 1.0; });
-                // Portrait: AR < 0.85 (taller than wide); Landscape: AR > 1.2 (wider than tall)
-                var allPortrait = aspectRatios.every(function(ar) { return ar < 0.85; });
-                var allLandscape = aspectRatios.every(function(ar) { return ar > 1.2; });
-                var gridStyle, items;
-                if (count === 2) {
-                    if (allLandscape) {
-                        gridStyle = 'grid-template-columns:1fr;grid-template-rows:1fr 1fr;';
-                    } else {
-                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
-                    }
-                    items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
-                } else if (count === 3) {
-                    if (allPortrait) {
-                        gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
-                        items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
-                    } else {
-                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
-                        items = srcs.map(function(s, i) { var span = i === 0 ? ' style="grid-column:1/-1;"' : ''; return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
-                    }
-                } else {
-                    gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
-                    items = srcs.map(function(s, i) { return '<div class="image-grid-item"><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>'; }).join('');
-                }
-                oic.style.cssText = 'display:grid;width:100%;gap:4px;align-items:stretch;' + gridStyle;
-                oic.innerHTML = items;
-                attachClicks();
+            function makeItem(s, i, spanFull) {
+                var span = spanFull ? ' style="grid-column:1/-1;"' : '';
+                return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>';
             }
-            srcs.forEach(function(src, i) {
-                var img = new window.Image();
-                img.onload = function() { imgDims[i] = { w: this.naturalWidth, h: this.naturalHeight }; loadedCount++; if (loadedCount === count) renderGrid(); };
-                img.onerror = function() { imgDims[i] = { w: 1, h: 1 }; loadedCount++; if (loadedCount === count) renderGrid(); };
-                img.src = src;
-            });
+            var gridStyle;
+            if (count === 2) {
+                gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
+            } else {
+                gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
+            }
+            var items = srcs.map(function(s, i) { return makeItem(s, i, count === 3 && i === 0); }).join('');
+            oic.style.cssText = 'display:grid;width:100%;gap:4px;align-items:stretch;' + gridStyle;
+            oic.innerHTML = items;
+            attachClicks();
         }
         function updateStatus() {
             if (statusFetchInProgress) return;
