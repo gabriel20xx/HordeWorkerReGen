@@ -741,12 +741,18 @@ class HordeInferenceProcess(HordeProcess):
             # Send memory report with VRAM to update webui resources display
             self.send_memory_report_message(include_vram=True)
         else:
-            # Send heartbeat with 0% if no progress info is available yet
+            # No granular progress available.  Preserve the last-known percentage so the
+            # progress bar never resets to 0 % (displayed as 1 % via the granular floor in
+            # the web UI) between the final denoising step and the first post-processing
+            # callback.  At the very start of inference _last_inference_percent is None, so
+            # we fall back to 0 % only then (first heartbeat before any step has fired).
+            pct = self._last_inference_percent if self._last_inference_percent is not None else 0
             self.send_heartbeat_message(
                 heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
-                percent_complete=0,
+                percent_complete=pct,
             )
-            self._last_inference_percent = 0
+            if self._last_inference_percent is None:
+                self._last_inference_percent = 0
 
     def start_inference(self, job_info: ImageGenerateJobPopResponse) -> list[ResultingImageReturn] | None:
         """Start an inference job in the HordeLib instance.
