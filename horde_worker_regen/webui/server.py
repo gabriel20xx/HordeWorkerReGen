@@ -858,16 +858,47 @@ class WorkerWebUI:
                 var span = spanFull ? ' style="grid-column:1/-1;"' : '';
                 return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>';
             }
-            var gridStyle;
-            if (count === 2) {
-                gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
-            } else {
-                gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
+            var imgDims = new Array(count).fill(null), loadedCount = 0;
+            function renderGrid() {
+                if (_lastRenderedImageKey !== renderToken) return;
+                var containerAR = (oic.offsetWidth || 320) / (oic.offsetHeight || 320);
+                var avgImgAR = imgDims.reduce(function(sum, d) { return sum + (d ? d.w / d.h : 1.0); }, 0) / count;
+                var gridStyle, items;
+                if (count === 2) {
+                    // Always side by side for 2 images
+                    gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
+                    items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
+                } else if (count === 3) {
+                    // 1×3: ideal cell AR = containerAR/3; 2+1: ideal cell AR = containerAR
+                    // Use 1×3 when image AR is closer to the narrow 1×3 cells (portrait images)
+                    if (Math.abs(avgImgAR - containerAR / 3) <= Math.abs(avgImgAR - containerAR)) {
+                        gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
+                        items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
+                    } else {
+                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
+                        items = srcs.map(function(s, i) { return makeItem(s, i, i === 0); }).join('');
+                    }
+                } else {
+                    // 1×4: ideal cell AR = containerAR/4; 2×2: ideal cell AR = containerAR
+                    // Use 1×4 when image AR is closer to the narrow 1×4 cells (portrait images)
+                    if (Math.abs(avgImgAR - containerAR / 4) <= Math.abs(avgImgAR - containerAR)) {
+                        gridStyle = 'grid-template-columns:repeat(4,1fr);grid-template-rows:1fr;';
+                        items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
+                    } else {
+                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
+                        items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
+                    }
+                }
+                oic.style.cssText = 'display:grid;width:100%;gap:4px;align-items:stretch;' + gridStyle;
+                oic.innerHTML = items;
+                attachClicks();
             }
-            var items = srcs.map(function(s, i) { return makeItem(s, i, count === 3 && i === 0); }).join('');
-            oic.style.cssText = 'display:grid;width:100%;gap:4px;align-items:stretch;' + gridStyle;
-            oic.innerHTML = items;
-            attachClicks();
+            srcs.forEach(function(src, i) {
+                var img = new window.Image();
+                img.onload = function() { imgDims[i] = { w: this.naturalWidth, h: this.naturalHeight }; loadedCount++; if (loadedCount === count) renderGrid(); };
+                img.onerror = function() { imgDims[i] = { w: 1, h: 1 }; loadedCount++; if (loadedCount === count) renderGrid(); };
+                img.src = src;
+            });
         }
         function updateStatus() {
             if (statusFetchInProgress) return;
