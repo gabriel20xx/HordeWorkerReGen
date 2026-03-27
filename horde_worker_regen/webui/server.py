@@ -166,6 +166,11 @@ class WorkerWebUI:
         .hamburger-btn { background: none; border: none; color: var(--text-light); font-size: 1.3rem; cursor: pointer; padding: 6px; border-radius: 6px; line-height: 1; transition: background 0.15s; }
         .hamburger-btn:hover { background: rgba(255,255,255,0.08); }
         .mobile-title { color: var(--text-light); font-size: 0.95rem; font-weight: 600; flex: 1; }
+        .mobile-uptime { color: var(--text-muted); font-size: 0.7rem; font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0; }
+
+        /* ---- Mobile resources sub-bar ---- */
+        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .mobile-res-chip { color: var(--text-muted); font-size: 0.7rem; font-weight: 600; font-family: 'Courier New', monospace; }
 
         /* ---- Main content ---- */
         .main-content { margin-left: var(--sidebar-width); flex: 1; min-height: 100vh; display: flex; flex-direction: column; min-width: 0; }
@@ -324,7 +329,7 @@ class WorkerWebUI:
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
         @media (max-width: 1200px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 768px) { .sidebar { transform: translateX(-100%); } .sidebar.open { transform: translateX(0); } .mobile-navbar { display: flex; } .mobile-resources { display: flex; } .main-content { margin-left: 0; padding-top: 80px; } .topbar { display: none; } .content-area { padding: 14px 12px; } .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr; } .grid-2 { grid-template-columns: 1fr; } .grid-3-popped { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 768px) { .sidebar { transform: translateX(-100%); top: 54px; height: calc(100vh - 54px); } .sidebar.open { transform: translateX(0); } .mobile-navbar { display: flex; } .mobile-resources { display: flex; } .main-content { margin-left: 0; padding-top: 80px; } .topbar { display: none; } .content-area { padding: 14px 12px; } .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr; } .grid-2 { grid-template-columns: 1fr; } .grid-3-popped { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 480px) { .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; } .stat-card-value { font-size: 1.4rem; } }
 
         /* ---- Theme toggle (square) ---- */
@@ -339,11 +344,6 @@ class WorkerWebUI:
         .topbar-res-pill-label { display: flex; justify-content: space-between; align-items: center; font-family: 'Courier New', monospace; }
         .topbar-res-bar-track { width: 100%; height: 4px; background: #cbd5e1; border-radius: 2px; overflow: hidden; }
         .topbar-res-bar { height: 100%; border-radius: 2px; transition: width 0.4s ease, background-color 0.4s ease; }
-
-        /* ---- Mobile resources sub-bar ---- */
-        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); }
-        .mobile-res-chip { color: var(--text-muted); font-size: 0.7rem; font-weight: 600; font-family: 'Courier New', monospace; }
-
         /* ---- Dark mode ---- */
         [data-theme="dark"] { --main-bg: #0f172a; --card-bg: #1e293b; --border: #2d3f55; --sidebar-bg: #0d1117; --sidebar-hover: #161e2e; }
         [data-theme="dark"] body { color: #cbd5e1; }
@@ -397,6 +397,7 @@ class WorkerWebUI:
         <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
         <span class="mobile-title">&#127912; Horde Worker</span>
         <span id="mobile-status-badge"></span>
+        <span class="mobile-uptime" id="mobile-uptime">&#9201; --</span>
         <button class="theme-toggle" onclick="toggleTheme()" id="mobile-theme-toggle" aria-label="Toggle theme">&#127769;</button>
     </nav>
     <div class="mobile-resources" aria-label="Resource usage">
@@ -924,6 +925,7 @@ class WorkerWebUI:
                         : '<span class="status-badge status-active" style="font-size:0.68rem;padding:2px 7px;">Active</span>';
                     const uptimeStr = formatUptime(data.uptime);
                     document.getElementById('uptime').textContent = uptimeStr;
+                    document.getElementById('mobile-uptime').textContent = '\u23F1 ' + uptimeStr;
                     document.getElementById('user-kudos-total').textContent = data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
                     document.getElementById('kudos-per-hour').textContent = data.kudos_per_hour.toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
