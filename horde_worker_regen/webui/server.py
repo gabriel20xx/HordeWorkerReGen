@@ -252,7 +252,7 @@ class WorkerWebUI:
         .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
 
-        .console-container { background: #0f172a; border-radius: 8px; padding: 12px 14px; max-height: 800px; overflow-y: auto; font-family: 'Courier New', Consolas, 'Lucida Console', monospace; font-size: 0.8rem; color: #e2e8f0; line-height: 1.55; }
+        .console-container { background: #0f172a; border-radius: 8px; padding: 12px 14px; max-height: 400px; overflow-y: auto; font-family: 'Courier New', Consolas, 'Lucida Console', monospace; font-size: 0.8rem; color: #e2e8f0; line-height: 1.55; }
 
         /* ---- Gallery ---- */
         .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; width: 100%; }
@@ -526,12 +526,6 @@ class WorkerWebUI:
                         <div class="section-header"><span class="section-title">&#128203; Console</span></div>
                         <div class="card" style="padding:0;overflow:hidden;">
                             <div id="console-logs" class="console-container" style="border-radius:12px;"><div style="text-align:center;color:#475569;padding:18px;">No logs available</div></div>
-                        </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header"><span class="section-title">&#9888; Faulted Jobs</span><span class="section-count" id="faulted-jobs-count">0</span></div>
-                        <div class="card">
-                            <div id="faulted-jobs" class="faulted-jobs-list"><div class="empty-state"><span class="empty-state-icon">&#10003;</span>No faulted jobs</div></div>
                         </div>
                     </div>
                     <div class="section">
@@ -1019,27 +1013,6 @@ class WorkerWebUI:
                     } else {
                         lastKnownImagesCount = newImagesCount;
                     }
-                    const fjd = document.getElementById('faulted-jobs'), fjc = document.getElementById('faulted-jobs-count');
-                    if (data.faulted_jobs_history && data.faulted_jobs_history.length > 0) {
-                        fjc.textContent = data.faulted_jobs_history.length;
-                        fjd.innerHTML = data.faulted_jobs_history.map(job => {
-                            let ts = 'Unknown time';
-                            if (job.time_faulted && !isNaN(job.time_faulted)) { const ft = new Date(job.time_faulted*1000); if (!isNaN(ft.getTime())) ts = ft.toLocaleString(); }
-                            let dh = '<div class="faulted-job-details">';
-                            dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Model</span><span class="faulted-job-value">'+escapeHtml(job.model)+'</span></div>';
-                            if (job.fault_phase) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Fault Phase</span><span class="faulted-job-value" style="color:#ef4444;font-weight:600;">'+escapeHtml(job.fault_phase)+'</span></div>';
-                            if (job.width&&job.height) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Size</span><span class="faulted-job-value">'+job.width+'x'+job.height+'</span></div>';
-                            if (job.steps) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Steps</span><span class="faulted-job-value">'+job.steps+'</span></div>';
-                            if (job.sampler) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Sampler</span><span class="faulted-job-value">'+escapeHtml(job.sampler)+'</span></div>';
-                            if (job.batch_size&&job.batch_size>1) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Batch</span><span class="faulted-job-value">'+job.batch_size+'x</span></div>';
-                            dh += '</div>';
-                            let lh = '';
-                            if (job.loras&&job.loras.length>0) { lh='<div class="faulted-job-section"><span class="faulted-job-label faulted-job-section-label">LoRAs:</span>'; job.loras.forEach(l=>{lh+='<span class="faulted-job-lora">'+escapeHtml(l.name||'Unknown')+'</span>';}); lh+='</div>'; }
-                            let ch = '';
-                            if (job.controlnet) ch = '<div class="faulted-job-section"><span class="faulted-job-label faulted-job-section-label">ControlNet:</span><span class="faulted-job-controlnet">'+escapeHtml(job.controlnet)+'</span></div>';
-                            return '<div class="faulted-job-item"><div class="faulted-job-header"><span class="faulted-job-id">'+escapeHtml(job.job_id)+'</span><span class="faulted-job-time">'+ts+'</span></div>'+dh+lh+ch+'</div>';
-                        }).join('');
-                    } else { fjc.textContent = '0'; fjd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#10003;</span>No faulted jobs</div>'; }
                     errorsData = (data.errors_history && data.errors_history.length > 0) ? data.errors_history : [];
                     if (!data.errors_history || data.errors_history.length === 0) errorsCurrentPage = 1;
                     renderErrorsPage();
