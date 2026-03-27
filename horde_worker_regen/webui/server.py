@@ -252,7 +252,7 @@ class WorkerWebUI:
         .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
 
-        .console-container { background: #0f172a; border-radius: 8px; padding: 12px 14px; max-height: 800px; overflow-y: auto; font-family: 'Courier New', Consolas, 'Lucida Console', monospace; font-size: 0.8rem; color: #e2e8f0; line-height: 1.55; }
+        .console-container { background: #0f172a; border-radius: 8px; padding: 12px 14px; max-height: 400px; overflow-y: auto; font-family: 'Courier New', Consolas, 'Lucida Console', monospace; font-size: 0.8rem; color: #e2e8f0; line-height: 1.55; }
 
         /* ---- Gallery ---- */
         .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; width: 100%; }
@@ -283,24 +283,8 @@ class WorkerWebUI:
         .image-overlay-nav.next { right: 12px; }
         .image-overlay-counter { position: absolute; bottom: -32px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.8); font-size: 0.85rem; white-space: nowrap; font-weight: 500; }
 
-        /* ---- Faulted jobs ---- */
-        .faulted-jobs-list { display: flex; flex-direction: column; gap: 0; }
-        .faulted-job-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 8px; padding: 13px; margin-bottom: 10px; }
-        .faulted-job-item:last-child { margin-bottom: 0; }
-        .faulted-job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px; padding-bottom: 7px; border-bottom: 1px solid #fecaca; flex-wrap: wrap; gap: 6px; }
-        .faulted-job-id { font-family: monospace; color: #dc2626; font-weight: 700; font-size: 0.85rem; word-break: break-all; }
-        .faulted-job-time { color: #94a3b8; font-size: 0.78rem; flex-shrink: 0; }
-        .faulted-job-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
-        .faulted-job-detail { display: flex; flex-direction: column; }
-        .faulted-job-label { color: #94a3b8; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
-        .faulted-job-value { color: #334155; font-weight: 500; font-size: 0.85rem; word-break: break-word; }
-        .faulted-job-lora { background: #fef3c7; color: #92400e; padding: 2px 7px; border-radius: 4px; font-size: 0.78rem; display: inline-block; margin: 2px; }
-        .faulted-job-controlnet { background: #dbeafe; color: #1e40af; padding: 2px 7px; border-radius: 4px; font-size: 0.78rem; display: inline-block; font-weight: 600; }
-        .faulted-job-section { margin-top: 8px; }
-        .faulted-job-section-label { display: block; margin-bottom: 4px; }
-
         /* ---- Errors ---- */
-        .errors-list { display: flex; flex-direction: column; }
+        .errors-list { display: flex; flex-direction: column; max-height: 400px; overflow-y: auto; }
         .error-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; padding: 9px 13px; font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; margin-bottom: 5px; }
         .error-item:last-child { margin-bottom: 0; }
 
@@ -381,9 +365,6 @@ class WorkerWebUI:
         [data-theme="dark"] .loading-spinner { border-color: #2d3f55; border-top-color: var(--accent); }
         [data-theme="dark"] .empty-state { color: #64748b; }
         [data-theme="dark"] .image-grid-item { background: #151e2e; }
-        [data-theme="dark"] .faulted-job-item { background: #1a1010; border-color: #7f1d1d; }
-        [data-theme="dark"] .faulted-job-value { color: #cbd5e1; }
-        [data-theme="dark"] .faulted-job-label { color: #64748b; }
         [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
 
         /* ---- Gallery new-images banner ---- */
@@ -526,12 +507,6 @@ class WorkerWebUI:
                         <div class="section-header"><span class="section-title">&#128203; Console</span></div>
                         <div class="card" style="padding:0;overflow:hidden;">
                             <div id="console-logs" class="console-container" style="border-radius:12px;"><div style="text-align:center;color:#475569;padding:18px;">No logs available</div></div>
-                        </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header"><span class="section-title">&#9888; Faulted Jobs</span><span class="section-count" id="faulted-jobs-count">0</span></div>
-                        <div class="card">
-                            <div id="faulted-jobs" class="faulted-jobs-list"><div class="empty-state"><span class="empty-state-icon">&#10003;</span>No faulted jobs</div></div>
                         </div>
                     </div>
                     <div class="section">
@@ -1026,27 +1001,6 @@ class WorkerWebUI:
                     } else {
                         lastKnownImagesCount = newImagesCount;
                     }
-                    const fjd = document.getElementById('faulted-jobs'), fjc = document.getElementById('faulted-jobs-count');
-                    if (data.faulted_jobs_history && data.faulted_jobs_history.length > 0) {
-                        fjc.textContent = data.faulted_jobs_history.length;
-                        fjd.innerHTML = data.faulted_jobs_history.map(job => {
-                            let ts = 'Unknown time';
-                            if (job.time_faulted && !isNaN(job.time_faulted)) { const ft = new Date(job.time_faulted*1000); if (!isNaN(ft.getTime())) ts = ft.toLocaleString(); }
-                            let dh = '<div class="faulted-job-details">';
-                            dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Model</span><span class="faulted-job-value">'+escapeHtml(job.model)+'</span></div>';
-                            if (job.fault_phase) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Fault Phase</span><span class="faulted-job-value" style="color:#ef4444;font-weight:600;">'+escapeHtml(job.fault_phase)+'</span></div>';
-                            if (job.width&&job.height) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Size</span><span class="faulted-job-value">'+job.width+'x'+job.height+'</span></div>';
-                            if (job.steps) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Steps</span><span class="faulted-job-value">'+job.steps+'</span></div>';
-                            if (job.sampler) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Sampler</span><span class="faulted-job-value">'+escapeHtml(job.sampler)+'</span></div>';
-                            if (job.batch_size&&job.batch_size>1) dh += '<div class="faulted-job-detail"><span class="faulted-job-label">Batch</span><span class="faulted-job-value">'+job.batch_size+'x</span></div>';
-                            dh += '</div>';
-                            let lh = '';
-                            if (job.loras&&job.loras.length>0) { lh='<div class="faulted-job-section"><span class="faulted-job-label faulted-job-section-label">LoRAs:</span>'; job.loras.forEach(l=>{lh+='<span class="faulted-job-lora">'+escapeHtml(l.name||'Unknown')+'</span>';}); lh+='</div>'; }
-                            let ch = '';
-                            if (job.controlnet) ch = '<div class="faulted-job-section"><span class="faulted-job-label faulted-job-section-label">ControlNet:</span><span class="faulted-job-controlnet">'+escapeHtml(job.controlnet)+'</span></div>';
-                            return '<div class="faulted-job-item"><div class="faulted-job-header"><span class="faulted-job-id">'+escapeHtml(job.job_id)+'</span><span class="faulted-job-time">'+ts+'</span></div>'+dh+lh+ch+'</div>';
-                        }).join('');
-                    } else { fjc.textContent = '0'; fjd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#10003;</span>No faulted jobs</div>'; }
                     errorsData = (data.errors_history && data.errors_history.length > 0) ? data.errors_history : [];
                     if (!data.errors_history || data.errors_history.length === 0) errorsCurrentPage = 1;
                     renderErrorsPage();
