@@ -300,7 +300,7 @@ class WorkerWebUI:
         .faulted-job-section-label { display: block; margin-bottom: 4px; }
 
         /* ---- Errors ---- */
-        .errors-list { display: flex; flex-direction: column; }
+        .errors-list { display: flex; flex-direction: column; max-height: 400px; overflow-y: auto; }
         .error-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; padding: 9px 13px; font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; margin-bottom: 5px; }
         .error-item:last-child { margin-bottom: 0; }
 
