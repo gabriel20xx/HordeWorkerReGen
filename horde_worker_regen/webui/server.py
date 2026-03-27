@@ -283,22 +283,6 @@ class WorkerWebUI:
         .image-overlay-nav.next { right: 12px; }
         .image-overlay-counter { position: absolute; bottom: -32px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.8); font-size: 0.85rem; white-space: nowrap; font-weight: 500; }
 
-        /* ---- Faulted jobs ---- */
-        .faulted-jobs-list { display: flex; flex-direction: column; gap: 0; }
-        .faulted-job-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 8px; padding: 13px; margin-bottom: 10px; }
-        .faulted-job-item:last-child { margin-bottom: 0; }
-        .faulted-job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px; padding-bottom: 7px; border-bottom: 1px solid #fecaca; flex-wrap: wrap; gap: 6px; }
-        .faulted-job-id { font-family: monospace; color: #dc2626; font-weight: 700; font-size: 0.85rem; word-break: break-all; }
-        .faulted-job-time { color: #94a3b8; font-size: 0.78rem; flex-shrink: 0; }
-        .faulted-job-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
-        .faulted-job-detail { display: flex; flex-direction: column; }
-        .faulted-job-label { color: #94a3b8; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
-        .faulted-job-value { color: #334155; font-weight: 500; font-size: 0.85rem; word-break: break-word; }
-        .faulted-job-lora { background: #fef3c7; color: #92400e; padding: 2px 7px; border-radius: 4px; font-size: 0.78rem; display: inline-block; margin: 2px; }
-        .faulted-job-controlnet { background: #dbeafe; color: #1e40af; padding: 2px 7px; border-radius: 4px; font-size: 0.78rem; display: inline-block; font-weight: 600; }
-        .faulted-job-section { margin-top: 8px; }
-        .faulted-job-section-label { display: block; margin-bottom: 4px; }
-
         /* ---- Errors ---- */
         .errors-list { display: flex; flex-direction: column; max-height: 400px; overflow-y: auto; }
         .error-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; padding: 9px 13px; font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; margin-bottom: 5px; }
@@ -381,9 +365,6 @@ class WorkerWebUI:
         [data-theme="dark"] .loading-spinner { border-color: #2d3f55; border-top-color: var(--accent); }
         [data-theme="dark"] .empty-state { color: #64748b; }
         [data-theme="dark"] .image-grid-item { background: #151e2e; }
-        [data-theme="dark"] .faulted-job-item { background: #1a1010; border-color: #7f1d1d; }
-        [data-theme="dark"] .faulted-job-value { color: #cbd5e1; }
-        [data-theme="dark"] .faulted-job-label { color: #64748b; }
         [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
 
         /* ---- Gallery new-images banner ---- */
