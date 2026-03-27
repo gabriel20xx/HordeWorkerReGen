@@ -1090,8 +1090,12 @@ class WorkerWebUI:
         document.addEventListener('visibilitychange', function() {
             if (document.visibilityState === 'visible') {
                 if (scheduledUpdateTimer !== null) { clearTimeout(scheduledUpdateTimer); scheduledUpdateTimer = null; }
-                if (statusAbortController) { statusAbortController.abort(); statusAbortController = null; }
-                updateStatus();
+                // If a status request is already in flight, let it complete rather than
+                // aborting it and starting a new one. This avoids races between overlapping
+                // requests and stale `.finally()` handlers.
+                if (!statusAbortController) {
+                    updateStatus();
+                }
             }
         });
         initializeUpdates();
