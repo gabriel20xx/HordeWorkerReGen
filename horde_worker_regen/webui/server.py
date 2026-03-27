@@ -1021,9 +1021,19 @@ class WorkerWebUI:
                 .finally(() => { statusAbortController = null; scheduleUpdate(); });
         }
         const DEFAULT_UPDATE_INTERVAL_MS = 1000;
+        const CONFIG_FETCH_TIMEOUT_MS = 5000;
+        async function fetchWithTimeout(url, timeoutMs) {
+            const controller = new AbortController();
+            const timerId = setTimeout(() => controller.abort(new Error('Request timed out after '+timeoutMs+'ms')), timeoutMs);
+            try {
+                return await fetch(url, { signal: controller.signal });
+            } finally {
+                clearTimeout(timerId);
+            }
+        }
         async function initializeUpdates() {
             try {
-                const config = await (await fetch('/api/config')).json();
+                const config = await (await fetchWithTimeout('/api/config', CONFIG_FETCH_TIMEOUT_MS)).json();
                 updateIntervalMs = config.update_interval_ms || DEFAULT_UPDATE_INTERVAL_MS;
                 updateStatus();
             } catch (e) {
@@ -1031,6 +1041,17 @@ class WorkerWebUI:
                 updateStatus();
             }
         }
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') {
+                if (scheduledUpdateTimer !== null) { clearTimeout(scheduledUpdateTimer); scheduledUpdateTimer = null; }
+                // If a status request is already in flight, let it complete rather than
+                // aborting it and starting a new one. This avoids races between overlapping
+                // requests and stale `.finally()` handlers.
+                if (!statusAbortController) {
+                    updateStatus();
+                }
+            }
+        });
         initializeUpdates();
     </script>
 </body>
