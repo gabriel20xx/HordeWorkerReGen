@@ -6473,9 +6473,10 @@ class HordeWorkerProcessManager:
                 if self._shutting_down:
                     break
 
-                loop_start = asyncio.get_event_loop().time()
+                loop = asyncio.get_running_loop()
+                loop_start = loop.time()
                 self.update_webui_status()
-                elapsed = asyncio.get_event_loop().time() - loop_start
+                elapsed = loop.time() - loop_start
                 sleep_duration = max(0.0, self.bridge_data.webui_update_interval - elapsed)
                 await asyncio.sleep(sleep_duration)
             except CancelledError:
