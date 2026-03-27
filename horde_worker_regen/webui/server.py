@@ -819,6 +819,7 @@ class WorkerWebUI:
             return result;
         }
         let statusAbortController = null, statusFetchInProgress = false, consecutiveErrors = 0;
+        let statusUpdateTimestamp = Date.now(), updateIntervalMs = 1000;
         const MAX_CONSECUTIVE_ERRORS = 5;
         function resBarColor(pct) { return pct >= 80 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#10b981'; }
         let _lastRenderedImageKey = null;
@@ -902,8 +903,17 @@ class WorkerWebUI:
                 img.src = src;
             });
         }
+        function scheduleUpdate() {
+            const elapsed = Date.now() - statusUpdateTimestamp;
+            const delay = Math.max(0, updateIntervalMs - elapsed);
+            setTimeout(updateStatus, delay);
+        }
         function updateStatus() {
-            if (statusFetchInProgress) return;
+            if (statusFetchInProgress) {
+                scheduleUpdate();
+                return;
+            }
+            statusUpdateTimestamp = Date.now();
             if (statusAbortController) statusAbortController.abort();
             statusAbortController = new AbortController();
             statusFetchInProgress = true;
@@ -1057,17 +1067,17 @@ class WorkerWebUI:
                     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS)
                         console.warn('Failed to fetch status '+consecutiveErrors+' times in a row. Check server connection.');
                 })
-                .finally(() => { statusFetchInProgress = false; statusAbortController = null; });
+                .finally(() => { statusFetchInProgress = false; statusAbortController = null; scheduleUpdate(); });
         }
         const DEFAULT_UPDATE_INTERVAL_MS = 1000;
         async function initializeUpdates() {
             try {
                 const config = await (await fetch('/api/config')).json();
-                const ui = config.update_interval_ms || DEFAULT_UPDATE_INTERVAL_MS;
-                updateStatus(); setInterval(updateStatus, ui);
+                updateIntervalMs = config.update_interval_ms || DEFAULT_UPDATE_INTERVAL_MS;
+                updateStatus();
             } catch (e) {
                 console.error('Error fetching config:', e);
-                updateStatus(); setInterval(updateStatus, DEFAULT_UPDATE_INTERVAL_MS);
+                updateStatus();
             }
         }
         initializeUpdates();
