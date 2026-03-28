@@ -572,6 +572,97 @@ async def test_webui_status_excludes_images_and_last_image_endpoint() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_webui_gallery_metadata_only() -> None:
+    """Test that /api/gallery?metadata_only=true strips both thumbnail and base64."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+
+        # Entry without thumbnail (base64 only)
+        webui._gallery_data.append({"gallery_id": 0, "base64": test_b64, "timestamp": 1.0, "model": "m1"})
+        # Entry with both thumbnail and base64
+        webui._gallery_data.append(
+            {"gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2"},
+        )
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=48&metadata_only=true",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["total"] == 2
+        for entry in data["images"]:
+            assert "base64" not in entry, "base64 must be stripped with metadata_only=true"
+            assert "thumbnail" not in entry, "thumbnail must be stripped with metadata_only=true"
+            assert "gallery_id" in entry
+            assert "timestamp" in entry
+            assert "model" in entry
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_gallery_image_thumbnail_only() -> None:
+    """Test that /api/gallery/image?thumbnail_only=true strips full-res base64."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+
+        # Entry with both thumbnail and base64
+        webui._gallery_data.append(
+            {"gallery_id": 5, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 1.0, "model": "m1"},
+        )
+        # Entry without thumbnail (base64 only); thumbnail_only should still work (no thumbnail to return)
+        webui._gallery_data.append({"gallery_id": 6, "base64": test_b64, "timestamp": 2.0, "model": "m2"})
+
+        # thumbnail_only=true on entry that has a thumbnail: base64 must be stripped
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id=5&thumbnail_only=true",
+        ) as response:
+            assert response.status == 200
+            img = await response.json()
+        assert "base64" not in img, "base64 must be stripped when thumbnail_only=true"
+        assert img["thumbnail"] == "thumb_data"
+        assert img["model"] == "m1"
+
+        # thumbnail_only=false (default) on same entry: base64 must be present
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id=5",
+        ) as response:
+            assert response.status == 200
+            img = await response.json()
+        assert img["base64"] == test_b64
+        assert img["thumbnail"] == "thumb_data"
+
+        # thumbnail_only=true on entry without thumbnail: base64 is kept as a fallback
+        # so the frontend can still render the image even without a generated thumbnail.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id=6&thumbnail_only=true",
+        ) as response:
+            assert response.status == 200
+            img = await response.json()
+        assert img["base64"] == test_b64
+        assert img["model"] == "m2"
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     # Run simple tests
     test_webui_creation()
