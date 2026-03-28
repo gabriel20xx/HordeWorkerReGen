@@ -609,14 +609,14 @@ async def test_webui_gallery_image_thumbnail_only() -> None:
         assert img["base64"] == test_b64
         assert img["thumbnail"] == "thumb_data"
 
-        # thumbnail_only=true on entry without thumbnail: base64 still stripped but
-        # the entry is returned (no thumbnail key expected since PIL wasn't run here)
+        # thumbnail_only=true on entry without thumbnail: base64 is kept as a fallback
+        # so the frontend can still render the image even without a generated thumbnail.
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/gallery/image?id=6&thumbnail_only=true",
         ) as response:
             assert response.status == 200
             img = await response.json()
-        assert "base64" not in img
+        assert img["base64"] == test_b64
         assert img["model"] == "m2"
     finally:
         await webui.stop()

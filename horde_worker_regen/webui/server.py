@@ -721,6 +721,8 @@ class WorkerWebUI:
         // Monotonically increasing batch ID used to cancel stale thumbnail loads when the
         // page changes before the previous batch has finished.
         let _galleryThumbnailBatchId = 0;
+        // AbortController for the currently running thumbnail batch; aborted when the page changes.
+        let _galleryBatchAbort = null;
         function renderGalleryPageSkeleton(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
@@ -760,8 +762,10 @@ class WorkerWebUI:
             pag.style.display = 'flex';
         }
         function loadGalleryThumbnailsOneByOne(galleryIds) {
-            // Increment the batch ID so any in-flight loads from a previous page are discarded.
+            // Increment the batch ID so any stale responses from a previous page are discarded.
             const batchId = ++_galleryThumbnailBatchId;
+            // Use an AbortController so in-flight requests are truly cancelled when the page changes.
+            const batchAbort = new AbortController();
             function buildThumbnailDataUrl(data) {
                 if (data.thumbnail) return 'data:image/jpeg;base64,'+data.thumbnail;
                 if (data.base64) return 'data:image/png;base64,'+data.base64;
@@ -770,21 +774,30 @@ class WorkerWebUI:
             function loadNext(i) {
                 if (batchId !== _galleryThumbnailBatchId || i >= galleryIds.length) return;
                 const galleryId = galleryIds[i];
-                fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true')
+                fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true', { signal: batchAbort.signal })
                     .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                     .then(data => {
                         if (batchId !== _galleryThumbnailBatchId) return;
+                        const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                        const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
                         const thumbSrc = buildThumbnailDataUrl(data);
-                        if (thumbSrc) {
-                            const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
-                            const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
-                            if (imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
-                            if (container) container.classList.remove('loading');
-                        }
+                        if (thumbSrc && imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
+                        // Always remove the shimmer class; if no image data was returned the tile
+                        // shows as an empty placeholder rather than spinning indefinitely.
+                        if (container) container.classList.remove('loading');
                     })
-                    .catch(err => { console.error('Thumbnail load error for id '+galleryId+':', err); })
+                    .catch(err => {
+                        if (err.name === 'AbortError') return;
+                        console.error('Thumbnail load error for id '+galleryId+':', err);
+                        // On error, stop the shimmer so the tile doesn't spin forever.
+                        const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                        if (container) container.classList.remove('loading');
+                    })
                     .finally(() => { loadNext(i + 1); });
             }
+            // Abort the previous batch's requests and register the new controller.
+            if (_galleryBatchAbort) { try { _galleryBatchAbort.abort(); } catch(_){} }
+            _galleryBatchAbort = batchAbort;
             loadNext(0);
         }
         function fetchGalleryPage(page) {
@@ -1189,8 +1202,12 @@ class WorkerWebUI:
         # _gallery_data is ordered oldest-first; search from newest for speed.
         for entry in reversed(self._gallery_data):
             if entry.get("gallery_id") == gallery_id:
-                if thumbnail_only:
+                if thumbnail_only and entry.get("thumbnail"):
+                    # When a thumbnail is available, omit the full-resolution base64
+                    # to keep the payload small for the gallery grid.
                     return web.json_response({k: v for k, v in entry.items() if k != "base64"})
+                # If no thumbnail is available (e.g. Pillow not installed), fall back to
+                # returning the full entry including base64 so the client can still render.
                 return web.json_response(entry)
 
         raise web.HTTPNotFound(reason="Gallery image not found")
