@@ -286,7 +286,7 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.SAFETY_EVALUATING
             or self.last_process_state == HordeProcessState.SAFETY_STARTING
             or self.last_process_state == HordeProcessState.IMAGE_SAVING
-            or self.last_process_state == HordeProcessState.IMAGE_SUBMITTING
+            or self.last_process_state == HordeProcessState.RESULT_SUBMITTING
             or self.last_process_state == HordeProcessState.PROCESS_STARTING
         )
 
@@ -1299,8 +1299,8 @@ class HordeWorkerProcessManager:
             HordeProcessState.SAFETY_COMPLETE,
             HordeProcessState.IMAGE_SAVING,
             HordeProcessState.IMAGE_SAVED,
-            HordeProcessState.IMAGE_SUBMITTING,
-            HordeProcessState.IMAGE_SUBMITTED,
+            HordeProcessState.RESULT_SUBMITTING,
+            HordeProcessState.RESULT_SUBMITTED,
         },
     )
 
@@ -3810,14 +3810,14 @@ class HordeWorkerProcessManager:
         )
         logger.debug(f"Submitting job {new_submit.job_id}")
 
-        # Find and update state to IMAGE_SUBMITTING for the process that handled this job
+        # Find and update state to RESULT_SUBMITTING for the process that handled this job
         handling_process_id = None
         for process_id, process_info in self._process_map.items():
             if process_info.last_job_referenced == new_submit.completed_job_info.sdk_api_job_info:
                 handling_process_id = process_id
                 self._process_map.on_process_state_change(
                     process_id=process_id,
-                    new_state=HordeProcessState.IMAGE_SUBMITTING,
+                    new_state=HordeProcessState.RESULT_SUBMITTING,
                 )
                 break
 
@@ -3926,15 +3926,15 @@ class HordeWorkerProcessManager:
 
             return new_submit
         finally:
-            # Ensure the process is never left stuck in IMAGE_SUBMITTING after any failure path.
+            # Ensure the process is never left stuck in RESULT_SUBMITTING after any failure path.
             # On success the state has already been set to WAITING_FOR_JOB above, so the check
             # below is a no-op in that case.  The specific submission error is logged by the
             # individual except/error-response branches above.
             if handling_process_id is not None:
                 stuck_proc = self._process_map.get(handling_process_id)
-                if stuck_proc is not None and stuck_proc.last_process_state == HordeProcessState.IMAGE_SUBMITTING:
+                if stuck_proc is not None and stuck_proc.last_process_state == HordeProcessState.RESULT_SUBMITTING:
                     logger.warning(
-                        f"Process {handling_process_id} was left in IMAGE_SUBMITTING after a failed "
+                        f"Process {handling_process_id} was left in RESULT_SUBMITTING after a failed "
                         f"submission for job {new_submit.job_id}; "
                         "resetting to WAITING_FOR_JOB to unblock job scheduling",
                     )
@@ -6139,9 +6139,9 @@ class HordeWorkerProcessManager:
             return 92  # Saving images
         if process_state == HordeProcessState.IMAGE_SAVED:
             return 95  # Images saved
-        if process_state == HordeProcessState.IMAGE_SUBMITTING:
+        if process_state == HordeProcessState.RESULT_SUBMITTING:
             return 97  # Submitting to API
-        if process_state == HordeProcessState.IMAGE_SUBMITTED:
+        if process_state == HordeProcessState.RESULT_SUBMITTED:
             return 100  # Submission complete
 
         # Failed states - show progress at the stage where failure occurred
@@ -6200,7 +6200,7 @@ class HordeWorkerProcessManager:
                 job = job_info.sdk_api_job_info
                 # Find the process that handled this job so we can show its most recent state.
                 # Default to a manager-centric label indicating that the job is queued for submission.
-                state = "PENDING_SUBMIT"
+                state = "RESULT_SUBMITTING"
                 for process in self._process_map.values():
                     if process.last_job_referenced == job:
                         # Use the actual last process state name if available.
@@ -6798,7 +6798,7 @@ class HordeWorkerProcessManager:
         any_replaced = False
         # Tracks only actual subprocess replacements (via _replace_inference_process /
         # _check_and_replace_process).  Used exclusively for the _recently_recovered cooldown
-        # so that a soft corrective action (e.g. resetting IMAGE_SUBMITTING state) does not
+        # so that a soft corrective action (e.g. resetting RESULT_SUBMITTING state) does not
         # start the cascading-recovery guard unnecessarily.
         any_process_replaced = False
         no_local_work = len(self.jobs_pending_inference) == 0 and len(self.jobs_in_progress) == 0
@@ -6902,7 +6902,7 @@ class HordeWorkerProcessManager:
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
                         any_replaced = any_process_replaced = True
 
-                # IMAGE_SUBMITTING is managed by the process manager, not the subprocess.
+                # RESULT_SUBMITTING is managed by the process manager, not the subprocess.
                 # Killing the subprocess is not appropriate here; just reset the state so
                 # the process can accept new jobs.  The primary fix is in
                 # submit_single_generation() (try/finally), but this serves as a safety net
@@ -6910,11 +6910,11 @@ class HordeWorkerProcessManager:
                 _image_submit_stuck_timeout = 60.0
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
-                    and process_info.last_process_state == HordeProcessState.IMAGE_SUBMITTING
+                    and process_info.last_process_state == HordeProcessState.RESULT_SUBMITTING
                     and (now - process_info.last_received_timestamp) > _image_submit_stuck_timeout
                 ):
                     logger.error(
-                        f"{process_info} has been stuck in IMAGE_SUBMITTING for "
+                        f"{process_info} has been stuck in RESULT_SUBMITTING for "
                         f"{now - process_info.last_received_timestamp:.0f}s; "
                         "resetting to WAITING_FOR_JOB to unblock job scheduling",
                     )
@@ -6975,7 +6975,7 @@ class HordeWorkerProcessManager:
 
         # If any subprocesses were actually replaced and we are not already inside a recovery
         # window, start the cascading-recovery guard timer.  Soft corrective actions such as
-        # resetting IMAGE_SUBMITTING state do not count as process replacements and therefore
+        # resetting RESULT_SUBMITTING state do not count as process replacements and therefore
         # do not trigger the cooldown.  When _recently_recovered is already True (because an
         # earlier recovery is still cooling down) we still perform the replacements above
         # (e.g. MODEL_PRELOADING) but we do NOT start a second timer thread, which would

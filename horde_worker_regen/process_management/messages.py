@@ -121,9 +121,9 @@ class HordeProcessState(enum.Enum):
     """The process is saving an image."""
     IMAGE_SAVED = auto()
     """The process has saved an image."""
-    IMAGE_SUBMITTING = auto()
+    RESULT_SUBMITTING = auto()
     """The process is submitting an image."""
-    IMAGE_SUBMITTED = auto()
+    RESULT_SUBMITTED = auto()
     """The process has submitted an image."""
 
     ALCHEMY_STARTING = auto()
