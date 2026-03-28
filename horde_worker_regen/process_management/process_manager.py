@@ -285,7 +285,7 @@ class HordeProcessInfo:
             or self.last_process_state == HordeProcessState.JOB_RECEIVED
             or self.last_process_state == HordeProcessState.SAFETY_EVALUATING
             or self.last_process_state == HordeProcessState.SAFETY_STARTING
-            or self.last_process_state == HordeProcessState.IMAGE_SAVING
+            or self.last_process_state == HordeProcessState.RESULT_SAVING
             or self.last_process_state == HordeProcessState.RESULT_SUBMITTING
             or self.last_process_state == HordeProcessState.PROCESS_STARTING
         )
@@ -515,7 +515,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             or new_state == HordeProcessState.MODEL_PRELOADED
             or new_state == HordeProcessState.MODEL_LOADED
             or new_state == HordeProcessState.SAFETY_COMPLETE
-            or new_state == HordeProcessState.IMAGE_SAVED
+            or new_state == HordeProcessState.RESULT_SAVED
             or new_state == HordeProcessState.WAITING_FOR_JOB
         ):
             self.reset_heartbeat_state(process_id)
@@ -1297,8 +1297,8 @@ class HordeWorkerProcessManager:
             HordeProcessState.SAFETY_STARTING,
             HordeProcessState.SAFETY_EVALUATING,
             HordeProcessState.SAFETY_COMPLETE,
-            HordeProcessState.IMAGE_SAVING,
-            HordeProcessState.IMAGE_SAVED,
+            HordeProcessState.RESULT_SAVING,
+            HordeProcessState.RESULT_SAVED,
             HordeProcessState.RESULT_SUBMITTING,
             HordeProcessState.RESULT_SUBMITTED,
         },
@@ -6135,9 +6135,9 @@ class HordeWorkerProcessManager:
             return 90  # Safety check complete
 
         # Submission stage (90-100%)
-        if process_state == HordeProcessState.IMAGE_SAVING:
+        if process_state == HordeProcessState.RESULT_SAVING:
             return 92  # Saving images
-        if process_state == HordeProcessState.IMAGE_SAVED:
+        if process_state == HordeProcessState.RESULT_SAVED:
             return 95  # Images saved
         if process_state == HordeProcessState.RESULT_SUBMITTING:
             return 97  # Submitting to API

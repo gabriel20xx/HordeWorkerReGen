@@ -4217,7 +4217,7 @@ class TestResultSubmittingStuckRecovery:
         self,
         process_id: int,
         *,
-        initial_state: HordeProcessState = HordeProcessState.IMAGE_SAVED,
+        initial_state: HordeProcessState = HordeProcessState.RESULT_SAVED,
     ) -> tuple[MagicMock, MagicMock]:
         """Build a minimal mock manager suitable for calling submit_single_generation."""
         process_map, process_info = self._make_process_map(process_id, initial_state)

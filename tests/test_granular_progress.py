@@ -45,8 +45,8 @@ def test_calculate_granular_progress() -> None:
         (HordeProcessState.SAFETY_EVALUATING, None, 85),
         (HordeProcessState.SAFETY_COMPLETE, None, 90),
         # Submission stage (90-100%)
-        (HordeProcessState.IMAGE_SAVING, None, 92),
-        (HordeProcessState.IMAGE_SAVED, None, 95),
+        (HordeProcessState.RESULT_SAVING, None, 92),
+        (HordeProcessState.RESULT_SAVED, None, 95),
         (HordeProcessState.RESULT_SUBMITTING, None, 97),
         (HordeProcessState.RESULT_SUBMITTED, None, 100),
         # Failed states

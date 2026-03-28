@@ -117,9 +117,9 @@ class HordeProcessState(enum.Enum):
     POST_PROCESSING_COMPLETE = auto()
     """The process has finished post-processing."""
 
-    IMAGE_SAVING = auto()
+    RESULT_SAVING = auto()
     """The process is saving an image."""
-    IMAGE_SAVED = auto()
+    RESULT_SAVED = auto()
     """The process has saved an image."""
     RESULT_SUBMITTING = auto()
     """The process is submitting an image."""
