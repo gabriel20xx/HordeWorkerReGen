@@ -5631,6 +5631,7 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
         ctx = multiprocessing.get_context("spawn")
 
         process_info = MagicMock()
+        process_info.process_id = 0
         process_info.last_process_state = state
         process_info.last_job_referenced = None
         process_info.loaded_horde_model_name = None
@@ -5638,7 +5639,6 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
         mock_manager = MagicMock()
         mock_manager.jobs_lookup = {}
         mock_manager.jobs_in_progress = []
-        mock_manager._disk_lock = ctx.Lock()
 
         # Set up inference semaphore: use a real BoundedSemaphore unless an error is injected
         if inference_sem_error is not None:
@@ -5648,6 +5648,15 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
         else:
             mock_manager._inference_semaphore = ctx.BoundedSemaphore(1)
             mock_manager._inference_semaphore.acquire()  # simulate child holding it
+
+        # Disk lock
+        if disk_lock_error is not None:
+            bad_disk_lock = MagicMock()
+            bad_disk_lock.release = MagicMock(side_effect=disk_lock_error)
+            mock_manager._disk_lock = bad_disk_lock
+        else:
+            mock_manager._disk_lock = ctx.Lock()
+            mock_manager._disk_lock.acquire()  # simulate child holding it
 
         # VAE decode semaphore
         if vae_sem_error is not None:
@@ -5687,8 +5696,8 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
 
         mock_manager._bound_replace(mock_manager._bound_replace_process_info)
 
-        # The replacement must proceed: new process must be started
-        mock_manager._start_inference_process.assert_called_once()
+        # The replacement must proceed: the correct slot (process_id=0) must be started
+        mock_manager._start_inference_process.assert_called_once_with(0)
 
     def test_disk_lock_os_error_does_not_prevent_replacement(self) -> None:
         """When _disk_lock.release() raises OSError, the new process must still be started."""
@@ -5699,7 +5708,7 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
 
         mock_manager._bound_replace(mock_manager._bound_replace_process_info)
 
-        mock_manager._start_inference_process.assert_called_once()
+        mock_manager._start_inference_process.assert_called_once_with(0)
 
     def test_vae_semaphore_os_error_does_not_prevent_replacement(self) -> None:
         """When _vae_decode_semaphore.release() raises OSError, the new process must still be started."""
@@ -5710,7 +5719,7 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
 
         mock_manager._bound_replace(mock_manager._bound_replace_process_info)
 
-        mock_manager._start_inference_process.assert_called_once()
+        mock_manager._start_inference_process.assert_called_once_with(0)
 
     def test_aux_model_lock_os_error_does_not_prevent_replacement(self) -> None:
         """When _aux_model_lock.release() raises OSError, the new process must still be started."""
@@ -5721,7 +5730,7 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
 
         mock_manager._bound_replace(mock_manager._bound_replace_process_info)
 
-        mock_manager._start_inference_process.assert_called_once()
+        mock_manager._start_inference_process.assert_called_once_with(0)
 
     def test_inference_semaphore_runtime_error_does_not_prevent_replacement(self) -> None:
         """When _inference_semaphore.release() raises RuntimeError, the replacement must proceed."""
@@ -5732,7 +5741,7 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
 
         mock_manager._bound_replace(mock_manager._bound_replace_process_info)
 
-        mock_manager._start_inference_process.assert_called_once()
+        mock_manager._start_inference_process.assert_called_once_with(0)
 
 
 class TestProcessEndingHandlerBroadExceptionHandling:
@@ -5895,25 +5904,30 @@ class TestRecoveryTimerThreadIsDaemon:
 
         A non-daemon thread keeps the interpreter alive even after sys.exit(), potentially
         delaying clean shutdown by up to inference_step_timeout (600 s by default).
+
+        We capture the ``daemon`` kwarg passed to ``threading.Thread(...)`` via a lightweight
+        fake that does not actually spawn a thread (its ``start()`` is a no-op), so the test
+        doesn't leave a background sleeper running for 600 s.
         """
-        import threading
+        import threading as _threading
 
         mock_manager = self._make_manager_with_stuck_inference()
 
-        created_threads: list[threading.Thread] = []
-        _original_thread = threading.Thread
+        captured_daemon_values: list[bool | None] = []
 
-        def _capture_thread(*args: object, **kwargs: object) -> threading.Thread:
-            t = _original_thread(*args, **kwargs)
-            created_threads.append(t)
-            return t
+        class _FakeThread:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                captured_daemon_values.append(kwargs.get("daemon"))
 
-        with patch("threading.Thread", _capture_thread):
+            def start(self) -> None:
+                pass  # no-op: don't actually spawn a thread
+
+        with patch("threading.Thread", _FakeThread):
             mock_manager._bound_replace_hung()
 
-        assert len(created_threads) >= 1, "replace_hung_processes must start a timer thread"
-        for t in created_threads:
-            assert t.daemon, (
-                f"Timer thread {t.name!r} must be daemon=True to avoid blocking clean shutdown; "
-                "got daemon=False"
+        assert len(captured_daemon_values) >= 1, "replace_hung_processes must create a timer thread"
+        for daemon_val in captured_daemon_values:
+            assert daemon_val is True, (
+                f"Timer thread must be created with daemon=True to avoid blocking clean shutdown; "
+                f"got daemon={daemon_val!r}"
             )
