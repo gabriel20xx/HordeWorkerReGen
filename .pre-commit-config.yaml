@@ -40,7 +40,7 @@ repos:
         - aiohttp
         - mediapipe==0.10.21
         - horde_safety==0.3.0
-        - torch==2.10.0
+        - torch==2.11.0
         - ruamel.yaml
         - horde_engine==2.22.2
         - horde_sdk==0.17.0
