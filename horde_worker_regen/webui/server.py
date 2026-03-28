@@ -727,6 +727,9 @@ class WorkerWebUI:
         let _galleryThumbnailBatchId = 0;
         // AbortController for the currently running thumbnail batch; aborted when the page changes.
         let _galleryBatchAbort = null;
+        // Ordered list of gallery_ids for the currently displayed page; used by overlay navigation.
+        // Stored at module scope so incremental updates (refreshGalleryPage1) keep it in sync.
+        let _currentPageGalleryIds = [];
         function renderGalleryPageSkeleton(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
@@ -743,7 +746,7 @@ class WorkerWebUI:
             // Use stable gallery_id values (assigned at insertion time) rather than
             // positional indices, so the overlay remains correct even when new images
             // arrive after the page was rendered.
-            const pageGalleryIds = images.map(img => img.gallery_id);
+            _currentPageGalleryIds = images.map(img => img.gallery_id);
             // Render placeholder items with a shimmer animation; images are filled in
             // one by one by loadGalleryThumbnailsOneByOne once the skeleton is shown.
             grid.innerHTML = images.map((img, idx) => {
@@ -757,7 +760,7 @@ class WorkerWebUI:
                 img.onclick = function() {
                     const galleryId = parseInt(this.getAttribute('data-gallery-id') || '0', 10);
                     const localIdx = parseInt(this.getAttribute('data-idx') || '0', 10);
-                    openGalleryImageOverlay(galleryId, pageGalleryIds, localIdx);
+                    openGalleryImageOverlay(galleryId, _currentPageGalleryIds, localIdx);
                 };
             });
             const tp = Math.max(1, totalPages);
@@ -818,6 +821,88 @@ class WorkerWebUI:
                     loadGalleryThumbnailsOneByOne(data.images.map(img => img.gallery_id));
                 })
                 .catch(err => { console.error('Gallery fetch error:', err); galleryFetchInProgress = false; });
+        }
+        // Incrementally update page 1 when new images arrive: prepend only new tiles and load
+        // their thumbnails without disturbing images that are already loaded in the grid.
+        function refreshGalleryPage1() {
+            if (galleryFetchInProgress) return;
+            galleryFetchInProgress = true;
+            fetch('/api/gallery?page=1&page_size='+galleryPageSize+'&metadata_only=true')
+                .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                .then(data => {
+                    galleryFetchInProgress = false;
+                    galleryCurrentPage = 1; galleryTotalImages = data.total; galleryTotalPages = data.total_pages;
+                    const grid = document.getElementById('gallery-grid'), cnt = document.getElementById('gallery-count'),
+                          pi = document.getElementById('gallery-page-info'), pb = document.getElementById('gallery-prev'),
+                          nb = document.getElementById('gallery-next'), pag = document.getElementById('gallery-pagination'),
+                          bnr = document.getElementById('gallery-new-banner'), empty = document.getElementById('gallery-empty');
+                    cnt.textContent = data.total;
+                    if (bnr) bnr.style.display = 'none';
+                    const tp = Math.max(1, data.total_pages);
+                    pi.textContent = 'Page 1 of '+tp; pb.disabled = true; nb.disabled = 1 >= tp; pag.style.display = 'flex';
+                    if (data.images.length === 0) {
+                        grid.style.display = 'none'; grid.innerHTML = ''; empty.style.display = '';
+                        pag.style.display = 'none'; return;
+                    }
+                    empty.style.display = 'none'; grid.style.display = '';
+                    const fetchedIds = data.images.map(img => img.gallery_id);
+                    const fetchedSet = new Set(fetchedIds);
+                    const existingItems = Array.from(grid.querySelectorAll('.image-grid-item[data-gallery-id]'));
+                    const existingSet = new Set(existingItems.map(el => parseInt(el.getAttribute('data-gallery-id'), 10)));
+                    // Remove tiles that have been pushed off the current page by new arrivals.
+                    existingItems.forEach(el => { if (!fetchedSet.has(parseInt(el.getAttribute('data-gallery-id'), 10))) el.remove(); });
+                    // Update the stable ID list and data-idx attributes for correct overlay navigation.
+                    _currentPageGalleryIds = fetchedIds;
+                    data.images.forEach((img, idx) => {
+                        const ie = grid.querySelector('img[data-gallery-id="'+img.gallery_id+'"]');
+                        if (ie) ie.setAttribute('data-idx', idx);
+                    });
+                    // Prepend skeleton tiles for new images, then load only their thumbnails.
+                    // Build newImages with the index from data.images (which matches fetchedIds 1:1)
+                    // to avoid repeated indexOf scans when setting data-idx on each tile.
+                    const newImages = data.images.reduce((acc, img, idx) => {
+                        if (!existingSet.has(img.gallery_id)) acc.push({ img, idx });
+                        return acc;
+                    }, []);
+                    if (newImages.length > 0) {
+                        const frag = document.createDocumentFragment();
+                        newImages.forEach(({ img, idx }) => {
+                            const galleryId = img.gallery_id;
+                            const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
+                            const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
+                            const div = document.createElement('div');
+                            div.className = 'image-grid-item loading';
+                            div.setAttribute('data-gallery-id', galleryId);
+                            div.innerHTML = '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '');
+                            div.querySelector('img').onclick = function() { openGalleryImageOverlay(parseInt(this.getAttribute('data-gallery-id')||'0',10), _currentPageGalleryIds, parseInt(this.getAttribute('data-idx')||'0',10)); };
+                            frag.appendChild(div);
+                        });
+                        grid.insertBefore(frag, grid.firstChild);
+                        // Abort previous batch and start a new one so incremental thumbnail fetches
+                        // are cancelled if the user navigates away or a full page reload is triggered.
+                        if (_galleryBatchAbort) _galleryBatchAbort.abort();
+                        const incrAbort = new AbortController();
+                        _galleryBatchAbort = incrAbort;
+                        newImages.forEach(({ img }) => {
+                            const galleryId = img.gallery_id;
+                            fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true', { signal: incrAbort.signal })
+                                .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                                .then(d => {
+                                    const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                                    const ie = c ? c.querySelector('img') : null;
+                                    const src = d.thumbnail ? 'data:image/jpeg;base64,'+d.thumbnail : (d.base64 ? 'data:image/png;base64,'+d.base64 : null);
+                                    if (src && ie) { ie.src = src; ie.style.display = ''; }
+                                    if (c) c.classList.remove('loading');
+                                })
+                                .catch(err => {
+                                    if (err.name === 'AbortError') return;
+                                    const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                                    if (c) c.classList.remove('loading');
+                                });
+                        });
+                    }
+                })
+                .catch(err => { console.error('Gallery refresh error:', err); galleryFetchInProgress = false; });
         }
         function galleryChangePage(delta) {
             const newPage = Math.min(Math.max(1, galleryCurrentPage + delta), Math.max(1, galleryTotalPages));
@@ -1094,7 +1179,7 @@ class WorkerWebUI:
                     if (hasNewImages && galleryPageActive) {
                         if (galleryCurrentPage === 1) {
                             if (!galleryFetchInProgress) {
-                                fetchGalleryPage(1);
+                                refreshGalleryPage1();
                                 lastKnownImagesCount = newImagesCount;
                             }
                             // If a fetch is already in progress, don't update lastKnownImagesCount so
