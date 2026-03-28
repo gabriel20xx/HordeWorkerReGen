@@ -261,6 +261,9 @@ class WorkerWebUI:
         .image-grid-item img:hover { transform: scale(1.04); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         .image-grid-item .image-timestamp { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #e2e8f0; font-size: 0.65rem; padding: 3px 6px; text-align: center; border-radius: 0 0 8px 8px; opacity: 0; transition: opacity 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .image-grid-item:hover .image-timestamp { opacity: 1; }
+        @keyframes gallery-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        .image-grid-item.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
+        [data-theme="dark"] .image-grid-item.loading { background: linear-gradient(90deg, #1e293b 25%, #2d3f55 50%, #1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 320px; overflow: hidden; }
         .last-image-container > .image-grid-item { aspect-ratio: auto; min-height: 0; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -715,7 +718,10 @@ class WorkerWebUI:
         // Sync the select element's initial value with the JS constant (single source of truth)
         document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
-        function renderGalleryPage(images, total, page, totalPages) {
+        // Monotonically increasing batch ID used to cancel stale thumbnail loads when the
+        // page changes before the previous batch has finished.
+        let _galleryThumbnailBatchId = 0;
+        function renderGalleryPageSkeleton(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
                   pi = document.getElementById('gallery-page-info'), pb = document.getElementById('gallery-prev'),
@@ -732,13 +738,13 @@ class WorkerWebUI:
             // positional indices, so the overlay remains correct even when new images
             // arrive after the page was rendered.
             const pageGalleryIds = images.map(img => img.gallery_id);
+            // Render placeholder items with a shimmer animation; images are filled in
+            // one by one by loadGalleryThumbnailsOneByOne once the skeleton is shown.
             grid.innerHTML = images.map((img, idx) => {
-                // Use thumbnail when available; fall back to full base64 if PIL was not installed.
-                const thumbSrc = img.thumbnail ? 'data:image/jpeg;base64,'+img.thumbnail : (img.base64 ? 'data:image/png;base64,'+img.base64 : '');
                 const galleryId = img.gallery_id;
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
-                return '<div class="image-grid-item"><img src="'+thumbSrc+'" alt="Generated image" loading="lazy" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />'+
+                return '<div class="image-grid-item loading" data-gallery-id="'+galleryId+'"><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+
                     (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
             grid.querySelectorAll('img[data-gallery-id]').forEach(img => {
@@ -753,14 +759,48 @@ class WorkerWebUI:
             pb.disabled = page <= 1; nb.disabled = page >= tp;
             pag.style.display = 'flex';
         }
+        function loadGalleryThumbnailsOneByOne(galleryIds) {
+            // Increment the batch ID so any in-flight loads from a previous page are discarded.
+            const batchId = ++_galleryThumbnailBatchId;
+            function buildThumbnailDataUrl(data) {
+                if (data.thumbnail) return 'data:image/jpeg;base64,'+data.thumbnail;
+                if (data.base64) return 'data:image/png;base64,'+data.base64;
+                return null;
+            }
+            function loadNext(i) {
+                if (batchId !== _galleryThumbnailBatchId || i >= galleryIds.length) return;
+                const galleryId = galleryIds[i];
+                fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true')
+                    .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                    .then(data => {
+                        if (batchId !== _galleryThumbnailBatchId) return;
+                        const thumbSrc = buildThumbnailDataUrl(data);
+                        if (thumbSrc) {
+                            const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                            const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
+                            if (imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
+                            if (container) container.classList.remove('loading');
+                        }
+                    })
+                    .catch(err => { console.error('Thumbnail load error for id '+galleryId+':', err); })
+                    .finally(() => { loadNext(i + 1); });
+            }
+            loadNext(0);
+        }
         function fetchGalleryPage(page) {
             if (galleryFetchInProgress) return;
             galleryFetchInProgress = true;
-            fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize)
+            // Phase 1: fetch lightweight metadata only so the page skeleton can be shown
+            // immediately without waiting for all thumbnail data to transfer.
+            fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+'&metadata_only=true')
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-                .then(data => { renderGalleryPage(data.images, data.total, data.page, data.total_pages); })
-                .catch(err => { console.error('Gallery fetch error:', err); })
-                .finally(() => { galleryFetchInProgress = false; });
+                .then(data => {
+                    renderGalleryPageSkeleton(data.images, data.total, data.page, data.total_pages);
+                    galleryFetchInProgress = false;
+                    // Phase 2: load each thumbnail one by one, updating the skeleton as images arrive.
+                    loadGalleryThumbnailsOneByOne(data.images.map(img => img.gallery_id));
+                })
+                .catch(err => { console.error('Gallery fetch error:', err); galleryFetchInProgress = false; });
         }
         function galleryChangePage(delta) {
             const newPage = Math.min(Math.max(1, galleryCurrentPage + delta), Math.max(1, galleryTotalPages));
@@ -1078,6 +1118,10 @@ class WorkerWebUI:
         Query parameters:
             page: 1-based page number (default: 1)
             page_size: images per page (default: 48, max: 96)
+            metadata_only: if "true"/"1", strip both ``thumbnail`` and ``base64`` so
+                only lightweight metadata (gallery_id, timestamp, model) is returned.
+                Use this to render the page skeleton quickly; images can then be
+                fetched individually via ``/api/gallery/image``.
         """
         try:
             page = max(1, int(request.rel_url.query.get("page", "1")))
@@ -1087,6 +1131,7 @@ class WorkerWebUI:
             page_size = min(96, max(1, int(request.rel_url.query.get("page_size", "48"))))
         except ValueError:
             page_size = 48
+        metadata_only = request.rel_url.query.get("metadata_only", "").lower() in ("1", "true", "yes")
 
         # Gallery is stored oldest-first; serve newest-first to the UI.
         images_reversed = list(reversed(self._gallery_data))
@@ -1096,14 +1141,20 @@ class WorkerWebUI:
         start = (page - 1) * page_size
         page_images = images_reversed[start : start + page_size]
 
-        # Strip the full-resolution base64 from entries that already have a thumbnail.
-        # This drastically reduces the response payload for the gallery grid view.
-        # Entries without a thumbnail keep their base64 as a display fallback.
-        # All entries are copied so the originals in _gallery_data are not mutated.
-        page_images = [
-            ({k: v for k, v in entry.items() if k != "base64"} if entry.get("thumbnail") else dict(entry))
-            for entry in page_images
-        ]
+        if metadata_only:
+            # Strip all image data so only lightweight metadata is returned.
+            # The UI uses this to render the page skeleton immediately, then
+            # fetches each thumbnail individually via /api/gallery/image.
+            page_images = [{k: v for k, v in dict(entry).items() if k not in ("base64", "thumbnail")} for entry in page_images]
+        else:
+            # Strip the full-resolution base64 from entries that already have a thumbnail.
+            # This drastically reduces the response payload for the gallery grid view.
+            # Entries without a thumbnail keep their base64 as a display fallback.
+            # All entries are copied so the originals in _gallery_data are not mutated.
+            page_images = [
+                ({k: v for k, v in entry.items() if k != "base64"} if entry.get("thumbnail") else dict(entry))
+                for entry in page_images
+            ]
 
         return web.json_response(
             {
@@ -1116,23 +1167,30 @@ class WorkerWebUI:
         )
 
     async def _handle_gallery_image(self, request: web.Request) -> web.Response:
-        """Return a single full-resolution gallery image by its stable ``gallery_id``.
+        """Return a single gallery image by its stable ``gallery_id``.
 
         Used by the overlay viewer to lazily fetch full-resolution images only when
-        the user actually opens them, avoiding the cost of including all full-res
-        images in the paginated gallery response.
+        the user actually opens them, and by the gallery grid to progressively load
+        thumbnails one by one after the page skeleton is rendered.
 
         Query parameters:
             id: stable ``gallery_id`` assigned when the image was added (required)
+            thumbnail_only: if "true"/"1", strip the full-resolution ``base64`` from
+                the response and return only the ``thumbnail`` (plus metadata).  Use
+                this when loading the gallery grid to avoid transferring large
+                full-resolution images for every grid item.
         """
         try:
             gallery_id = int(request.rel_url.query.get("id", ""))
         except ValueError:
             raise web.HTTPBadRequest(reason="Invalid or missing id parameter") from None
+        thumbnail_only = request.rel_url.query.get("thumbnail_only", "").lower() in ("1", "true", "yes")
 
         # _gallery_data is ordered oldest-first; search from newest for speed.
         for entry in reversed(self._gallery_data):
             if entry.get("gallery_id") == gallery_id:
+                if thumbnail_only:
+                    return web.json_response({k: v for k, v in entry.items() if k != "base64"})
                 return web.json_response(entry)
 
         raise web.HTTPNotFound(reason="Gallery image not found")
