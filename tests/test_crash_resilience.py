@@ -5600,3 +5600,334 @@ class TestHandleJobFaultRecordsHistory:
         mock_manager.handle_job_fault(faulted_job=job, process_info=process_info)
 
         assert mock_manager._faulted_jobs_history[0]["fault_phase"] == "During Inference"
+
+
+class TestReplaceInferenceProcessBroadExceptionHandling:
+    """Tests that _replace_inference_process() continues and starts the replacement process
+    even when semaphore/lock release operations raise unexpected exceptions (e.g. OSError).
+
+    On some platforms or in certain failure modes, releasing a semaphore or lock can raise
+    exceptions other than ValueError (e.g. OSError("Invalid semaphore") on containers with
+    restricted IPC namespaces, or RuntimeError on Windows edge cases).  If these exceptions
+    propagate out of _replace_inference_process(), the new process is never started and the
+    stuck slot is never recovered — recovery fails silently.  The fix wraps each release in
+    ``except Exception`` so the replacement always proceeds regardless of the exception type.
+    """
+
+    def _make_manager(
+        self,
+        state: HordeProcessState,
+        *,
+        inference_sem_error: Exception | None = None,
+        disk_lock_error: Exception | None = None,
+        vae_sem_error: Exception | None = None,
+        aux_lock_error: Exception | None = None,
+    ) -> MagicMock:
+        """Build a minimal mock manager for _replace_inference_process() tests."""
+        import multiprocessing
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+
+        process_info = MagicMock()
+        process_info.process_id = 0
+        process_info.last_process_state = state
+        process_info.last_job_referenced = None
+        process_info.loaded_horde_model_name = None
+
+        mock_manager = MagicMock()
+        mock_manager.jobs_lookup = {}
+        mock_manager.jobs_in_progress = []
+
+        # Set up inference semaphore: use a real BoundedSemaphore unless an error is injected
+        if inference_sem_error is not None:
+            bad_sem = MagicMock()
+            bad_sem.release = MagicMock(side_effect=inference_sem_error)
+            mock_manager._inference_semaphore = bad_sem
+        else:
+            mock_manager._inference_semaphore = ctx.BoundedSemaphore(1)
+            mock_manager._inference_semaphore.acquire()  # simulate child holding it
+
+        # Disk lock
+        if disk_lock_error is not None:
+            bad_disk_lock = MagicMock()
+            bad_disk_lock.release = MagicMock(side_effect=disk_lock_error)
+            mock_manager._disk_lock = bad_disk_lock
+        else:
+            mock_manager._disk_lock = ctx.Lock()
+            mock_manager._disk_lock.acquire()  # simulate child holding it
+
+        # VAE decode semaphore
+        if vae_sem_error is not None:
+            bad_vae = MagicMock()
+            bad_vae.release = MagicMock(side_effect=vae_sem_error)
+            mock_manager._vae_decode_semaphore = bad_vae
+        else:
+            mock_manager._vae_decode_semaphore = ctx.BoundedSemaphore(1)
+            mock_manager._vae_decode_semaphore.acquire()  # simulate child holding it
+
+        # Aux model lock
+        if aux_lock_error is not None:
+            bad_aux = MagicMock()
+            bad_aux.release = MagicMock(side_effect=aux_lock_error)
+            mock_manager._aux_model_lock = bad_aux
+        else:
+            mock_manager._aux_model_lock = ctx.Lock()
+
+        bound = HordeWorkerProcessManager._replace_inference_process.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        mock_manager._bound_replace = bound
+        mock_manager._bound_replace_process_info = process_info
+        return mock_manager
+
+    def test_inference_semaphore_os_error_does_not_prevent_replacement(self) -> None:
+        """When _inference_semaphore.release() raises OSError, the new process must still be started.
+
+        This validates that the ``except Exception`` handler added around semaphore release
+        in _replace_inference_process() catches non-ValueError exceptions and allows the
+        replacement to proceed.
+        """
+        mock_manager = self._make_manager(
+            HordeProcessState.INFERENCE_PROCESSING,
+            inference_sem_error=OSError("Invalid semaphore"),
+        )
+
+        mock_manager._bound_replace(mock_manager._bound_replace_process_info)
+
+        # The replacement must proceed: the correct slot (process_id=0) must be started
+        mock_manager._start_inference_process.assert_called_once_with(0)
+
+    def test_disk_lock_os_error_does_not_prevent_replacement(self) -> None:
+        """When _disk_lock.release() raises OSError, the new process must still be started."""
+        mock_manager = self._make_manager(
+            HordeProcessState.INFERENCE_PROCESSING,
+            disk_lock_error=OSError("Invalid lock"),
+        )
+
+        mock_manager._bound_replace(mock_manager._bound_replace_process_info)
+
+        mock_manager._start_inference_process.assert_called_once_with(0)
+
+    def test_vae_semaphore_os_error_does_not_prevent_replacement(self) -> None:
+        """When _vae_decode_semaphore.release() raises OSError, the new process must still be started."""
+        mock_manager = self._make_manager(
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            vae_sem_error=OSError("Invalid semaphore"),
+        )
+
+        mock_manager._bound_replace(mock_manager._bound_replace_process_info)
+
+        mock_manager._start_inference_process.assert_called_once_with(0)
+
+    def test_aux_model_lock_os_error_does_not_prevent_replacement(self) -> None:
+        """When _aux_model_lock.release() raises OSError, the new process must still be started."""
+        mock_manager = self._make_manager(
+            HordeProcessState.DOWNLOADING_AUX_MODEL,
+            aux_lock_error=OSError("Invalid lock"),
+        )
+
+        mock_manager._bound_replace(mock_manager._bound_replace_process_info)
+
+        mock_manager._start_inference_process.assert_called_once_with(0)
+
+    def test_inference_semaphore_runtime_error_does_not_prevent_replacement(self) -> None:
+        """When _inference_semaphore.release() raises RuntimeError, the replacement must proceed."""
+        mock_manager = self._make_manager(
+            HordeProcessState.INFERENCE_STARTING,
+            inference_sem_error=RuntimeError("semaphore not owned"),
+        )
+
+        mock_manager._bound_replace(mock_manager._bound_replace_process_info)
+
+        mock_manager._start_inference_process.assert_called_once_with(0)
+
+
+class TestProcessEndingHandlerBroadExceptionHandling:
+    """Tests that the PROCESS_ENDING handler in receive_and_handle_process_messages continues
+    to fault jobs and restart the process even when semaphore releases raise unexpected exceptions.
+
+    If _inference_semaphore.release() or _vae_decode_semaphore.release() raises an OSError
+    (or any non-ValueError exception), the handler must not abort — the job must still be
+    faulted and the process map must still be updated, so the slot can be recovered.
+    """
+
+    def _make_message(self, state: HordeProcessState) -> MagicMock:
+        from horde_worker_regen.process_management.messages import HordeProcessStateChangeMessage
+
+        msg = MagicMock(spec=HordeProcessStateChangeMessage)
+        msg.process_id = 0
+        msg.process_state = state
+        msg.process_launch_identifier = 1
+        msg.info = ""
+        return msg
+
+    def _run_with_bad_semaphore(
+        self,
+        prior_state: HordeProcessState,
+        sem_error: Exception,
+        *,
+        which_semaphore: str = "inference",
+    ) -> MagicMock:
+        """Run the PROCESS_ENDING path with a semaphore that raises on release.
+
+        Returns the mock_manager so callers can inspect whether on_process_ending was called.
+        """
+        import multiprocessing
+        import queue as queue_mod
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = prior_state
+        process_info.last_job_referenced = None
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        msg = self._make_message(HordeProcessState.PROCESS_ENDING)
+        q = queue_mod.Queue()
+        q.put(msg)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+
+        # Set up the bad semaphore that raises on release
+        bad_sem = MagicMock()
+        bad_sem.release = MagicMock(side_effect=sem_error)
+
+        if which_semaphore == "inference":
+            mock_manager._inference_semaphore = bad_sem
+            mock_manager._vae_decode_semaphore = ctx.BoundedSemaphore(1)
+        else:
+            mock_manager._inference_semaphore = ctx.BoundedSemaphore(1)
+            mock_manager._vae_decode_semaphore = bad_sem
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+        return mock_manager
+
+    def test_inference_semaphore_os_error_does_not_abort_process_ending(self) -> None:
+        """An OSError from inference semaphore release must not abort the PROCESS_ENDING handler.
+
+        The process map's on_process_ending must still be called so the slot is properly
+        cleaned up and can be restarted.
+        """
+        mock_manager = self._run_with_bad_semaphore(
+            prior_state=HordeProcessState.INFERENCE_PROCESSING,
+            sem_error=OSError("Invalid semaphore"),
+            which_semaphore="inference",
+        )
+
+        # on_process_ending must have been called despite the OSError
+        mock_manager._process_map.on_process_ending.assert_called_once_with(process_id=0)
+
+    def test_vae_semaphore_os_error_does_not_abort_process_ending(self) -> None:
+        """An OSError from VAE decode semaphore release must not abort the PROCESS_ENDING handler."""
+        mock_manager = self._run_with_bad_semaphore(
+            prior_state=HordeProcessState.INFERENCE_POST_PROCESSING,
+            sem_error=OSError("Invalid semaphore"),
+            which_semaphore="vae",
+        )
+
+        mock_manager._process_map.on_process_ending.assert_called_once_with(process_id=0)
+
+    def test_inference_semaphore_runtime_error_does_not_abort_process_ending(self) -> None:
+        """A RuntimeError from inference semaphore release must not abort the PROCESS_ENDING handler."""
+        mock_manager = self._run_with_bad_semaphore(
+            prior_state=HordeProcessState.INFERENCE_STARTING,
+            sem_error=RuntimeError("semaphore not owned"),
+            which_semaphore="inference",
+        )
+
+        mock_manager._process_map.on_process_ending.assert_called_once_with(process_id=0)
+
+
+class TestRecoveryTimerThreadIsDaemon:
+    """Tests that the _recently_recovered timer thread created by replace_hung_processes()
+    is a daemon thread.
+
+    Non-daemon threads keep the interpreter alive even after sys.exit() is called,
+    which can delay clean shutdown by up to inference_step_timeout (600 s).  The timer
+    only resets a boolean flag — it must be a daemon so it doesn't block process exit.
+    """
+
+    def _make_manager_with_stuck_inference(self) -> MagicMock:
+        """Build a minimal manager with a stuck INFERENCE_PROCESSING process."""
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        proc = MagicMock()
+        proc.process_id = 0
+        proc.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        proc.last_received_timestamp = _time.time() - 9999
+        proc.last_heartbeat_timestamp = _time.time() - 9999
+        proc.last_progress_timestamp = _time.time() - 9999
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        # is_stuck_on_inference returns True for the stuck INFERENCE_PROCESSING process
+        mock_manager._process_map.is_stuck_on_inference.return_value = True
+        mock_manager._process_map.values.return_value = [proc]
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def test_recovery_timer_thread_is_daemon(self) -> None:
+        """The _recently_recovered timer thread started by replace_hung_processes() must be daemon=True.
+
+        A non-daemon thread keeps the interpreter alive even after sys.exit(), potentially
+        delaying clean shutdown by up to inference_step_timeout (600 s by default).
+
+        We capture the ``daemon`` kwarg passed to ``threading.Thread(...)`` via a lightweight
+        fake that does not actually spawn a thread (its ``start()`` is a no-op), so the test
+        doesn't leave a background sleeper running for 600 s.
+        """
+        import threading as _threading
+
+        mock_manager = self._make_manager_with_stuck_inference()
+
+        captured_daemon_values: list[bool | None] = []
+
+        class _FakeThread:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                captured_daemon_values.append(kwargs.get("daemon"))
+
+            def start(self) -> None:
+                pass  # no-op: don't actually spawn a thread
+
+        with patch("threading.Thread", _FakeThread):
+            mock_manager._bound_replace_hung()
+
+        assert len(captured_daemon_values) >= 1, "replace_hung_processes must create a timer thread"
+        for daemon_val in captured_daemon_values:
+            assert daemon_val is True, (
+                f"Timer thread must be created with daemon=True to avoid blocking clean shutdown; "
+                f"got daemon={daemon_val!r}"
+            )

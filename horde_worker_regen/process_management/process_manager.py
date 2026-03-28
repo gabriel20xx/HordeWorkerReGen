@@ -2126,11 +2126,23 @@ class HordeWorkerProcessManager:
             try:
                 self._inference_semaphore.release()
             except ValueError:
-                logger.debug("Inference semaphore already released")
+                logger.debug(
+                    f"Inference semaphore already released when replacing process {process_info.process_id}",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Unexpected error releasing inference semaphore when replacing process "
+                    f"{process_info.process_id}: {type(e).__name__}: {e}",
+                )
             try:
                 self._disk_lock.release()
             except ValueError:
-                logger.debug("Disk lock already released")
+                logger.debug(f"Disk lock already released when replacing process {process_info.process_id}")
+            except Exception as e:
+                logger.warning(
+                    f"Unexpected error releasing disk lock when replacing process "
+                    f"{process_info.process_id}: {type(e).__name__}: {e}",
+                )
 
         if process_info.last_process_state in (
             HordeProcessState.INFERENCE_POST_PROCESSING,
@@ -2145,13 +2157,27 @@ class HordeWorkerProcessManager:
             try:
                 self._vae_decode_semaphore.release()
             except ValueError:
-                logger.debug("VAE decode semaphore already released")
+                logger.debug(
+                    f"VAE decode semaphore already released when replacing process {process_info.process_id}",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Unexpected error releasing VAE decode semaphore when replacing process "
+                    f"{process_info.process_id}: {type(e).__name__}: {e}",
+                )
 
         elif process_info.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL:
             try:
                 self._aux_model_lock.release()
             except ValueError:
-                logger.debug("Aux model lock already released")
+                logger.debug(
+                    f"Aux model lock already released when replacing process {process_info.process_id}",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Unexpected error releasing aux model lock when replacing process "
+                    f"{process_info.process_id}: {type(e).__name__}: {e}",
+                )
 
             if process_info.last_job_referenced is not None and process_info.last_job_referenced in self.jobs_lookup:
                 job_to_remove = process_info.last_job_referenced
@@ -2334,6 +2360,11 @@ class HordeWorkerProcessManager:
                                 f"Inference semaphore already released for process {message.process_id} "
                                 "on PROCESS_ENDING (child released it normally via finally block)",
                             )
+                        except Exception as e:
+                            logger.warning(
+                                f"Unexpected error releasing inference semaphore for process "
+                                f"{message.process_id} on PROCESS_ENDING: {type(e).__name__}: {e}",
+                            )
                     # When INFERENCE_POST_PROCESSING ends unexpectedly the child's finally block
                     # may not have run (e.g. OOM kill), leaving the VAE decode semaphore held.
                     # Release it defensively here so other processes are not blocked.
@@ -2353,6 +2384,11 @@ class HordeWorkerProcessManager:
                             logger.debug(
                                 f"VAE decode semaphore already released for process {message.process_id} "
                                 "on PROCESS_ENDING (child released it normally or never acquired it)",
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Unexpected error releasing VAE decode semaphore for process "
+                                f"{message.process_id} on PROCESS_ENDING: {type(e).__name__}: {e}",
                             )
                     # If the process is ending but still has a job in progress, fault the job
                     # so it is not silently lost. This can happen if an exception occurs in the
@@ -6946,7 +6982,7 @@ class HordeWorkerProcessManager:
         # extend the blocked window unnecessarily.
         if any_process_replaced and not self._recently_recovered:
             self._recently_recovered = True
-            threading.Thread(target=timed_unset_recently_recovered).start()
+            threading.Thread(target=timed_unset_recently_recovered, daemon=True).start()
 
         if self._last_pop_no_jobs_available:
             return any_replaced
@@ -6997,7 +7033,7 @@ class HordeWorkerProcessManager:
             # was False before this block). This prevents a second thread from being spawned during
             # a shutdown timeout that fires while a prior recovery is still cooling down.
             if not already_recovering:
-                threading.Thread(target=timed_unset_recently_recovered).start()
+                threading.Thread(target=timed_unset_recently_recovered, daemon=True).start()
         else:
             self._hung_processes_detected = False
 
