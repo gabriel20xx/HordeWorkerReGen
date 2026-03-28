@@ -943,6 +943,10 @@ class WorkerWebUI:
         // Tracks the last image submission timestamp for which images have been fetched.
         // Images are only re-fetched when this value changes, keeping /api/status lightweight.
         let _lastFetchedImageTimestamp = null;
+        // Track the current job id and its highest-seen progress so the bar never goes
+        // backwards for the same job.  Reset whenever the displayed job id changes.
+        let _currentJobId = null;
+        let _currentJobProgress = 0;
         function _getImageKey(rawB64, timestamp) {
             if (!rawB64 || rawB64.length === 0) return 'empty';
             // Use count + submission timestamp as the change-detection key.
@@ -1135,7 +1139,21 @@ class WorkerWebUI:
                     if (data.current_job) {
                         const job = data.current_job;
                         const sd = escapeHtml(job.state || 'N/A');
-                        const pv = (job.progress !== null && job.progress !== undefined) ? job.progress : 0;
+                        const rawPv = (job.progress !== null && job.progress !== undefined) ? job.progress : 0;
+                        // Use null for missing ids so that two jobs without ids are never
+                        // treated as the same job by the high-water-mark logic below.
+                        const jobId = job.id || null;
+                        // Never let the progress bar go backwards for the same job id.
+                        // Skip the high-water mark when jobId is null (unknown id) so a
+                        // missing-id job never pins progress across separate jobs.
+                        let pv;
+                        if (jobId !== null && jobId === _currentJobId) {
+                            pv = Math.max(_currentJobProgress, rawPv);
+                        } else {
+                            _currentJobId = jobId;
+                            pv = rawPv;
+                        }
+                        _currentJobProgress = pv;
                         ojd.classList.remove('centered-empty-container');
                         ojd.innerHTML =
                             '<div class="stat-row"><span class="stat-label">Job ID:</span><span class="stat-value" style="font-family:monospace;font-size:0.8rem;">'+escapeHtml(job.id||'N/A')+'</span></div>'+
