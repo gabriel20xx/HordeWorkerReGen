@@ -888,10 +888,23 @@ class WorkerWebUI:
             fetch('/api/last_image')
                 .then(r => { if (!r.ok) throw new Error('HTTP error! status: '+r.status); return r.json(); })
                 .then(imgData => {
-                    _lastFetchedImageTimestamp = timestamp;
-                    renderLastImages(imgData.last_image_base64, document.getElementById('overview-image-container'), imgData.last_image_submission_timestamp);
+                    // Prefer the timestamp from the /api/last_image response so that the
+                    // cache marker reflects the actual data that was rendered, not the
+                    // /api/status snapshot that triggered the fetch.
+                    var ts = imgData && imgData.last_image_submission_timestamp;
+                    if (typeof ts !== 'number') { ts = Number(ts); }
+                    if (!Number.isFinite(ts)) {
+                        ts = (typeof timestamp === 'number' && Number.isFinite(timestamp)) ? timestamp
+                            : (Number.isFinite(_lastFetchedImageTimestamp) ? _lastFetchedImageTimestamp : 0);
+                    }
+                    _lastFetchedImageTimestamp = ts;
+                    renderLastImages(imgData.last_image_base64, document.getElementById('overview-image-container'), ts);
                 })
-                .catch(function() {});
+                .catch(function(err) {
+                    // Log the error and mark this timestamp as handled to avoid repeated retries.
+                    console.error('Failed to fetch /api/last_image:', err);
+                    _lastFetchedImageTimestamp = timestamp;
+                });
         }
         function scheduleUpdate() {
             if (scheduledUpdateTimer !== null) return;
