@@ -4729,7 +4729,15 @@ class HordeWorkerProcessManager:
     _last_pop_no_jobs_available: bool = False
     """Whether the last job pop attempt had a no jobs available response."""
     _last_pop_no_jobs_available_time: float = 0.0
-    """The time at which the last job pop attempt had a no jobs available response."""
+    """Anchor timestamp for the current idle period.
+
+    Set to ``session_start_time`` at initialisation so that idle time is tracked
+    from program launch even before any job-pop response has been received.  Updated
+    to the current time on each "no jobs available" pop cycle to accumulate elapsed
+    idle seconds into ``_time_spent_no_jobs_available``.  Reset to ``0.0`` when a
+    job is successfully popped, which also causes ``update_webui_status`` to stop
+    adding a live in-flight delta to the displayed counter.
+    """
     _time_spent_no_jobs_available: float = 0.0
     """The number of seconds spent with no jobs popped or available."""
     _max_time_spent_no_jobs_available: float = 60.0 * 60.0
