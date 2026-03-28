@@ -935,7 +935,7 @@ class WorkerWebUI:
             }
             return result;
         }
-        let statusAbortController = null, _lastImageFetchController = null, consecutiveErrors = 0;
+        let statusAbortController = null, _lastImageFetchController = null, _lastImageFetchTimestamp = null, consecutiveErrors = 0;
         let statusUpdateTimestamp = Date.now(), updateIntervalMs = 1000, scheduledUpdateTimer = null;
         const MAX_CONSECUTIVE_ERRORS = 5;
         function resBarColor(pct) { return pct >= 80 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#10b981'; }
@@ -1027,17 +1027,22 @@ class WorkerWebUI:
         function fetchLastImage(timestamp) {
             // Fetch images from the dedicated endpoint so that /api/status stays lightweight.
             // Only called when last_image_submission_timestamp changes.
-            // Abort any previous in-flight request so that a stale response can never
-            // overwrite a newer image (which would cause the display to flicker back to
-            // an older result).
+            // If a fetch for this same timestamp is already in flight, let it complete rather
+            // than aborting and restarting on every 1-second status poll.
+            if (_lastImageFetchController && _lastImageFetchTimestamp === timestamp) return;
+            // A *different* (newer) timestamp supersedes the previous request — abort it so
+            // that a stale response can never overwrite a newer image (which would cause the
+            // display to flicker back to an older result).
             if (_lastImageFetchController) _lastImageFetchController.abort();
             _lastImageFetchController = new AbortController();
+            _lastImageFetchTimestamp = timestamp;
             const ctrl = _lastImageFetchController;
             fetch('/api/last_image', { signal: ctrl.signal })
                 .then(r => { if (!r.ok) throw new Error('HTTP error! status: '+r.status); return r.json(); })
                 .then(imgData => {
                     // Discard the response if a newer fetch has already superseded this one.
                     if (ctrl !== _lastImageFetchController) return;
+                    _lastImageFetchController = null;
                     // Prefer the timestamp from the /api/last_image response so that the
                     // cache marker reflects the actual data that was rendered, not the
                     // /api/status snapshot that triggered the fetch.
@@ -1052,6 +1057,8 @@ class WorkerWebUI:
                 })
                 .catch(function(err) {
                     if (err.name === 'AbortError') return;
+                    // Reset the in-flight marker so the next status poll can retry the request.
+                    if (ctrl === _lastImageFetchController) { _lastImageFetchController = null; _lastImageFetchTimestamp = null; }
                     // Log the error but do not advance the cache marker so we can retry on the next status poll.
                     console.error('Failed to fetch /api/last_image:', err);
                     var container = document.getElementById('overview-image-container');
