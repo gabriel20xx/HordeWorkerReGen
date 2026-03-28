@@ -267,6 +267,8 @@ class WorkerWebUI:
         [data-theme="dark"] .image-grid-item.loading { background: linear-gradient(90deg, #1e293b 25%, #2d3f55 50%, #1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 320px; overflow: hidden; }
+        .last-image-container.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
+        [data-theme="dark"] .last-image-container.loading { background: linear-gradient(90deg, #1e293b 25%, #2d3f55 50%, #1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
         .last-image-container > .image-grid-item { aspect-ratio: auto; min-height: 0; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .last-image-container .image-grid-item img { max-width: 100%; height: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: block; }
         .last-image-container .image-grid-item img:hover { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
@@ -866,6 +868,7 @@ class WorkerWebUI:
             const key = _getImageKey(rawB64, timestamp);
             if (key === _lastRenderedImageKey) return;
             _lastRenderedImageKey = key;
+            oic.classList.remove('loading');
             // Capture the render token so async image-load callbacks can detect whether a
             // newer renderLastImages() call has already superseded this one.
             const renderToken = key;
@@ -957,6 +960,7 @@ class WorkerWebUI:
                     // Log the error and mark this timestamp as handled to avoid repeated retries.
                     console.error('Failed to fetch /api/last_image:', err);
                     _lastFetchedImageTimestamp = timestamp;
+                    document.getElementById('overview-image-container').classList.remove('loading');
                 });
         }
         function scheduleUpdate() {
@@ -1045,6 +1049,11 @@ class WorkerWebUI:
                     // Images are re-fetched only when the submission timestamp changes.
                     if (data.last_image_submission_timestamp !== _lastFetchedImageTimestamp) {
                         if (hasImage) {
+                            const oic = document.getElementById('overview-image-container');
+                            if (!oic.querySelector('img')) {
+                                oic.innerHTML = '';
+                                oic.classList.add('loading');
+                            }
                             fetchLastImage(data.last_image_submission_timestamp);
                         } else {
                             _lastFetchedImageTimestamp = data.last_image_submission_timestamp;
