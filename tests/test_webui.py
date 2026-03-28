@@ -532,6 +532,47 @@ async def test_webui_gallery_image_endpoint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_status_excludes_images_and_last_image_endpoint() -> None:
+    """Test that /api/status omits last_image_base64 and /api/last_image serves it."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+        test_timestamp = 1704067200.0
+        webui.update_status(
+            last_image_base64=[test_b64],
+            last_image_submission_timestamp=test_timestamp,
+        )
+
+        # /api/status must NOT include the image payload
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/status",
+        ) as response:
+            assert response.status == 200
+            status = await response.json()
+        assert "last_image_base64" not in status, "/api/status must not expose last_image_base64"
+        assert status["last_image_submission_timestamp"] == test_timestamp
+
+        # /api/last_image must return the full image list and timestamp
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/last_image",
+        ) as response:
+            assert response.status == 200
+            img_data = await response.json()
+        assert "last_image_base64" in img_data
+        assert img_data["last_image_base64"] == [test_b64]
+        assert img_data["last_image_submission_timestamp"] == test_timestamp
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_gallery_metadata_only() -> None:
     """Test that /api/gallery?metadata_only=true strips both thumbnail and base64."""
     webui = WorkerWebUI(port=0)
