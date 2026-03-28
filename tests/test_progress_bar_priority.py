@@ -1,9 +1,13 @@
-"""Tests for progress bar priority: current job progress must stay active until submitted.
+"""Tests for progress bar priority and time-without-jobs tracking in update_webui_status.
 
 The progress bar should remain active (at 100%) for a job until the generation is fully
 submitted to the API, before resetting to 0% for the next generation.  Even when a new
 inference job has been dispatched and is at 0%, the webui must still show the submitting
 job at 100% because jobs_pending_submit is checked first.
+
+The time_without_jobs counter must start accumulating from program launch and must count
+continuously between job-pop cycles by computing a live in-flight delta on top of the
+accumulated total.
 """
 
 from unittest.mock import MagicMock, patch
@@ -98,6 +102,8 @@ def _invoke_update_webui_status(
     # Simple counter / scalar attributes accessed at the end of the method
     mock_manager.kudos_events = []
     mock_manager.user_info = None
+    mock_manager._time_spent_no_jobs_available = 0.0
+    mock_manager._last_pop_no_jobs_available_time = 0.0
 
     # The webui must be non-None so the method does not return immediately
     mock_manager.webui = MagicMock()
@@ -360,3 +366,116 @@ def test_raw_progress_used_for_mid_inference() -> None:
     assert current_job["progress"] == 65, (
         f"Expected raw progress=65 for mid-inference job, got {current_job['progress']}%"
     )
+
+
+# ---------------------------------------------------------------------------
+# time_without_jobs helpers & tests
+# ---------------------------------------------------------------------------
+
+
+def _invoke_update_webui_status_for_time_without_jobs(
+    time_spent_no_jobs_available: float,
+    last_pop_no_jobs_available_time: float,
+    fake_now: float,
+) -> float:
+    """Call ``update_webui_status`` with controlled time values and return the
+    ``time_without_jobs`` kwarg that was passed to ``webui.update_status``."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+
+    # Idle-time attributes under test
+    mock_manager._time_spent_no_jobs_available = time_spent_no_jobs_available
+    mock_manager._last_pop_no_jobs_available_time = last_pop_no_jobs_available_time
+
+    # Minimal attributes required by the rest of update_webui_status
+    mock_manager.jobs_pending_submit = []
+    mock_manager.jobs_being_safety_checked = []
+    mock_manager.jobs_pending_safety_check = []
+    mock_manager.jobs_in_progress = []
+    mock_manager.jobs_lookup = {}
+    mock_manager.jobs_pending_inference = []
+    mock_manager._WEBUI_POST_INFERENCE_STATES = HordeWorkerProcessManager._WEBUI_POST_INFERENCE_STATES
+    mock_manager._calculate_granular_progress = (
+        HordeWorkerProcessManager._calculate_granular_progress.__get__(mock_manager, HordeWorkerProcessManager)
+    )
+    mock_manager._serialize_loras_for_webui.return_value = None
+    mock_manager._process_map.values.return_value = []
+    mock_manager._device_map.root = {}
+    mock_manager.kudos_events = []
+    mock_manager.user_info = None
+    mock_manager.webui = MagicMock()
+
+    stub_psutil = MagicMock()
+    stub_psutil.cpu_percent.return_value = 0.0
+    stub_psutil.cpu_count.return_value = 1
+
+    with (
+        patch("horde_worker_regen.process_management.process_manager.psutil", stub_psutil),
+        patch.dict("sys.modules", {"torch": MagicMock()}),
+        patch("horde_worker_regen.process_management.process_manager.time.time", return_value=fake_now),
+    ):
+        method = HordeWorkerProcessManager.update_webui_status.__get__(mock_manager, HordeWorkerProcessManager)
+        method()
+
+    assert mock_manager.webui.update_status.called, "webui.update_status was not called"
+    return mock_manager.webui.update_status.call_args.kwargs["time_without_jobs"]
+
+
+def test_time_without_jobs_counts_from_anchor() -> None:
+    """time_without_jobs must add the live delta to the accumulated total.
+
+    When _last_pop_no_jobs_available_time is non-zero (idle period in progress),
+    the displayed value should be the accumulated total plus the time elapsed since
+    the anchor timestamp.
+    """
+    accumulated = 30.0  # 30 s already accumulated from previous idle cycles
+    anchor = 1000.0  # timestamp when this idle period began
+    fake_now = 1045.0  # 45 s later
+
+    result = _invoke_update_webui_status_for_time_without_jobs(
+        time_spent_no_jobs_available=accumulated,
+        last_pop_no_jobs_available_time=anchor,
+        fake_now=fake_now,
+    )
+
+    expected = accumulated + (fake_now - anchor)  # 30 + 45 = 75
+    assert result == expected, f"Expected time_without_jobs={expected}, got {result}"
+
+
+def test_time_without_jobs_zero_when_job_is_active() -> None:
+    """time_without_jobs must not include an in-flight delta while a job is running.
+
+    When a job is successfully popped _last_pop_no_jobs_available_time is reset to
+    0.0.  The dynamic addition must be suppressed so that the counter stays frozen
+    at the accumulated total (which is itself reset to 0 by convention, but the
+    guard must prevent any addition regardless).
+    """
+    # Simulate state immediately after a successful job pop: anchor is 0.0.
+    result = _invoke_update_webui_status_for_time_without_jobs(
+        time_spent_no_jobs_available=0.0,
+        last_pop_no_jobs_available_time=0.0,
+        fake_now=9999.0,
+    )
+
+    assert result == 0.0, f"Expected time_without_jobs=0.0 while job is active, got {result}"
+
+
+def test_time_without_jobs_starts_from_program_launch() -> None:
+    """time_without_jobs begins accumulating from session start, before any pop.
+
+    At init, _last_pop_no_jobs_available_time is set to session_start_time so the
+    counter is non-zero as soon as the first webui update fires, even before any
+    "no jobs available" pop response has been received.
+    """
+    session_start = 500.0  # session_start_time
+    fake_now = 515.0  # 15 s after session start, webui fires for the first time
+
+    result = _invoke_update_webui_status_for_time_without_jobs(
+        time_spent_no_jobs_available=0.0,  # no pops yet, accumulated is zero
+        last_pop_no_jobs_available_time=session_start,
+        fake_now=fake_now,
+    )
+
+    expected = fake_now - session_start  # 15 s
+    assert result == expected, f"Expected time_without_jobs={expected} from session start, got {result}"

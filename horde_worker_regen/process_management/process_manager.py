@@ -1551,6 +1551,7 @@ class HordeWorkerProcessManager:
             directml (int, optional): ID of the potential directml device. Defaults to None.
         """
         self.session_start_time = time.time()
+        self._last_pop_no_jobs_available_time = self.session_start_time
 
         self.bridge_data = bridge_data
         logger.debug(f"Models to load: {bridge_data.image_models_to_load}")
@@ -4728,7 +4729,15 @@ class HordeWorkerProcessManager:
     _last_pop_no_jobs_available: bool = False
     """Whether the last job pop attempt had a no jobs available response."""
     _last_pop_no_jobs_available_time: float = 0.0
-    """The time at which the last job pop attempt had a no jobs available response."""
+    """Anchor timestamp for the current idle period.
+
+    Set to ``session_start_time`` at initialisation so that idle time is tracked
+    from program launch even before any job-pop response has been received.  Updated
+    to the current time on each "no jobs available" pop cycle to accumulate elapsed
+    idle seconds into ``_time_spent_no_jobs_available``.  Reset to ``0.0`` when a
+    job is successfully popped, which also causes ``update_webui_status`` to stop
+    adding a live in-flight delta to the displayed counter.
+    """
     _time_spent_no_jobs_available: float = 0.0
     """The number of seconds spent with no jobs popped or available."""
     _max_time_spent_no_jobs_available: float = 60.0 * 60.0
@@ -6446,12 +6455,18 @@ class HordeWorkerProcessManager:
                 user_kudos_total = self.user_info.kudos_details.accumulated
 
         # Update the web UI
+        # Compute time_without_jobs dynamically so the webui counter increments
+        # continuously between job-pop cycles, and correctly starts from session start.
+        current_time_without_jobs = self._time_spent_no_jobs_available
+        if self._last_pop_no_jobs_available_time > 0:
+            current_time_without_jobs += time.time() - self._last_pop_no_jobs_available_time
+
         self.webui.update_status(
             worker_name=self.bridge_data.dreamer_worker_name,
             horde_username=horde_username,
             jobs_popped=self.total_num_jobs_queued,
             jobs_queued=len(self.jobs_pending_inference),
-            time_without_jobs=self._time_spent_no_jobs_available,
+            time_without_jobs=current_time_without_jobs,
             jobs_completed=self.total_num_completed_jobs,
             jobs_faulted=self._num_jobs_faulted,
             processes_recovered=self._num_process_recoveries,
