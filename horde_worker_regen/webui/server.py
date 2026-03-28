@@ -858,11 +858,16 @@ class WorkerWebUI:
                         if (ie) ie.setAttribute('data-idx', idx);
                     });
                     // Prepend skeleton tiles for new images, then load only their thumbnails.
-                    const newImages = data.images.filter(img => !existingSet.has(img.gallery_id));
+                    // Build newImages with the index from data.images (which matches fetchedIds 1:1)
+                    // to avoid repeated indexOf scans when setting data-idx on each tile.
+                    const newImages = data.images.reduce((acc, img, idx) => {
+                        if (!existingSet.has(img.gallery_id)) acc.push({ img, idx });
+                        return acc;
+                    }, []);
                     if (newImages.length > 0) {
                         const frag = document.createDocumentFragment();
-                        newImages.forEach(img => {
-                            const galleryId = img.gallery_id, idx = fetchedIds.indexOf(galleryId);
+                        newImages.forEach(({ img, idx }) => {
+                            const galleryId = img.gallery_id;
                             const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                             const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
                             const div = document.createElement('div');
@@ -873,9 +878,14 @@ class WorkerWebUI:
                             frag.appendChild(div);
                         });
                         grid.insertBefore(frag, grid.firstChild);
-                        newImages.forEach(img => {
+                        // Abort previous batch and start a new one so incremental thumbnail fetches
+                        // are cancelled if the user navigates away or a full page reload is triggered.
+                        if (_galleryBatchAbort) _galleryBatchAbort.abort();
+                        const incrAbort = new AbortController();
+                        _galleryBatchAbort = incrAbort;
+                        newImages.forEach(({ img }) => {
                             const galleryId = img.gallery_id;
-                            fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true')
+                            fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true', { signal: incrAbort.signal })
                                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                                 .then(d => {
                                     const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
@@ -884,7 +894,11 @@ class WorkerWebUI:
                                     if (src && ie) { ie.src = src; ie.style.display = ''; }
                                     if (c) c.classList.remove('loading');
                                 })
-                                .catch(() => { const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]'); if (c) c.classList.remove('loading'); });
+                                .catch(err => {
+                                    if (err.name === 'AbortError') return;
+                                    const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                                    if (c) c.classList.remove('loading');
+                                });
                         });
                     }
                 })
