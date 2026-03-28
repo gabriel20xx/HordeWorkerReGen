@@ -87,6 +87,7 @@ class WorkerWebUI:
         """Set up the web server routes."""
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/api/status", self._handle_status)
+        self.app.router.add_get("/api/last_image", self._handle_last_image)
         self.app.router.add_get("/api/gallery", self._handle_gallery)
         self.app.router.add_get("/api/gallery/image", self._handle_gallery_image)
         self.app.router.add_get("/api/config", self._handle_config)
@@ -798,6 +799,9 @@ class WorkerWebUI:
         const MAX_CONSECUTIVE_ERRORS = 5;
         function resBarColor(pct) { return pct >= 80 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#10b981'; }
         let _lastRenderedImageKey = null;
+        // Tracks the last image submission timestamp for which images have been fetched.
+        // Images are only re-fetched when this value changes, keeping /api/status lightweight.
+        let _lastFetchedImageTimestamp = null;
         function _getImageKey(rawB64, timestamp) {
             if (!rawB64 || rawB64.length === 0) return 'empty';
             // Use count + submission timestamp as the change-detection key.
@@ -877,6 +881,17 @@ class WorkerWebUI:
                 img.onerror = function() { imgDims[i] = { w: 1, h: 1 }; loadedCount++; if (loadedCount === count) renderGrid(); };
                 img.src = src;
             });
+        }
+        function fetchLastImage(timestamp) {
+            // Fetch images from the dedicated endpoint so that /api/status stays lightweight.
+            // Only called when last_image_submission_timestamp changes.
+            fetch('/api/last_image')
+                .then(r => { if (!r.ok) throw new Error('HTTP error! status: '+r.status); return r.json(); })
+                .then(imgData => {
+                    _lastFetchedImageTimestamp = timestamp;
+                    renderLastImages(imgData.last_image_base64, document.getElementById('overview-image-container'), imgData.last_image_submission_timestamp);
+                })
+                .catch(function() {});
         }
         function scheduleUpdate() {
             if (scheduledUpdateTimer !== null) return;
@@ -960,7 +975,16 @@ class WorkerWebUI:
                     }
                     const hasImage = data.last_image_submission_timestamp && data.last_image_submission_timestamp !== 0;
                     document.getElementById('overview-image-time').textContent = hasImage ? formatTimeAgo(data.last_image_submission_timestamp) : '';
-                    renderLastImages(data.last_image_base64, document.getElementById('overview-image-container'), data.last_image_submission_timestamp);
+                    // Fetch images separately so the status payload stays small.
+                    // Images are re-fetched only when the submission timestamp changes.
+                    if (data.last_image_submission_timestamp !== _lastFetchedImageTimestamp) {
+                        if (hasImage) {
+                            fetchLastImage(data.last_image_submission_timestamp);
+                        } else {
+                            _lastFetchedImageTimestamp = data.last_image_submission_timestamp;
+                            renderLastImages([], document.getElementById('overview-image-container'), 0);
+                        }
+                    }
                     const qd = document.getElementById('job-queue');
                     document.getElementById('queue-count').textContent = data.job_queue.length;
                     if (data.job_queue.length > 0) {
@@ -1060,8 +1084,31 @@ class WorkerWebUI:
         return web.Response(text=html, content_type="text/html")
 
     async def _handle_status(self, request: web.Request) -> web.Response:
-        """Handle status API request."""
-        return web.json_response(self.status_data)
+        """Handle status API request.
+
+        Returns all status fields **except** ``last_image_base64`` so that the
+        (potentially large) image payload is not included in every poll.  Clients
+        should use the lightweight ``last_image_submission_timestamp`` field to
+        detect when a new image is available and then fetch it separately via
+        ``/api/last_image``.
+        """
+        payload = {k: v for k, v in self.status_data.items() if k != "last_image_base64"}
+        return web.json_response(payload)
+
+    async def _handle_last_image(self, request: web.Request) -> web.Response:
+        """Return only the last generated image(s) and their submission timestamp.
+
+        Separating image data from the main status response keeps ``/api/status``
+        lightweight so the overview page loads quickly.  The client fetches this
+        endpoint only when ``last_image_submission_timestamp`` changes, i.e. when
+        a genuinely new image is available.
+        """
+        return web.json_response(
+            {
+                "last_image_base64": self.status_data["last_image_base64"],
+                "last_image_submission_timestamp": self.status_data["last_image_submission_timestamp"],
+            },
+        )
 
     async def _handle_health(self, request: web.Request) -> web.Response:
         """Handle health check request."""
