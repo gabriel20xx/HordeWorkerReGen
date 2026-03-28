@@ -4184,13 +4184,13 @@ class TestReplaceHungWaitingForJob:
         assert result is False
 
 
-class TestImageSubmittingStuckRecovery:
-    """Tests for the IMAGE_SUBMITTING stuck-process fixes.
+class TestResultSubmittingStuckRecovery:
+    """Tests for the RESULT_SUBMITTING stuck-process fixes.
 
     Two complementary guards are tested:
     1. submit_single_generation() try/finally resets the state to WAITING_FOR_JOB on every
-       failure path so the process never stays in IMAGE_SUBMITTING after a failed submission.
-    2. replace_hung_processes() resets any process that remains in IMAGE_SUBMITTING for longer
+       failure path so the process never stays in RESULT_SUBMITTING after a failed submission.
+    2. replace_hung_processes() resets any process that remains in RESULT_SUBMITTING for longer
        than 60 s as a safety net, without killing the subprocess.
     """
 
@@ -4217,7 +4217,7 @@ class TestImageSubmittingStuckRecovery:
         self,
         process_id: int,
         *,
-        initial_state: HordeProcessState = HordeProcessState.IMAGE_SAVED,
+        initial_state: HordeProcessState = HordeProcessState.RESULT_SAVED,
     ) -> tuple[MagicMock, MagicMock]:
         """Build a minimal mock manager suitable for calling submit_single_generation."""
         process_map, process_info = self._make_process_map(process_id, initial_state)
@@ -4229,7 +4229,7 @@ class TestImageSubmittingStuckRecovery:
         """Build a faulted PendingSubmitJob mock whose job reference matches the process.
 
         Using is_faulted=True (faulted job, no image) lets the function bypass the
-        image-upload section and proceed directly to setting IMAGE_SUBMITTING and
+        image-upload section and proceed directly to setting RESULT_SUBMITTING and
         calling the API, which is what we want to exercise.
         """
         sdk_job = MagicMock()
@@ -4354,7 +4354,7 @@ class TestImageSubmittingStuckRecovery:
         )
         return mock_manager
 
-    def _make_image_submitting_process(
+    def _make_result_submitting_process(
         self,
         process_id: int,
         *,
@@ -4367,7 +4367,7 @@ class TestImageSubmittingStuckRecovery:
         proc = MagicMock()
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
-        proc.last_process_state = HordeProcessState.IMAGE_SUBMITTING
+        proc.last_process_state = HordeProcessState.RESULT_SUBMITTING
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -4375,9 +4375,9 @@ class TestImageSubmittingStuckRecovery:
         proc.last_job_referenced = None
         return proc
 
-    def test_image_submitting_stuck_over_60s_resets_state(self) -> None:
-        """A process stuck in IMAGE_SUBMITTING for >60 s must have its state reset to WAITING_FOR_JOB."""
-        proc = self._make_image_submitting_process(2, time_elapsed=90.0)
+    def test_result_submitting_stuck_over_60s_resets_state(self) -> None:
+        """A process stuck in RESULT_SUBMITTING for >60 s must have its state reset to WAITING_FOR_JOB."""
+        proc = self._make_result_submitting_process(2, time_elapsed=90.0)
         mock_manager = self._make_hung_manager([proc])
 
         state_changes: list[HordeProcessState] = []
@@ -4396,9 +4396,9 @@ class TestImageSubmittingStuckRecovery:
         # The subprocess must NOT have been killed
         mock_manager._replace_inference_process.assert_not_called()
 
-    def test_image_submitting_not_reset_within_60s(self) -> None:
-        """A process in IMAGE_SUBMITTING for <60 s must not be touched (submission still in progress)."""
-        proc = self._make_image_submitting_process(2, time_elapsed=30.0)
+    def test_result_submitting_not_reset_within_60s(self) -> None:
+        """A process in RESULT_SUBMITTING for <60 s must not be touched (submission still in progress)."""
+        proc = self._make_result_submitting_process(2, time_elapsed=30.0)
         mock_manager = self._make_hung_manager([proc])
 
         with patch("threading.Thread"):
@@ -4408,13 +4408,13 @@ class TestImageSubmittingStuckRecovery:
         mock_manager._replace_inference_process.assert_not_called()
         mock_manager._process_map.on_process_state_change.assert_not_called()
 
-    def test_image_submitting_stuck_not_reset_when_no_jobs_available(self) -> None:
-        """IMAGE_SUBMITTING timeout check must be skipped when no jobs are available.
+    def test_result_submitting_stuck_not_reset_when_no_jobs_available(self) -> None:
+        """RESULT_SUBMITTING timeout check must be skipped when no jobs are available.
 
         The check is inside the _last_pop_no_jobs_available guard, so it should not
         trigger when the server has no work.
         """
-        proc = self._make_image_submitting_process(2, time_elapsed=9999.0)
+        proc = self._make_result_submitting_process(2, time_elapsed=9999.0)
         mock_manager = self._make_hung_manager([proc], last_pop_no_jobs=True)
 
         with patch("threading.Thread"):
@@ -4423,16 +4423,16 @@ class TestImageSubmittingStuckRecovery:
         assert result is False
         mock_manager._replace_inference_process.assert_not_called()
 
-    def test_image_submitting_reset_does_not_trigger_recently_recovered(self) -> None:
-        """Resetting IMAGE_SUBMITTING state must NOT set _recently_recovered.
+    def test_result_submitting_reset_does_not_trigger_recently_recovered(self) -> None:
+        """Resetting RESULT_SUBMITTING state must NOT set _recently_recovered.
 
-        IMAGE_SUBMITTING recovery is a soft state reset — the subprocess is NOT killed.
+        RESULT_SUBMITTING recovery is a soft state reset — the subprocess is NOT killed.
         Setting _recently_recovered would incorrectly suppress INFERENCE_STARTING detection
         and other legitimate checks for inference_step_timeout seconds after every submission
         timeout, which is far too conservative.  Only actual subprocess replacements should
         start the cascading-recovery cooldown.
         """
-        proc = self._make_image_submitting_process(2, time_elapsed=90.0)
+        proc = self._make_result_submitting_process(2, time_elapsed=90.0)
         mock_manager = self._make_hung_manager([proc])
 
         thread_started = False
