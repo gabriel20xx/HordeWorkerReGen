@@ -118,13 +118,13 @@ class HordeProcessState(enum.Enum):
     """The process has finished post-processing."""
 
     RESULT_SAVING = auto()
-    """The process is saving an image."""
+    """The process is saving the generated result."""
     RESULT_SAVED = auto()
-    """The process has saved an image."""
+    """The process has saved the generated result."""
     RESULT_SUBMITTING = auto()
-    """The process is submitting an image."""
+    """The process is submitting the generated result."""
     RESULT_SUBMITTED = auto()
-    """The process has submitted an image."""
+    """The process has submitted the generated result."""
 
     ALCHEMY_STARTING = auto()
     """The process is starting performing alchemy jobs."""

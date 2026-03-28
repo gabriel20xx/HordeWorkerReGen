@@ -6200,7 +6200,7 @@ class HordeWorkerProcessManager:
                 job = job_info.sdk_api_job_info
                 # Find the process that handled this job so we can show its most recent state.
                 # Default to a manager-centric label indicating that the job is queued for submission.
-                state = "RESULT_SUBMITTING"
+                state = "RESULT_PENDING_SUBMIT"
                 for process in self._process_map.values():
                     if process.last_job_referenced == job:
                         # Use the actual last process state name if available.
@@ -6907,11 +6907,11 @@ class HordeWorkerProcessManager:
                 # the process can accept new jobs.  The primary fix is in
                 # submit_single_generation() (try/finally), but this serves as a safety net
                 # for any edge cases that slip through.
-                _image_submit_stuck_timeout = 60.0
+                _result_submit_stuck_timeout = 60.0
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
                     and process_info.last_process_state == HordeProcessState.RESULT_SUBMITTING
-                    and (now - process_info.last_received_timestamp) > _image_submit_stuck_timeout
+                    and (now - process_info.last_received_timestamp) > _result_submit_stuck_timeout
                 ):
                     logger.error(
                         f"{process_info} has been stuck in RESULT_SUBMITTING for "
