@@ -4600,6 +4600,241 @@ class TestReplaceHungModelPreloaded:
         assert result is False
 
 
+class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
+    """Tests that actively-in-progress states are cleared before idle/finished states.
+
+    The conditions list in replace_hung_processes must check actively in-progress states
+    (INFERENCE_POST_PROCESSING, MODEL_PRELOADING, DOWNLOADING_AUX_MODEL) before idle/finished
+    states (MODEL_PRELOADED).  Processes actively doing work hold resources (e.g. the VAE
+    decode semaphore) and must be cleared first; a MODEL_PRELOADED process is merely waiting
+    idle for a job.
+    """
+
+    def _make_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        recently_recovered: bool = False,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 20000
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager,
+        )
+        return mock_manager
+
+    def _make_process(
+        self,
+        process_id: int,
+        state: HordeProcessState,
+        *,
+        time_elapsed: float = 9999.0,
+    ) -> MagicMock:
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = state
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_inference_post_processing_replaced_before_model_preloaded(self) -> None:
+        """When both INFERENCE_POST_PROCESSING and MODEL_PRELOADED processes are stuck,
+        the INFERENCE_POST_PROCESSING process must be replaced first.
+
+        The idle MODEL_PRELOADED process is listed first in the process map to prove that
+        replacement order is driven by the conditions priority, not the process map iteration
+        order.  With a per-process-first loop the MODEL_PRELOADED process would be replaced
+        first (because it comes first in the list); the multi-pass condition-first loop
+        ensures INFERENCE_POST_PROCESSING is always cleared first.
+        """
+        replace_order: list[int] = []
+
+        post_proc = self._make_process(1, HordeProcessState.INFERENCE_POST_PROCESSING)
+        preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED)
+
+        # MODEL_PRELOADED process is listed first in the map — a per-process-first loop
+        # would replace it before INFERENCE_POST_PROCESSING.  The multi-pass loop must
+        # clear INFERENCE_POST_PROCESSING first regardless.
+        mock_manager = self._make_manager([preloaded, post_proc])
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    replace_order.append(process_info.process_id)
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        assert 1 in replace_order, "INFERENCE_POST_PROCESSING process must be replaced"
+        assert 2 in replace_order, "MODEL_PRELOADED process must be replaced"
+        assert replace_order.index(1) < replace_order.index(2), (
+            "INFERENCE_POST_PROCESSING (id=1) must be cleared before MODEL_PRELOADED (id=2); "
+            f"actual replacement order: {replace_order}"
+        )
+
+    def test_inference_post_processing_replaced_when_model_preloaded_not_stuck(self) -> None:
+        """INFERENCE_POST_PROCESSING must be replaced even when MODEL_PRELOADED is not stuck."""
+        post_proc = self._make_process(1, HordeProcessState.INFERENCE_POST_PROCESSING, time_elapsed=9999.0)
+        # MODEL_PRELOADED process is fresh (not stuck)
+        preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED, time_elapsed=10.0)
+
+        mock_manager = self._make_manager([post_proc, preloaded])
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        # Only post_proc should be replaced
+        mock_manager._replace_inference_process.assert_called_once_with(post_proc)
+
+    def test_downloading_aux_model_replaced_before_model_preloaded(self) -> None:
+        """DOWNLOADING_AUX_MODEL (in progress) must be cleared before MODEL_PRELOADED (idle).
+
+        The MODEL_PRELOADED process is listed first in the process map to prove that
+        replacement order is driven by the conditions priority, not process map iteration order.
+        """
+        replace_order: list[int] = []
+
+        downloading = self._make_process(1, HordeProcessState.DOWNLOADING_AUX_MODEL)
+        preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED)
+
+        # MODEL_PRELOADED is listed first — per-process-first loop would replace it first.
+        mock_manager = self._make_manager([preloaded, downloading])
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    replace_order.append(process_info.process_id)
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        assert 1 in replace_order, "DOWNLOADING_AUX_MODEL process must be replaced"
+        assert 2 in replace_order, "MODEL_PRELOADED process must be replaced"
+        assert replace_order.index(1) < replace_order.index(2), (
+            "DOWNLOADING_AUX_MODEL (id=1) must be cleared before MODEL_PRELOADED (id=2); "
+            f"actual replacement order: {replace_order}"
+        )
+
+    def test_all_in_progress_states_replaced_before_model_preloaded(self) -> None:
+        """All in-progress states must be cleared before the idle MODEL_PRELOADED state.
+
+        MODEL_PRELOADED is listed first in the process map so that a per-process-first
+        loop would replace it before the in-progress states.  The multi-pass condition-first
+        loop must clear all in-progress states first regardless of process map ordering.
+        """
+        replace_order: list[int] = []
+
+        post_proc = self._make_process(1, HordeProcessState.INFERENCE_POST_PROCESSING)
+        preloading = self._make_process(2, HordeProcessState.MODEL_PRELOADING)
+        downloading = self._make_process(3, HordeProcessState.DOWNLOADING_AUX_MODEL)
+        preloaded = self._make_process(4, HordeProcessState.MODEL_PRELOADED)
+
+        # MODEL_PRELOADED (id=4) is first — a per-process-first loop would replace it first.
+        mock_manager = self._make_manager([preloaded, post_proc, preloading, downloading])
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    replace_order.append(process_info.process_id)
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        # All four must be replaced
+        assert set(replace_order) == {1, 2, 3, 4}, f"All processes must be replaced; got {replace_order}"
+        # MODEL_PRELOADED (id=4) must come after all in-progress states
+        preloaded_pos = replace_order.index(4)
+        for in_progress_id in (1, 2, 3):
+            assert replace_order.index(in_progress_id) < preloaded_pos, (
+                f"In-progress process id={in_progress_id} must be replaced before MODEL_PRELOADED (id=4); "
+                f"actual order: {replace_order}"
+            )
+
+
 class TestPreloadModelsPipeBroken:
     """Tests that a broken pipe in ``preload_models()`` causes immediate process replacement.
 

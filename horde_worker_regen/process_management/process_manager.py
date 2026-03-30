@@ -6833,9 +6833,17 @@ class HordeWorkerProcessManager:
         - The ``INFERENCE_STARTING`` check is skipped while the flag is set, to prevent cascading
           replacements: a process blocked waiting to acquire the semaphore cannot send heartbeats
           and would falsely appear stuck immediately after a prior replacement freed the semaphore.
-        - ``MODEL_PRELOADING``, ``MODEL_PRELOADED``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
-          ``PROCESS_STARTING`` are **always** evaluated, so a process that is genuinely stuck in
-          one of those states is recovered even when a different process was recently replaced.
+        - ``INFERENCE_POST_PROCESSING``, ``MODEL_PRELOADING``, ``MODEL_PRELOADED``,
+          ``DOWNLOADING_AUX_MODEL``, and ``PROCESS_STARTING`` are **always** evaluated, so a
+          process that is genuinely stuck in one of those states is recovered even when a different
+          process was recently replaced.
+
+        Job-related stuck states are checked in a multi-pass scan (condition-first, then
+        processes) so that every process is examined for the highest-priority state before any
+        process is examined for the next state.  This gives true cross-process prioritization:
+        actively-in-progress states (``INFERENCE_POST_PROCESSING``, ``MODEL_PRELOADING``,
+        ``DOWNLOADING_AUX_MODEL``) are cleared across the entire worker before idle/finished
+        states (``MODEL_PRELOADED``) are reclaimed, regardless of subprocess map ordering.
         """
         import threading
 
@@ -6930,34 +6938,6 @@ class HordeWorkerProcessManager:
                 if self._last_pop_no_jobs_available and no_local_work:
                     continue
 
-                # Check job-related states that only matter when jobs are being processed
-                conditions: list[tuple[float, HordeProcessState, str]] = [
-                    (
-                        self.bridge_data.preload_timeout,
-                        HordeProcessState.MODEL_PRELOADING,
-                        "seems to be stuck preloading a model",
-                    ),
-                    (
-                        self.bridge_data.preload_timeout,
-                        HordeProcessState.MODEL_PRELOADED,
-                        "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
-                    ),
-                    (
-                        self.bridge_data.download_timeout,
-                        HordeProcessState.DOWNLOADING_AUX_MODEL,
-                        "seems to be stuck downloading an auxiliary model (LoRa, etc)",
-                    ),
-                    (
-                        self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
-                        HordeProcessState.INFERENCE_POST_PROCESSING,
-                        "seems to be stuck post processing",
-                    ),
-                ]
-
-                for timeout, state, error_message in conditions:
-                    if self._check_and_replace_process(process_info, timeout, state, error_message):
-                        any_replaced = any_process_replaced = True
-
                 # RESULT_SUBMITTING is managed by the process manager, not the subprocess.
                 # Killing the subprocess is not appropriate here; just reset the state so
                 # the process can accept new jobs.  The primary fix is in
@@ -7027,6 +7007,49 @@ class HordeWorkerProcessManager:
                             "with no active inference process holding the semaphore; replacing it",
                         )
                         self._replace_inference_process(process_info)
+                        any_replaced = any_process_replaced = True
+
+        # Job-related stuck states are checked in a multi-pass scan: for each condition in
+        # priority order, every process is scanned before moving to the next condition.
+        # This guarantees true cross-process prioritization — a stuck INFERENCE_POST_PROCESSING
+        # process (which holds the VAE decode semaphore and actively blocks other workers) is
+        # cleared across the entire worker before any idle/finished state (e.g. MODEL_PRELOADED,
+        # which is merely waiting for a job dispatch) is reclaimed, regardless of the order in
+        # which subprocesses appear in the process map.
+        #
+        # The conditions are ordered: actively-in-progress states first, idle/finished last:
+        #   1. INFERENCE_POST_PROCESSING  — holds VAE decode semaphore
+        #   2. MODEL_PRELOADING           — actively loading a model
+        #   3. DOWNLOADING_AUX_MODEL      — actively downloading a file
+        #   4. MODEL_PRELOADED            — idle, waiting for a job to be dispatched
+        if not (self._last_pop_no_jobs_available and no_local_work):
+            conditions: list[tuple[float, HordeProcessState, str]] = [
+                # --- actively in progress ---
+                (
+                    self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
+                    HordeProcessState.INFERENCE_POST_PROCESSING,
+                    "seems to be stuck post processing",
+                ),
+                (
+                    self.bridge_data.preload_timeout,
+                    HordeProcessState.MODEL_PRELOADING,
+                    "seems to be stuck preloading a model",
+                ),
+                (
+                    self.bridge_data.download_timeout,
+                    HordeProcessState.DOWNLOADING_AUX_MODEL,
+                    "seems to be stuck downloading an auxiliary model (LoRa, etc)",
+                ),
+                # --- finished / idle ---
+                (
+                    self.bridge_data.preload_timeout,
+                    HordeProcessState.MODEL_PRELOADED,
+                    "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
+                ),
+            ]
+            for timeout, state, error_message in conditions:
+                for process_info in self._process_map.values():
+                    if self._check_and_replace_process(process_info, timeout, state, error_message):
                         any_replaced = any_process_replaced = True
 
         # If any subprocesses were actually replaced and we are not already inside a recovery
