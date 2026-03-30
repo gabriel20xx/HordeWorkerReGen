@@ -4626,7 +4626,7 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
         mock_manager.bridge_data.preload_timeout = 80
-        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.process_timeout = 20000
         mock_manager.bridge_data.download_timeout = 300
         mock_manager.bridge_data.post_process_timeout = 60
         mock_manager.bridge_data.max_batch = 1
@@ -4663,19 +4663,23 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
 
     def test_inference_post_processing_replaced_before_model_preloaded(self) -> None:
         """When both INFERENCE_POST_PROCESSING and MODEL_PRELOADED processes are stuck,
-        the INFERENCE_POST_PROCESSING process must be checked and replaced first.
+        the INFERENCE_POST_PROCESSING process must be replaced first.
 
-        INFERENCE_POST_PROCESSING holds the VAE decode semaphore; clearing it first
-        unblocks the rest of the pipeline before reclaiming the slot occupied by the
-        idle MODEL_PRELOADED process.
+        The idle MODEL_PRELOADED process is listed first in the process map to prove that
+        replacement order is driven by the conditions priority, not the process map iteration
+        order.  With a per-process-first loop the MODEL_PRELOADED process would be replaced
+        first (because it comes first in the list); the multi-pass condition-first loop
+        ensures INFERENCE_POST_PROCESSING is always cleared first.
         """
         replace_order: list[int] = []
 
         post_proc = self._make_process(1, HordeProcessState.INFERENCE_POST_PROCESSING)
         preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED)
 
-        # Present post_proc first so any ordering reversal in conditions would show up.
-        mock_manager = self._make_manager([post_proc, preloaded])
+        # MODEL_PRELOADED process is listed first in the map — a per-process-first loop
+        # would replace it before INFERENCE_POST_PROCESSING.  The multi-pass loop must
+        # clear INFERENCE_POST_PROCESSING first regardless.
+        mock_manager = self._make_manager([preloaded, post_proc])
 
         def fake_check_and_replace(
             process_info: MagicMock,
@@ -4739,16 +4743,18 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         mock_manager._replace_inference_process.assert_called_once_with(post_proc)
 
     def test_downloading_aux_model_replaced_before_model_preloaded(self) -> None:
-        """DOWNLOADING_AUX_MODEL (in progress) must be checked before MODEL_PRELOADED (idle).
+        """DOWNLOADING_AUX_MODEL (in progress) must be cleared before MODEL_PRELOADED (idle).
 
-        Both are stuck, but downloading is an active operation and must be cleared first.
+        The MODEL_PRELOADED process is listed first in the process map to prove that
+        replacement order is driven by the conditions priority, not process map iteration order.
         """
         replace_order: list[int] = []
 
         downloading = self._make_process(1, HordeProcessState.DOWNLOADING_AUX_MODEL)
         preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED)
 
-        mock_manager = self._make_manager([downloading, preloaded])
+        # MODEL_PRELOADED is listed first — per-process-first loop would replace it first.
+        mock_manager = self._make_manager([preloaded, downloading])
 
         def fake_check_and_replace(
             process_info: MagicMock,
@@ -4782,8 +4788,9 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
     def test_all_in_progress_states_replaced_before_model_preloaded(self) -> None:
         """All in-progress states must be cleared before the idle MODEL_PRELOADED state.
 
-        When INFERENCE_POST_PROCESSING, MODEL_PRELOADING, DOWNLOADING_AUX_MODEL, and
-        MODEL_PRELOADED are all stuck at the same time, MODEL_PRELOADED must be last.
+        MODEL_PRELOADED is listed first in the process map so that a per-process-first
+        loop would replace it before the in-progress states.  The multi-pass condition-first
+        loop must clear all in-progress states first regardless of process map ordering.
         """
         replace_order: list[int] = []
 
@@ -4792,7 +4799,8 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         downloading = self._make_process(3, HordeProcessState.DOWNLOADING_AUX_MODEL)
         preloaded = self._make_process(4, HordeProcessState.MODEL_PRELOADED)
 
-        mock_manager = self._make_manager([post_proc, preloading, downloading, preloaded])
+        # MODEL_PRELOADED (id=4) is first — a per-process-first loop would replace it first.
+        mock_manager = self._make_manager([preloaded, post_proc, preloading, downloading])
 
         def fake_check_and_replace(
             process_info: MagicMock,
