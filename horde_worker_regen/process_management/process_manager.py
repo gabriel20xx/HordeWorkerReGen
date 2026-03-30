@@ -4764,9 +4764,11 @@ class HordeWorkerProcessManager:
     Set to ``session_start_time`` at initialisation so that idle time is tracked
     from program launch even before any job-pop response has been received.  Updated
     to the current time on each "no jobs available" pop cycle to accumulate elapsed
-    idle seconds into ``_time_spent_no_jobs_available``.  Reset to ``0.0`` when a
-    job is successfully popped, which also causes ``update_webui_status`` to stop
-    adding a live in-flight delta to the displayed counter.
+    idle seconds into ``_time_spent_no_jobs_available``.  When a job is successfully
+    popped, any elapsed idle time since the last anchor is first flushed into
+    ``_time_spent_no_jobs_available`` before this is reset to ``0.0``, which also
+    causes ``update_webui_status`` to stop adding a live in-flight delta to the
+    displayed counter.
     """
     _time_spent_no_jobs_available: float = 0.0
     """The number of seconds spent with no jobs popped or available."""
@@ -5164,6 +5166,8 @@ class HordeWorkerProcessManager:
         self.job_faults[job_pop_response.id_] = []
 
         self._last_pop_no_jobs_available = False
+        if self._last_pop_no_jobs_available_time > 0.0:
+            self._time_spent_no_jobs_available += time.time() - self._last_pop_no_jobs_available_time
         self._last_pop_no_jobs_available_time = 0.0
 
         has_loras = job_pop_response.payload.loras is not None and len(job_pop_response.payload.loras) > 0
@@ -5858,6 +5862,10 @@ class HordeWorkerProcessManager:
 
             logger.debug(f"Active models: {active_models}")
 
+            _no_jobs_time = self._time_spent_no_jobs_available
+            if self._last_pop_no_jobs_available_time > 0:
+                _no_jobs_time += cur_time - self._last_pop_no_jobs_available_time
+
             job_info_message = "  " + " | ".join(
                 [
                     f"in progress: {len(self.jobs_in_progress)}",
@@ -5868,7 +5876,7 @@ class HordeWorkerProcessManager:
                     f"slow: {self._num_job_slowdowns}",
                     f"recoveries: {self._num_process_recoveries}",
                     f"pop errors: {self._consecutive_pop_failures}",
-                    f"no jobs: {self._time_spent_no_jobs_available:.1f}s",
+                    f"no jobs: {_no_jobs_time:.1f}s",
                 ],
             )
 
