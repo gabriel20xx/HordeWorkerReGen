@@ -5931,3 +5931,233 @@ class TestRecoveryTimerThreadIsDaemon:
                 f"Timer thread must be created with daemon=True to avoid blocking clean shutdown; "
                 f"got daemon={daemon_val!r}"
             )
+
+
+class TestGetProcessByHordeModelNamePreference:
+    """Tests that get_process_by_horde_model_name prefers job-accepting processes.
+
+    When multiple processes have the same model loaded (e.g. one MODEL_PRELOADED and one
+    INFERENCE_STARTING), the process that can accept a job must be returned first.
+    This prevents MODEL_PRELOADED processes from being stuck waiting for a job while
+    a busy process for the same model is returned by the lookup.
+    """
+
+    def _make_process_map(self, processes: list[MagicMock]) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import ProcessMap
+
+        pmap = MagicMock()
+        pmap.values.return_value = processes
+        pmap.get_process_by_horde_model_name = ProcessMap.get_process_by_horde_model_name.__get__(
+            pmap, ProcessMap
+        )
+        return pmap
+
+    def _make_process(
+        self,
+        process_id: int,
+        state: HordeProcessState,
+        model: str | None,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeProcessInfo
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.loaded_horde_model_name = model
+        proc.last_process_state = state
+        proc.can_accept_job = HordeProcessInfo.can_accept_job.__get__(proc, HordeProcessInfo)
+        return proc
+
+    def test_returns_accepting_process_when_two_with_same_model(self) -> None:
+        """When P1 is INFERENCE_STARTING (busy) and P2 is MODEL_PRELOADED (ready),
+        get_process_by_horde_model_name must return P2, not P1."""
+        p1 = self._make_process(1, HordeProcessState.INFERENCE_STARTING, "Fustercluck")
+        p2 = self._make_process(2, HordeProcessState.MODEL_PRELOADED, "Fustercluck")
+        pmap = self._make_process_map([p1, p2])
+
+        result = pmap.get_process_by_horde_model_name("Fustercluck")
+
+        assert result is p2, "Should return MODEL_PRELOADED p2 over INFERENCE_STARTING p1"
+
+    def test_returns_first_match_when_none_can_accept(self) -> None:
+        """When no process can accept a job, the first matching process is returned as fallback."""
+        p1 = self._make_process(1, HordeProcessState.INFERENCE_STARTING, "Fustercluck")
+        p2 = self._make_process(2, HordeProcessState.INFERENCE_PROCESSING, "Fustercluck")
+        pmap = self._make_process_map([p1, p2])
+
+        result = pmap.get_process_by_horde_model_name("Fustercluck")
+
+        assert result is p1, "Should return first match (p1) when neither process can accept"
+
+    def test_returns_waiting_process_over_inference_starting(self) -> None:
+        """WAITING_FOR_JOB process should be preferred over INFERENCE_STARTING."""
+        p1 = self._make_process(1, HordeProcessState.INFERENCE_STARTING, "ModelA")
+        p2 = self._make_process(2, HordeProcessState.WAITING_FOR_JOB, "ModelA")
+        # Note: WAITING_FOR_JOB with a model is an unusual state but we still handle it
+        pmap = self._make_process_map([p1, p2])
+
+        result = pmap.get_process_by_horde_model_name("ModelA")
+
+        assert result is p2
+
+    def test_returns_none_when_no_match(self) -> None:
+        """Returns None when no process has the requested model."""
+        p1 = self._make_process(1, HordeProcessState.MODEL_PRELOADED, "OtherModel")
+        pmap = self._make_process_map([p1])
+
+        result = pmap.get_process_by_horde_model_name("Fustercluck")
+
+        assert result is None
+
+    def test_single_model_preloaded_process_returned(self) -> None:
+        """When only one process has the model and it can accept, return it directly."""
+        p1 = self._make_process(1, HordeProcessState.MODEL_PRELOADED, "Fustercluck")
+        pmap = self._make_process_map([p1])
+
+        result = pmap.get_process_by_horde_model_name("Fustercluck")
+
+        assert result is p1
+
+
+class TestGetNextJobAndProcessModelPreloading:
+    """Tests that get_next_job_and_process skips MODEL_PRELOADING jobs to dispatch preloaded ones.
+
+    When the first job in the queue has its model still being preloaded (MODEL_PRELOADING),
+    get_next_job_and_process must look for other pending jobs that already have a
+    MODEL_PRELOADED process ready.  This prevents MODEL_PRELOADED processes from being
+    stuck when a MODEL_PRELOADING job sits at the front of the queue.
+    """
+
+    def _make_manager(
+        self,
+        *,
+        first_job_model: str,
+        first_process_state: HordeProcessState,
+        second_job_model: str,
+        second_process_state: HordeProcessState,
+    ) -> MagicMock:
+        """Build a minimal manager mock with two pending jobs and their corresponding processes."""
+        import types
+
+        from horde_worker_regen.process_management.process_manager import (
+            HordeProcessInfo,
+            HordeWorkerProcessManager,
+        )
+
+        # First job - its model is MODEL_PRELOADING
+        job1 = MagicMock()
+        job1.model = first_job_model
+        job1.payload.loras = None
+        job1.payload.n_iter = 1
+
+        # Second job - its model is MODEL_PRELOADED (ready)
+        job2 = MagicMock()
+        job2.model = second_job_model
+        job2.payload.loras = None
+        job2.payload.n_iter = 1
+
+        # Process for job1
+        proc1 = MagicMock()
+        proc1.loaded_horde_model_name = first_job_model
+        proc1.last_process_state = first_process_state
+        proc1.can_accept_job = HordeProcessInfo.can_accept_job.__get__(proc1, HordeProcessInfo)
+
+        # Process for job2
+        proc2 = MagicMock()
+        proc2.loaded_horde_model_name = second_job_model
+        proc2.last_process_state = second_process_state
+        proc2.can_accept_job = HordeProcessInfo.can_accept_job.__get__(proc2, HordeProcessInfo)
+
+        mock_process_map = MagicMock()
+
+        def fake_get_process_by_model(model: str) -> MagicMock | None:
+            if model == first_job_model:
+                return proc1
+            if model == second_job_model:
+                return proc2
+            return None
+
+        mock_process_map.get_process_by_horde_model_name.side_effect = fake_get_process_by_model
+
+        mock_manager = MagicMock()
+        mock_manager._process_map = mock_process_map
+        mock_manager.jobs_pending_inference = deque([job1, job2])
+        mock_manager.jobs_in_progress = []
+        mock_manager._skipped_line_next_job_and_process = None
+        mock_manager._preload_delay_notified = False
+        mock_manager.post_process_job_overlap_allowed = False
+        mock_manager._model_recently_missing = False
+        mock_manager.max_concurrent_inference_processes = 3
+        mock_manager.get_single_job_effective_megapixelsteps.return_value = 1
+        mock_manager._horde_model_map.is_model_loading.return_value = True
+
+        mock_manager._bound_get_next_job_and_process = types.MethodType(
+            HordeWorkerProcessManager.get_next_job_and_process,
+            mock_manager,
+        )
+        return mock_manager, job1, job2, proc2
+
+    def _patch_next_job_and_process(self) -> object:
+        """Return a context manager that patches NextJobAndProcess to accept MagicMock values.
+
+        NextJobAndProcess is a Pydantic model that validates its fields.  In tests we use
+        MagicMock for jobs and processes, so we patch the class to use a simple namespace
+        instead of triggering Pydantic validation.
+        """
+
+        class _FakeNJAP:
+            def __init__(self, **kwargs: object) -> None:
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return patch(
+            "horde_worker_regen.process_management.process_manager.NextJobAndProcess",
+            _FakeNJAP,
+        )
+
+    def test_skips_model_preloading_to_dispatch_preloaded(self) -> None:
+        """When job1's model is MODEL_PRELOADING and job2's model is MODEL_PRELOADED,
+        get_next_job_and_process must return job2 with its preloaded process."""
+        mock_manager, job1, job2, proc2 = self._make_manager(
+            first_job_model="SomeModel",
+            first_process_state=HordeProcessState.MODEL_PRELOADING,
+            second_job_model="Fustercluck",
+            second_process_state=HordeProcessState.MODEL_PRELOADED,
+        )
+
+        with self._patch_next_job_and_process():
+            result = mock_manager._bound_get_next_job_and_process()
+
+        assert result is not None, "Should find a dispatchable job despite MODEL_PRELOADING first"
+        assert result.next_job is job2, "Should dispatch job2 (Fustercluck, preloaded)"
+        assert result.process_with_model is proc2
+        assert result.skipped_line is True
+
+    def test_no_skip_when_first_job_model_is_preloaded(self) -> None:
+        """When job1's model is MODEL_PRELOADED, it should be dispatched normally."""
+        mock_manager, job1, job2, proc2 = self._make_manager(
+            first_job_model="Fustercluck",
+            first_process_state=HordeProcessState.MODEL_PRELOADED,
+            second_job_model="SomeModel",
+            second_process_state=HordeProcessState.MODEL_PRELOADED,
+        )
+
+        with self._patch_next_job_and_process():
+            result = mock_manager._bound_get_next_job_and_process()
+
+        assert result is not None
+        assert result.next_job is job1, "Should dispatch job1 normally when its process is ready"
+        assert result.skipped_line is False
+
+    def test_returns_none_when_no_other_preloaded_job(self) -> None:
+        """When job1 is MODEL_PRELOADING and no other job has a preloaded process, return None."""
+        mock_manager, _job1, _job2, _proc2 = self._make_manager(
+            first_job_model="SomeModel",
+            first_process_state=HordeProcessState.MODEL_PRELOADING,
+            second_job_model="OtherModel",
+            second_process_state=HordeProcessState.MODEL_PRELOADING,
+        )
+
+        with self._patch_next_job_and_process():
+            result = mock_manager._bound_get_next_job_and_process()
+
+        assert result is None, "Should return None when no other job has a ready process"
