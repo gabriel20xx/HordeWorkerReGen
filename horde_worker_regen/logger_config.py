@@ -3,6 +3,7 @@
 import os
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -70,11 +71,24 @@ def create_level_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS") -
     return format_record
 
 
-def configure_logger_format() -> None:
+_LOGS_DIR = Path("logs")
+_LOG_ROTATION = "10 MB"
+_LOG_RETENTION = 3
+
+
+def configure_logger_format(process_id: int | None = None) -> None:
     """Configure the logger with a standardized format: timestamp | level | message.
 
     This should be called after HordeLog.initialise() to override the default format
     with a consistent pattern across all processes with enhanced colors.
+
+    In addition to console (stderr) output, log messages are written to files in the
+    ``logs/`` directory:
+
+    * ``logs/bridge.log`` (main process) or ``logs/bridge_{process_id}.log`` (subprocess) –
+      all messages at the configured log level.
+    * ``logs/trace.log`` (main process) or ``logs/trace_{process_id}.log`` (subprocess) –
+      WARNING and above only.
 
     Format: {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}
 
@@ -85,6 +99,12 @@ def configure_logger_format() -> None:
         2026-02-04 21:44:03.123 | INFO     | Worker starting...
         2026-02-04 21:44:05.456 | SUCCESS  | Job completed successfully
         2026-02-04 21:44:06.789 | ERROR    | Job failed with error
+
+    Args:
+        process_id: Optional process identifier. When ``None`` (the default) the main
+            process log files (``bridge.log`` / ``trace.log``) are used.  Subprocesses
+            should pass their integer ID so that their output goes to dedicated files
+            (e.g. ``bridge_1.log`` / ``trace_1.log``).
 
     Environment Variables:
         AIWORKER_LOG_LEVEL: Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -116,6 +136,39 @@ def configure_logger_format() -> None:
         format=format_record,
         level=log_level,
         colorize=True,  # Enable ANSI colors
+    )
+
+    # Determine log file names based on whether this is a subprocess
+    if process_id is None:
+        bridge_log_name = "bridge.log"
+        trace_log_name = "trace.log"
+    else:
+        bridge_log_name = f"bridge_{process_id}.log"
+        trace_log_name = f"trace_{process_id}.log"
+
+    # Ensure the logs directory exists
+    _LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Plain-text file handler: all messages at the configured log level
+    logger.add(
+        _LOGS_DIR / bridge_log_name,
+        format=format_record,
+        level=log_level,
+        colorize=False,  # No ANSI escape codes in log files
+        rotation=_LOG_ROTATION,
+        retention=_LOG_RETENTION,
+        encoding="utf-8",
+    )
+
+    # Plain-text file handler: WARNING and above only (quick error reference)
+    logger.add(
+        _LOGS_DIR / trace_log_name,
+        format=format_record,
+        level="WARNING",
+        colorize=False,
+        rotation=_LOG_ROTATION,
+        retention=_LOG_RETENTION,
+        encoding="utf-8",
     )
 
     # Log the configured level for clarity (only if not INFO)
