@@ -917,11 +917,20 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         return None
 
     def get_process_by_horde_model_name(self, horde_model_name: str) -> HordeProcessInfo | None:
-        """Return the process that has the given horde model loaded, or None if there is none."""
+        """Return the process that has the given horde model loaded, or None if there is none.
+
+        When multiple processes have the same model loaded (e.g. one MODEL_PRELOADED and one
+        running inference), the process that can currently accept a job is returned first.
+        If no process can accept a job, the first matching process is returned as a fallback.
+        """
+        first_match: HordeProcessInfo | None = None
         for p in self.values():
             if p.loaded_horde_model_name == horde_model_name:
-                return p
-        return None
+                if p.can_accept_job():
+                    return p
+                if first_match is None:
+                    first_match = p
+        return first_match
 
     def num_busy_processes(self) -> int:
         """Return the number of processes that are actively engaged in a task.
@@ -2873,7 +2882,6 @@ class HordeWorkerProcessManager:
         for process in self._process_map.values():
             if (
                 process.last_process_state == HordeProcessState.MODEL_PRELOADED
-                or process.last_process_state == HordeProcessState.MODEL_PRELOADED
             ) and process.loaded_horde_model_name not in pending_models:
                 logger.debug(
                     f"Clearing preloaded model {process.loaded_horde_model_name} "
@@ -3139,6 +3147,8 @@ class HordeWorkerProcessManager:
                 # If any of the next n jobs (other than this one) aren't using the same model, see if that job
                 # has a model that's already loaded.
                 # If it does, we'll start inference on that job instead.
+                chosen_candidate: ImageGenerateJobPopResponse | None = None
+                chosen_process: HordeProcessInfo | None = None
                 for candidate_small_job in next_n_jobs:
                     job_has_loras = (
                         candidate_small_job.payload.loras is not None and len(candidate_small_job.payload.loras) > 0
@@ -3156,17 +3166,38 @@ class HordeWorkerProcessManager:
                             and self.get_single_job_effective_megapixelsteps(candidate_small_job) <= candidate_job_size
                             and candidate_process_with_model.can_accept_job()
                         ):
-                            skipped_line = True
-                            skipped_line_for = next_job
-
-                            next_job = candidate_small_job
-                            self._skipped_line_job = next_job
-                            process_with_model = candidate_process_with_model
+                            chosen_candidate = candidate_small_job
+                            chosen_process = candidate_process_with_model
                             break
-                else:
+                if chosen_candidate is None or chosen_process is None:
+                    return None
+            elif process_with_model.last_process_state == HordeProcessState.MODEL_PRELOADING:
+                # The first job's model is still being preloaded. Look for other pending jobs
+                # that already have a preloaded process ready to accept a job. This prevents
+                # MODEL_PRELOADED processes from being stuck waiting while the queue is blocked
+                # by a MODEL_PRELOADING process at the front.
+                chosen_candidate = None
+                chosen_process = None
+                for candidate_job in next_n_jobs:
+                    if candidate_job.model is not None and candidate_job.model != next_job.model:
+                        candidate_process_with_model = self._process_map.get_process_by_horde_model_name(
+                            candidate_job.model,
+                        )
+                        if candidate_process_with_model is not None and candidate_process_with_model.can_accept_job():
+                            chosen_candidate = candidate_job
+                            chosen_process = candidate_process_with_model
+                            break
+                if chosen_candidate is None or chosen_process is None:
                     return None
             else:
                 return None
+
+            # A candidate job/process pair was found via line-skipping.
+            skipped_line = True
+            skipped_line_for = next_job
+            next_job = chosen_candidate
+            self._skipped_line_job = next_job
+            process_with_model = chosen_process
 
         self._model_recently_missing = False
 
@@ -3521,7 +3552,6 @@ class HordeWorkerProcessManager:
 
             if (
                 process_info.is_process_busy()
-                or process_info.last_process_state == HordeProcessState.MODEL_PRELOADED
                 or process_info.last_process_state == HordeProcessState.MODEL_PRELOADED
             ):
                 continue
@@ -5486,10 +5516,13 @@ class HordeWorkerProcessManager:
                             self._completed_jobs_lock,
                             self._job_pop_timestamps_lock,
                         ):
-                            # So long as we didn't preload a model this cycle, we can start inference
-                            # We want to get any messages next cycle from preloading processes to make sure
-                            # the state of everything is up to date
-                            if not self.preload_models():
+                            # preload_models() returns True when a new model was dispatched for
+                            # preloading on an available process.  We still want to call
+                            # start_inference() if there are already-preloaded processes waiting
+                            # for a job — otherwise those processes sit in MODEL_PRELOADED
+                            # indefinitely while the manager keeps loading new models.
+                            started_preload = self.preload_models()
+                            if not started_preload or self._process_map.num_preloaded_processes() > 0:
                                 next_job_and_process = self.get_next_job_and_process(information_only=True)
 
                                 next_job_heavy_model_and_workflow = False
