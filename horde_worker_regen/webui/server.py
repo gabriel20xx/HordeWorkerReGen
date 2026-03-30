@@ -563,7 +563,26 @@ class WorkerWebUI:
             if (push !== false) {
                 if (location.hash !== newHash) history.pushState({page: pageId}, '', newHash);
             }
-            if (pageId === 'gallery') fetchGalleryPage(galleryCurrentPage);
+            if (pageId === 'gallery') {
+                const gridEl = document.getElementById('gallery-grid');
+                const gridEmpty = !gridEl || !gridEl.querySelector('.image-grid-item');
+                if (gridEmpty) {
+                    // First visit (or after page-size change cleared the grid): full fetch.
+                    fetchGalleryPage(galleryCurrentPage);
+                } else if (galleryHasUnseenImages) {
+                    // New images arrived while we were on another tab.  Handle exactly the
+                    // same way the status-poll would if the gallery tab had been active.
+                    galleryHasUnseenImages = false;
+                    if (galleryCurrentPage === 1) {
+                        if (!galleryFetchInProgress) refreshGalleryPage1();
+                    } else {
+                        const bnr = document.getElementById('gallery-new-banner');
+                        if (bnr) bnr.style.display = '';
+                    }
+                }
+                // Otherwise the grid already shows the current page with cached thumbnails;
+                // new-image notifications continue via the status-poll path.
+            }
         }
         window.addEventListener('popstate', function() {
             var hash = location.hash.replace('#', '');
@@ -722,6 +741,9 @@ class WorkerWebUI:
         // Sync the select element's initial value with the JS constant (single source of truth)
         document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
+        // Set to true when new images arrive while the gallery tab is not active.
+        // Consumed by showPage() to refresh or show the banner on return.
+        let galleryHasUnseenImages = false;
         // Monotonically increasing batch ID used to cancel stale thumbnail loads when the
         // page changes before the previous batch has finished.
         let _galleryThumbnailBatchId = 0;
@@ -730,6 +752,17 @@ class WorkerWebUI:
         // Ordered list of gallery_ids for the currently displayed page; used by overlay navigation.
         // Stored at module scope so incremental updates (refreshGalleryPage1) keep it in sync.
         let _currentPageGalleryIds = [];
+        // Client-side cache: gallery_id (integer) → thumbnail data-URL string.
+        // Avoids re-fetching thumbnails when the user switches pages or returns to the gallery tab.
+        const _galleryThumbnailCache = new Map();
+        // Must be >= the server's maximum gallery history (200 entries, see add_gallery_image).
+        const _GALLERY_THUMBNAIL_CACHE_MAX = 200;
+        function _cacheThumbnail(galleryId, dataUrl) {
+            _galleryThumbnailCache.set(galleryId, dataUrl);
+            if (_galleryThumbnailCache.size > _GALLERY_THUMBNAIL_CACHE_MAX) {
+                _galleryThumbnailCache.delete(_galleryThumbnailCache.keys().next().value);
+            }
+        }
         function renderGalleryPageSkeleton(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
@@ -749,10 +782,19 @@ class WorkerWebUI:
             _currentPageGalleryIds = images.map(img => img.gallery_id);
             // Render placeholder items with a shimmer animation; images are filled in
             // one by one by loadGalleryThumbnailsOneByOne once the skeleton is shown.
+            // For thumbnails already in the client-side cache, skip the shimmer and
+            // show the image immediately.
             grid.innerHTML = images.map((img, idx) => {
                 const galleryId = img.gallery_id;
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
+                const cachedSrc = _galleryThumbnailCache.get(galleryId);
+                // Only use the cached value when it is a well-formed image data URL to
+                // guard against any unexpected cache content reaching innerHTML.
+                if (cachedSrc && (cachedSrc.startsWith('data:image/jpeg;base64,') || cachedSrc.startsWith('data:image/png;base64,'))) {
+                    return '<div class="image-grid-item" data-gallery-id="'+galleryId+'"><img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />'+
+                        (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
+                }
                 return '<div class="image-grid-item loading" data-gallery-id="'+galleryId+'"><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+
                     (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
@@ -781,6 +823,9 @@ class WorkerWebUI:
             function loadNext(i) {
                 if (batchId !== _galleryThumbnailBatchId || i >= galleryIds.length) return;
                 const galleryId = galleryIds[i];
+                // If the thumbnail is already cached (rendered immediately by renderGalleryPageSkeleton),
+                // skip the network request and move straight to the next item.
+                if (_galleryThumbnailCache.has(galleryId)) { loadNext(i + 1); return; }
                 fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true', { signal: batchAbort.signal })
                     .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                     .then(data => {
@@ -788,6 +833,10 @@ class WorkerWebUI:
                         const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
                         const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
                         const thumbSrc = buildThumbnailDataUrl(data);
+                        // Only cache actual JPEG thumbnails (Pillow-generated, small).
+                        // When Pillow is absent the response falls back to full-resolution PNG;
+                        // caching those would balloon memory for workers without Pillow.
+                        if (data.thumbnail && thumbSrc) { _cacheThumbnail(galleryId, thumbSrc); }
                         if (thumbSrc && imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
                         // Always remove the shimmer class; if no image data was returned the tile
                         // shows as an empty placeholder rather than spinning indefinitely.
@@ -891,6 +940,8 @@ class WorkerWebUI:
                                     const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
                                     const ie = c ? c.querySelector('img') : null;
                                     const src = d.thumbnail ? 'data:image/jpeg;base64,'+d.thumbnail : (d.base64 ? 'data:image/png;base64,'+d.base64 : null);
+                                    // Only cache actual JPEG thumbnails; skip full-res PNG fallback.
+                                    if (d.thumbnail && src) { _cacheThumbnail(galleryId, src); }
                                     if (src && ie) { ie.src = src; ie.style.display = ''; }
                                     if (c) c.classList.remove('loading');
                                 })
@@ -1224,6 +1275,11 @@ class WorkerWebUI:
                             lastKnownImagesCount = newImagesCount;
                         }
                     } else {
+                        if (hasNewImages && !galleryPageActive) {
+                            // New images arrived while another tab is shown.  Record this so
+                            // showPage() can act when the user returns to the gallery tab.
+                            galleryHasUnseenImages = true;
+                        }
                         lastKnownImagesCount = newImagesCount;
                     }
                     errorsData = (data.errors_history && data.errors_history.length > 0) ? data.errors_history : [];
