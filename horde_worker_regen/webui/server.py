@@ -563,7 +563,15 @@ class WorkerWebUI:
             if (push !== false) {
                 if (location.hash !== newHash) history.pushState({page: pageId}, '', newHash);
             }
-            if (pageId === 'gallery') fetchGalleryPage(galleryCurrentPage);
+            if (pageId === 'gallery') {
+                // Only trigger a full page fetch when the grid is empty (first visit or after
+                // a page-size change).  When returning to the tab the existing grid content and
+                // cached thumbnails remain visible; new-image notifications are handled
+                // incrementally by the status-poll path (refreshGalleryPage1 / banner).
+                const gridEl = document.getElementById('gallery-grid');
+                const gridEmpty = !gridEl || !gridEl.querySelector('.image-grid-item');
+                if (gridEmpty) fetchGalleryPage(galleryCurrentPage);
+            }
         }
         window.addEventListener('popstate', function() {
             var hash = location.hash.replace('#', '');
@@ -730,6 +738,17 @@ class WorkerWebUI:
         // Ordered list of gallery_ids for the currently displayed page; used by overlay navigation.
         // Stored at module scope so incremental updates (refreshGalleryPage1) keep it in sync.
         let _currentPageGalleryIds = [];
+        // Client-side cache: gallery_id (integer) → thumbnail data-URL string.
+        // Avoids re-fetching thumbnails when the user switches pages or returns to the gallery tab.
+        const _galleryThumbnailCache = new Map();
+        // Must be >= the server's maximum gallery history (200 entries, see add_gallery_image).
+        const _GALLERY_THUMBNAIL_CACHE_MAX = 200;
+        function _cacheThumbnail(galleryId, dataUrl) {
+            _galleryThumbnailCache.set(galleryId, dataUrl);
+            if (_galleryThumbnailCache.size > _GALLERY_THUMBNAIL_CACHE_MAX) {
+                _galleryThumbnailCache.delete(_galleryThumbnailCache.keys().next().value);
+            }
+        }
         function renderGalleryPageSkeleton(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
@@ -749,10 +768,19 @@ class WorkerWebUI:
             _currentPageGalleryIds = images.map(img => img.gallery_id);
             // Render placeholder items with a shimmer animation; images are filled in
             // one by one by loadGalleryThumbnailsOneByOne once the skeleton is shown.
+            // For thumbnails already in the client-side cache, skip the shimmer and
+            // show the image immediately.
             grid.innerHTML = images.map((img, idx) => {
                 const galleryId = img.gallery_id;
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
+                const cachedSrc = _galleryThumbnailCache.get(galleryId);
+                // Only use the cached value when it is a well-formed image data URL to
+                // guard against any unexpected cache content reaching innerHTML.
+                if (cachedSrc && (cachedSrc.startsWith('data:image/jpeg;base64,') || cachedSrc.startsWith('data:image/png;base64,'))) {
+                    return '<div class="image-grid-item" data-gallery-id="'+galleryId+'"><img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />'+
+                        (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
+                }
                 return '<div class="image-grid-item loading" data-gallery-id="'+galleryId+'"><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+
                     (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
@@ -781,6 +809,9 @@ class WorkerWebUI:
             function loadNext(i) {
                 if (batchId !== _galleryThumbnailBatchId || i >= galleryIds.length) return;
                 const galleryId = galleryIds[i];
+                // If the thumbnail is already cached (rendered immediately by renderGalleryPageSkeleton),
+                // skip the network request and move straight to the next item.
+                if (_galleryThumbnailCache.has(galleryId)) { loadNext(i + 1); return; }
                 fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true', { signal: batchAbort.signal })
                     .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                     .then(data => {
@@ -788,6 +819,7 @@ class WorkerWebUI:
                         const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
                         const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
                         const thumbSrc = buildThumbnailDataUrl(data);
+                        if (thumbSrc) { _cacheThumbnail(galleryId, thumbSrc); }
                         if (thumbSrc && imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
                         // Always remove the shimmer class; if no image data was returned the tile
                         // shows as an empty placeholder rather than spinning indefinitely.
@@ -891,6 +923,7 @@ class WorkerWebUI:
                                     const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
                                     const ie = c ? c.querySelector('img') : null;
                                     const src = d.thumbnail ? 'data:image/jpeg;base64,'+d.thumbnail : (d.base64 ? 'data:image/png;base64,'+d.base64 : null);
+                                    if (src) { _cacheThumbnail(galleryId, src); }
                                     if (src && ie) { ie.src = src; ie.style.display = ''; }
                                     if (c) c.classList.remove('loading');
                                 })
