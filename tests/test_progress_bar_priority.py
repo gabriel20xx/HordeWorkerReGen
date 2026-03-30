@@ -443,22 +443,27 @@ def test_time_without_jobs_counts_from_anchor() -> None:
     assert result == expected, f"Expected time_without_jobs={expected}, got {result}"
 
 
-def test_time_without_jobs_zero_when_job_is_active() -> None:
+def test_time_without_jobs_frozen_when_job_is_active() -> None:
     """time_without_jobs must not include an in-flight delta while a job is running.
 
-    When a job is successfully popped _last_pop_no_jobs_available_time is reset to
-    0.0.  The dynamic addition must be suppressed so that the counter stays frozen
-    at the accumulated total (which is itself reset to 0 by convention, but the
-    guard must prevent any addition regardless).
+    When a job is successfully popped, any elapsed idle time since the last anchor
+    is flushed into ``_time_spent_no_jobs_available`` before
+    ``_last_pop_no_jobs_available_time`` is reset to 0.0.  During the job, the
+    dynamic addition must be suppressed so that the counter stays frozen at the
+    accumulated total (no new idle time is accrued while a job is in progress).
     """
-    # Simulate state immediately after a successful job pop: anchor is 0.0.
+    # Simulate state after a successful job pop: anchor is 0.0, but accumulated
+    # idle time has already been flushed into _time_spent_no_jobs_available.
+    accumulated_idle = 42.0
     result = _invoke_update_webui_status_for_time_without_jobs(
-        time_spent_no_jobs_available=0.0,
+        time_spent_no_jobs_available=accumulated_idle,
         last_pop_no_jobs_available_time=0.0,
         fake_now=9999.0,
     )
 
-    assert result == 0.0, f"Expected time_without_jobs=0.0 while job is active, got {result}"
+    assert result == accumulated_idle, (
+        f"Expected time_without_jobs={accumulated_idle} (frozen at accumulated total) while job is active, got {result}"
+    )
 
 
 def test_time_without_jobs_starts_from_program_launch() -> None:
@@ -479,3 +484,44 @@ def test_time_without_jobs_starts_from_program_launch() -> None:
 
     expected = fake_now - session_start  # 15 s
     assert result == expected, f"Expected time_without_jobs={expected} from session start, got {result}"
+
+
+def test_time_without_jobs_does_not_reset_when_job_is_popped() -> None:
+    """time_without_jobs must not drop when a job is successfully popped.
+
+    Before the fix, when a job was popped ``_last_pop_no_jobs_available_time`` was
+    reset to 0.0 *without* first flushing the elapsed idle time into
+    ``_time_spent_no_jobs_available``.  This caused the WebUI counter to drop from a
+    growing value (e.g. 15 s of idle time since session start) to 0.
+
+    The fix ensures that any elapsed idle time since the last anchor is accumulated
+    before the anchor is reset, so the counter is always monotonically increasing.
+
+    This test simulates the before-pop and after-pop WebUI states to verify there is
+    no drop in the displayed counter.
+    """
+    # Before the job is popped: 15 s have elapsed since session start (anchor=T_start).
+    session_start = 500.0
+    fake_now = 515.0  # 15 s later
+
+    before_pop = _invoke_update_webui_status_for_time_without_jobs(
+        time_spent_no_jobs_available=0.0,
+        last_pop_no_jobs_available_time=session_start,
+        fake_now=fake_now,
+    )
+    # Should be 15 s
+    assert before_pop == 15.0, f"Expected 15.0 before pop, got {before_pop}"
+
+    # After the fix, when a job is popped the idle time is flushed first:
+    #   _time_spent += fake_now - session_start  =>  0 + 15 = 15
+    #   _last_pop_time = 0.0
+    # The WebUI now shows just the accumulated total (no live delta), which equals 15 s.
+    after_pop = _invoke_update_webui_status_for_time_without_jobs(
+        time_spent_no_jobs_available=15.0,  # flushed by the fix
+        last_pop_no_jobs_available_time=0.0,
+        fake_now=fake_now,
+    )
+
+    assert after_pop >= before_pop, (
+        f"time_without_jobs must not drop when a job is popped: before={before_pop}, after={after_pop}"
+    )
