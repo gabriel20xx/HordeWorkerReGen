@@ -329,7 +329,7 @@ def init() -> int:
     # Configure standardized log format: timestamp | level | message
     from horde_worker_regen.logger_config import configure_logger_format
 
-    configure_logger_format()
+    configure_logger_format(enable_stderr=not args.no_logging)
 
     # We only need to download the legacy DBs once, so we do it here instead of in the worker processes
 
