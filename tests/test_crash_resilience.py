@@ -4600,6 +4600,144 @@ class TestReplaceHungModelPreloaded:
         assert result is False
 
 
+class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
+    """Tests that INFERENCE_POST_PROCESSING processes are cleared before MODEL_PRELOADED processes.
+
+    The conditions list in replace_hung_processes must check INFERENCE_POST_PROCESSING first
+    because a stuck post-processing process holds the VAE decode semaphore, blocking other
+    processes.  MODEL_PRELOADED processes only have a model loaded but no active job, so they
+    are less urgent.
+    """
+
+    def _make_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        recently_recovered: bool = False,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager,
+        )
+        return mock_manager
+
+    def _make_process(
+        self,
+        process_id: int,
+        state: HordeProcessState,
+        *,
+        time_elapsed: float = 9999.0,
+    ) -> MagicMock:
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = state
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_inference_post_processing_replaced_before_model_preloaded(self) -> None:
+        """When both INFERENCE_POST_PROCESSING and MODEL_PRELOADED processes are stuck,
+        the INFERENCE_POST_PROCESSING process must be checked and replaced first.
+
+        INFERENCE_POST_PROCESSING holds the VAE decode semaphore; clearing it first
+        unblocks the rest of the pipeline before reclaiming the slot occupied by the
+        idle MODEL_PRELOADED process.
+        """
+        replace_order: list[int] = []
+
+        post_proc = self._make_process(1, HordeProcessState.INFERENCE_POST_PROCESSING)
+        preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED)
+
+        # Present post_proc first so any ordering reversal in conditions would show up.
+        mock_manager = self._make_manager([post_proc, preloaded])
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    replace_order.append(process_info.process_id)
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        assert 1 in replace_order, "INFERENCE_POST_PROCESSING process must be replaced"
+        assert 2 in replace_order, "MODEL_PRELOADED process must be replaced"
+        assert replace_order.index(1) < replace_order.index(2), (
+            "INFERENCE_POST_PROCESSING (id=1) must be cleared before MODEL_PRELOADED (id=2); "
+            f"actual replacement order: {replace_order}"
+        )
+
+    def test_inference_post_processing_replaced_when_model_preloaded_not_stuck(self) -> None:
+        """INFERENCE_POST_PROCESSING must be replaced even when MODEL_PRELOADED is not stuck."""
+        post_proc = self._make_process(1, HordeProcessState.INFERENCE_POST_PROCESSING, time_elapsed=9999.0)
+        # MODEL_PRELOADED process is fresh (not stuck)
+        preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED, time_elapsed=10.0)
+
+        mock_manager = self._make_manager([post_proc, preloaded])
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        # Only post_proc should be replaced
+        mock_manager._replace_inference_process.assert_called_once_with(post_proc)
+
+
 class TestPreloadModelsPipeBroken:
     """Tests that a broken pipe in ``preload_models()`` causes immediate process replacement.
 

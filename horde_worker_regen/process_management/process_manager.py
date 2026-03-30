@@ -6833,9 +6833,15 @@ class HordeWorkerProcessManager:
         - The ``INFERENCE_STARTING`` check is skipped while the flag is set, to prevent cascading
           replacements: a process blocked waiting to acquire the semaphore cannot send heartbeats
           and would falsely appear stuck immediately after a prior replacement freed the semaphore.
-        - ``MODEL_PRELOADING``, ``MODEL_PRELOADED``, ``DOWNLOADING_AUX_MODEL``, ``INFERENCE_POST_PROCESSING``, and
-          ``PROCESS_STARTING`` are **always** evaluated, so a process that is genuinely stuck in
-          one of those states is recovered even when a different process was recently replaced.
+        - ``INFERENCE_POST_PROCESSING``, ``MODEL_PRELOADING``, ``MODEL_PRELOADED``,
+          ``DOWNLOADING_AUX_MODEL``, and ``PROCESS_STARTING`` are **always** evaluated, so a
+          process that is genuinely stuck in one of those states is recovered even when a different
+          process was recently replaced.
+
+        Job-related stuck states are checked in priority order: ``INFERENCE_POST_PROCESSING``
+        first (the process holds the VAE decode semaphore, blocking other processes), then
+        ``MODEL_PRELOADING`` and ``MODEL_PRELOADED`` (model loaded but no job dispatched), and
+        finally ``DOWNLOADING_AUX_MODEL``.
         """
         import threading
 
@@ -6930,8 +6936,17 @@ class HordeWorkerProcessManager:
                 if self._last_pop_no_jobs_available and no_local_work:
                     continue
 
-                # Check job-related states that only matter when jobs are being processed
+                # Check job-related states that only matter when jobs are being processed.
+                # Priority order: inference/post-processing stuck states are checked first,
+                # because those processes are actively using resources (e.g. holding the VAE
+                # decode semaphore) and must be cleared before processes that merely have a
+                # model loaded and are waiting for a job to be dispatched.
                 conditions: list[tuple[float, HordeProcessState, str]] = [
+                    (
+                        self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
+                        HordeProcessState.INFERENCE_POST_PROCESSING,
+                        "seems to be stuck post processing",
+                    ),
                     (
                         self.bridge_data.preload_timeout,
                         HordeProcessState.MODEL_PRELOADING,
@@ -6946,11 +6961,6 @@ class HordeWorkerProcessManager:
                         self.bridge_data.download_timeout,
                         HordeProcessState.DOWNLOADING_AUX_MODEL,
                         "seems to be stuck downloading an auxiliary model (LoRa, etc)",
-                    ),
-                    (
-                        self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
-                        HordeProcessState.INFERENCE_POST_PROCESSING,
-                        "seems to be stuck post processing",
                     ),
                 ]
 
