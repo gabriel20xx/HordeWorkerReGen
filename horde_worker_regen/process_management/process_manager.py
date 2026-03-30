@@ -5167,7 +5167,7 @@ class HordeWorkerProcessManager:
 
         self._last_pop_no_jobs_available = False
         if self._last_pop_no_jobs_available_time > 0.0:
-            self._time_spent_no_jobs_available += cur_time - self._last_pop_no_jobs_available_time
+            self._time_spent_no_jobs_available += time.time() - self._last_pop_no_jobs_available_time
         self._last_pop_no_jobs_available_time = 0.0
 
         has_loras = job_pop_response.payload.loras is not None and len(job_pop_response.payload.loras) > 0

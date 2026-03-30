@@ -10,7 +10,8 @@ continuously between job-pop cycles by computing a live in-flight delta on top o
 accumulated total.
 """
 
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from horde_worker_regen.process_management.messages import HordeProcessState
 
@@ -524,4 +525,110 @@ def test_time_without_jobs_does_not_reset_when_job_is_popped() -> None:
 
     assert after_pop >= before_pop, (
         f"time_without_jobs must not drop when a job is popped: before={before_pop}, after={after_pop}"
+    )
+
+
+def test_api_job_pop_flushes_idle_time_before_reset() -> None:
+    """api_job_pop must flush elapsed idle time before resetting the anchor on a successful pop.
+
+    This directly exercises the ``api_job_pop`` code path rather than simulating the
+    post-pop state by hand, so that a regression in the flush logic is reliably caught.
+
+    Setup: the worker has been idle for 20 s (anchor = T-20, accumulated = 0).
+    Action: ``api_job_pop`` is called and the mocked API returns a valid job response.
+    Assertion: after the call ``_time_spent_no_jobs_available`` is >= 20 s and
+    ``_last_pop_no_jobs_available_time`` is 0.0.
+    """
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    # Build a mock response that looks like a successful job pop
+    mock_response = MagicMock()
+    mock_response.id_ = "test-job-id-1234"
+    mock_response.model = "test_model"
+    mock_response.messages = None
+    mock_response.skipped.model_dump.return_value = {}
+    mock_response.skipped.model_extra = None
+    mock_response.payload.loras = None
+    mock_response.payload.post_processing = None
+    mock_response.payload.seed = 42
+    mock_response.payload.n_iter = 1
+    mock_response.payload.denoising_strength = None
+    mock_response.source_image = None
+
+    mock_manager = MagicMock()
+
+    # Idle-time state: 20 s of idle time is in-flight (not yet flushed)
+    fake_anchor = 1000.0
+    fake_now = 1020.0  # 20 s later
+    mock_manager._time_spent_no_jobs_available = 0.0
+    mock_manager._last_pop_no_jobs_available_time = fake_anchor
+
+    # Guard conditions that must NOT cause an early return
+    mock_manager._shutting_down = False
+    mock_manager.horde_client_session = MagicMock()
+    mock_manager._too_many_consecutive_failed_jobs = False
+    mock_manager._consecutive_failed_jobs = 0
+    mock_manager._consecutive_pop_failures = 0
+    mock_manager._consecutive_pop_failure_warn_threshold = 5
+    mock_manager._job_pop_frequency = 0.0
+    mock_manager._error_job_pop_frequency = 30.0
+    mock_manager._default_job_pop_frequency = 4.0
+    mock_manager._last_pop_maintenance_mode = False
+    mock_manager._replaced_due_to_maintenance = False
+    mock_manager.bridge_data.queue_size = 5
+    mock_manager.bridge_data.max_threads = 1
+    mock_manager.jobs_pending_inference = []
+    mock_manager.jobs_pending_submit = []
+    mock_manager._process_map.get_first_available_safety_process.return_value = MagicMock()
+    mock_manager._process_map.get_first_available_inference_process.return_value = MagicMock()
+    mock_manager.bridge_data.image_models_to_load = ["test_model"]
+    mock_manager.should_wait_for_pending_megapixelsteps.return_value = False
+    mock_manager._triggered_max_pending_megapixelsteps = False
+    mock_manager._last_job_pop_time = 0.0
+    mock_manager.bridge_data.horde_model_stickiness = 0
+    mock_manager.bridge_data.custom_models = None
+    mock_manager.bridge_data.api_key = "0" * 22  # must be 22 characters
+    mock_manager.bridge_data.dreamer_worker_name = "test_worker"
+    mock_manager.bridge_data.blacklist = []
+    mock_manager.bridge_data.nsfw = False
+    mock_manager.max_concurrent_inference_processes = 1
+    mock_manager.bridge_data.max_power = 8
+    mock_manager.bridge_data.require_upfront_kudos = False
+    mock_manager.bridge_data.allow_img2img = True
+    mock_manager.bridge_data.allow_inpainting = True
+    mock_manager.bridge_data.allow_unsafe_ip = False
+    mock_manager.bridge_data.allow_post_processing = True
+    mock_manager.bridge_data.allow_controlnet = True
+    mock_manager.bridge_data.allow_sdxl_controlnet = False
+    mock_manager.bridge_data.extra_slow_worker = False
+    mock_manager.bridge_data.limit_max_steps = False
+    mock_manager.bridge_data.allow_lora = True
+    mock_manager.bridge_data.max_batch = 1
+    mock_manager.max_inference_processes = 1
+
+    # Mock the HTTP call and post-pop helpers
+    mock_manager.horde_client_session.submit_request = AsyncMock(return_value=mock_response)
+    mock_manager._get_source_images = AsyncMock(return_value=mock_response)
+    mock_manager._jobs_pending_inference_lock = asyncio.Lock()
+    mock_manager._job_pop_timestamps_lock = asyncio.Lock()
+    mock_manager.job_faults = {}
+    mock_manager.jobs_lookup = {}
+    mock_manager.job_pop_timestamps = {}
+    mock_manager.total_num_jobs_queued = 0
+
+    with (
+        patch("horde_worker_regen.process_management.process_manager.time.time", return_value=fake_now),
+        patch("horde_worker_regen.process_management.process_manager.HordeJobInfo", MagicMock()),
+    ):
+        bound = HordeWorkerProcessManager.api_job_pop.__get__(mock_manager, HordeWorkerProcessManager)
+        asyncio.run(bound())
+
+    # The flush must have accumulated the 20 s of idle time and reset the anchor
+    assert mock_manager._time_spent_no_jobs_available >= 20.0, (
+        f"Expected _time_spent_no_jobs_available >= 20.0 after pop, "
+        f"got {mock_manager._time_spent_no_jobs_available}"
+    )
+    assert mock_manager._last_pop_no_jobs_available_time == 0.0, (
+        f"Expected _last_pop_no_jobs_available_time == 0.0 after pop, "
+        f"got {mock_manager._last_pop_no_jobs_available_time}"
     )
