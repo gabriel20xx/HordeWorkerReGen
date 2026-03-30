@@ -6838,10 +6838,11 @@ class HordeWorkerProcessManager:
           process that is genuinely stuck in one of those states is recovered even when a different
           process was recently replaced.
 
-        Job-related stuck states are checked in priority order: ``INFERENCE_POST_PROCESSING``
-        first (the process holds the VAE decode semaphore, blocking other processes), then
-        ``MODEL_PRELOADING`` and ``MODEL_PRELOADED`` (model loaded but no job dispatched), and
-        finally ``DOWNLOADING_AUX_MODEL``.
+        Job-related stuck states are checked in priority order: actively-in-progress states
+        first (``INFERENCE_POST_PROCESSING``, ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``),
+        then idle/finished states (``MODEL_PRELOADED``).  A process that is actively using
+        resources must be cleared before one that has merely finished loading and is waiting
+        idle for job dispatch.
         """
         import threading
 
@@ -6937,11 +6938,12 @@ class HordeWorkerProcessManager:
                     continue
 
                 # Check job-related states that only matter when jobs are being processed.
-                # Priority order: inference/post-processing stuck states are checked first,
-                # because those processes are actively using resources (e.g. holding the VAE
-                # decode semaphore) and must be cleared before processes that merely have a
-                # model loaded and are waiting for a job to be dispatched.
+                # Priority order: actively-in-progress states first, idle/finished states last.
+                # A process that is actively doing something (post-processing, loading a model,
+                # downloading a file) must be cleared before a process that has merely finished
+                # loading and is waiting idle for a job to be dispatched.
                 conditions: list[tuple[float, HordeProcessState, str]] = [
+                    # --- actively in progress ---
                     (
                         self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
                         HordeProcessState.INFERENCE_POST_PROCESSING,
@@ -6953,14 +6955,15 @@ class HordeWorkerProcessManager:
                         "seems to be stuck preloading a model",
                     ),
                     (
-                        self.bridge_data.preload_timeout,
-                        HordeProcessState.MODEL_PRELOADED,
-                        "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
-                    ),
-                    (
                         self.bridge_data.download_timeout,
                         HordeProcessState.DOWNLOADING_AUX_MODEL,
                         "seems to be stuck downloading an auxiliary model (LoRa, etc)",
+                    ),
+                    # --- finished / idle ---
+                    (
+                        self.bridge_data.preload_timeout,
+                        HordeProcessState.MODEL_PRELOADED,
+                        "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
                     ),
                 ]
 
