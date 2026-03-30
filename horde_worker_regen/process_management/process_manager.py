@@ -3147,6 +3147,8 @@ class HordeWorkerProcessManager:
                 # If any of the next n jobs (other than this one) aren't using the same model, see if that job
                 # has a model that's already loaded.
                 # If it does, we'll start inference on that job instead.
+                chosen_candidate: ImageGenerateJobPopResponse | None = None
+                chosen_process: HordeProcessInfo | None = None
                 for candidate_small_job in next_n_jobs:
                     job_has_loras = (
                         candidate_small_job.payload.loras is not None and len(candidate_small_job.payload.loras) > 0
@@ -3164,37 +3166,38 @@ class HordeWorkerProcessManager:
                             and self.get_single_job_effective_megapixelsteps(candidate_small_job) <= candidate_job_size
                             and candidate_process_with_model.can_accept_job()
                         ):
-                            skipped_line = True
-                            skipped_line_for = next_job
-
-                            next_job = candidate_small_job
-                            self._skipped_line_job = next_job
-                            process_with_model = candidate_process_with_model
+                            chosen_candidate = candidate_small_job
+                            chosen_process = candidate_process_with_model
                             break
-                else:
+                if chosen_candidate is None or chosen_process is None:
                     return None
             elif process_with_model.last_process_state == HordeProcessState.MODEL_PRELOADING:
                 # The first job's model is still being preloaded. Look for other pending jobs
                 # that already have a preloaded process ready to accept a job. This prevents
                 # MODEL_PRELOADED processes from being stuck waiting while the queue is blocked
                 # by a MODEL_PRELOADING process at the front.
+                chosen_candidate = None
+                chosen_process = None
                 for candidate_job in next_n_jobs:
                     if candidate_job.model is not None and candidate_job.model != next_job.model:
                         candidate_process_with_model = self._process_map.get_process_by_horde_model_name(
                             candidate_job.model,
                         )
                         if candidate_process_with_model is not None and candidate_process_with_model.can_accept_job():
-                            skipped_line = True
-                            skipped_line_for = next_job
-
-                            next_job = candidate_job
-                            self._skipped_line_job = next_job
-                            process_with_model = candidate_process_with_model
+                            chosen_candidate = candidate_job
+                            chosen_process = candidate_process_with_model
                             break
-                else:
+                if chosen_candidate is None or chosen_process is None:
                     return None
             else:
                 return None
+
+            # A candidate job/process pair was found via line-skipping.
+            skipped_line = True
+            skipped_line_for = next_job
+            next_job = chosen_candidate
+            self._skipped_line_job = next_job
+            process_with_model = chosen_process
 
         self._model_recently_missing = False
 

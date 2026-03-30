@@ -5992,7 +5992,8 @@ class TestGetProcessByHordeModelNamePreference:
         """WAITING_FOR_JOB process should be preferred over INFERENCE_STARTING."""
         p1 = self._make_process(1, HordeProcessState.INFERENCE_STARTING, "ModelA")
         p2 = self._make_process(2, HordeProcessState.WAITING_FOR_JOB, "ModelA")
-        # Note: WAITING_FOR_JOB with a model is an unusual state but we still handle it
+        # Note: a WAITING_FOR_JOB process with a loaded_horde_model_name can occur after a process
+        # finishes inference and is reset to WAITING_FOR_JOB while still holding the model in RAM.
         pmap = self._make_process_map([p1, p2])
 
         result = pmap.get_process_by_horde_model_name("ModelA")
