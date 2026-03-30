@@ -76,19 +76,19 @@ _LOG_ROTATION = "10 MB"
 _LOG_RETENTION = 3
 
 
-def configure_logger_format(process_id: int | None = None) -> None:
+def configure_logger_format(process_id: int | None = None, *, enable_stderr: bool = True) -> None:
     """Configure the logger with a standardized format: timestamp | level | message.
 
     This should be called after HordeLog.initialise() to override the default format
     with a consistent pattern across all processes with enhanced colors.
 
-    In addition to console (stderr) output, log messages are written to files in the
-    ``logs/`` directory:
+    In addition to (optional) console (stderr) output, log messages are written to files
+    in the ``logs/`` directory:
 
     * ``logs/bridge.log`` (main process) or ``logs/bridge_{process_id}.log`` (subprocess) –
       all messages at the configured log level.
     * ``logs/trace.log`` (main process) or ``logs/trace_{process_id}.log`` (subprocess) –
-      WARNING and above only.
+      ERROR and above only (mirrors the "errors only" description in ``logs/README.md``).
 
     Format: {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}
 
@@ -105,6 +105,9 @@ def configure_logger_format(process_id: int | None = None) -> None:
             process log files (``bridge.log`` / ``trace.log``) are used.  Subprocesses
             should pass their integer ID so that their output goes to dedicated files
             (e.g. ``bridge_1.log`` / ``trace_1.log``).
+        enable_stderr: When ``True`` (the default) a stderr sink is added in addition to
+            the file sinks.  Pass ``False`` when the caller has disabled console logging
+            (e.g. ``--no-logging``) so that no console output is produced.
 
     Environment Variables:
         AIWORKER_LOG_LEVEL: Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -131,12 +134,13 @@ def configure_logger_format(process_id: int | None = None) -> None:
     # Use the shared format function for consistent coloring
     format_record = create_level_format_function(time_format="YYYY-MM-DD HH:mm:ss.SSS")
 
-    logger.add(
-        sys.stderr,
-        format=format_record,
-        level=log_level,
-        colorize=True,  # Enable ANSI colors
-    )
+    if enable_stderr:
+        logger.add(
+            sys.stderr,
+            format=format_record,
+            level=log_level,
+            colorize=True,  # Enable ANSI colors
+        )
 
     # Determine log file names based on whether this is a subprocess
     if process_id is None:
@@ -160,11 +164,11 @@ def configure_logger_format(process_id: int | None = None) -> None:
         encoding="utf-8",
     )
 
-    # Plain-text file handler: WARNING and above only (quick error reference)
+    # Plain-text file handler: ERROR and above only (errors-only trace log per logs/README.md)
     logger.add(
         _LOGS_DIR / trace_log_name,
         format=format_record,
-        level="WARNING",
+        level="ERROR",
         colorize=False,
         rotation=_LOG_ROTATION,
         retention=_LOG_RETENTION,

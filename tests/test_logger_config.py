@@ -1,8 +1,7 @@
 """Tests for configure_logger_format file-logging behaviour."""
 
-import importlib
-import os
 import sys
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -10,21 +9,13 @@ from loguru import logger
 
 
 @pytest.fixture(autouse=True)
-def _restore_logger():
+def _restore_logger() -> Generator[None, None, None]:
     """Remove all loguru handlers added during the test and restore the default handler."""
     logger.remove()
     yield
     logger.remove()
     # Restore a basic stderr sink so other tests are not affected
     logger.add(sys.stderr)
-
-
-def _reload_logger_config():
-    """Return a freshly imported configure_logger_format callable."""
-    import horde_worker_regen.logger_config as mod
-
-    importlib.reload(mod)
-    return mod.configure_logger_format, mod._LOGS_DIR
 
 
 class TestConfigureLoggerFormatFileLogging:
@@ -71,8 +62,8 @@ class TestConfigureLoggerFormatFileLogging:
         content = (tmp_path / "bridge.log").read_text(encoding="utf-8")
         assert "test info message for bridge" in content
 
-    def test_trace_log_receives_warning_messages(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """trace.log should capture WARNING-level messages."""
+    def test_trace_log_receives_error_messages(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """trace.log should capture ERROR-level messages (errors only, per logs/README.md)."""
         import horde_worker_regen.logger_config as mod
 
         monkeypatch.setattr(mod, "_LOGS_DIR", tmp_path)
@@ -80,14 +71,16 @@ class TestConfigureLoggerFormatFileLogging:
         monkeypatch.delenv("AIWORKER_DEBUG", raising=False)
 
         mod.configure_logger_format(process_id=None)
-        logger.warning("test warning for trace")
+        logger.error("test error for trace")
         logger.complete()
 
         content = (tmp_path / "trace.log").read_text(encoding="utf-8")
-        assert "test warning for trace" in content
+        assert "test error for trace" in content
 
-    def test_trace_log_does_not_receive_info_messages(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """trace.log should NOT capture INFO-level messages (WARNING+ only)."""
+    def test_trace_log_does_not_receive_info_or_warning_messages(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """trace.log should NOT capture INFO or WARNING messages (ERROR+ only)."""
         import horde_worker_regen.logger_config as mod
 
         monkeypatch.setattr(mod, "_LOGS_DIR", tmp_path)
@@ -96,10 +89,12 @@ class TestConfigureLoggerFormatFileLogging:
 
         mod.configure_logger_format(process_id=None)
         logger.info("info only message")
+        logger.warning("warning only message")
         logger.complete()
 
         content = (tmp_path / "trace.log").read_text(encoding="utf-8")
         assert "info only message" not in content
+        assert "warning only message" not in content
 
     def test_log_files_have_no_ansi_escape_codes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Log files should contain plain text without ANSI escape sequences."""
@@ -117,7 +112,7 @@ class TestConfigureLoggerFormatFileLogging:
         assert "\x1b[" not in content, "Log file should not contain ANSI escape codes"
 
     def test_logs_directory_is_created_automatically(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """configure_logger_format should create the logs directory if it does not exist."""
         import horde_worker_regen.logger_config as mod
@@ -132,3 +127,21 @@ class TestConfigureLoggerFormatFileLogging:
         mod.configure_logger_format(process_id=None)
 
         assert nested_logs.is_dir(), "logs directory should be created automatically"
+
+    def test_enable_stderr_false_still_writes_to_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """enable_stderr=False (--no-logging) should still write to log files."""
+        import horde_worker_regen.logger_config as mod
+
+        monkeypatch.setattr(mod, "_LOGS_DIR", tmp_path)
+        monkeypatch.delenv("AIWORKER_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("AIWORKER_DEBUG", raising=False)
+
+        mod.configure_logger_format(process_id=None, enable_stderr=False)
+        logger.info("no-logging file message")
+        logger.complete()
+
+        content = (tmp_path / "bridge.log").read_text(encoding="utf-8")
+        assert "no-logging file message" in content
+
