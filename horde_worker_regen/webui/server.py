@@ -564,13 +564,24 @@ class WorkerWebUI:
                 if (location.hash !== newHash) history.pushState({page: pageId}, '', newHash);
             }
             if (pageId === 'gallery') {
-                // Only trigger a full page fetch when the grid is empty (first visit or after
-                // a page-size change).  When returning to the tab the existing grid content and
-                // cached thumbnails remain visible; new-image notifications are handled
-                // incrementally by the status-poll path (refreshGalleryPage1 / banner).
                 const gridEl = document.getElementById('gallery-grid');
                 const gridEmpty = !gridEl || !gridEl.querySelector('.image-grid-item');
-                if (gridEmpty) fetchGalleryPage(galleryCurrentPage);
+                if (gridEmpty) {
+                    // First visit (or after page-size change cleared the grid): full fetch.
+                    fetchGalleryPage(galleryCurrentPage);
+                } else if (galleryHasUnseenImages) {
+                    // New images arrived while we were on another tab.  Handle exactly the
+                    // same way the status-poll would if the gallery tab had been active.
+                    galleryHasUnseenImages = false;
+                    if (galleryCurrentPage === 1) {
+                        if (!galleryFetchInProgress) refreshGalleryPage1();
+                    } else {
+                        const bnr = document.getElementById('gallery-new-banner');
+                        if (bnr) bnr.style.display = '';
+                    }
+                }
+                // Otherwise the grid already shows the current page with cached thumbnails;
+                // new-image notifications continue via the status-poll path.
             }
         }
         window.addEventListener('popstate', function() {
@@ -730,6 +741,9 @@ class WorkerWebUI:
         // Sync the select element's initial value with the JS constant (single source of truth)
         document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
+        // Set to true when new images arrive while the gallery tab is not active.
+        // Consumed by showPage() to refresh or show the banner on return.
+        let galleryHasUnseenImages = false;
         // Monotonically increasing batch ID used to cancel stale thumbnail loads when the
         // page changes before the previous batch has finished.
         let _galleryThumbnailBatchId = 0;
@@ -819,7 +833,10 @@ class WorkerWebUI:
                         const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
                         const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
                         const thumbSrc = buildThumbnailDataUrl(data);
-                        if (thumbSrc) { _cacheThumbnail(galleryId, thumbSrc); }
+                        // Only cache actual JPEG thumbnails (Pillow-generated, small).
+                        // When Pillow is absent the response falls back to full-resolution PNG;
+                        // caching those would balloon memory for workers without Pillow.
+                        if (data.thumbnail && thumbSrc) { _cacheThumbnail(galleryId, thumbSrc); }
                         if (thumbSrc && imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
                         // Always remove the shimmer class; if no image data was returned the tile
                         // shows as an empty placeholder rather than spinning indefinitely.
@@ -923,7 +940,8 @@ class WorkerWebUI:
                                     const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
                                     const ie = c ? c.querySelector('img') : null;
                                     const src = d.thumbnail ? 'data:image/jpeg;base64,'+d.thumbnail : (d.base64 ? 'data:image/png;base64,'+d.base64 : null);
-                                    if (src) { _cacheThumbnail(galleryId, src); }
+                                    // Only cache actual JPEG thumbnails; skip full-res PNG fallback.
+                                    if (d.thumbnail && src) { _cacheThumbnail(galleryId, src); }
                                     if (src && ie) { ie.src = src; ie.style.display = ''; }
                                     if (c) c.classList.remove('loading');
                                 })
@@ -1257,6 +1275,11 @@ class WorkerWebUI:
                             lastKnownImagesCount = newImagesCount;
                         }
                     } else {
+                        if (hasNewImages && !galleryPageActive) {
+                            // New images arrived while another tab is shown.  Record this so
+                            // showPage() can act when the user returns to the gallery tab.
+                            galleryHasUnseenImages = true;
+                        }
                         lastKnownImagesCount = newImagesCount;
                     }
                     errorsData = (data.errors_history && data.errors_history.length > 0) ? data.errors_history : [];
