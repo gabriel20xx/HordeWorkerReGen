@@ -356,28 +356,28 @@ def test_webui_images_history() -> None:
     # Test default state: no images_history in status_data; images_count starts at 0
     assert "images_history" not in webui.status_data
     assert webui.status_data["images_count"] == 0
-    assert webui._gallery_data == []
+    assert webui._gallery_dict == {}
 
     # Test adding a single image entry
     test_image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
     webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067205.0, "model": "stable_diffusion_xl"})
-    assert len(webui._gallery_data) == 1
+    assert len(webui._gallery_dict) == 1
     assert webui.status_data["images_count"] == 1
-    assert webui._gallery_data[0]["model"] == "stable_diffusion_xl"
+    assert webui._gallery_dict[0]["model"] == "stable_diffusion_xl"
 
     # Test adding multiple image entries
     webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067210.0, "model": "stable_diffusion_2_1"})
     webui.add_gallery_image({"base64": test_image_b64, "timestamp": 1704067215.0, "model": None})
-    assert len(webui._gallery_data) == 3
+    assert len(webui._gallery_dict) == 3
     assert webui.status_data["images_count"] == 3
-    assert webui._gallery_data[1]["model"] == "stable_diffusion_2_1"
-    assert webui._gallery_data[2]["model"] is None
+    assert webui._gallery_dict[1]["model"] == "stable_diffusion_2_1"
+    assert webui._gallery_dict[2]["model"] is None
 
-    # Test that gallery is bounded at 200 entries
+    # Test that gallery is unbounded – adding more than 200 entries keeps all of them.
     for i in range(200):
         webui.add_gallery_image({"base64": test_image_b64, "timestamp": float(i), "model": "sdxl"})
-    assert len(webui._gallery_data) == 200
-    assert webui.status_data["images_count"] == 200
+    assert len(webui._gallery_dict) == 203
+    assert webui.status_data["images_count"] == 203
 
     # Verify /api/status does NOT include base64 image data
     assert "images_history" not in webui.status_data
@@ -426,12 +426,10 @@ async def test_webui_gallery_thumbnail_only() -> None:
         )
 
         # Add an entry *without* a thumbnail (simulates PIL not being available)
-        webui._gallery_data.append({"gallery_id": 0, "base64": test_b64, "timestamp": 1.0, "model": "m1"})
+        webui._gallery_dict[0] = {"gallery_id": 0, "base64": test_b64, "timestamp": 1.0, "model": "m1"}
 
         # Add an entry *with* a thumbnail (simulates PIL available; thumbnail_only stripping applies)
-        webui._gallery_data.append(
-            {"gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2"},
-        )
+        webui._gallery_dict[1] = {"gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2"}
         webui.status_data["images_count"] = 2
 
         async with aiohttp.ClientSession() as session, session.get(
@@ -587,11 +585,9 @@ async def test_webui_gallery_metadata_only() -> None:
         )
 
         # Entry without thumbnail (base64 only)
-        webui._gallery_data.append({"gallery_id": 0, "base64": test_b64, "timestamp": 1.0, "model": "m1"})
+        webui._gallery_dict[0] = {"gallery_id": 0, "base64": test_b64, "timestamp": 1.0, "model": "m1"}
         # Entry with both thumbnail and base64
-        webui._gallery_data.append(
-            {"gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2"},
-        )
+        webui._gallery_dict[1] = {"gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2"}
 
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/gallery?page=1&page_size=48&metadata_only=true",
@@ -625,11 +621,9 @@ async def test_webui_gallery_image_thumbnail_only() -> None:
         )
 
         # Entry with both thumbnail and base64
-        webui._gallery_data.append(
-            {"gallery_id": 5, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 1.0, "model": "m1"},
-        )
+        webui._gallery_dict[5] = {"gallery_id": 5, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 1.0, "model": "m1"}
         # Entry without thumbnail (base64 only); thumbnail_only should still work (no thumbnail to return)
-        webui._gallery_data.append({"gallery_id": 6, "base64": test_b64, "timestamp": 2.0, "model": "m2"})
+        webui._gallery_dict[6] = {"gallery_id": 6, "base64": test_b64, "timestamp": 2.0, "model": "m2"}
 
         # thumbnail_only=true on entry that has a thumbnail: base64 must be stripped
         async with aiohttp.ClientSession() as session, session.get(
