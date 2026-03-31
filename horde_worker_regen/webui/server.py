@@ -77,7 +77,8 @@ class WorkerWebUI:
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
         # sending large base64 payloads on every poll.  Served via /api/gallery instead.
-        self._gallery_data: list[dict[str, Any]] = []
+        # Keyed by gallery_id (int) for O(1) lookup; insertion order is oldest-first.
+        self._gallery_dict: dict[int, dict[str, Any]] = {}
         # Monotonically increasing counter used to assign stable gallery_id values.
         self._next_gallery_id: int = 0
 
@@ -754,9 +755,9 @@ class WorkerWebUI:
         let _currentPageGalleryIds = [];
         // Client-side cache: gallery_id (integer) → thumbnail data-URL string.
         // Avoids re-fetching thumbnails when the user switches pages or returns to the gallery tab.
+        // Evicts the oldest entry once the cache exceeds _GALLERY_THUMBNAIL_CACHE_MAX to bound memory.
         const _galleryThumbnailCache = new Map();
-        // Must be >= the server's maximum gallery history (200 entries, see add_gallery_image).
-        const _GALLERY_THUMBNAIL_CACHE_MAX = 200;
+        const _GALLERY_THUMBNAIL_CACHE_MAX = 1000;
         function _cacheThumbnail(galleryId, dataUrl) {
             _galleryThumbnailCache.set(galleryId, dataUrl);
             if (_galleryThumbnailCache.size > _GALLERY_THUMBNAIL_CACHE_MAX) {
@@ -1397,9 +1398,9 @@ class WorkerWebUI:
             page_size = 48
         metadata_only = request.rel_url.query.get("metadata_only", "").lower() in ("1", "true", "yes")
 
-        # Gallery is stored oldest-first; serve newest-first to the UI.
-        images_reversed = list(reversed(self._gallery_data))
-        total = len(images_reversed)
+        # Gallery is stored oldest-first (insertion order); serve newest-first to the UI.
+        images_reversed = list(reversed(self._gallery_dict.values()))
+        total = len(self._gallery_dict)
         total_pages = max(1, math.ceil(total / page_size))
         page = min(page, total_pages)
         start = (page - 1) * page_size
@@ -1414,7 +1415,7 @@ class WorkerWebUI:
             # Strip the full-resolution base64 from entries that already have a thumbnail.
             # This drastically reduces the response payload for the gallery grid view.
             # Entries without a thumbnail keep their base64 as a display fallback.
-            # All entries are copied so the originals in _gallery_data are not mutated.
+            # All entries are copied so the originals in _gallery_dict are not mutated.
             page_images = [
                 ({k: v for k, v in entry.items() if k != "base64"} if entry.get("thumbnail") else dict(entry))
                 for entry in page_images
@@ -1450,21 +1451,19 @@ class WorkerWebUI:
             raise web.HTTPBadRequest(reason="Invalid or missing id parameter") from None
         thumbnail_only = request.rel_url.query.get("thumbnail_only", "").lower() in ("1", "true", "yes")
 
-        # _gallery_data is ordered oldest-first; search from newest for speed.
-        for entry in reversed(self._gallery_data):
-            if entry.get("gallery_id") == gallery_id:
-                if thumbnail_only and entry.get("thumbnail"):
-                    # When a thumbnail is available, omit the full-resolution base64
-                    # to keep the payload small for the gallery grid.
-                    return web.json_response({k: v for k, v in entry.items() if k != "base64"})
-                # If no thumbnail is available (e.g. Pillow not installed), fall back to
-                # returning the full entry including base64 so the client can still render.
-                return web.json_response(entry)
-
-        raise web.HTTPNotFound(reason="Gallery image not found")
+        entry = self._gallery_dict.get(gallery_id)
+        if entry is None:
+            raise web.HTTPNotFound(reason="Gallery image not found")
+        if thumbnail_only and entry.get("thumbnail"):
+            # When a thumbnail is available, omit the full-resolution base64
+            # to keep the payload small for the gallery grid.
+            return web.json_response({k: v for k, v in entry.items() if k != "base64"})
+        # If no thumbnail is available (e.g. Pillow not installed), fall back to
+        # returning the full entry including base64 so the client can still render.
+        return web.json_response(entry)
 
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
-        """Append one image entry to the gallery and keep at most 200 entries.
+        """Append one image entry to the gallery history.
 
         A small JPEG thumbnail is generated and stored under the ``thumbnail`` key so
         that the gallery grid can load much faster than serving the full-resolution PNG.
@@ -1486,10 +1485,8 @@ class WorkerWebUI:
                         entry["thumbnail"] = base64.b64encode(buf.getvalue()).decode("utf-8")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate gallery thumbnail: {}", exc)
-        self._gallery_data.append(entry)
-        if len(self._gallery_data) > 200:
-            self._gallery_data = self._gallery_data[-200:]
-        self.status_data["images_count"] = len(self._gallery_data)
+        self._gallery_dict[entry["gallery_id"]] = entry
+        self.status_data["images_count"] = len(self._gallery_dict)
 
     def update_status(
         self,
