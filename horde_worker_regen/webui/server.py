@@ -755,13 +755,8 @@ class WorkerWebUI:
         // Client-side cache: gallery_id (integer) → thumbnail data-URL string.
         // Avoids re-fetching thumbnails when the user switches pages or returns to the gallery tab.
         const _galleryThumbnailCache = new Map();
-        // Must be >= the server's maximum gallery history (200 entries, see add_gallery_image).
-        const _GALLERY_THUMBNAIL_CACHE_MAX = 200;
         function _cacheThumbnail(galleryId, dataUrl) {
             _galleryThumbnailCache.set(galleryId, dataUrl);
-            if (_galleryThumbnailCache.size > _GALLERY_THUMBNAIL_CACHE_MAX) {
-                _galleryThumbnailCache.delete(_galleryThumbnailCache.keys().next().value);
-            }
         }
         function renderGalleryPageSkeleton(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
@@ -1464,7 +1459,7 @@ class WorkerWebUI:
         raise web.HTTPNotFound(reason="Gallery image not found")
 
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
-        """Append one image entry to the gallery and keep at most 200 entries.
+        """Append one image entry to the gallery history.
 
         A small JPEG thumbnail is generated and stored under the ``thumbnail`` key so
         that the gallery grid can load much faster than serving the full-resolution PNG.
@@ -1487,8 +1482,6 @@ class WorkerWebUI:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate gallery thumbnail: {}", exc)
         self._gallery_data.append(entry)
-        if len(self._gallery_data) > 200:
-            self._gallery_data = self._gallery_data[-200:]
         self.status_data["images_count"] = len(self._gallery_data)
 
     def update_status(
