@@ -1293,7 +1293,7 @@ class HordeWorkerProcessManager:
     _MAX_CONSOLE_LOGS_BUFFER = 500  # Maximum number of console logs to keep in memory buffer
     _WEBUI_CONSOLE_LOGS_LIMIT = 250  # Number of recent logs to send to webui from buffer
     _MAX_ERRORS_HISTORY = 1000  # Maximum number of error messages to keep in history (memory safety cap)
-    _WEBUI_ERRORS_HISTORY_LIMIT = 200  # Number of recent errors to send to webui per poll
+    _WEBUI_ERRORS_HISTORY_LIMIT = 100  # Number of recent errors to send to webui per poll
 
     # States that indicate inference is done and the result is being post-processed or submitted.
     # In all these states the progress bar must be pinned at 100% so it never goes backwards.
@@ -6529,7 +6529,8 @@ class HordeWorkerProcessManager:
             last_image_submission_timestamp=self._last_image_job_timestamp,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
-            errors_history=self._errors_history[: self._WEBUI_ERRORS_HISTORY_LIMIT],
+            # Only send the most recent errors to keep /api/status lightweight
+            errors_history=self._errors_history[-self._WEBUI_ERRORS_HISTORY_LIMIT :] if self._errors_history else [],
         )
 
     def _handle_exception(self, future: asyncio.Future) -> None:
