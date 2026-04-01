@@ -88,6 +88,7 @@ class WorkerWebUI:
         """Set up the web server routes."""
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/api/status", self._handle_status)
+        self.app.router.add_get("/api/errors", self._handle_errors)
         self.app.router.add_get("/api/last_image", self._handle_last_image)
         self.app.router.add_get("/api/gallery", self._handle_gallery)
         self.app.router.add_get("/api/gallery/image", self._handle_gallery_image)
@@ -716,26 +717,41 @@ class WorkerWebUI:
         }
         const SCROLL_TOLERANCE_PX = 1;
         const ERRORS_PAGE_SIZE = 10;
-        let errorsCurrentPage = 1, errorsData = [];
+        let errorsCurrentPage = 1, errorsTotal = 0, errorsTotalPages = 1, errorsPageData = [];
+        let _errorsAbortController = null;
+        function fetchErrorsPage(page) {
+            if (_errorsAbortController) _errorsAbortController.abort();
+            _errorsAbortController = new AbortController();
+            const ctrl = _errorsAbortController;
+            fetch('/api/errors?page='+page+'&page_size='+ERRORS_PAGE_SIZE, { signal: ctrl.signal })
+                .then(r => { if (!r.ok) throw new Error('HTTP error! status: '+r.status); return r.json(); })
+                .then(data => {
+                    if (ctrl !== _errorsAbortController) return;
+                    _errorsAbortController = null;
+                    errorsCurrentPage = data.page;
+                    errorsTotal = data.total;
+                    errorsTotalPages = data.total_pages;
+                    errorsPageData = data.errors || [];
+                    renderErrorsPage();
+                })
+                .catch(err => { if (err.name !== 'AbortError') console.error('Failed to fetch /api/errors:', err); });
+        }
         function renderErrorsPage() {
             const ed = document.getElementById('errors-history'), pi = document.getElementById('errors-page-info'),
                   pb = document.getElementById('errors-prev'), nb = document.getElementById('errors-next'),
                   pag = document.getElementById('errors-pagination'), cnt = document.getElementById('errors-count');
-            if (errorsData.length === 0) {
+            if (errorsTotal === 0) {
                 ed.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#10003;</span>No errors</div>';
                 pag.style.display = 'none'; cnt.textContent = '0'; return;
             }
-            const tp = Math.max(1, Math.ceil(errorsData.length / ERRORS_PAGE_SIZE));
-            errorsCurrentPage = Math.min(Math.max(1, errorsCurrentPage), tp);
-            const start = (errorsCurrentPage - 1) * ERRORS_PAGE_SIZE;
-            ed.innerHTML = errorsData.slice(start, start + ERRORS_PAGE_SIZE).map(err => '<div class="error-item">'+escapeHtml(err)+'</div>').join('');
-            pi.textContent = 'Page '+errorsCurrentPage+' of '+tp;
-            pb.disabled = errorsCurrentPage <= 1; nb.disabled = errorsCurrentPage >= tp;
-            pag.style.display = 'flex'; cnt.textContent = errorsData.length;
+            ed.innerHTML = errorsPageData.map(err => '<div class="error-item">'+escapeHtml(err)+'</div>').join('');
+            pi.textContent = 'Page '+errorsCurrentPage+' of '+errorsTotalPages;
+            pb.disabled = errorsCurrentPage <= 1; nb.disabled = errorsCurrentPage >= errorsTotalPages;
+            pag.style.display = 'flex'; cnt.textContent = errorsTotal;
         }
         function errorsChangePage(delta) {
-            errorsCurrentPage = Math.min(Math.max(1, errorsCurrentPage + delta), Math.max(1, Math.ceil(errorsData.length / ERRORS_PAGE_SIZE)));
-            renderErrorsPage();
+            const newPage = Math.min(Math.max(1, errorsCurrentPage + delta), errorsTotalPages);
+            if (newPage !== errorsCurrentPage) fetchErrorsPage(newPage);
         }
         const GALLERY_DEFAULT_PAGE_SIZE = 48;
         let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
@@ -1283,9 +1299,11 @@ class WorkerWebUI:
                         }
                         lastKnownImagesCount = newImagesCount;
                     }
-                    errorsData = (data.errors_history && data.errors_history.length > 0) ? data.errors_history : [];
-                    if (!data.errors_history || data.errors_history.length === 0) errorsCurrentPage = 1;
-                    renderErrorsPage();
+                    const newErrorsCount = data.errors_count || 0;
+                    if (newErrorsCount !== errorsTotal) {
+                        if (newErrorsCount === 0) { errorsCurrentPage = 1; errorsTotal = 0; errorsTotalPages = 1; errorsPageData = []; renderErrorsPage(); }
+                        else fetchErrorsPage(errorsCurrentPage);
+                    }
                     const cl = document.getElementById('console-logs');
                     if (data.console_logs && data.console_logs.length > 0) {
                         const atb = isScrolledToBottom(cl, SCROLL_TOLERANCE_PX);
@@ -1344,13 +1362,14 @@ class WorkerWebUI:
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Handle status API request.
 
-        Returns all status fields **except** ``last_image_base64`` so that the
-        (potentially large) image payload is not included in every poll.  Clients
-        should use the lightweight ``last_image_submission_timestamp`` field to
-        detect when a new image is available and then fetch it separately via
-        ``/api/last_image``.
+        Returns all status fields **except** ``last_image_base64`` and the full
+        ``errors_history`` list so that large payloads are not included in every
+        poll.  Clients should use ``last_image_submission_timestamp`` to detect
+        new images (fetch via ``/api/last_image``) and ``errors_count`` to detect
+        new errors (fetch the relevant page via ``/api/errors``).
         """
-        payload = {k: v for k, v in self.status_data.items() if k != "last_image_base64"}
+        payload = {k: v for k, v in self.status_data.items() if k not in ("last_image_base64", "errors_history")}
+        payload["errors_count"] = len(self.status_data["errors_history"])
         return web.json_response(payload)
 
     async def _handle_last_image(self, request: web.Request) -> web.Response:
@@ -1371,6 +1390,36 @@ class WorkerWebUI:
     async def _handle_health(self, request: web.Request) -> web.Response:
         """Handle health check request."""
         return web.json_response({"status": "ok"})
+
+    async def _handle_errors(self, request: web.Request) -> web.Response:
+        """Return a paginated slice of the error history.
+
+        Query parameters:
+            page: 1-based page number (default: 1)
+            page_size: errors per page (default: 10, max: 100)
+        """
+        try:
+            page = max(1, int(request.rel_url.query.get("page", "1")))
+        except ValueError:
+            page = 1
+        try:
+            page_size = min(100, max(1, int(request.rel_url.query.get("page_size", "10"))))
+        except ValueError:
+            page_size = 10
+        errors = self.status_data["errors_history"]
+        total = len(errors)
+        total_pages = max(1, math.ceil(total / page_size))
+        page = min(page, total_pages)
+        start = (page - 1) * page_size
+        return web.json_response(
+            {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "errors": errors[start : start + page_size],
+            },
+        )
 
     async def _handle_gallery(self, request: web.Request) -> web.Response:
         """Return a paginated slice of the gallery image history.
