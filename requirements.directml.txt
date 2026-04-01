@@ -1,5 +1,4 @@
 torch-directml==0.2.5.dev240914
-nvidia-ml-py # Replacement for deprecated pynvml
 certifi # Required for SSL cert resolution
 
 horde_sdk~=0.17.0
@@ -10,14 +9,9 @@ horde_model_reference~=0.10.0
 python-dotenv
 ruamel.yaml
 semver
-wheel
-
-python-Levenshtein
 
 pydantic>=2.9.2
 typing_extensions
 requests
 StrEnum
 loguru
-
-babel
