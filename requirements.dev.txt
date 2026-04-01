@@ -11,8 +11,6 @@ semver
 
 pytest-cov
 
-babel
-
 types-requests
 types-pillow
 types-pytz
