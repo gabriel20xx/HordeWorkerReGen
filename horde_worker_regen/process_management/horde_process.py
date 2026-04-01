@@ -155,14 +155,14 @@ class HordeProcess(abc.ABC):
     _last_heartbeat_time: float = 0.0
     _last_heartbeat_type: HordeHeartbeatType = HordeHeartbeatType.OTHER
 
-    _IDLE_HEARTBEAT_INTERVAL: float = 15.0
+    _idle_heartbeat_interval_seconds: float = 15.0
     """How often (seconds) an idle process sends a keepalive heartbeat.
 
     Processes that are waiting for a job (or in other non-inference states) do not produce
     any messages on their own, so their heartbeat delta grows unboundedly.  This interval
     caps that growth so the process manager always has a recent proof-of-life signal.
     """
-    _last_idle_heartbeat_time: float
+    _last_idle_heartbeat_time: float = 0.0
 
     def send_heartbeat_message(
         self,
@@ -281,7 +281,10 @@ class HordeProcess(abc.ABC):
         to preserve the idle-heartbeat behaviour.
         """
         now = time.time()
-        if now - self._last_idle_heartbeat_time >= self._IDLE_HEARTBEAT_INTERVAL:
+        if (
+            now - self._last_idle_heartbeat_time >= self._idle_heartbeat_interval_seconds
+            and now - self._last_heartbeat_time >= self._heartbeat_limit_interval_seconds
+        ):
             self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.OTHER)
             self._last_idle_heartbeat_time = now
 
