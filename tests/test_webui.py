@@ -657,6 +657,159 @@ async def test_webui_gallery_image_thumbnail_only() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_webui_status_excludes_errors_history_and_has_errors_count() -> None:
+    """Test that /api/status omits errors_history and includes errors_count."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Populate some errors
+        webui.update_status(errors_history=["error one", "error two", "error three"])
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/status",
+        ) as response:
+            assert response.status == 200
+            status = await response.json()
+
+        assert "errors_history" not in status, "/api/status must not expose the full errors_history list"
+        assert "errors_count" in status, "/api/status must include errors_count"
+        assert status["errors_count"] == 3
+
+        # Adding more errors must be reflected in errors_count
+        webui.update_status(errors_history=["error one", "error two", "error three", "error four"])
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/status",
+        ) as response:
+            status2 = await response.json()
+        assert status2["errors_count"] == 4
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_endpoint_pagination() -> None:
+    """Test /api/errors returns paginated slices of the error history."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Add 25 errors
+        errors = [f"error {i}" for i in range(25)]
+        webui.update_status(errors_history=errors)
+
+        # Default page (page=1, page_size=10)
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 25
+        assert data["page"] == 1
+        assert data["page_size"] == 10
+        assert data["total_pages"] == 3
+        assert len(data["errors"]) == 10
+        assert data["errors"] == errors[:10]
+
+        # Page 2
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors?page=2&page_size=10",
+        ) as response:
+            assert response.status == 200
+            data2 = await response.json()
+        assert data2["page"] == 2
+        assert len(data2["errors"]) == 10
+        assert data2["errors"] == errors[10:20]
+
+        # Last page (partial)
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors?page=3&page_size=10",
+        ) as response:
+            assert response.status == 200
+            data3 = await response.json()
+        assert data3["page"] == 3
+        assert len(data3["errors"]) == 5
+        assert data3["errors"] == errors[20:25]
+
+        # Custom page_size
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors?page=1&page_size=5",
+        ) as response:
+            assert response.status == 200
+            data4 = await response.json()
+        assert data4["total_pages"] == 5
+        assert len(data4["errors"]) == 5
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_endpoint_edge_cases() -> None:
+    """Test /api/errors handles out-of-range page, invalid params, and empty history."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Empty history
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 0
+        assert data["page"] == 1
+        assert data["total_pages"] == 1
+        assert data["errors"] == []
+
+        # Populate errors for remaining tests
+        webui.update_status(errors_history=[f"error {i}" for i in range(15)])
+
+        # Out-of-range page is clamped to last page
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors?page=999",
+        ) as response:
+            assert response.status == 200
+            data_clamped = await response.json()
+        assert data_clamped["page"] == data_clamped["total_pages"]
+        assert len(data_clamped["errors"]) > 0
+
+        # page=0 is treated as page=1
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors?page=0",
+        ) as response:
+            assert response.status == 200
+            data_zero = await response.json()
+        assert data_zero["page"] == 1
+
+        # Invalid (non-integer) page falls back to 1
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors?page=abc",
+        ) as response:
+            assert response.status == 200
+            data_inv = await response.json()
+        assert data_inv["page"] == 1
+
+        # page_size is capped at 100
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors?page_size=9999",
+        ) as response:
+            assert response.status == 200
+            data_cap = await response.json()
+        assert data_cap["page_size"] == 100
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     # Run simple tests
     test_webui_creation()

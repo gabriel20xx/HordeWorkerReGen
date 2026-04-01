@@ -1615,6 +1615,9 @@ class HordeWorkerProcessManager:
         self.job_faults = {}
         self._faulted_jobs_history = []
         self._errors_history: list[str] = []
+        # Tracks the length of _errors_history at the last webui update so the list
+        # is only copied and sent when new errors have been added.
+        self._errors_history_last_sent_len: int = -1
 
         self._jobs_safety_check_lock = Lock_Asyncio()
 
@@ -6528,8 +6531,13 @@ class HordeWorkerProcessManager:
             last_image_submission_timestamp=self._last_image_job_timestamp,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
-            errors_history=self._errors_history,
+            errors_history=(
+                self._errors_history
+                if len(self._errors_history) != self._errors_history_last_sent_len
+                else None
+            ),
         )
+        self._errors_history_last_sent_len = len(self._errors_history)
 
     def _handle_exception(self, future: asyncio.Future) -> None:
         """Logs exceptions from asyncio tasks.
