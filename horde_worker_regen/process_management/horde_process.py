@@ -119,6 +119,7 @@ class HordeProcess(abc.ABC):
         self.pipe_connection = pipe_connection
         self.disk_lock = disk_lock
         self.process_launch_identifier = process_launch_identifier
+        self._last_idle_heartbeat_time = time.time()
 
         self.send_process_state_change_message(
             process_state=HordeProcessState.PROCESS_STARTING,
@@ -153,6 +154,15 @@ class HordeProcess(abc.ABC):
     _heartbeat_limit_interval_seconds: float = 1.0
     _last_heartbeat_time: float = 0.0
     _last_heartbeat_type: HordeHeartbeatType = HordeHeartbeatType.OTHER
+
+    _IDLE_HEARTBEAT_INTERVAL: float = 15.0
+    """How often (seconds) an idle process sends a keepalive heartbeat.
+
+    Processes that are waiting for a job (or in other non-inference states) do not produce
+    any messages on their own, so their heartbeat delta grows unboundedly.  This interval
+    caps that growth so the process manager always has a recent proof-of-life signal.
+    """
+    _last_idle_heartbeat_time: float
 
     def send_heartbeat_message(
         self,
@@ -265,9 +275,15 @@ class HordeProcess(abc.ABC):
     def worker_cycle(self) -> None:
         """Do any process specific handling after messages have been received and handled.
 
-        Override this to implement any process specific logic.
+        The base implementation sends a periodic keepalive heartbeat so that idle processes
+        (e.g. WAITING_FOR_JOB) do not accumulate an unbounded heartbeat delta.  Override
+        this in subclasses to add process-specific logic; call ``super().worker_cycle()``
+        to preserve the idle-heartbeat behaviour.
         """
-        return
+        now = time.time()
+        if now - self._last_idle_heartbeat_time >= self._IDLE_HEARTBEAT_INTERVAL:
+            self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.OTHER)
+            self._last_idle_heartbeat_time = now
 
     def main_loop(self) -> None:
         """Start the main loop of the process."""
