@@ -349,6 +349,103 @@ class TestWorkerCycleExceptionHandling:
         assert HordeProcessState.PROCESS_ENDED in sent_states
 
 
+class TestIdleHeartbeatTiming:
+    """Unit tests for the idle keepalive heartbeat added to HordeProcess.worker_cycle()."""
+
+    def _make_idle_process(self) -> tuple[object, MagicMock]:
+        """Return a concrete HordeProcess subclass instance and its message queue mock."""
+        from horde_worker_regen.process_management.horde_process import HordeProcess
+
+        class _IdleProcess(HordeProcess):
+            def cleanup_for_exit(self) -> None:
+                pass
+
+            def _receive_and_handle_control_message(self, message: object) -> None:
+                pass
+
+        mock_queue = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.poll.return_value = False
+        mock_lock = MagicMock()
+
+        proc = _IdleProcess(
+            process_id=0,
+            process_message_queue=mock_queue,
+            pipe_connection=mock_conn,
+            disk_lock=mock_lock,
+            process_launch_identifier=1,
+        )
+        return proc, mock_queue
+
+    def _heartbeat_put_calls(self, mock_queue: MagicMock) -> list:
+        """Return all HordeProcessHeartbeatMessage objects enqueued so far."""
+        from horde_worker_regen.process_management.messages import HordeProcessHeartbeatMessage
+
+        return [
+            call.args[0]
+            for call in mock_queue.put.call_args_list
+            if isinstance(call.args[0], HordeProcessHeartbeatMessage)
+        ]
+
+    def test_no_heartbeat_before_interval_elapses(self) -> None:
+        """worker_cycle() must NOT send a heartbeat before the idle interval has elapsed."""
+        proc, mock_queue = self._make_idle_process()
+
+        fixed_time = 1_000.0
+        proc._last_idle_heartbeat_time = fixed_time
+        proc._last_heartbeat_time = fixed_time - 10.0  # well outside throttle window
+
+        # Simulate a call just before the interval expires
+        with patch("time.time", return_value=fixed_time + proc._idle_heartbeat_interval_seconds - 0.1):
+            proc.worker_cycle()
+
+        assert len(self._heartbeat_put_calls(mock_queue)) == 0
+
+    def test_heartbeat_sent_once_interval_elapses(self) -> None:
+        """worker_cycle() MUST send a heartbeat once the idle interval has elapsed."""
+        proc, mock_queue = self._make_idle_process()
+
+        fixed_time = 1_000.0
+        proc._last_idle_heartbeat_time = fixed_time
+        proc._last_heartbeat_time = fixed_time - 10.0  # well outside throttle window
+
+        with patch("time.time", return_value=fixed_time + proc._idle_heartbeat_interval_seconds + 0.1):
+            proc.worker_cycle()
+
+        heartbeats = self._heartbeat_put_calls(mock_queue)
+        assert len(heartbeats) == 1
+
+    def test_no_heartbeat_inside_throttle_window(self) -> None:
+        """worker_cycle() must NOT send a heartbeat when a recent heartbeat was just sent."""
+        from horde_worker_regen.process_management.messages import HordeHeartbeatType
+
+        proc, mock_queue = self._make_idle_process()
+
+        fixed_time = 1_000.0
+        # Idle interval has elapsed but we are inside the throttle window
+        proc._last_idle_heartbeat_time = fixed_time - proc._idle_heartbeat_interval_seconds - 1.0
+        proc._last_heartbeat_time = fixed_time - proc._heartbeat_limit_interval_seconds + 0.1
+        proc._last_heartbeat_type = HordeHeartbeatType.OTHER
+
+        with patch("time.time", return_value=fixed_time):
+            proc.worker_cycle()
+
+        assert len(self._heartbeat_put_calls(mock_queue)) == 0
+
+    def test_idle_heartbeat_timestamp_updated_after_send(self) -> None:
+        """After sending an idle heartbeat, _last_idle_heartbeat_time must be updated."""
+        proc, mock_queue = self._make_idle_process()
+
+        send_time = 2_000.0
+        proc._last_idle_heartbeat_time = send_time - proc._idle_heartbeat_interval_seconds - 1.0
+        proc._last_heartbeat_time = send_time - 10.0
+
+        with patch("time.time", return_value=send_time):
+            proc.worker_cycle()
+
+        assert proc._last_idle_heartbeat_time == send_time
+
+
 class TestApiSubmitJobBrokenDataHandling:
     """Tests that api_submit_job skips broken jobs instead of leaving the submit queue blocked."""
 
