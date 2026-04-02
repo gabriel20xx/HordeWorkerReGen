@@ -145,49 +145,6 @@ class TestReplaceHungProcessesAnyReplaced:
         )
         mock_manager._replace_inference_process.assert_called_once_with(mock_process)
 
-    def test_inference_starting_not_detected_when_recently_recovered(self) -> None:
-        """INFERENCE_STARTING detection must be suppressed when _recently_recovered is True.
-
-        After replacing a stuck INFERENCE_PROCESSING process the semaphore is released.  Any
-        INFERENCE_STARTING process that was blocked waiting for the semaphore may have a stale
-        heartbeat timestamp (it could not send heartbeats while blocked).  The _recently_recovered
-        guard prevents a cascading false-positive replacement.
-        """
-        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
-
-        mock_manager = MagicMock()
-        mock_manager._recently_recovered = True  # guard is active
-        mock_manager._last_pop_no_jobs_available = False
-        mock_manager._shutting_down = False
-        mock_manager.bridge_data.inference_step_timeout = 60
-        mock_manager.bridge_data.process_timeout = 30
-
-        import time
-
-        mock_process = MagicMock()
-        mock_process.process_id = 0
-        mock_process.last_process_state = HordeProcessState.INFERENCE_STARTING
-        mock_process.last_heartbeat_percent_complete = None
-        mock_process.last_job_referenced = None
-        mock_process.last_heartbeat_delta = 9999
-        mock_process.last_progress_timestamp = time.time() - 9999
-        mock_process.last_received_timestamp = time.time() - 9999
-        mock_process.last_heartbeat_timestamp = time.time() - 9999
-
-        mock_manager._process_map.values.return_value = [mock_process]
-        # is_stuck_on_inference returns True but the guard should block the replacement
-        mock_manager._process_map.is_stuck_on_inference.return_value = True
-
-        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
-            mock_manager, HordeWorkerProcessManager
-        )
-
-        with patch("threading.Thread"):
-            bound_method()
-
-        # Should NOT replace the INFERENCE_STARTING process while recently recovered
-        mock_manager._replace_inference_process.assert_not_called()
-
 
 class TestBridgeDataLoopExceptionHandling:
     """Behavioral tests that the bridge data loop recovers from exceptions."""
@@ -3164,6 +3121,46 @@ class TestReplaceHungInferenceStarting:
         mock_manager._replace_inference_process.assert_not_called()
         assert result is False
 
+    def test_stuck_inference_starting_replaced_even_when_recently_recovered(self) -> None:
+        """An INFERENCE_STARTING process stuck longer than preload_timeout must be replaced
+        even when _recently_recovered is True, provided no INFERENCE_PROCESSING is active.
+
+        With frequent recoveries the _recently_recovered flag can be True for most of the
+        worker's lifetime.  Exempting the elapsed-time INFERENCE_STARTING check from the flag
+        ensures that a stuck process is always detected once preload_timeout expires and no
+        other process holds the semaphore.
+        """
+        proc = self._make_process(0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc])
+        mock_manager._recently_recovered = True  # simulate active recovery window
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True, (
+            "replace_hung_processes must return True for stuck INFERENCE_STARTING "
+            "even when _recently_recovered is True (no active INFERENCE_PROCESSING)"
+        )
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+    def test_stuck_inference_starting_not_replaced_when_inference_processing_active_recently_recovered(
+        self,
+    ) -> None:
+        """INFERENCE_STARTING must NOT be replaced when INFERENCE_PROCESSING is active,
+        even when _recently_recovered is True.  The active INFERENCE_PROCESSING process
+        legitimately holds the semaphore; INFERENCE_STARTING should wait for it.
+        """
+        inference_starting = self._make_process(0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0)
+        inference_processing = self._make_process(1, HordeProcessState.INFERENCE_PROCESSING, time_elapsed=10.0)
+        mock_manager = self._make_manager([inference_starting, inference_processing])
+        mock_manager._recently_recovered = True  # simulate active recovery window
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False
+
 
 class TestProcessEndingReleasesInferenceSemaphoreFromInferenceStarting(_ReceiveLoopHarnessMixin):
     """Tests that the inference semaphore is released when PROCESS_ENDING is received for a
@@ -4124,24 +4121,6 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
         mock_manager._replace_inference_process.assert_called_once_with(proc)
         # No new timer thread should be started when already inside a recovery window
         mock_thread.assert_not_called()
-
-    def test_inference_starting_not_replaced_when_recently_recovered_true(self) -> None:
-        """INFERENCE_STARTING detection must be skipped while _recently_recovered is True.
-
-        Replacing a process in INFERENCE_STARTING shortly after another recovery can cascade;
-        the guard prevents that.
-        """
-        proc = self._make_process(0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0)
-        mock_manager = self._make_manager([proc], recently_recovered=True)
-
-        # _check_and_replace_process returns False for all states
-        mock_manager._check_and_replace_process.return_value = False
-
-        with patch("threading.Thread"):
-            result = mock_manager._bound_replace_hung()
-
-        mock_manager._replace_inference_process.assert_not_called()
-        assert result is False
 
 
 class TestReplaceHungWaitingForJob:

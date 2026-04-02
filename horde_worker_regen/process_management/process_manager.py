@@ -6837,9 +6837,15 @@ class HordeWorkerProcessManager:
           blocks every other process from starting inference.  Newly-replaced processes start in
           PROCESS_STARTING (never INFERENCE_PROCESSING), so there is no false-positive risk from
           a recently-recovered slot.
-        - The ``INFERENCE_STARTING`` check is skipped while the flag is set, to prevent cascading
-          replacements: a process blocked waiting to acquire the semaphore cannot send heartbeats
-          and would falsely appear stuck immediately after a prior replacement freed the semaphore.
+        - The ``INFERENCE_STARTING`` **is_stuck_on_inference()** path is skipped while the flag is
+          set, to prevent cascading replacements: a process blocked waiting to acquire the semaphore
+          cannot send heartbeats and would falsely appear stuck immediately after a prior replacement
+          freed the semaphore.  However, the ``INFERENCE_STARTING``-specific elapsed-time check
+          (which measures time since the most recent job activity, based on the minimum of the
+          last-received and last-heartbeat timestamps, rather than dispatch time alone) is
+          **always** evaluated when no other process is in INFERENCE_PROCESSING; in that case the
+          semaphore is available and any process stuck in INFERENCE_STARTING for longer than
+          ``preload_timeout`` is genuinely hung regardless of how recently a recovery was performed.
         - ``INFERENCE_POST_PROCESSING``, ``MODEL_PRELOADING``, ``MODEL_PRELOADED``,
           ``DOWNLOADING_AUX_MODEL``, and ``PROCESS_STARTING`` are **always** evaluated, so a
           process that is genuinely stuck in one of those states is recovered even when a different
@@ -6996,10 +7002,13 @@ class HordeWorkerProcessManager:
                 # inference is running.  We skip this check when another process IS in
                 # INFERENCE_PROCESSING, because that process legitimately holds the semaphore
                 # and INFERENCE_STARTING should wait for it to finish.
-                # Guard against cascading recoveries: skip when a replacement was made recently.
-                if not self._recently_recovered and (
-                    process_info.last_process_state == HordeProcessState.INFERENCE_STARTING
-                ):
+                # The _recently_recovered guard is deliberately NOT applied here: with frequent
+                # recoveries (e.g. slow/faulted jobs), _recently_recovered may be True for most
+                # of the worker's lifetime, permanently preventing stuck detection for any
+                # INFERENCE_STARTING process.  When no INFERENCE_PROCESSING process is active the
+                # semaphore is available, so any process stuck in INFERENCE_STARTING for longer
+                # than preload_timeout is genuinely hung — safe to replace without the guard.
+                if process_info.last_process_state == HordeProcessState.INFERENCE_STARTING:
                     time_elapsed_starting = now - process_info.last_received_timestamp
                     time_elapsed_starting = min(
                         time_elapsed_starting,
