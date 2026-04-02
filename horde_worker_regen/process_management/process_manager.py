@@ -6841,10 +6841,11 @@ class HordeWorkerProcessManager:
           set, to prevent cascading replacements: a process blocked waiting to acquire the semaphore
           cannot send heartbeats and would falsely appear stuck immediately after a prior replacement
           freed the semaphore.  However, the ``INFERENCE_STARTING``-specific elapsed-time check
-          (which measures time since job dispatch, not heartbeat time) is **always** evaluated when
-          no other process is in INFERENCE_PROCESSING; in that case the semaphore is available and
-          any process stuck in INFERENCE_STARTING for longer than ``preload_timeout`` is genuinely
-          hung regardless of how recently a recovery was performed.
+          (which measures time since the most recent job activity, based on the minimum of the
+          last-received and last-heartbeat timestamps, rather than dispatch time alone) is
+          **always** evaluated when no other process is in INFERENCE_PROCESSING; in that case the
+          semaphore is available and any process stuck in INFERENCE_STARTING for longer than
+          ``preload_timeout`` is genuinely hung regardless of how recently a recovery was performed.
         - ``INFERENCE_POST_PROCESSING``, ``MODEL_PRELOADING``, ``MODEL_PRELOADED``,
           ``DOWNLOADING_AUX_MODEL``, and ``PROCESS_STARTING`` are **always** evaluated, so a
           process that is genuinely stuck in one of those states is recovered even when a different
