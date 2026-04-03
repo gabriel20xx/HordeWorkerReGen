@@ -897,6 +897,13 @@ class WorkerWebUI:
                     console.error('Gallery fetch error:', err);
                     if (glEl) glEl.style.display = 'none';
                     galleryFetchInProgress = false;
+                    // On error, if the grid has no content (e.g. first load) show the empty-state
+                    // so the user isn't left with a completely blank gallery card.
+                    const gridEl = document.getElementById('gallery-grid');
+                    const hasGridContent = gridEl && gridEl.querySelector('.image-grid-item');
+                    if (!hasGridContent) {
+                        if (geEl) geEl.style.display = '';
+                    }
                 });
         }
         // Incrementally update page 1 when new images arrive: prepend only new tiles and load
