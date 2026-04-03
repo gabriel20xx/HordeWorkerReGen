@@ -492,7 +492,8 @@ class WorkerWebUI:
                         <div class="section-header"><span class="section-title">&#128444; Gallery</span><span class="section-count" id="gallery-count">0</span></div>
                         <div class="card">
                             <div id="gallery-new-banner" role="button" tabindex="0" onclick="fetchGalleryPage(1)" onkeydown="if(event.key==='Enter'||event.key===' '){fetchGalleryPage(1);event.preventDefault();}">&#128444; New images available &#8212; click to view latest</div>
-                            <div id="gallery-empty" class="empty-state"><span class="empty-state-icon">&#128444;</span>No images generated yet</div>
+                            <div id="gallery-loading" style="display:none;text-align:center;padding:24px 16px;"><div class="loading-spinner" style="margin:0 auto 8px;"></div><span class="loading-text">Loading gallery&#8230;</span></div>
+                            <div id="gallery-empty" class="empty-state" style="display:none;"><span class="empty-state-icon">&#128444;</span>No images generated yet</div>
                             <div id="gallery-grid" class="image-grid" style="display:none;"></div>
                             <div class="pagination-controls" id="gallery-pagination" style="display:none;">
                                 <button id="gallery-prev" onclick="galleryChangePage(-1)" disabled>&#8249; Prev</button>
@@ -876,17 +877,34 @@ class WorkerWebUI:
         function fetchGalleryPage(page) {
             if (galleryFetchInProgress) return;
             galleryFetchInProgress = true;
+            // Show a loading indicator and hide the empty-state while the fetch is in progress
+            // so the "No images generated yet" message is not shown before we know the result.
+            const glEl = document.getElementById('gallery-loading'), geEl = document.getElementById('gallery-empty');
+            if (glEl) glEl.style.display = 'block';
+            if (geEl) geEl.style.display = 'none';
             // Phase 1: fetch lightweight metadata only so the page skeleton can be shown
             // immediately without waiting for all thumbnail data to transfer.
             fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+'&metadata_only=true')
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                 .then(data => {
+                    if (glEl) glEl.style.display = 'none';
                     renderGalleryPageSkeleton(data.images, data.total, data.page, data.total_pages);
                     galleryFetchInProgress = false;
                     // Phase 2: load each thumbnail one by one, updating the skeleton as images arrive.
                     loadGalleryThumbnailsOneByOne(data.images.map(img => img.gallery_id));
                 })
-                .catch(err => { console.error('Gallery fetch error:', err); galleryFetchInProgress = false; });
+                .catch(err => {
+                    console.error('Gallery fetch error:', err);
+                    if (glEl) glEl.style.display = 'none';
+                    galleryFetchInProgress = false;
+                    // On error, if the grid has no content (e.g. first load) show the empty-state
+                    // so the user isn't left with a completely blank gallery card.
+                    const gridEl = document.getElementById('gallery-grid');
+                    const hasGridContent = gridEl && gridEl.querySelector('.image-grid-item');
+                    if (!hasGridContent) {
+                        if (geEl) geEl.style.display = '';
+                    }
+                });
         }
         // Incrementally update page 1 when new images arrive: prepend only new tiles and load
         // their thumbnails without disturbing images that are already loaded in the grid.
