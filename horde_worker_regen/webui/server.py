@@ -518,7 +518,7 @@ class WorkerWebUI:
                 <!-- LOGS PAGE -->
                 <div class="page" id="page-logs">
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output">&#9646;&#9646; Pause</button></div>
+                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button></div>
                         <div class="card" style="padding:0;overflow:hidden;">
                             <div id="console-logs" class="console-container" style="border-radius:12px;"><div style="text-align:center;color:#475569;padding:18px;">No logs available</div></div>
                         </div>
@@ -725,8 +725,8 @@ class WorkerWebUI:
         function toggleConsolePause() {
             consolePaused = !consolePaused;
             const btn = document.getElementById('console-pause-btn');
-            if (consolePaused) { btn.textContent = '\u25B6 Resume'; btn.classList.add('paused'); }
-            else { btn.textContent = '\u25AE\u25AE Pause'; btn.classList.remove('paused'); }
+            if (consolePaused) { btn.textContent = '\u25B6 Resume'; btn.classList.add('paused'); btn.title = 'Resume console output'; btn.setAttribute('aria-pressed', 'true'); }
+            else { btn.textContent = '\u25AE\u25AE Pause'; btn.classList.remove('paused'); btn.title = 'Pause console output'; btn.setAttribute('aria-pressed', 'false'); }
         }
         const ERRORS_PAGE_SIZE = 10;
         let errorsCurrentPage = 1, errorsTotal = 0, errorsTotalPages = 1, errorsPageData = [];
