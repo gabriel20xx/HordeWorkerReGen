@@ -1451,15 +1451,41 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
 
         mock_manager._start_inference_process.assert_not_called()
 
-    def test_process_starting_prior_state_skips_restart(self) -> None:
+    def test_process_starting_prior_state_restarts_with_rate_limiting(self) -> None:
         """When PROCESS_ENDED arrives and the prior state was PROCESS_STARTING, the process
-        must NOT be restarted to avoid a tight crash/restart loop caused by init failures."""
+        must be restarted (with rate-limiting) so that the slot is not left permanently dead."""
         from horde_worker_regen.process_management.process_manager import HordeProcessType
 
         mock_manager = self._run_receive_process_ended(
             process_type=HordeProcessType.INFERENCE,
             shutting_down=False,
             prior_state=HordeProcessState.PROCESS_STARTING,
+        )
+
+        mock_manager._start_inference_process.assert_called_once_with(0)
+        assert mock_manager._num_process_recoveries == 1
+
+    def test_process_starting_prior_state_rate_limited_after_five_failures(self) -> None:
+        """When a process repeatedly ends in PROCESS_STARTING, restart is suppressed after
+        5 failures within 60s to prevent a tight crash loop."""
+        import time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        now = time.time()
+        mock_manager = MagicMock()
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_in_progress = []
+        mock_manager._shutting_down = False
+        mock_manager._num_process_recoveries = 0
+        mock_manager._process_restart_history = {0: deque([now - 5, now - 4, now - 3, now - 2, now - 1], maxlen=5)}
+
+        self._run_receive_process_ended(
+            process_type=HordeProcessType.INFERENCE,
+            shutting_down=False,
+            prior_state=HordeProcessState.PROCESS_STARTING,
+            existing_manager=mock_manager,
         )
 
         mock_manager._start_inference_process.assert_not_called()
