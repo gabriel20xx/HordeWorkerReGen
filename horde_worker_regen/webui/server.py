@@ -256,6 +256,10 @@ class WorkerWebUI:
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
 
         .console-container { background: #0f172a; border-radius: 8px; padding: 12px 14px; max-height: 400px; overflow-y: auto; font-family: 'Courier New', Consolas, 'Lucida Console', monospace; font-size: 0.8rem; color: #e2e8f0; line-height: 1.55; }
+        .console-pause-btn { margin-left: auto; background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; }
+        .console-pause-btn:hover { background: #cbd5e1; }
+        .console-pause-btn.paused { background: var(--accent); color: #fff; }
+        .console-pause-btn.paused:hover { background: var(--accent-hover); }
 
         /* ---- Gallery ---- */
         .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; width: 100%; }
@@ -514,7 +518,7 @@ class WorkerWebUI:
                 <!-- LOGS PAGE -->
                 <div class="page" id="page-logs">
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#128203; Console</span></div>
+                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button></div>
                         <div class="card" style="padding:0;overflow:hidden;">
                             <div id="console-logs" class="console-container" style="border-radius:12px;"><div style="text-align:center;color:#475569;padding:18px;">No logs available</div></div>
                         </div>
@@ -717,6 +721,13 @@ class WorkerWebUI:
             return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
         }
         const SCROLL_TOLERANCE_PX = 1;
+        let consolePaused = false;
+        function toggleConsolePause() {
+            consolePaused = !consolePaused;
+            const btn = document.getElementById('console-pause-btn');
+            if (consolePaused) { btn.textContent = '\u25B6 Resume'; btn.classList.add('paused'); btn.title = 'Resume console output'; btn.setAttribute('aria-pressed', 'true'); }
+            else { btn.textContent = '\u25AE\u25AE Pause'; btn.classList.remove('paused'); btn.title = 'Pause console output'; btn.setAttribute('aria-pressed', 'false'); }
+        }
         const ERRORS_PAGE_SIZE = 10;
         let errorsCurrentPage = 1, errorsTotal = 0, errorsTotalPages = 1, errorsPageData = [];
         let _errorsAbortController = null;
@@ -1323,11 +1334,13 @@ class WorkerWebUI:
                         else fetchErrorsPage(errorsCurrentPage);
                     }
                     const cl = document.getElementById('console-logs');
-                    if (data.console_logs && data.console_logs.length > 0) {
-                        const atb = isScrolledToBottom(cl, SCROLL_TOLERANCE_PX);
-                        cl.innerHTML = data.console_logs.map(log => '<div style="margin: 2px 0; white-space: pre-wrap; word-break: break-word;">'+ansiToHtml(log)+'</div>').join('');
-                        if (atb) cl.scrollTop = cl.scrollHeight;
-                    } else { cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>'; }
+                    if (!consolePaused) {
+                        if (data.console_logs && data.console_logs.length > 0) {
+                            const atb = isScrolledToBottom(cl, SCROLL_TOLERANCE_PX);
+                            cl.innerHTML = data.console_logs.map(log => '<div style="margin: 2px 0; white-space: pre-wrap; word-break: break-word;">'+ansiToHtml(log)+'</div>').join('');
+                            if (atb) cl.scrollTop = cl.scrollHeight;
+                        } else { cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>'; }
+                    }
                 })
                 .catch(error => {
                     if (error.name === 'AbortError') return;
