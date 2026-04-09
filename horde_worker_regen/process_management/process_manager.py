@@ -2457,38 +2457,36 @@ class HordeWorkerProcessManager:
                     # the process to restore the configured worker capacity.
                     ended_process_info = self._process_map[message.process_id]
                     if not self._shutting_down and ended_process_info.process_type == HordeProcessType.INFERENCE:
-                        if prior_process_state == HordeProcessState.PROCESS_STARTING:
-                            # The process never reached WAITING_FOR_JOB — it likely failed during
-                            # initialisation (e.g. no models available).  Restarting immediately
-                            # would create a tight crash/restart loop, so skip the restart.
+                        # Rate-limit restarts per process slot to prevent a tight crash/restart
+                        # loop when a process repeatedly fails shortly after starting (including
+                        # when it never made it past PROCESS_STARTING due to an init failure).
+                        restart_history = self._process_restart_history.setdefault(
+                            message.process_id,
+                            deque(maxlen=5),
+                        )
+                        now_ts = time.time()
+                        restart_history.append(now_ts)
+                        if (
+                            len(restart_history) == restart_history.maxlen
+                            and now_ts - restart_history[0] < 60
+                        ):
                             logger.error(
-                                f"Inference process {message.process_id} ended while still in "
-                                "PROCESS_STARTING; skipping auto-restart to avoid a crash loop.",
+                                f"Inference process {message.process_id} has ended "
+                                f"{restart_history.maxlen} times within 60s; "
+                                "skipping auto-restart to avoid a crash loop.",
                             )
                         else:
-                            # Rate-limit restarts per process slot to prevent a tight crash/restart
-                            # loop when a process repeatedly fails shortly after starting.
-                            restart_history = self._process_restart_history.setdefault(
-                                message.process_id,
-                                deque(maxlen=5),
-                            )
-                            now_ts = time.time()
-                            restart_history.append(now_ts)
-                            if (
-                                len(restart_history) == restart_history.maxlen
-                                and now_ts - restart_history[0] < 60
-                            ):
-                                logger.error(
-                                    f"Inference process {message.process_id} has ended "
-                                    f"{restart_history.maxlen} times within 60s; "
-                                    "skipping auto-restart to avoid a crash loop.",
+                            if prior_process_state == HordeProcessState.PROCESS_STARTING:
+                                logger.warning(
+                                    f"Inference process {message.process_id} ended while still in "
+                                    "PROCESS_STARTING; restarting with rate limiting.",
                                 )
                             else:
                                 logger.info(
                                     f"Restarting inference process {message.process_id} after unexpected end",
                                 )
-                                self._start_inference_process(message.process_id)
-                                self._num_process_recoveries += 1
+                            self._start_inference_process(message.process_id)
+                            self._num_process_recoveries += 1
                 else:
                     logger.debug(f"Process {message.process_id} changed state to {message.process_state}")
 
