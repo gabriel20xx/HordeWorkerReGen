@@ -109,7 +109,7 @@ MAX_WEBUI_QUEUE_ITEMS = 10
 """Maximum number of queued jobs to display in the web UI."""
 
 METRICS_CALCULATION_WINDOW_SECONDS = 3600
-"""Time window (1 hour) for calculating per-hour metrics such as kudos per hour and images per hour."""
+"""Rolling time window, in seconds, for calculating rate-based metrics such as kudos per hour and images per hour."""
 
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
@@ -5265,7 +5265,7 @@ class HordeWorkerProcessManager:
         current_time = time.time()
 
         for event_time, kudos in reversed(self.kudos_events):
-            if current_time - event_time > 3600:
+            if current_time - event_time > METRICS_CALCULATION_WINDOW_SECONDS:
                 break
 
             num_events_found += 1
@@ -6481,24 +6481,21 @@ class HordeWorkerProcessManager:
             # If torch is not available or CUDA is not available, GPU usage will be 0
             pass
 
-        # Calculate kudos per hour
+        # Calculate kudos per hour and images per hour over the rolling window
+        now = time.time()
+        cutoff = now - METRICS_CALCULATION_WINDOW_SECONDS
+
+        # Prune and sum kudos events
         kudos_per_hour = 0.0
         if len(self.kudos_events) > 0:
-            recent_kudos = sum(
-                kudos
-                for timestamp, kudos in self.kudos_events
-                if time.time() - timestamp < METRICS_CALCULATION_WINDOW_SECONDS
-            )
-            kudos_per_hour = recent_kudos
+            self.kudos_events = [(ts, k) for ts, k in self.kudos_events if ts >= cutoff]
+            kudos_per_hour = sum(k for _, k in self.kudos_events)
 
-        # Calculate images per hour
+        # Prune and sum image events
         images_per_hour = 0.0
         if len(self.image_events) > 0:
-            images_per_hour = sum(
-                count
-                for timestamp, count in self.image_events
-                if time.time() - timestamp < METRICS_CALCULATION_WINDOW_SECONDS
-            )
+            self.image_events = [(ts, c) for ts, c in self.image_events if ts >= cutoff]
+            images_per_hour = sum(c for _, c in self.image_events)
 
         # Get user kudos total and username
         user_kudos_total = None
