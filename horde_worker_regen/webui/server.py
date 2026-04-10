@@ -787,6 +787,27 @@ class WorkerWebUI:
         // Evicts the oldest entry once the cache exceeds _GALLERY_THUMBNAIL_CACHE_MAX to bound memory.
         const _galleryThumbnailCache = new Map();
         const _GALLERY_THUMBNAIL_CACHE_MAX = 1000;
+        const GALLERY_VALID_COLS = [1, 2, 3, 4, 6, 12];
+        const GALLERY_MIN_ITEM_PX = 160;
+        const GALLERY_GRID_GAP_PX = 10;
+        function updateGalleryColumns() {
+            const grid = document.getElementById('gallery-grid');
+            if (!grid) return;
+            const width = grid.clientWidth;
+            if (!width) return;
+            // Account for gaps between columns so tiles never shrink below GALLERY_MIN_ITEM_PX.
+            // For n columns there are (n-1) gaps, so the available width per column is
+            // (width - (n-1)*gap) / n >= GALLERY_MIN_ITEM_PX, i.e. n <= (width + gap) / (GALLERY_MIN_ITEM_PX + gap).
+            const rawCols = Math.max(1, Math.floor((width + GALLERY_GRID_GAP_PX) / (GALLERY_MIN_ITEM_PX + GALLERY_GRID_GAP_PX)));
+            const cols = GALLERY_VALID_COLS.filter(c => c <= rawCols).pop() || 1;
+            grid.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(' + GALLERY_MIN_ITEM_PX + 'px, 1fr))';
+        }
+        let _galleryResizeObserver = null;
+        if (typeof ResizeObserver !== 'undefined') {
+            _galleryResizeObserver = new ResizeObserver(function() { updateGalleryColumns(); });
+            const _galleryGridEl = document.getElementById('gallery-grid');
+            if (_galleryGridEl) _galleryResizeObserver.observe(_galleryGridEl);
+        }
         function _cacheThumbnail(galleryId, dataUrl) {
             _galleryThumbnailCache.set(galleryId, dataUrl);
             if (_galleryThumbnailCache.size > _GALLERY_THUMBNAIL_CACHE_MAX) {
@@ -806,6 +827,7 @@ class WorkerWebUI:
                 pag.style.display = 'none'; return;
             }
             empty.style.display = 'none'; grid.style.display = '';
+            updateGalleryColumns();
             // Use stable gallery_id values (assigned at insertion time) rather than
             // positional indices, so the overlay remains correct even when new images
             // arrive after the page was rendered.
@@ -941,6 +963,7 @@ class WorkerWebUI:
                         pag.style.display = 'none'; return;
                     }
                     empty.style.display = 'none'; grid.style.display = '';
+                    updateGalleryColumns();
                     const fetchedIds = data.images.map(img => img.gallery_id);
                     const fetchedSet = new Set(fetchedIds);
                     const existingItems = Array.from(grid.querySelectorAll('.image-grid-item[data-gallery-id]'));
