@@ -306,7 +306,8 @@ class WorkerWebUI:
         .pagination-controls button:hover:not(:disabled) { background: var(--accent-hover); }
         .pagination-controls button:disabled { background: #c7d2fe; cursor: default; }
         .pagination-info { font-size: 0.82rem; color: #64748b; }
-        .page-size-select { font-size: 0.82rem; color: #334155; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+        .page-size-select { font-size: 0.82rem; color: inherit; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; cursor: pointer; transition: border-color 0.15s; }
+        .page-size-select:focus { outline: none; border-color: var(--accent); }
 
         .scrollable { max-height: 260px; overflow-y: auto; }
         .scrollable-tall { max-height: 400px; overflow-y: auto; }
@@ -378,6 +379,7 @@ class WorkerWebUI:
         [data-theme="dark"] .loading-spinner { border-color: #2d3f55; border-top-color: var(--accent); }
         [data-theme="dark"] .empty-state { color: #64748b; }
         [data-theme="dark"] .image-grid-item { background: #151e2e; }
+        [data-theme="dark"] .page-size-select { color: #cbd5e1; }
         [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
 
         /* ---- Gallery new-images banner ---- */
@@ -503,7 +505,7 @@ class WorkerWebUI:
                                 <button id="gallery-prev" onclick="galleryChangePage(-1)" disabled>&#8249; Prev</button>
                                 <span class="pagination-info" id="gallery-page-info">Page 1 of 1</span>
                                 <button id="gallery-next" onclick="galleryChangePage(1)">Next &#8250;</button>
-                                <label for="gallery-page-size" style="font-size:0.82rem;color:#64748b;">Per page:</label>
+                                <label for="gallery-page-size" class="pagination-info">Per page:</label>
                                 <select id="gallery-page-size" class="page-size-select" onchange="galleryChangePageSize(this.value)">
                                     <option value="12">12</option>
                                     <option value="24">24</option>
@@ -765,7 +767,7 @@ class WorkerWebUI:
             const newPage = Math.min(Math.max(1, errorsCurrentPage + delta), errorsTotalPages);
             if (newPage !== errorsCurrentPage) fetchErrorsPage(newPage);
         }
-        const GALLERY_DEFAULT_PAGE_SIZE = 48;
+        const GALLERY_DEFAULT_PAGE_SIZE = 96;
         let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
         // Sync the select element's initial value with the JS constant (single source of truth)
         document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
@@ -1462,7 +1464,7 @@ class WorkerWebUI:
 
         Query parameters:
             page: 1-based page number (default: 1)
-            page_size: images per page (default: 48, max: 96)
+            page_size: images per page (default: 96, max: 96)
             metadata_only: if "true"/"1", strip both ``thumbnail`` and ``base64`` so
                 only lightweight metadata (gallery_id, timestamp, model) is returned.
                 Use this to render the page skeleton quickly; images can then be
@@ -1473,9 +1475,9 @@ class WorkerWebUI:
         except ValueError:
             page = 1
         try:
-            page_size = min(96, max(1, int(request.rel_url.query.get("page_size", "48"))))
+            page_size = min(96, max(1, int(request.rel_url.query.get("page_size", "96"))))
         except ValueError:
-            page_size = 48
+            page_size = 96
         metadata_only = request.rel_url.query.get("metadata_only", "").lower() in ("1", "true", "yes")
 
         # Gallery is stored oldest-first (insertion order); serve newest-first to the UI.
