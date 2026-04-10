@@ -788,22 +788,25 @@ class WorkerWebUI:
         const _GALLERY_THUMBNAIL_CACHE_MAX = 1000;
         const GALLERY_VALID_COLS = [1, 2, 3, 4, 6, 12];
         const GALLERY_MIN_ITEM_PX = 160;
+        const GALLERY_GRID_GAP_PX = 10;
         function updateGalleryColumns() {
             const grid = document.getElementById('gallery-grid');
             if (!grid) return;
             const width = grid.clientWidth;
             if (!width) return;
-            const rawCols = Math.max(1, Math.floor(width / GALLERY_MIN_ITEM_PX));
+            // Account for gaps between columns so tiles never shrink below GALLERY_MIN_ITEM_PX.
+            // For n columns there are (n-1) gaps, so the available width per column is
+            // (width - (n-1)*gap) / n >= GALLERY_MIN_ITEM_PX, i.e. n <= (width + gap) / (GALLERY_MIN_ITEM_PX + gap).
+            const rawCols = Math.max(1, Math.floor((width + GALLERY_GRID_GAP_PX) / (GALLERY_MIN_ITEM_PX + GALLERY_GRID_GAP_PX)));
             const cols = GALLERY_VALID_COLS.filter(c => c <= rawCols).pop() || 1;
-            grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+            grid.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(' + GALLERY_MIN_ITEM_PX + 'px, 1fr))';
         }
-        (function() {
-            if (typeof ResizeObserver !== 'undefined') {
-                const _galleryResizeObserver = new ResizeObserver(function() { updateGalleryColumns(); });
-                const _galleryGridEl = document.getElementById('gallery-grid');
-                if (_galleryGridEl) _galleryResizeObserver.observe(_galleryGridEl);
-            }
-        })();
+        let _galleryResizeObserver = null;
+        if (typeof ResizeObserver !== 'undefined') {
+            _galleryResizeObserver = new ResizeObserver(function() { updateGalleryColumns(); });
+            const _galleryGridEl = document.getElementById('gallery-grid');
+            if (_galleryGridEl) _galleryResizeObserver.observe(_galleryGridEl);
+        }
         function _cacheThumbnail(galleryId, dataUrl) {
             _galleryThumbnailCache.set(galleryId, dataUrl);
             if (_galleryThumbnailCache.size > _GALLERY_THUMBNAIL_CACHE_MAX) {
