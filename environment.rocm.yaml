@@ -6,4 +6,4 @@ channels:
 dependencies:
   - git
   - pip
-  - python==3.11.6
+  - python==3.12

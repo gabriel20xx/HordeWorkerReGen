@@ -16,43 +16,100 @@
 ### Caveats and Limitations:
 > WSL will probably be slower than a native Linux System. Unless you have a lot of RAM, you might also run into memory issues. It might be neccessary to increase WSL memory limits or configure SWAP like described here: https://learn.microsoft.com/en-us/windows/wsl/wsl-config
 
-### System setup:
+### Step 1: Install the Windows Build Tools & SDK (On your Windows Host)
+Before touching Linux, you need the Microsoft development headers so the Linux compiler can understand how to talk to Windows.
+
+* Download the **Visual Studio Build Tools** from Microsoft's developer website.
+* Run the installer and select the **"Desktop development with C++"** workload.
+* In the installation details panel on the right, ensure that **Windows 11 SDK (10.0.26100.0)** is checked, then click Install.
+* Once installed, confirm the headers exist by navigating your Windows File Explorer to `C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\`. We will need this path in Step 5.
+
+### Step 2: System setup
 * Make sure your Windows OS and AMD drivers are up to date.
 * You need to enable and install WSL on your system. Open a command prompt with Administrative privileges (search for cmd, then click "Run as Administrator")
-* Type the following to download and enable WSL and install the Ubuntu 22.04 image:
+* Type the following to download and enable WSL and install the Ubuntu 24.04 image:
   - If that command throws an error about WSL not being installed/enabled, you might need to run just `wsl --install` before being able install a specific distribution.
 ```
-wsl --install -d Ubuntu-22.04
+wsl --install -d Ubuntu-24.04
 ```
-* If you have previously used Ubuntu-22.04 WSL, please reset the image (Note: this will delete the data inside the WSL image, make sure it's saved elsewhere):
+* If you have previously used Ubuntu-24.04 WSL, please reset the image (Note: this will delete the data inside the WSL image, make sure it's saved elsewhere):
 ```
-wsl --unregister Ubuntu-22.04
+wsl --unregister Ubuntu-24.04
 ```
 * When the terminal asks you for a "unix username" type in a simple username. It will then ask for a password. Type in the password you want to use, press enter to confirm and repeat. It will not show any output, but your key presses are still registered.
-* To open your Ubuntu image after closing the terminal window you can search for `Ubuntu 22.04` in the Start Menu, or open a Termial and enter the command `wsl -d Ubuntu-22.04`
+* To open your Ubuntu image after closing the terminal window you can search for `Ubuntu 24.04` in the Start Menu, or open a Termial and enter the command `wsl -d Ubuntu-24.04`
 
-### Ubuntu ROCm install:
-* First we need to update the image, then install ROCm. All these actions require root privileges, so switch to root for now and enter your password:
+### Step 3: Install Ubuntu 24.04 Build Dependencies
+Boot up your Ubuntu 24.04 WSL terminal and install the base tools needed to compile code:
+
+```bash
+sudo apt update && sudo apt install -y build-essential cmake git ca-certificates wget gpg
 ```
-sudo su
+
+### Step 4: Add the ROCm Repo, PIN IT, and Install
+We will add the repository, set the priority pin so Ubuntu doesn't get confused, and then install. Run these block by block:
+
+```bash
+# 1. Download and add the AMD GPG key
+sudo mkdir --parents --mode=0755 /etc/apt/keyrings
+wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
+
+# 2. Add the ROCm repository specifically for Ubuntu 24.04 (Noble)
+sudo tee /etc/apt/sources.list.d/rocm.list << EOF
+deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/latest noble main
+EOF
+
+# 3. Set the Apt priority pin to prefer AMD's repo over Ubuntu's defaults
+echo -e "Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600" | sudo tee /etc/apt/preferences.d/rocm-pin-600
+
+# 4. Update your package list and install the ROCm stack
+sudo apt update
+sudo apt install -y rocm rocm-dev
 ```
-* Now update the system and install a few tools:
+*(Grab a coffee, step 4 will download a few gigabytes of data).*
+
+### Step 5: Clone and Build librocdxg
+Now we compile the bridge library. We will point the Linux compiler directly to your mounted Windows C: drive so it can read the Windows SDK headers.
+
+```bash
+# 1. Clone the repository to your local WSL
+git clone https://github.com/ROCm/librocdxg.git
+cd librocdxg
+
+# 2. Set the Windows SDK path 
+# IMPORTANT: Change "10.0.26100.0" below to match the folder version you found in Step 1!
+export win_sdk='/mnt/c/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/'
+ 
+# 3. Configure the build environment
+mkdir -p build
+cd build
+cmake .. -DWIN_SDK="${win_sdk}/shared"
+
+# 4. Compile and install the library
+make
+sudo make install
 ```
-apt update && apt full-upgrade -y && apt autopurge -y
-apt install -y curl git nano wget
+
+### Step 6: Enable Detection and Verify
+Finally, we need to set the environment variables so ROCm knows to route through the newly built DXG library.
+
+```bash
+# 1. Add the environment variables to your bash profile
+echo 'export HSA_ENABLE_DXG_DETECTION=1' >> ~/.bashrc
+echo 'export PATH=/opt/rocm/bin:$PATH' >> ~/.bashrc
+
+# 2. Reload your profile
+source ~/.bashrc
 ```
-* Now we can install ROCm. Command 3 will take a while to download and install everything:
-```
-wget -r -nd -np -A 'amdgpu-install*all.deb' "https://repo.radeon.com/amdgpu-install/6.1.3/ubuntu/jammy/"
-apt-get install -y ./amdgpu-install*all.deb
-amdgpu-install -y --usecase=rocm,wsl --no-dkms
-```
-* We can now check whether ROCm was installed successfully with the `rocminfo` command.
-```
+
+Once that is all done, run the moment of truth:
+
+```bash
 rocminfo
 ```
+
 * It should return something like:
-```
+```text
 WSL environment detected.
 =====================
 HSA System Attributes
@@ -70,10 +127,6 @@ DMAbuf Support:          NO
 HSA Agents
 ==========
 ...
-```
-* Now type `exit` to leave the root shell
-```
-exit
 ```
 
 ### Installing the worker:
