@@ -6516,7 +6516,7 @@ class HordeWorkerProcessManager:
             worker_name=self.bridge_data.dreamer_worker_name,
             horde_username=horde_username,
             jobs_popped=self.total_num_jobs_queued,
-            jobs_queued=len(self.jobs_pending_inference),
+            jobs_queued=sum(1 for job in self.jobs_pending_inference if job not in self.jobs_in_progress),
             time_without_jobs=current_time_without_jobs,
             jobs_completed=self.total_num_completed_jobs,
             jobs_faulted=self._num_jobs_faulted,
