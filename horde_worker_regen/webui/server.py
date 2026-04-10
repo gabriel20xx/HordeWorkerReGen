@@ -786,6 +786,24 @@ class WorkerWebUI:
         // Evicts the oldest entry once the cache exceeds _GALLERY_THUMBNAIL_CACHE_MAX to bound memory.
         const _galleryThumbnailCache = new Map();
         const _GALLERY_THUMBNAIL_CACHE_MAX = 1000;
+        const GALLERY_VALID_COLS = [1, 2, 3, 4, 6, 12];
+        const GALLERY_MIN_ITEM_PX = 160;
+        function updateGalleryColumns() {
+            const grid = document.getElementById('gallery-grid');
+            if (!grid) return;
+            const width = grid.clientWidth;
+            if (!width) return;
+            const rawCols = Math.max(1, Math.floor(width / GALLERY_MIN_ITEM_PX));
+            const cols = GALLERY_VALID_COLS.filter(c => c <= rawCols).pop() || 1;
+            grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+        }
+        (function() {
+            if (typeof ResizeObserver !== 'undefined') {
+                const _galleryResizeObserver = new ResizeObserver(function() { updateGalleryColumns(); });
+                const _galleryGridEl = document.getElementById('gallery-grid');
+                if (_galleryGridEl) _galleryResizeObserver.observe(_galleryGridEl);
+            }
+        })();
         function _cacheThumbnail(galleryId, dataUrl) {
             _galleryThumbnailCache.set(galleryId, dataUrl);
             if (_galleryThumbnailCache.size > _GALLERY_THUMBNAIL_CACHE_MAX) {
@@ -805,6 +823,7 @@ class WorkerWebUI:
                 pag.style.display = 'none'; return;
             }
             empty.style.display = 'none'; grid.style.display = '';
+            updateGalleryColumns();
             // Use stable gallery_id values (assigned at insertion time) rather than
             // positional indices, so the overlay remains correct even when new images
             // arrive after the page was rendered.
@@ -940,6 +959,7 @@ class WorkerWebUI:
                         pag.style.display = 'none'; return;
                     }
                     empty.style.display = 'none'; grid.style.display = '';
+                    updateGalleryColumns();
                     const fetchedIds = data.images.map(img => img.gallery_id);
                     const fetchedSet = new Set(fetchedIds);
                     const existingItems = Array.from(grid.querySelectorAll('.image-grid-item[data-gallery-id]'));
