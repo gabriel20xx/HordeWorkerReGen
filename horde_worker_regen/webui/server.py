@@ -55,6 +55,7 @@ class WorkerWebUI:
             "processes_recovered": 0,
             "kudos_earned_session": 0.0,
             "kudos_per_hour": 0.0,
+            "images_per_hour": 0.0,
             "current_job": None,
             "job_queue": [],
             "processes": [],
@@ -451,7 +452,7 @@ class WorkerWebUI:
                 <div class="page active" id="page-overview">
                     <div class="grid-4" style="margin-bottom: 14px;">
                         <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-kudos-total">-</div></div>
-                        <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="kudos-per-hour">0</div></div>
+                        <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="images-per-hour">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value accent" id="jobs-popped">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="jobs-completed">0</div></div>
                     </div>
@@ -1203,7 +1204,7 @@ class WorkerWebUI:
                     document.getElementById('uptime').textContent = uptimeStr;
                     document.getElementById('mobile-uptime').textContent = '\u23F1 ' + uptimeStr;
                     document.getElementById('user-kudos-total').textContent = data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
-                    document.getElementById('kudos-per-hour').textContent = data.kudos_per_hour.toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
                     document.getElementById('jobs-completed').textContent = data.jobs_completed;
                     document.getElementById('jobs-faulted').textContent = data.jobs_faulted;
@@ -1580,6 +1581,7 @@ class WorkerWebUI:
         processes_recovered: int | None = None,
         kudos_earned_session: float | None = None,
         kudos_per_hour: float | None = None,
+        images_per_hour: float | None = None,
         current_job: dict[str, Any] | None = None,
         job_queue: list[dict[str, Any]] | None = None,
         processes: list[dict[str, Any]] | None = None,
@@ -1611,6 +1613,7 @@ class WorkerWebUI:
             processes_recovered: Total number of jobs recovered this session
             kudos_earned_session: Total kudos earned this session
             kudos_per_hour: Current kudos per hour rate
+            images_per_hour: Current images generated per hour rate
             current_job: Information about the current job being processed
             job_queue: List of jobs in the queue
             processes: List of process information
@@ -1649,6 +1652,8 @@ class WorkerWebUI:
             self.status_data["kudos_earned_session"] = kudos_earned_session
         if kudos_per_hour is not None:
             self.status_data["kudos_per_hour"] = kudos_per_hour
+        if images_per_hour is not None:
+            self.status_data["images_per_hour"] = images_per_hour
         if current_job is not None:
             self.status_data["current_job"] = current_job
         if job_queue is not None:

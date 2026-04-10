@@ -108,8 +108,8 @@ BYTES_TO_MEGABYTES = 1024 * 1024
 MAX_WEBUI_QUEUE_ITEMS = 10
 """Maximum number of queued jobs to display in the web UI."""
 
-KUDOS_CALCULATION_WINDOW_SECONDS = 3600
-"""Time window (1 hour) for calculating kudos per hour."""
+METRICS_CALCULATION_WINDOW_SECONDS = 3600
+"""Rolling time window, in seconds, for calculating rate-based metrics such as kudos per hour and images per hour."""
 
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
@@ -1427,7 +1427,9 @@ class HordeWorkerProcessManager:
     kudos_generated_this_session: float = 0
     """The amount of kudos generated this entire session."""
     kudos_events: list[tuple[float, float]]
-    """A deque of kudos events, each is a tuple of the time the event occurred and the amount of kudos generated."""
+    """A list of kudos events, each is a tuple of the time the event occurred and the amount of kudos generated."""
+    image_events: list[tuple[float, int]]
+    """A list of image completion events, each is a tuple of the time the event occurred and the number of images generated."""
     session_start_time: float = 0
     """The time at which the session started in epoch time."""
 
@@ -1687,6 +1689,7 @@ class HordeWorkerProcessManager:
         self._process_message_queue = multiprocessing.Queue()
 
         self.kudos_events: list[tuple[float, float]] = []
+        self.image_events: list[tuple[float, int]] = []
 
         self._api_messages_received = {}
 
@@ -3946,6 +3949,7 @@ class HordeWorkerProcessManager:
 
             self.kudos_generated_this_session += job_submit_response.reward
             self.kudos_events.append((time.time(), job_submit_response.reward))
+            self.image_events.append((time.time(), new_submit.batch_count))
             new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
 
             # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
@@ -5261,7 +5265,7 @@ class HordeWorkerProcessManager:
         current_time = time.time()
 
         for event_time, kudos in reversed(self.kudos_events):
-            if current_time - event_time > 3600:
+            if current_time - event_time > METRICS_CALCULATION_WINDOW_SECONDS:
                 break
 
             num_events_found += 1
@@ -6477,15 +6481,21 @@ class HordeWorkerProcessManager:
             # If torch is not available or CUDA is not available, GPU usage will be 0
             pass
 
-        # Calculate kudos per hour
+        # Calculate kudos per hour and images per hour over the rolling window
+        now = time.time()
+        cutoff = now - METRICS_CALCULATION_WINDOW_SECONDS
+
+        # Prune and sum kudos events
         kudos_per_hour = 0.0
         if len(self.kudos_events) > 0:
-            recent_kudos = sum(
-                kudos
-                for timestamp, kudos in self.kudos_events
-                if time.time() - timestamp < KUDOS_CALCULATION_WINDOW_SECONDS
-            )
-            kudos_per_hour = recent_kudos
+            self.kudos_events = [(ts, k) for ts, k in self.kudos_events if ts >= cutoff]
+            kudos_per_hour = sum(k for _, k in self.kudos_events)
+
+        # Prune and sum image events
+        images_per_hour = 0.0
+        if len(self.image_events) > 0:
+            self.image_events = [(ts, c) for ts, c in self.image_events if ts >= cutoff]
+            images_per_hour = sum(c for _, c in self.image_events)
 
         # Get user kudos total and username
         user_kudos_total = None
@@ -6513,6 +6523,7 @@ class HordeWorkerProcessManager:
             processes_recovered=self._num_process_recoveries,
             kudos_earned_session=self.kudos_generated_this_session,
             kudos_per_hour=kudos_per_hour,
+            images_per_hour=images_per_hour,
             current_job=current_job,
             job_queue=job_queue,
             processes=processes,

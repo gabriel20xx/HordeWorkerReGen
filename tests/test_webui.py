@@ -31,6 +31,7 @@ def test_webui_status_update() -> None:
         processes_recovered=2,
         kudos_earned_session=100.5,
         kudos_per_hour=50.25,
+        images_per_hour=12.5,
     )
 
     # Verify the values were updated
@@ -43,6 +44,7 @@ def test_webui_status_update() -> None:
     assert webui.status_data["processes_recovered"] == 2
     assert webui.status_data["kudos_earned_session"] == 100.5
     assert webui.status_data["kudos_per_hour"] == 50.25
+    assert webui.status_data["images_per_hour"] == 12.5
 
 
 def test_webui_vram_resources() -> None:
@@ -806,6 +808,30 @@ async def test_webui_errors_endpoint_edge_cases() -> None:
             assert response.status == 200
             data_cap = await response.json()
         assert data_cap["page_size"] == 100
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_status_includes_images_per_hour() -> None:
+    """Test that /api/status JSON payload includes the images_per_hour field."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        webui.update_status(images_per_hour=7.5)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/status",
+        ) as response:
+            assert response.status == 200
+            status = await response.json()
+
+        assert "images_per_hour" in status, "/api/status must include images_per_hour"
+        assert status["images_per_hour"] == 7.5
     finally:
         await webui.stop()
 
