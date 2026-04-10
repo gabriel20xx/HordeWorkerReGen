@@ -1428,6 +1428,8 @@ class HordeWorkerProcessManager:
     """The amount of kudos generated this entire session."""
     kudos_events: list[tuple[float, float]]
     """A deque of kudos events, each is a tuple of the time the event occurred and the amount of kudos generated."""
+    image_events: list[tuple[float, int]]
+    """A list of image completion events, each is a tuple of the time the event occurred and the number of images generated."""
     session_start_time: float = 0
     """The time at which the session started in epoch time."""
 
@@ -1687,6 +1689,7 @@ class HordeWorkerProcessManager:
         self._process_message_queue = multiprocessing.Queue()
 
         self.kudos_events: list[tuple[float, float]] = []
+        self.image_events: list[tuple[float, int]] = []
 
         self._api_messages_received = {}
 
@@ -3946,6 +3949,7 @@ class HordeWorkerProcessManager:
 
             self.kudos_generated_this_session += job_submit_response.reward
             self.kudos_events.append((time.time(), job_submit_response.reward))
+            self.image_events.append((time.time(), new_submit.batch_count))
             new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
 
             # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
@@ -6487,6 +6491,15 @@ class HordeWorkerProcessManager:
             )
             kudos_per_hour = recent_kudos
 
+        # Calculate images per hour
+        images_per_hour = 0.0
+        if len(self.image_events) > 0:
+            images_per_hour = sum(
+                count
+                for timestamp, count in self.image_events
+                if time.time() - timestamp < KUDOS_CALCULATION_WINDOW_SECONDS
+            )
+
         # Get user kudos total and username
         user_kudos_total = None
         horde_username = None
@@ -6513,6 +6526,7 @@ class HordeWorkerProcessManager:
             processes_recovered=self._num_process_recoveries,
             kudos_earned_session=self.kudos_generated_this_session,
             kudos_per_hour=kudos_per_hour,
+            images_per_hour=images_per_hour,
             current_job=current_job,
             job_queue=job_queue,
             processes=processes,

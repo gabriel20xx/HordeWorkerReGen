@@ -31,6 +31,7 @@ def test_webui_status_update() -> None:
         processes_recovered=2,
         kudos_earned_session=100.5,
         kudos_per_hour=50.25,
+        images_per_hour=12.5,
     )
 
     # Verify the values were updated
@@ -43,6 +44,7 @@ def test_webui_status_update() -> None:
     assert webui.status_data["processes_recovered"] == 2
     assert webui.status_data["kudos_earned_session"] == 100.5
     assert webui.status_data["kudos_per_hour"] == 50.25
+    assert webui.status_data["images_per_hour"] == 12.5
 
 
 def test_webui_vram_resources() -> None:
