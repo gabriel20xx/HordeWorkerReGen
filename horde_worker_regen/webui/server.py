@@ -305,9 +305,9 @@ class WorkerWebUI:
         .pagination-controls button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
         .pagination-controls button:hover:not(:disabled) { background: var(--accent-hover); }
         .pagination-controls button:disabled { background: #c7d2fe; cursor: default; }
-        .pagination-info { font-size: 0.82rem; color: #64748b; }
+        .pagination-info { font-size: 0.82rem; color: var(--text-muted); }
         .page-size-select { font-size: 0.82rem; color: inherit; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; cursor: pointer; transition: border-color 0.15s; }
-        .page-size-select:focus { outline: none; border-color: var(--accent); }
+        .page-size-select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.35); }
 
         .scrollable { max-height: 260px; overflow-y: auto; }
         .scrollable-tall { max-height: 400px; overflow-y: auto; }
