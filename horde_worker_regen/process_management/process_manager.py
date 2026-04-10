@@ -108,8 +108,8 @@ BYTES_TO_MEGABYTES = 1024 * 1024
 MAX_WEBUI_QUEUE_ITEMS = 10
 """Maximum number of queued jobs to display in the web UI."""
 
-KUDOS_CALCULATION_WINDOW_SECONDS = 3600
-"""Time window (1 hour) for calculating kudos per hour."""
+METRICS_CALCULATION_WINDOW_SECONDS = 3600
+"""Time window (1 hour) for calculating per-hour metrics such as kudos per hour and images per hour."""
 
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
@@ -1427,7 +1427,7 @@ class HordeWorkerProcessManager:
     kudos_generated_this_session: float = 0
     """The amount of kudos generated this entire session."""
     kudos_events: list[tuple[float, float]]
-    """A deque of kudos events, each is a tuple of the time the event occurred and the amount of kudos generated."""
+    """A list of kudos events, each is a tuple of the time the event occurred and the amount of kudos generated."""
     image_events: list[tuple[float, int]]
     """A list of image completion events, each is a tuple of the time the event occurred and the number of images generated."""
     session_start_time: float = 0
@@ -6487,7 +6487,7 @@ class HordeWorkerProcessManager:
             recent_kudos = sum(
                 kudos
                 for timestamp, kudos in self.kudos_events
-                if time.time() - timestamp < KUDOS_CALCULATION_WINDOW_SECONDS
+                if time.time() - timestamp < METRICS_CALCULATION_WINDOW_SECONDS
             )
             kudos_per_hour = recent_kudos
 
@@ -6497,7 +6497,7 @@ class HordeWorkerProcessManager:
             images_per_hour = sum(
                 count
                 for timestamp, count in self.image_events
-                if time.time() - timestamp < KUDOS_CALCULATION_WINDOW_SECONDS
+                if time.time() - timestamp < METRICS_CALCULATION_WINDOW_SECONDS
             )
 
         # Get user kudos total and username
