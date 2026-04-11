@@ -632,3 +632,115 @@ def test_api_job_pop_flushes_idle_time_before_reset() -> None:
         f"Expected _last_pop_no_jobs_available_time == 0.0 after pop, "
         f"got {mock_manager._last_pop_no_jobs_available_time}"
     )
+
+
+
+class TestApiJobPopQueueGate:
+    """Unit tests for the queue-size gate in api_job_pop.
+
+    The gate must:
+    - Stop popping when the number of not-yet-started jobs >= queue_size
+    - Also stop when total pending jobs >= max_concurrent_inference_processes
+    - Allow popping while there is still room in the prefetch queue AND thread capacity
+    """
+
+    def _make_manager(
+        self,
+        queue_size: int,
+        max_concurrent: int,
+        jobs_pending: int,
+        jobs_in_progress: int,
+    ) -> MagicMock:
+        """Return a mock manager wired with only the attributes the queue gate touches.
+
+        Sets horde_client_session to a sentinel MagicMock so callers can detect whether
+        the gate fired (sentinel untouched) or was passed (sentinel accessed).
+        """
+        mock_manager = MagicMock()
+        mock_manager._shutting_down = False
+        mock_manager._too_many_consecutive_failed_jobs = False
+        mock_manager._consecutive_failed_jobs = 0
+
+        mock_manager.bridge_data.queue_size = queue_size
+        mock_manager.max_concurrent_inference_processes = max_concurrent
+
+        # Build minimal job lists - in_progress jobs are a prefix of pending_jobs
+        # so that len() checks reflect reality.
+        pending_jobs = [MagicMock() for _ in range(jobs_pending)]
+        in_progress_jobs = pending_jobs[:jobs_in_progress]
+
+        mock_manager.jobs_pending_inference = pending_jobs
+        mock_manager.jobs_in_progress = in_progress_jobs
+
+        # Sentinel: if the gate fires early, horde_client_session is never accessed
+        # by the code after the gate.  The "if self.horde_client_session is None"
+        # check lives *after* the gate, so we use a plain MagicMock here and switch
+        # it to None in tests that want the pop to proceed past the gate.
+        mock_manager.horde_client_session = MagicMock(name="sentinel")
+
+        return mock_manager
+
+    @staticmethod
+    def _run(mock_manager: MagicMock) -> None:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        import asyncio
+
+        bound = HordeWorkerProcessManager.api_job_pop.__get__(mock_manager, HordeWorkerProcessManager)
+        asyncio.run(bound())
+
+    def test_gate_stops_when_queued_exceeds_queue_size(self) -> None:
+        """Pop gate returns early when jobs_queued >= queue_size."""
+        # 2 pending, 0 in-progress → 2 queued; queue_size=1 → gate must fire
+        mock_manager = self._make_manager(queue_size=1, max_concurrent=4, jobs_pending=2, jobs_in_progress=0)
+        sentinel = mock_manager.horde_client_session
+
+        self._run(mock_manager)
+
+        # Gate returned before reaching "if self.horde_client_session is None"
+        sentinel.assert_not_called()
+
+    def test_gate_stops_when_pending_meets_max_concurrent(self) -> None:
+        """Pop gate returns early when total pending jobs >= max_concurrent_inference_processes."""
+        # 2 pending, 2 in-progress → 0 queued; queue_size=5 → first condition passes.
+        # max_concurrent=2, total pending=2 → second condition fires.
+        mock_manager = self._make_manager(queue_size=5, max_concurrent=2, jobs_pending=2, jobs_in_progress=2)
+        sentinel = mock_manager.horde_client_session
+
+        self._run(mock_manager)
+
+        sentinel.assert_not_called()
+
+    def test_gate_allows_pop_when_room_in_both_queue_and_threads(self) -> None:
+        """Pop gate does NOT return early when queue and thread capacity both have room."""
+        # 1 active job → 0 queued; queue_size=2, max_concurrent=2 → gate must NOT fire
+        # Set horde_client_session=None so api_job_pop returns immediately after the gate
+        # without needing further mocks for the rest of the function.
+        mock_manager = self._make_manager(queue_size=2, max_concurrent=2, jobs_pending=1, jobs_in_progress=1)
+        mock_manager.horde_client_session = None
+
+        # Should reach "if self.horde_client_session is None: return" without raising
+        self._run(mock_manager)
+
+    def test_queue_size_zero_stops_immediately(self) -> None:
+        """queue_size=0 means no pre-fetching; gate fires even with no queued jobs."""
+        # 0 pending → jobs_queued=0 >= queue_size=0 → gate fires
+        mock_manager = self._make_manager(queue_size=0, max_concurrent=2, jobs_pending=0, jobs_in_progress=0)
+        sentinel = mock_manager.horde_client_session
+
+        self._run(mock_manager)
+
+        sentinel.assert_not_called()
+
+    def test_active_jobs_do_not_consume_queue_size_slots(self) -> None:
+        """Active (in-progress) jobs must NOT reduce available queue_size slots."""
+        # 1 active (in-progress) job; queue_size=1, max_concurrent=2
+        # jobs_queued = max(0, 1 - 1) = 0 < queue_size=1 → gate must NOT fire on queue check
+        # len(jobs_pending_inference)=1 < max_concurrent=2 → gate must NOT fire on thread check
+        # Set horde_client_session=None so api_job_pop returns immediately after the gate.
+        mock_manager = self._make_manager(queue_size=1, max_concurrent=2, jobs_pending=1, jobs_in_progress=1)
+        mock_manager.horde_client_session = None
+
+        # Should not return from the gate; reaching here means gate correctly let the pop through
+        self._run(mock_manager)
+

@@ -4871,7 +4871,10 @@ class HordeWorkerProcessManager:
         # are controlled by max_threads and should not consume queue_size slots.
         jobs_queued = max(0, len(self.jobs_pending_inference) - len(self.jobs_in_progress))
 
-        if jobs_queued >= self.bridge_data.queue_size and len(self.jobs_pending_inference) >= self.bridge_data.max_threads:
+        if jobs_queued >= self.bridge_data.queue_size:
+            return
+
+        if len(self.jobs_pending_inference) >= self.max_concurrent_inference_processes:
             return
 
         # We let the first job run through to make sure things are working
