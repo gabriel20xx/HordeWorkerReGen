@@ -1364,8 +1364,8 @@ class HordeWorkerProcessManager:
 
     @property
     def current_queue_size(self) -> int:
-        """The current number of jobs that are queued."""
-        return len(self.jobs_pending_inference)
+        """The current number of jobs that are queued (not yet started)."""
+        return max(0, len(self.jobs_pending_inference) - len(self.jobs_in_progress))
 
     @property
     def target_ram_bytes_used(self) -> int:
@@ -4867,12 +4867,14 @@ class HordeWorkerProcessManager:
             self._consecutive_failed_jobs = 0
             return
 
-        max_jobs_in_queue = self.bridge_data.queue_size + 1
+        # Only count jobs not yet started as "queued"; active jobs (jobs_in_progress)
+        # are controlled by max_threads and should not consume queue_size slots.
+        jobs_queued = max(0, len(self.jobs_pending_inference) - len(self.jobs_in_progress))
 
-        if self.bridge_data.max_threads > 1:
-            max_jobs_in_queue += self.bridge_data.max_threads - 1
+        if jobs_queued >= self.bridge_data.queue_size:
+            return
 
-        if len(self.jobs_pending_inference) >= max_jobs_in_queue:
+        if len(self.jobs_pending_inference) >= self.max_concurrent_inference_processes:
             return
 
         # We let the first job run through to make sure things are working
