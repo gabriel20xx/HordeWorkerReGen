@@ -6997,17 +6997,18 @@ class HordeWorkerProcessManager:
                 ):
                     any_replaced = any_process_replaced = True
 
-                # Skip other state checks if no jobs are available since those states are job-related.
-                # But if there are already jobs pending in our local queue or in-progress,
-                # always run these checks so that stuck processes don't block local work.
-                if self._last_pop_no_jobs_available and no_local_work:
-                    continue
-
                 # RESULT_SUBMITTING is managed by the process manager, not the subprocess.
                 # Killing the subprocess is not appropriate here; just reset the state so
                 # the process can accept new jobs.  The primary fix is in
                 # submit_single_generation() (try/finally), but this serves as a safety net
                 # for any edge cases that slip through.
+                #
+                # This check is intentionally placed BEFORE the _last_pop_no_jobs_available
+                # guard below: when a process gets stuck here its job has already been removed
+                # from jobs_in_progress (the HordeInferenceResultMessage was received), so
+                # no_local_work would be True even though the process still holds an active
+                # slot.  Skipping the check in that situation leaves the process permanently
+                # blocked, preventing it from accepting new jobs when they eventually arrive.
                 _result_submit_stuck_timeout = 60.0
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
@@ -7024,6 +7025,12 @@ class HordeWorkerProcessManager:
                         new_state=HordeProcessState.WAITING_FOR_JOB,
                     )
                     any_replaced = True
+
+                # Skip other state checks if no jobs are available since those states are job-related.
+                # But if there are already jobs pending in our local queue or in-progress,
+                # always run these checks so that stuck processes don't block local work.
+                if self._last_pop_no_jobs_available and no_local_work:
+                    continue
 
                 # Check for WAITING_FOR_JOB inference processes with stale heartbeats when
                 # jobs are pending.  These processes may have died silently without sending
