@@ -2227,13 +2227,14 @@ class HordeWorkerProcessManager:
 
         self._end_inference_process(process_info)
 
-        # For INFERENCE_STARTING: release the inference semaphore NOW, after the process has
-        # been killed.  Releasing it earlier (before the kill) creates a race: the child was
-        # blocked at semaphore.acquire() and immediately acquires the freshly-released token,
-        # starts basic_inference(), and is then killed with SIGKILL.  SIGKILL bypasses the
-        # finally block, permanently consuming the token and leaving every subsequent
-        # INFERENCE_STARTING process blocked at acquire() forever.  Killing first guarantees
-        # the child is dead before we release, so no one can steal the token.
+        # For INFERENCE_STARTING: release the inference semaphore only after we've asked the
+        # old process to stop.  Releasing it earlier creates a race: the child may be blocked
+        # at semaphore.acquire(), immediately grab the freshly-released token, start
+        # basic_inference(), and then get killed with SIGKILL.  SIGKILL bypasses the finally
+        # block, permanently consuming the token and leaving every subsequent
+        # INFERENCE_STARTING process blocked at acquire() forever.  Releasing after
+        # _end_inference_process() avoids reopening that race window here, even though this
+        # path does not explicitly verify child exit before the release.
         if prior_state == HordeProcessState.INFERENCE_STARTING:
             try:
                 self._inference_semaphore.release()
