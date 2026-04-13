@@ -4578,19 +4578,32 @@ class TestResultSubmittingStuckRecovery:
         mock_manager._replace_inference_process.assert_not_called()
         mock_manager._process_map.on_process_state_change.assert_not_called()
 
-    def test_result_submitting_stuck_not_reset_when_no_jobs_available(self) -> None:
-        """RESULT_SUBMITTING timeout check must be skipped when no jobs are available.
+    def test_result_submitting_stuck_reset_even_when_no_jobs_available(self) -> None:
+        """RESULT_SUBMITTING stuck check must fire even when no jobs are available.
 
-        The check is inside the _last_pop_no_jobs_available guard, so it should not
-        trigger when the server has no work.
+        When a process is stuck in RESULT_SUBMITTING its job has already been removed
+        from jobs_in_progress (the HordeInferenceResultMessage was received), so
+        no_local_work would be True.  Previously the check was inside the
+        _last_pop_no_jobs_available guard, which caused it to be silently skipped,
+        leaving the inference slot permanently blocked.  The check is now placed before
+        that guard so it always fires after the 60 s timeout regardless of job availability.
         """
         proc = self._make_result_submitting_process(2, time_elapsed=9999.0)
         mock_manager = self._make_hung_manager([proc], last_pop_no_jobs=True)
 
+        state_changes: list[HordeProcessState] = []
+
+        def _on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
+            proc.last_process_state = new_state
+            state_changes.append(new_state)
+
+        mock_manager._process_map.on_process_state_change.side_effect = _on_state_change
+
         with patch("threading.Thread"):
             result = mock_manager._bound_replace_hung()
 
-        assert result is False
+        assert result is True
+        assert HordeProcessState.WAITING_FOR_JOB in state_changes
         mock_manager._replace_inference_process.assert_not_called()
 
     def test_result_submitting_reset_does_not_trigger_recently_recovered(self) -> None:
