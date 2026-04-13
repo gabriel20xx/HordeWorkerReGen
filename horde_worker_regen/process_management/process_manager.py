@@ -2133,8 +2133,19 @@ class HordeWorkerProcessManager:
         if process_info.last_job_referenced is not None and process_info.last_job_referenced in self.jobs_lookup:
             job_to_remove = process_info.last_job_referenced
 
-        if process_info.last_process_state in (
-            HordeProcessState.INFERENCE_STARTING,
+        # Snapshot the state before _end_inference_process() calls on_process_ending(),
+        # which resets last_process_state to PROCESS_ENDING.
+        prior_state = process_info.last_process_state
+
+        # Release the inference semaphore immediately for INFERENCE_PROCESSING and
+        # POST_PROCESSING_STARTING so that any process waiting in INFERENCE_STARTING can
+        # proceed.  INFERENCE_STARTING is intentionally excluded here: the child may be
+        # blocked at semaphore.acquire().  Releasing the semaphore before killing creates a
+        # race where the child acquires the semaphore just before the SIGKILL arrives.
+        # SIGKILL bypasses the finally block, permanently leaking the token and leaving the
+        # next INFERENCE_STARTING process blocked forever.  The semaphore is instead
+        # released AFTER the kill (see below).
+        if prior_state in (
             HordeProcessState.INFERENCE_PROCESSING,
             HordeProcessState.POST_PROCESSING_STARTING,
         ):
@@ -2149,6 +2160,13 @@ class HordeWorkerProcessManager:
                     f"Unexpected error releasing inference semaphore when replacing process "
                     f"{process_info.process_id}: {type(e).__name__}: {e}",
                 )
+
+        # Release the disk lock defensively for all three inference-active states.
+        if prior_state in (
+            HordeProcessState.INFERENCE_STARTING,
+            HordeProcessState.INFERENCE_PROCESSING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+        ):
             try:
                 self._disk_lock.release()
             except ValueError:
@@ -2208,6 +2226,28 @@ class HordeWorkerProcessManager:
             self.handle_job_fault(faulted_job=job_to_remove, process_info=process_info)
 
         self._end_inference_process(process_info)
+
+        # For INFERENCE_STARTING: release the inference semaphore NOW, after the process has
+        # been killed.  Releasing it earlier (before the kill) creates a race: the child was
+        # blocked at semaphore.acquire() and immediately acquires the freshly-released token,
+        # starts basic_inference(), and is then killed with SIGKILL.  SIGKILL bypasses the
+        # finally block, permanently consuming the token and leaving every subsequent
+        # INFERENCE_STARTING process blocked at acquire() forever.  Killing first guarantees
+        # the child is dead before we release, so no one can steal the token.
+        if prior_state == HordeProcessState.INFERENCE_STARTING:
+            try:
+                self._inference_semaphore.release()
+            except ValueError:
+                logger.debug(
+                    f"Inference semaphore already released when replacing INFERENCE_STARTING "
+                    f"process {process_info.process_id}",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Unexpected error releasing inference semaphore when replacing INFERENCE_STARTING "
+                    f"process {process_info.process_id}: {type(e).__name__}: {e}",
+                )
+
         self._start_inference_process(process_info.process_id)
 
         self._num_process_recoveries += 1
