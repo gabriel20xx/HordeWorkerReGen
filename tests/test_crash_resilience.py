@@ -1183,6 +1183,74 @@ class TestInferenceSemaphoreBoundedSemaphore:
         second_acquired = bounded_sem.acquire(block=False)
         assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
 
+    def test_replace_inference_starting_releases_semaphore_after_kill(self) -> None:
+        """For INFERENCE_STARTING, _replace_inference_process must release the semaphore
+        AFTER killing the process, not before.
+
+        The child process is blocked at semaphore.acquire().  Releasing the semaphore before
+        the kill creates a race: the child acquires the token just before the SIGKILL arrives.
+        SIGKILL bypasses the finally block, permanently consuming the token and leaving every
+        subsequent INFERENCE_STARTING process blocked at acquire() forever.
+
+        This test verifies that at the moment _end_inference_process() is called (the kill),
+        the semaphore has NOT yet been released, and that after the full replacement the
+        semaphore is available (count == 1).
+        """
+        import multiprocessing
+        import types
+        from multiprocessing.synchronize import BoundedSemaphore
+        from unittest.mock import MagicMock
+
+        from horde_worker_regen.process_management.messages import HordeProcessState
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        ctx = multiprocessing.get_context("spawn")
+        max_threads = 1
+        bounded_sem = BoundedSemaphore(max_threads, ctx=ctx)
+
+        # Simulate a leaked semaphore: the token has been consumed (count == 0) without any
+        # process in INFERENCE_PROCESSING — exactly the broken state that causes a cascade of
+        # stuck INFERENCE_STARTING processes.
+        bounded_sem.acquire()
+
+        # Track whether the semaphore was still consumed (not yet released) at kill time.
+        semaphore_available_at_kill: list[bool] = []
+
+        def fake_end_inference_process(pi: object) -> None:
+            # At kill time the semaphore must NOT have been released yet.
+            acquired = bounded_sem.acquire(block=False)
+            semaphore_available_at_kill.append(acquired)
+            if acquired:
+                bounded_sem.release()  # restore so post-kill release works correctly
+
+        mock_manager = MagicMock()
+        mock_manager._inference_semaphore = bounded_sem
+        mock_manager._disk_lock = MagicMock()
+        mock_manager._disk_lock.release.side_effect = ValueError  # already released
+        mock_manager._end_inference_process.side_effect = fake_end_inference_process
+
+        process_info = MagicMock()
+        process_info.last_process_state = HordeProcessState.INFERENCE_STARTING
+        process_info.last_job_referenced = None
+        process_info.loaded_horde_model_name = None
+
+        bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
+        bound(process_info)  # Must not raise
+
+        assert semaphore_available_at_kill == [False], (
+            "Semaphore must NOT be released before killing the process for INFERENCE_STARTING "
+            "(kill-before-release order required to prevent the semaphore-leak race condition)"
+        )
+
+        # After the replacement the semaphore must be available so the next process can proceed.
+        acquired_after = bounded_sem.acquire(block=False)
+        assert acquired_after, (
+            "Semaphore must be available (count == 1) after replacing an INFERENCE_STARTING process"
+        )
+        # Verify no permit inflation: only exactly 1 permit available.
+        second_acquired = bounded_sem.acquire(block=False)
+        assert not second_acquired, "Semaphore must not have more than 1 permit after replacement"
+
 
 class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
     """Tests that a job in-progress is faulted when its process sends HordeProcessState.PROCESS_ENDING.
