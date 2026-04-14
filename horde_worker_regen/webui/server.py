@@ -625,9 +625,9 @@ class WorkerWebUI:
         }
         const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'logs']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
-        let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
+        let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); var parsed = s ? JSON.parse(s) : []; return Array.isArray(parsed) ? parsed : []; } catch(e) { return []; } })();
         function renderWorkersList() {
-            const workersList = cachedWorkersList;
+            const workersList = Array.isArray(cachedWorkersList) ? cachedWorkersList : [];
             document.getElementById('user-workers-count').textContent = workersList.length;
             const wlEl = document.getElementById('user-workers-list');
             if (workersList.length === 0) {
@@ -1516,7 +1516,19 @@ class WorkerWebUI:
                         ? kdRows.map(function(r){return '<div class="stat-row"><span class="stat-label">'+escapeHtml(r[0])+':</span><span class="stat-value">'+Number(r[1]).toLocaleString(undefined,{maximumFractionDigits:2})+'</span></div>';}).join('')
                         : '<div class="empty-state">No kudos breakdown available</div>';
                     // Render per-worker cards
-                    if (ud.workers_list) { cachedWorkersList = ud.workers_list; try { localStorage.setItem('horde-workers-list', JSON.stringify(cachedWorkersList)); } catch(e) {} }
+                    if (Array.isArray(ud.workers_list)) {
+                        cachedWorkersList = ud.workers_list;
+                        try {
+                            if (cachedWorkersList.length > 0) {
+                                localStorage.setItem('horde-workers-list', JSON.stringify(cachedWorkersList));
+                            } else {
+                                localStorage.removeItem('horde-workers-list');
+                            }
+                        } catch(e) {}
+                    } else if (ud.worker_count === 0) {
+                        cachedWorkersList = [];
+                        try { localStorage.removeItem('horde-workers-list'); } catch(e) {}
+                    }
                     renderWorkersList();
                 })
                 .catch(error => {
