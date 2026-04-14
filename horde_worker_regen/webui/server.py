@@ -625,7 +625,60 @@ class WorkerWebUI:
         }
         const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'logs']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
-        let cachedWorkersList = [];
+        let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
+        function renderWorkersList() {
+            const workersList = cachedWorkersList;
+            document.getElementById('user-workers-count').textContent = workersList.length;
+            const wlEl = document.getElementById('user-workers-list');
+            if (workersList.length === 0) {
+                wlEl.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No worker data yet</div>';
+            } else {
+                wlEl.innerHTML = workersList.map(function(w) {
+                    const onlineCls = w.online ? 'online' : 'offline';
+                    const onlineTxt = w.online ? 'Online' : 'Offline';
+                    const capBadge = function(val, label) {
+                        if (val === null || val === undefined) return '';
+                        return '<span class="wcap '+(val?'wcap-yes':'wcap-no')+'">'+escapeHtml(label)+'</span>';
+                    };
+                    const nsfwBadge = w.nsfw === true ? '<span class="wcap wcap-nsfw">NSFW</span>' : (w.nsfw === false ? '<span class="wcap wcap-sfw">SFW</span>' : '');
+                    const caps = nsfwBadge +
+                        capBadge(w.trusted, 'Trusted') +
+                        capBadge(w.img2img, 'img2img') +
+                        capBadge(w.painting, 'Painting') +
+                        capBadge(w.lora, 'LoRA');
+                    const models = w.models || [];
+                    const modelCount = models.length;
+                    const modelTitles = models.join('\n');
+                    const sizeStr = w.max_pixels ? ('\u2248'+Math.round(Math.sqrt(w.max_pixels))+'px') : '-';
+                    const uptimeSecs = w.uptime || 0;
+                    const uh = Math.floor(uptimeSecs/3600), um = Math.floor((uptimeSecs%3600)/60);
+                    const uptimeStr = uh > 0 ? uh+'h '+um+'m' : (um > 0 ? um+'m' : uptimeSecs+'s');
+                    const kudos = w.kudos_rewards != null ? Number(w.kudos_rewards).toLocaleString(undefined,{maximumFractionDigits:0}) : '-';
+                    const kph = (w.kudos_rewards != null && uptimeSecs > 0)
+                        ? (w.kudos_rewards / (uptimeSecs / 3600)).toLocaleString(undefined, {maximumFractionDigits:1})
+                        : '-';
+                    return '<div class="worker-card">' +
+                        '<div class="worker-card-header">' +
+                        '<span class="worker-card-name">'+escapeHtml(w.name||'Unknown')+'</span>' +
+                        (w.version ? '<span class="worker-version-badge">v'+escapeHtml(w.version)+'</span>' : '') +
+                        (w.type ? '<span class="worker-type-badge">'+escapeHtml(w.type)+'</span>' : '') +
+                        '<span class="worker-online-badge '+onlineCls+'">'+onlineTxt+'</span>' +
+                        '</div>' +
+                        (caps ? '<div class="worker-caps-row">'+caps+'</div>' : '') +
+                        '<div class="worker-meta-row">' +
+                        '<span class="wm-item">\uD83D\uDCCF '+escapeHtml(sizeStr)+'</span>' +
+                        (w.threads != null ? '<span class="wm-item">\uD83E\uDDF5 '+escapeHtml(w.threads)+' thread'+(w.threads!==1?'s':'')+'</span>' : '') +
+                        '<span class="wm-item models-pill" title="'+escapeHtml(modelTitles)+'">\uD83E\uDDE9 '+modelCount+' model'+(modelCount!==1?'s':'')+(modelCount>0?' \u25BE':'')+'</span>' +
+                        '</div>' +
+                        '<div class="worker-stats-row">' +
+                        '<span class="ws-item">&#9201; '+escapeHtml(uptimeStr)+' uptime</span>' +
+                        '<span class="ws-item">\uD83D\uDC8E '+kudos+' kudos</span>' +
+                        '<span class="ws-item accent">\uD83D\uDCC8 '+kph+' k/h</span>' +
+                        '</div>' +
+                        '</div>';
+                }).join('');
+            }
+        }
         function showPage(pageId, navEl, push) {
             if (!VALID_PAGES.includes(pageId)) pageId = 'overview';
             document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
@@ -658,6 +711,10 @@ class WorkerWebUI:
                 }
                 // Otherwise the grid already shows the current page with cached thumbnails;
                 // new-image notifications continue via the status-poll path.
+            }
+            if (pageId === 'user') {
+                // Render cached workers immediately so the list is visible before the next status poll.
+                renderWorkersList();
             }
         }
         window.addEventListener('popstate', function() {
@@ -1459,58 +1516,8 @@ class WorkerWebUI:
                         ? kdRows.map(function(r){return '<div class="stat-row"><span class="stat-label">'+escapeHtml(r[0])+':</span><span class="stat-value">'+Number(r[1]).toLocaleString(undefined,{maximumFractionDigits:2})+'</span></div>';}).join('')
                         : '<div class="empty-state">No kudos breakdown available</div>';
                     // Render per-worker cards
-                    if (ud.workers_list) { cachedWorkersList = ud.workers_list; }
-                    const workersList = cachedWorkersList;
-                    document.getElementById('user-workers-count').textContent = workersList.length;
-                    const wlEl = document.getElementById('user-workers-list');
-                    if (workersList.length === 0) {
-                        wlEl.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No worker data yet</div>';
-                    } else {
-                        wlEl.innerHTML = workersList.map(function(w) {
-                            const onlineCls = w.online ? 'online' : 'offline';
-                            const onlineTxt = w.online ? 'Online' : 'Offline';
-                            const capBadge = function(val, label) {
-                                if (val === null || val === undefined) return '';
-                                return '<span class="wcap '+(val?'wcap-yes':'wcap-no')+'">'+escapeHtml(label)+'</span>';
-                            };
-                            const nsfwBadge = w.nsfw === true ? '<span class="wcap wcap-nsfw">NSFW</span>' : (w.nsfw === false ? '<span class="wcap wcap-sfw">SFW</span>' : '');
-                            const caps = nsfwBadge +
-                                capBadge(w.trusted, 'Trusted') +
-                                capBadge(w.img2img, 'img2img') +
-                                capBadge(w.painting, 'Painting') +
-                                capBadge(w.lora, 'LoRA');
-                            const models = w.models || [];
-                            const modelCount = models.length;
-                            const modelTitles = models.join('\n');
-                            const sizeStr = w.max_pixels ? ('\u2248'+Math.round(Math.sqrt(w.max_pixels))+'px') : '-';
-                            const uptimeSecs = w.uptime || 0;
-                            const uh = Math.floor(uptimeSecs/3600), um = Math.floor((uptimeSecs%3600)/60);
-                            const uptimeStr = uh > 0 ? uh+'h '+um+'m' : (um > 0 ? um+'m' : uptimeSecs+'s');
-                            const kudos = w.kudos_rewards != null ? Number(w.kudos_rewards).toLocaleString(undefined,{maximumFractionDigits:0}) : '-';
-                            const kph = (w.kudos_rewards != null && uptimeSecs > 0)
-                                ? (w.kudos_rewards / (uptimeSecs / 3600)).toLocaleString(undefined, {maximumFractionDigits:1})
-                                : '-';
-                            return '<div class="worker-card">' +
-                                '<div class="worker-card-header">' +
-                                '<span class="worker-card-name">'+escapeHtml(w.name||'Unknown')+'</span>' +
-                                (w.version ? '<span class="worker-version-badge">v'+escapeHtml(w.version)+'</span>' : '') +
-                                (w.type ? '<span class="worker-type-badge">'+escapeHtml(w.type)+'</span>' : '') +
-                                '<span class="worker-online-badge '+onlineCls+'">'+onlineTxt+'</span>' +
-                                '</div>' +
-                                (caps ? '<div class="worker-caps-row">'+caps+'</div>' : '') +
-                                '<div class="worker-meta-row">' +
-                                '<span class="wm-item">\uD83D\uDCCF '+escapeHtml(sizeStr)+'</span>' +
-                                (w.threads != null ? '<span class="wm-item">\uD83E\uDDF5 '+escapeHtml(w.threads)+' thread'+(w.threads!==1?'s':'')+'</span>' : '') +
-                                '<span class="wm-item models-pill" title="'+escapeHtml(modelTitles)+'">\uD83E\uDDE9 '+modelCount+' model'+(modelCount!==1?'s':'')+(modelCount>0?' \u25BE':'')+'</span>' +
-                                '</div>' +
-                                '<div class="worker-stats-row">' +
-                                '<span class="ws-item">&#9201; '+escapeHtml(uptimeStr)+' uptime</span>' +
-                                '<span class="ws-item">\uD83D\uDC8E '+kudos+' kudos</span>' +
-                                '<span class="ws-item accent">\uD83D\uDCC8 '+kph+' k/h</span>' +
-                                '</div>' +
-                                '</div>';
-                        }).join('');
-                    }
+                    if (ud.workers_list) { cachedWorkersList = ud.workers_list; try { localStorage.setItem('horde-workers-list', JSON.stringify(cachedWorkersList)); } catch(e) {} }
+                    renderWorkersList();
                 })
                 .catch(error => {
                     if (error.name === 'AbortError') return;
