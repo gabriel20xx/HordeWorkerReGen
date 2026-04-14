@@ -1460,7 +1460,7 @@ class HordeWorkerProcessManager:
     _user_info_fetch_interval: float = 10
     """The number of seconds between each fetch of the user info."""
 
-    _workers_details: list[dict[str, Any]] = []
+    _workers_details: list[dict[str, Any]]
     """Cached per-worker detail records fetched from the API for the User page."""
     _api_get_workers_details_interval: float = 120
     """The number of seconds between each fetch of individual worker details."""
@@ -1626,6 +1626,9 @@ class HordeWorkerProcessManager:
         # Tracks the length of _errors_history at the last webui update so the list
         # is only copied and sent when new errors have been added.
         self._errors_history_last_sent_len: int = -1
+
+        self._workers_details: list[dict[str, Any]] = []
+        self._last_sent_workers_details_cache_key: str | None = None
 
         self._jobs_safety_check_lock = Lock_Asyncio()
 
@@ -5525,38 +5528,43 @@ class HordeWorkerProcessManager:
         if not worker_ids:
             self._workers_details = []
             return
-        workers: list[dict[str, Any]] = []
-        for worker_id in worker_ids:
-            try:
-                request = SingleWorkerDetailsRequest(worker_id=str(worker_id))
-                response = await self.horde_client_session.submit_request(request, SingleWorkerDetailsResponse)
-                if isinstance(response, RequestErrorResponse):
-                    logger.debug(f"Failed to get details for worker {worker_id}: {response}")
-                    continue
-                ba = response.bridge_agent or ""
-                ba_parts = ba.split(":")
-                version = ba_parts[1] if len(ba_parts) > 1 else ""
-                worker: dict[str, Any] = {
-                    "id": str(response.id_) if response.id_ else str(worker_id),
-                    "name": response.name or "",
-                    "version": version,
-                    "type": str(response.type_.value) if response.type_ else "",
-                    "online": response.online,
-                    "nsfw": response.nsfw,
-                    "trusted": response.trusted,
-                    "img2img": response.img2img,
-                    "painting": response.painting,
-                    "lora": response.lora,
-                    "max_pixels": response.max_pixels,
-                    "threads": response.threads,
-                    "models": list(response.models) if response.models else [],
-                    "uptime": response.uptime,
-                    "kudos_rewards": response.kudos_rewards,
-                }
-                workers.append(worker)
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"Failed to get details for worker {worker_id}: {e}")
-        self._workers_details = workers
+
+        semaphore = asyncio.Semaphore(5)
+
+        async def _fetch_one(worker_id: str) -> dict[str, Any] | None:
+            async with semaphore:
+                try:
+                    request = SingleWorkerDetailsRequest(worker_id=str(worker_id))
+                    response = await self.horde_client_session.submit_request(request, SingleWorkerDetailsResponse)
+                    if isinstance(response, RequestErrorResponse):
+                        logger.debug(f"Failed to get details for worker {worker_id}: {response}")
+                        return None
+                    ba = response.bridge_agent or ""
+                    ba_parts = ba.split(":")
+                    version = ba_parts[1] if len(ba_parts) > 1 else ""
+                    return {
+                        "id": str(response.id_) if response.id_ else str(worker_id),
+                        "name": response.name or "",
+                        "version": version,
+                        "type": str(response.type_.value) if response.type_ else "",
+                        "online": response.online,
+                        "nsfw": response.nsfw,
+                        "trusted": response.trusted,
+                        "img2img": response.img2img,
+                        "painting": response.painting,
+                        "lora": response.lora,
+                        "max_pixels": response.max_pixels,
+                        "threads": response.threads,
+                        "models": list(response.models) if response.models else [],
+                        "uptime": response.uptime,
+                        "kudos_rewards": response.kudos_rewards,
+                    }
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Failed to get details for worker {worker_id}: {e}")
+                    return None
+
+        results = await asyncio.gather(*(_fetch_one(str(wid)) for wid in worker_ids))
+        self._workers_details = [w for w in results if w is not None]
 
     async def _api_get_workers_details_loop(self) -> None:
         """Periodically fetch per-worker detail records for the User page."""
@@ -5574,6 +5582,8 @@ class HordeWorkerProcessManager:
                     self._shutdown()
                     logger.debug(f"CancelledError: {e}")
             await asyncio.sleep(self._api_get_workers_details_interval)
+
+    _status_message_frequency = 20.0
     """The rate in seconds at which to print status messages with details about the current state of the worker."""
     _last_status_message_time = 0.0
     """The epoch time of the last status message."""
@@ -6633,7 +6643,10 @@ class HordeWorkerProcessManager:
             if worker_ids:
                 user_details["worker_ids"] = [str(wid) for wid in worker_ids]
         if self._workers_details:
-            user_details["workers_list"] = self._workers_details
+            workers_cache_key = json.dumps(self._workers_details, sort_keys=True, separators=(",", ":"), default=str)
+            if workers_cache_key != self._last_sent_workers_details_cache_key:
+                user_details["workers_list"] = self._workers_details
+                self._last_sent_workers_details_cache_key = workers_cache_key
 
         # Update the web UI
         # Compute time_without_jobs dynamically so the webui counter increments

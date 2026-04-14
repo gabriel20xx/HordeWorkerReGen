@@ -625,6 +625,7 @@ class WorkerWebUI:
         }
         const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'logs']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
+        let cachedWorkersList = [];
         function showPage(pageId, navEl, push) {
             if (!VALID_PAGES.includes(pageId)) pageId = 'overview';
             document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
@@ -1434,8 +1435,8 @@ class WorkerWebUI:
                     }
                     // Update user page
                     const ud = data.user_details || {};
-                    document.getElementById('user-page-username').textContent = escapeHtml(data.horde_username || '-');
-                    document.getElementById('user-page-kudos-total').textContent = data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
+                    document.getElementById('user-page-username').textContent = data.horde_username || '-';
+                    document.getElementById('user-page-kudos-total').textContent = data.user_kudos_total != null ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
                     document.getElementById('user-page-kudos-per-hour').textContent = (data.kudos_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('user-page-kudos-session').textContent = (data.kudos_earned_session || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('user-page-images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
@@ -1458,7 +1459,8 @@ class WorkerWebUI:
                         ? kdRows.map(function(r){return '<div class="stat-row"><span class="stat-label">'+escapeHtml(r[0])+':</span><span class="stat-value">'+Number(r[1]).toLocaleString(undefined,{maximumFractionDigits:2})+'</span></div>';}).join('')
                         : '<div class="empty-state">No kudos breakdown available</div>';
                     // Render per-worker cards
-                    const workersList = ud.workers_list || [];
+                    if (ud.workers_list) { cachedWorkersList = ud.workers_list; }
+                    const workersList = cachedWorkersList;
                     document.getElementById('user-workers-count').textContent = workersList.length;
                     const wlEl = document.getElementById('user-workers-list');
                     if (workersList.length === 0) {
@@ -1479,7 +1481,7 @@ class WorkerWebUI:
                                 capBadge(w.lora, 'LoRA');
                             const models = w.models || [];
                             const modelCount = models.length;
-                            const modelTitles = models.map(function(m){return escapeHtml(m);}).join('\n');
+                            const modelTitles = models.join('\n');
                             const sizeStr = w.max_pixels ? ('\u2248'+Math.round(Math.sqrt(w.max_pixels))+'px') : '-';
                             const uptimeSecs = w.uptime || 0;
                             const uh = Math.floor(uptimeSecs/3600), um = Math.floor((uptimeSecs%3600)/60);
