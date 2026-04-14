@@ -49,6 +49,7 @@ from horde_sdk.ai_horde_api.apimodels import (
     ImageGenerateJobPopResponse,
     JobSubmitResponse,
     ModifyWorkerRequest,
+    SingleWorkerDetailsRequest,
     SingleWorkerDetailsResponse,
     UserDetailsResponse,
 )
@@ -1459,6 +1460,11 @@ class HordeWorkerProcessManager:
     _user_info_fetch_interval: float = 10
     """The number of seconds between each fetch of the user info."""
 
+    _workers_details: list[dict[str, Any]]
+    """Cached per-worker detail records fetched from the API for the User page."""
+    _api_get_workers_details_interval: float = 120
+    """The number of seconds between each fetch of individual worker details."""
+
     _process_map: ProcessMap
     """A mapping (dict) of process IDs to HordeProcessInfo objects. Contains some helper methods."""
     _horde_model_map: HordeModelMap
@@ -1620,6 +1626,9 @@ class HordeWorkerProcessManager:
         # Tracks the length of _errors_history at the last webui update so the list
         # is only copied and sent when new errors have been added.
         self._errors_history_last_sent_len: int = -1
+
+        self._workers_details: list[dict[str, Any]] = []
+        self._last_sent_workers_details_cache_key: str | None = None
 
         self._jobs_safety_check_lock = Lock_Asyncio()
 
@@ -5517,6 +5526,73 @@ class HordeWorkerProcessManager:
 
             await asyncio.sleep(self._api_get_user_info_interval)
 
+    async def api_get_workers_details(self) -> None:
+        """Fetch individual details for each worker belonging to the current user."""
+        if self._shutting_down:
+            return
+        if self.horde_client_session is None:
+            return
+        if self.user_info is None:
+            return
+        worker_ids = getattr(self.user_info, "worker_ids", None)
+        if not worker_ids:
+            self._workers_details = []
+            return
+
+        semaphore = asyncio.Semaphore(5)
+
+        async def _fetch_one(worker_id: str) -> dict[str, Any] | None:
+            async with semaphore:
+                try:
+                    request = SingleWorkerDetailsRequest(worker_id=str(worker_id))
+                    response = await self.horde_client_session.submit_request(request, SingleWorkerDetailsResponse)
+                    if isinstance(response, RequestErrorResponse):
+                        logger.debug(f"Failed to get details for worker {worker_id}: {response}")
+                        return None
+                    ba = response.bridge_agent or ""
+                    ba_parts = ba.split(":")
+                    version = ba_parts[1] if len(ba_parts) > 1 else ""
+                    return {
+                        "id": str(response.id_) if response.id_ else str(worker_id),
+                        "name": response.name or "",
+                        "version": version,
+                        "type": str(response.type_.value) if response.type_ else "",
+                        "online": response.online,
+                        "nsfw": response.nsfw,
+                        "trusted": response.trusted,
+                        "img2img": response.img2img,
+                        "painting": response.painting,
+                        "lora": response.lora,
+                        "max_pixels": response.max_pixels,
+                        "threads": response.threads,
+                        "models": list(response.models) if response.models else [],
+                        "uptime": response.uptime,
+                        "kudos_rewards": response.kudos_rewards,
+                    }
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Failed to get details for worker {worker_id}: {e}")
+                    return None
+
+        results = await asyncio.gather(*(_fetch_one(str(wid)) for wid in worker_ids))
+        self._workers_details = [w for w in results if w is not None]
+
+    async def _api_get_workers_details_loop(self) -> None:
+        """Periodically fetch per-worker detail records for the User page."""
+        logger.debug("In _api_get_workers_details_loop")
+        while True:
+            with logger.catch():
+                try:
+                    if self.horde_client_session is None:
+                        await asyncio.sleep(1)
+                        continue
+                    await self.api_get_workers_details()
+                    if self.is_time_for_shutdown() or self._shut_down:
+                        break
+                except CancelledError as e:
+                    self._shutdown()
+                    logger.debug(f"CancelledError: {e}")
+            await asyncio.sleep(self._api_get_workers_details_interval)
+
     _status_message_frequency = 20.0
     """The rate in seconds at which to print status messages with details about the current state of the worker."""
     _last_status_message_time = 0.0
@@ -6553,10 +6629,34 @@ class HordeWorkerProcessManager:
         # Get user kudos total and username
         user_kudos_total = None
         horde_username = None
+        user_details: dict[str, Any] = {}
         if self.user_info:
             horde_username = self.user_info.username
             if self.user_info.kudos_details:
                 user_kudos_total = self.user_info.kudos_details.accumulated
+                kd = self.user_info.kudos_details
+                kudos_details_dict: dict[str, Any] = {}
+                for field in ("accumulated", "gifted", "admin", "received", "donated", "recurring"):
+                    val = getattr(kd, field, None)
+                    if val is not None:
+                        try:
+                            kudos_details_dict[field] = float(val)
+                        except (TypeError, ValueError):
+                            pass
+                if kudos_details_dict:
+                    user_details["kudos_details"] = kudos_details_dict
+            for field in ("worker_count", "trusted", "moderator", "pseudonymous", "concurrency"):
+                val = getattr(self.user_info, field, None)
+                if val is not None:
+                    user_details[field] = val
+            worker_ids = getattr(self.user_info, "worker_ids", None)
+            if worker_ids:
+                user_details["worker_ids"] = [str(wid) for wid in worker_ids]
+        if self._workers_details:
+            workers_cache_key = json.dumps(self._workers_details, sort_keys=True, separators=(",", ":"), default=str)
+            if workers_cache_key != self._last_sent_workers_details_cache_key:
+                user_details["workers_list"] = self._workers_details
+                self._last_sent_workers_details_cache_key = workers_cache_key
 
         # Update the web UI
         # Compute time_without_jobs dynamically so the webui counter increments
@@ -6598,6 +6698,7 @@ class HordeWorkerProcessManager:
                 if len(self._errors_history) != self._errors_history_last_sent_len
                 else None
             ),
+            user_details=user_details if user_details else None,
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 
@@ -6657,6 +6758,11 @@ class HordeWorkerProcessManager:
         api_get_user_info_loop = asyncio.create_task(self._api_get_user_info_loop(), name="api_get_user_info_loop")
         api_get_user_info_loop.add_done_callback(self._handle_exception)
 
+        api_get_workers_details_loop = asyncio.create_task(
+            self._api_get_workers_details_loop(), name="api_get_workers_details_loop"
+        )
+        api_get_workers_details_loop.add_done_callback(self._handle_exception)
+
         job_submit_loop = asyncio.create_task(self._job_submit_loop(), name="job_submit_loop")
         job_submit_loop.add_done_callback(self._handle_exception)
 
@@ -6672,7 +6778,7 @@ class HordeWorkerProcessManager:
             webui_update_loop = asyncio.create_task(self._webui_update_loop(), name="webui_update_loop")
             webui_update_loop.add_done_callback(self._handle_exception)
 
-        tasks = [process_control_loop, api_call_loop, api_get_user_info_loop, job_submit_loop]
+        tasks = [process_control_loop, api_call_loop, api_get_user_info_loop, api_get_workers_details_loop, job_submit_loop]
 
         if bridge_data_loop is not None:
             tasks.append(bridge_data_loop)

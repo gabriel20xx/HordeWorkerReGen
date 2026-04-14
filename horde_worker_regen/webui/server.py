@@ -74,6 +74,7 @@ class WorkerWebUI:
             "faulted_jobs_history": [],
             "errors_history": [],
             "images_count": 0,
+            "user_details": {},
         }
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
@@ -383,6 +384,40 @@ class WorkerWebUI:
         [data-theme="dark"] .page-size-select { color: #cbd5e1; }
         [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
 
+        /* ---- Worker cards (User page) ---- */
+        .worker-card { background: var(--card-bg); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+        .worker-card:last-child { margin-bottom: 0; }
+        .worker-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+        .worker-card-name { font-weight: 700; color: var(--accent); font-size: 0.95rem; flex-shrink: 0; }
+        .worker-version-badge { font-size: 0.68rem; background: #e0e7ff; color: #4338ca; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-family: 'Courier New', monospace; }
+        .worker-type-badge { font-size: 0.68rem; background: #f0fdf4; color: #166534; padding: 2px 7px; border-radius: 4px; font-weight: 600; text-transform: capitalize; }
+        .worker-online-badge { font-size: 0.68rem; padding: 2px 7px; border-radius: 4px; font-weight: 600; margin-left: auto; }
+        .worker-online-badge.online { background: #dcfce7; color: #166534; }
+        .worker-online-badge.offline { background: #fee2e2; color: #991b1b; }
+        .worker-caps-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+        .wcap { font-size: 0.68rem; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+        .wcap-yes { background: #dcfce7; color: #166534; }
+        .wcap-no { background: #f1f5f9; color: #64748b; }
+        .wcap-nsfw { background: #fef3c7; color: #92400e; }
+        .wcap-sfw { background: #f1f5f9; color: #64748b; }
+        .worker-meta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; font-size: 0.82rem; color: #475569; }
+        .wm-item { display: flex; align-items: center; gap: 4px; }
+        .models-pill { cursor: default; text-decoration: underline dotted; }
+        .worker-stats-row { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: #64748b; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px; }
+        .ws-item { display: flex; align-items: center; gap: 4px; }
+        .ws-item.accent { color: var(--accent); font-weight: 600; }
+        [data-theme="dark"] .worker-version-badge { background: #312e81; color: #a5b4fc; }
+        [data-theme="dark"] .worker-type-badge { background: #14532d; color: #86efac; }
+        [data-theme="dark"] .worker-online-badge.online { background: #14532d; color: #86efac; }
+        [data-theme="dark"] .worker-online-badge.offline { background: #450a0a; color: #fca5a5; }
+        [data-theme="dark"] .wcap-yes { background: #14532d; color: #86efac; }
+        [data-theme="dark"] .wcap-no { background: #1e293b; color: #64748b; }
+        [data-theme="dark"] .wcap-nsfw { background: #451a03; color: #fcd34d; }
+        [data-theme="dark"] .wcap-sfw { background: #1e293b; color: #64748b; }
+        [data-theme="dark"] .worker-meta-row { color: #94a3b8; }
+        [data-theme="dark"] .worker-stats-row { color: #94a3b8; }
+        [data-theme="dark"] .worker-card { background: #151e2e; border-color: #2d3f55; }
+
         /* ---- Gallery new-images banner ---- */
         #gallery-new-banner { display: none; background: #dbeafe; border: 1px solid #93c5fd; border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 500; color: #1d4ed8; }
         [data-theme="dark"] #gallery-new-banner { background: #1e3a5f; border-color: #2d5fa0; color: #93c5fd; }
@@ -415,6 +450,9 @@ class WorkerWebUI:
             </button>
             <button class="nav-item" onclick="showPage('gallery', this)" id="nav-gallery">
                 <span class="nav-icon">&#128444;</span> Gallery
+            </button>
+            <button class="nav-item" onclick="showPage('user', this)" id="nav-user">
+                <span class="nav-icon">&#128100;</span> User
             </button>
             <button class="nav-item" onclick="showPage('logs', this)" id="nav-logs">
                 <span class="nav-icon">&#128203;</span> Logs
@@ -518,6 +556,33 @@ class WorkerWebUI:
                     </div>
                 </div>
 
+                <!-- USER PAGE -->
+                <div class="page" id="page-user">
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#128100; User Details</span></div>
+                        <div class="grid-4" style="margin-bottom: 14px;">
+                            <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value" id="user-page-username">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Kudos This Session</div><div class="stat-card-value accent" id="user-page-kudos-session">0</div></div>
+                        </div>
+                        <div class="grid-4" style="margin-bottom: 14px;">
+                            <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="user-page-images-per-hour">0</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="user-page-jobs-completed">0</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Trusted</div><div class="stat-card-value" id="user-page-trusted">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Worker Count</div><div class="stat-card-value" id="user-page-worker-count">-</div></div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header"><span class="card-title">&#127881; Kudos Breakdown</span></div>
+                            <div id="user-page-kudos-breakdown"></div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#9881; Workers</span><span class="section-count" id="user-workers-count">0</span></div>
+                        <div id="user-workers-list"><div class="empty-state"><span class="empty-state-icon">&#9881;</span>No worker data yet</div></div>
+                    </div>
+                </div>
+
                 <!-- LOGS PAGE -->
                 <div class="page" id="page-logs">
                     <div class="section">
@@ -558,8 +623,9 @@ class WorkerWebUI:
             if (str === null || str === undefined) return '';
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
-        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'horde', 'logs']);
+        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'logs']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
+        let cachedWorkersList = [];
         function showPage(pageId, navEl, push) {
             if (!VALID_PAGES.includes(pageId)) pageId = 'overview';
             document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
@@ -1367,6 +1433,84 @@ class WorkerWebUI:
                             if (atb) cl.scrollTop = cl.scrollHeight;
                         } else { cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>'; }
                     }
+                    // Update user page
+                    const ud = data.user_details || {};
+                    document.getElementById('user-page-username').textContent = data.horde_username || '-';
+                    document.getElementById('user-page-kudos-total').textContent = data.user_kudos_total != null ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
+                    document.getElementById('user-page-kudos-per-hour').textContent = (data.kudos_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('user-page-kudos-session').textContent = (data.kudos_earned_session || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('user-page-images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('user-page-jobs-completed').textContent = data.jobs_completed || 0;
+                    const trusted = ud.trusted;
+                    document.getElementById('user-page-trusted').textContent = trusted === true ? '\u2714 Yes' : (trusted === false ? '\u2718 No' : '-');
+                    document.getElementById('user-page-trusted').className = 'stat-card-value ' + (trusted === true ? 'success' : (trusted === false ? 'error' : ''));
+                    document.getElementById('user-page-worker-count').textContent = ud.worker_count != null ? ud.worker_count : '-';
+                    const kb = document.getElementById('user-page-kudos-breakdown');
+                    const kd = ud.kudos_details || {};
+                    const kdRows = [
+                        ['Accumulated', kd.accumulated],
+                        ['Gifted', kd.gifted],
+                        ['Admin', kd.admin],
+                        ['Received', kd.received],
+                        ['Donated', kd.donated],
+                        ['Recurring', kd.recurring],
+                    ].filter(function(r){return r[1] != null;});
+                    kb.innerHTML = kdRows.length > 0
+                        ? kdRows.map(function(r){return '<div class="stat-row"><span class="stat-label">'+escapeHtml(r[0])+':</span><span class="stat-value">'+Number(r[1]).toLocaleString(undefined,{maximumFractionDigits:2})+'</span></div>';}).join('')
+                        : '<div class="empty-state">No kudos breakdown available</div>';
+                    // Render per-worker cards
+                    if (ud.workers_list) { cachedWorkersList = ud.workers_list; }
+                    const workersList = cachedWorkersList;
+                    document.getElementById('user-workers-count').textContent = workersList.length;
+                    const wlEl = document.getElementById('user-workers-list');
+                    if (workersList.length === 0) {
+                        wlEl.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No worker data yet</div>';
+                    } else {
+                        wlEl.innerHTML = workersList.map(function(w) {
+                            const onlineCls = w.online ? 'online' : 'offline';
+                            const onlineTxt = w.online ? 'Online' : 'Offline';
+                            const capBadge = function(val, label) {
+                                if (val === null || val === undefined) return '';
+                                return '<span class="wcap '+(val?'wcap-yes':'wcap-no')+'">'+escapeHtml(label)+'</span>';
+                            };
+                            const nsfwBadge = w.nsfw === true ? '<span class="wcap wcap-nsfw">NSFW</span>' : (w.nsfw === false ? '<span class="wcap wcap-sfw">SFW</span>' : '');
+                            const caps = nsfwBadge +
+                                capBadge(w.trusted, 'Trusted') +
+                                capBadge(w.img2img, 'img2img') +
+                                capBadge(w.painting, 'Painting') +
+                                capBadge(w.lora, 'LoRA');
+                            const models = w.models || [];
+                            const modelCount = models.length;
+                            const modelTitles = models.join('\n');
+                            const sizeStr = w.max_pixels ? ('\u2248'+Math.round(Math.sqrt(w.max_pixels))+'px') : '-';
+                            const uptimeSecs = w.uptime || 0;
+                            const uh = Math.floor(uptimeSecs/3600), um = Math.floor((uptimeSecs%3600)/60);
+                            const uptimeStr = uh > 0 ? uh+'h '+um+'m' : (um > 0 ? um+'m' : uptimeSecs+'s');
+                            const kudos = w.kudos_rewards != null ? Number(w.kudos_rewards).toLocaleString(undefined,{maximumFractionDigits:0}) : '-';
+                            const kph = (w.kudos_rewards != null && uptimeSecs > 0)
+                                ? (w.kudos_rewards / (uptimeSecs / 3600)).toLocaleString(undefined, {maximumFractionDigits:1})
+                                : '-';
+                            return '<div class="worker-card">' +
+                                '<div class="worker-card-header">' +
+                                '<span class="worker-card-name">'+escapeHtml(w.name||'Unknown')+'</span>' +
+                                (w.version ? '<span class="worker-version-badge">v'+escapeHtml(w.version)+'</span>' : '') +
+                                (w.type ? '<span class="worker-type-badge">'+escapeHtml(w.type)+'</span>' : '') +
+                                '<span class="worker-online-badge '+onlineCls+'">'+onlineTxt+'</span>' +
+                                '</div>' +
+                                (caps ? '<div class="worker-caps-row">'+caps+'</div>' : '') +
+                                '<div class="worker-meta-row">' +
+                                '<span class="wm-item">\uD83D\uDCCF '+escapeHtml(sizeStr)+'</span>' +
+                                (w.threads != null ? '<span class="wm-item">\uD83E\uDDF5 '+escapeHtml(w.threads)+' thread'+(w.threads!==1?'s':'')+'</span>' : '') +
+                                '<span class="wm-item models-pill" title="'+escapeHtml(modelTitles)+'">\uD83E\uDDE9 '+modelCount+' model'+(modelCount!==1?'s':'')+(modelCount>0?' \u25BE':'')+'</span>' +
+                                '</div>' +
+                                '<div class="worker-stats-row">' +
+                                '<span class="ws-item">&#9201; '+escapeHtml(uptimeStr)+' uptime</span>' +
+                                '<span class="ws-item">\uD83D\uDC8E '+kudos+' kudos</span>' +
+                                '<span class="ws-item accent">\uD83D\uDCC8 '+kph+' k/h</span>' +
+                                '</div>' +
+                                '</div>';
+                        }).join('');
+                    }
                 })
                 .catch(error => {
                     if (error.name === 'AbortError') return;
@@ -1624,6 +1768,7 @@ class WorkerWebUI:
         console_logs: list[str] | None = None,
         faulted_jobs_history: list[dict[str, Any]] | None = None,
         errors_history: list[str] | None = None,
+        user_details: dict[str, Any] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -1656,6 +1801,7 @@ class WorkerWebUI:
             console_logs: Recent console log messages
             faulted_jobs_history: List of faulted jobs with details
             errors_history: List of recent error messages
+            user_details: Extended user details from the Horde API (worker_count, trusted, moderator, etc.)
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -1713,6 +1859,8 @@ class WorkerWebUI:
             self.status_data["faulted_jobs_history"] = faulted_jobs_history
         if errors_history is not None:
             self.status_data["errors_history"] = list(errors_history)
+        if user_details is not None:
+            self.status_data["user_details"] = user_details
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]

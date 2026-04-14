@@ -836,6 +836,118 @@ async def test_webui_status_includes_images_per_hour() -> None:
         await webui.stop()
 
 
+def test_webui_user_details_status_update() -> None:
+    """Test that update_status correctly stores user_details in status_data."""
+    webui = WorkerWebUI(port=0)
+
+    sample_workers: list[dict] = [
+        {
+            "id": "worker-id-1",
+            "name": "TestWorker",
+            "version": "0.9.0",
+            "type": "image",
+            "online": True,
+            "nsfw": False,
+            "trusted": True,
+            "img2img": True,
+            "painting": False,
+            "lora": True,
+            "max_pixels": 4194304,
+            "threads": 2,
+            "models": ["stable_diffusion", "sdxl"],
+            "uptime": 7200,
+            "kudos_rewards": 3600.0,
+        },
+    ]
+    user_details = {
+        "worker_count": 1,
+        "trusted": True,
+        "moderator": False,
+        "workers_list": sample_workers,
+        "kudos_details": {"accumulated": 5000.0, "gifted": 100.0},
+    }
+
+    webui.update_status(user_details=user_details)
+
+    assert "user_details" in webui.status_data, "status_data must contain user_details"
+    stored = webui.status_data["user_details"]
+    assert stored["worker_count"] == 1
+    assert stored["trusted"] is True
+    assert stored["moderator"] is False
+    assert len(stored["workers_list"]) == 1
+    w = stored["workers_list"][0]
+    assert w["name"] == "TestWorker"
+    assert w["version"] == "0.9.0"
+    assert w["type"] == "image"
+    assert w["nsfw"] is False
+    assert w["trusted"] is True
+    assert w["img2img"] is True
+    assert w["threads"] == 2
+    assert w["models"] == ["stable_diffusion", "sdxl"]
+    assert w["uptime"] == 7200
+    assert w["kudos_rewards"] == 3600.0
+    assert stored["kudos_details"]["accumulated"] == 5000.0
+
+
+@pytest.mark.asyncio
+async def test_webui_status_api_includes_user_details() -> None:
+    """Test that /api/status includes user_details with workers_list."""
+    webui = WorkerWebUI(port=0)
+
+    sample_workers: list[dict] = [
+        {
+            "id": "worker-id-2",
+            "name": "ApiTestWorker",
+            "version": "1.0.0",
+            "type": "image",
+            "online": True,
+            "nsfw": True,
+            "trusted": False,
+            "img2img": False,
+            "painting": True,
+            "lora": False,
+            "max_pixels": 1048576,
+            "threads": 1,
+            "models": ["model_a", "model_b", "model_c"],
+            "uptime": 3600,
+            "kudos_rewards": 1800.0,
+        },
+    ]
+    user_details = {
+        "worker_count": 1,
+        "trusted": False,
+        "workers_list": sample_workers,
+    }
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        webui.update_status(user_details=user_details)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/status",
+        ) as response:
+            assert response.status == 200
+            status = await response.json()
+
+        assert "user_details" in status, "/api/status must include user_details"
+        ud = status["user_details"]
+        assert ud["worker_count"] == 1
+        assert ud["trusted"] is False
+        assert len(ud["workers_list"]) == 1
+        w = ud["workers_list"][0]
+        assert w["name"] == "ApiTestWorker"
+        assert w["type"] == "image"
+        assert w["nsfw"] is True
+        assert w["models"] == ["model_a", "model_b", "model_c"]
+        assert w["uptime"] == 3600
+        assert w["kudos_rewards"] == 1800.0
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     # Run simple tests
     test_webui_creation()
