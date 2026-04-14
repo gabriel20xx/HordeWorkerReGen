@@ -2225,7 +2225,11 @@ class HordeWorkerProcessManager:
         if job_to_remove is not None and (
             job_to_remove in self.jobs_in_progress
             or (
-                prior_state == HordeProcessState.MODEL_PRELOADING
+                prior_state
+                in (
+                    HordeProcessState.MODEL_PRELOADING,
+                    HordeProcessState.DOWNLOADING_AUX_MODEL,
+                )
                 and job_to_remove in self.jobs_pending_inference
             )
         ):
