@@ -2222,7 +2222,17 @@ class HordeWorkerProcessManager:
         if process_info.loaded_horde_model_name is not None:
             self._horde_model_map.expire_entry(process_info.loaded_horde_model_name)
 
-        if job_to_remove is not None and job_to_remove in self.jobs_in_progress:
+        if job_to_remove is not None and (
+            job_to_remove in self.jobs_in_progress
+            or (
+                prior_state
+                in (
+                    HordeProcessState.MODEL_PRELOADING,
+                    HordeProcessState.DOWNLOADING_AUX_MODEL,
+                )
+                and job_to_remove in self.jobs_pending_inference
+            )
+        ):
             self.handle_job_fault(faulted_job=job_to_remove, process_info=process_info)
 
         self._end_inference_process(process_info)
