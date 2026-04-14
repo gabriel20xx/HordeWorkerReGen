@@ -402,7 +402,9 @@ class WorkerWebUI:
         .wcap-sfw { background: #f1f5f9; color: #64748b; }
         .worker-meta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; font-size: 0.82rem; color: #475569; }
         .wm-item { display: flex; align-items: center; gap: 4px; }
-        .models-pill { cursor: default; text-decoration: underline dotted; }
+        .models-pill { cursor: default; text-decoration: underline dotted; position: relative; }
+        .models-pill[data-tooltip]:not([data-tooltip=""]):hover::after { content: attr(data-tooltip); white-space: pre-wrap; overflow-wrap: anywhere; position: absolute; bottom: calc(100% + 4px); left: 0; background: #334155; color: #f1f5f9; padding: 6px 10px; border-radius: 6px; font-size: 0.78rem; line-height: 1.5; z-index: 1000; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 1px solid #475569; min-width: 140px; max-width: min(90vw, 480px); }
+        [data-theme="dark"] .models-pill[data-tooltip]:not([data-tooltip=""]):hover::after { background: #1e293b; border-color: #334155; }
         .worker-stats-row { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: #64748b; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px; }
         .ws-item { display: flex; align-items: center; gap: 4px; }
         .ws-item.accent { color: var(--accent); font-weight: 600; }
@@ -668,7 +670,7 @@ class WorkerWebUI:
                         '<div class="worker-meta-row">' +
                         '<span class="wm-item">\uD83D\uDCCF '+escapeHtml(sizeStr)+'</span>' +
                         (w.threads != null ? '<span class="wm-item">\uD83E\uDDF5 '+escapeHtml(w.threads)+' thread'+(w.threads!==1?'s':'')+'</span>' : '') +
-                        '<span class="wm-item models-pill" title="'+escapeHtml(modelTitles)+'">\uD83E\uDDE9 '+modelCount+' model'+(modelCount!==1?'s':'')+(modelCount>0?' \u25BE':'')+'</span>' +
+                        (modelTitles ? '<span class="wm-item models-pill" data-tooltip="'+escapeHtml(modelTitles)+'">' : '<span class="wm-item models-pill">') +'\uD83E\uDDE9 '+modelCount+' model'+(modelCount!==1?'s':'')+(modelCount>0?' \u25BE':'')+'</span>' +
                         '</div>' +
                         '<div class="worker-stats-row">' +
                         '<span class="ws-item">&#9201; '+escapeHtml(uptimeStr)+' uptime</span>' +
