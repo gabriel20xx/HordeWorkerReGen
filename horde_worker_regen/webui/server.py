@@ -74,6 +74,7 @@ class WorkerWebUI:
             "faulted_jobs_history": [],
             "errors_history": [],
             "images_count": 0,
+            "user_details": {},
         }
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
@@ -416,6 +417,9 @@ class WorkerWebUI:
             <button class="nav-item" onclick="showPage('gallery', this)" id="nav-gallery">
                 <span class="nav-icon">&#128444;</span> Gallery
             </button>
+            <button class="nav-item" onclick="showPage('user', this)" id="nav-user">
+                <span class="nav-icon">&#128100;</span> User
+            </button>
             <button class="nav-item" onclick="showPage('logs', this)" id="nav-logs">
                 <span class="nav-icon">&#128203;</span> Logs
             </button>
@@ -518,6 +522,35 @@ class WorkerWebUI:
                     </div>
                 </div>
 
+                <!-- USER PAGE -->
+                <div class="page" id="page-user">
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#128100; User Details</span></div>
+                        <div class="grid-4" style="margin-bottom: 14px;">
+                            <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value" id="user-page-username">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Kudos This Session</div><div class="stat-card-value accent" id="user-page-kudos-session">0</div></div>
+                        </div>
+                        <div class="grid-4" style="margin-bottom: 14px;">
+                            <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="user-page-images-per-hour">0</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="user-page-jobs-completed">0</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Trusted</div><div class="stat-card-value" id="user-page-trusted">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Worker Count</div><div class="stat-card-value" id="user-page-worker-count">-</div></div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="card">
+                                <div class="card-header"><span class="card-title">&#9881; This Worker</span></div>
+                                <div id="user-page-worker-info"></div>
+                            </div>
+                            <div class="card">
+                                <div class="card-header"><span class="card-title">&#127881; Kudos Breakdown</span></div>
+                                <div id="user-page-kudos-breakdown"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- LOGS PAGE -->
                 <div class="page" id="page-logs">
                     <div class="section">
@@ -558,7 +591,7 @@ class WorkerWebUI:
             if (str === null || str === undefined) return '';
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
-        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'horde', 'logs']);
+        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'logs']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         function showPage(pageId, navEl, push) {
             if (!VALID_PAGES.includes(pageId)) pageId = 'overview';
@@ -1367,6 +1400,38 @@ class WorkerWebUI:
                             if (atb) cl.scrollTop = cl.scrollHeight;
                         } else { cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>'; }
                     }
+                    // Update user page
+                    const ud = data.user_details || {};
+                    document.getElementById('user-page-username').textContent = escapeHtml(data.horde_username || '-');
+                    document.getElementById('user-page-kudos-total').textContent = data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
+                    document.getElementById('user-page-kudos-per-hour').textContent = (data.kudos_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('user-page-kudos-session').textContent = (data.kudos_earned_session || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('user-page-images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('user-page-jobs-completed').textContent = data.jobs_completed || 0;
+                    const trusted = ud.trusted;
+                    document.getElementById('user-page-trusted').textContent = trusted === true ? '\u2714 Yes' : (trusted === false ? '\u2718 No' : '-');
+                    document.getElementById('user-page-trusted').className = 'stat-card-value ' + (trusted === true ? 'success' : (trusted === false ? 'error' : ''));
+                    document.getElementById('user-page-worker-count').textContent = ud.worker_count != null ? ud.worker_count : '-';
+                    const winfo = document.getElementById('user-page-worker-info');
+                    winfo.innerHTML = '<div class="stat-row"><span class="stat-label">Worker Name:</span><span class="stat-value">'+escapeHtml(data.worker_name||'-')+'</span></div>'+
+                        (ud.moderator != null ? '<div class="stat-row"><span class="stat-label">Moderator:</span><span class="stat-value">'+(ud.moderator?'\u2714 Yes':'\u2718 No')+'</span></div>' : '')+
+                        (ud.pseudonymous != null ? '<div class="stat-row"><span class="stat-label">Pseudonymous:</span><span class="stat-value">'+(ud.pseudonymous?'\u2714 Yes':'\u2718 No')+'</span></div>' : '')+
+                        (ud.concurrency != null ? '<div class="stat-row"><span class="stat-label">Concurrency:</span><span class="stat-value">'+escapeHtml(ud.concurrency)+'</span></div>' : '')+
+                        (ud.worker_ids && ud.worker_ids.length > 0 ? '<div class="stat-row" style="align-items:flex-start;"><span class="stat-label">Worker IDs:</span><span class="stat-value" style="font-family:monospace;font-size:0.78rem;word-break:break-all;">'+ud.worker_ids.map(function(id){return escapeHtml(id);}).join('<br>')+'</span></div>' : '');
+                    if (!winfo.innerHTML.trim()) winfo.innerHTML = '<div class="empty-state">No worker info available</div>';
+                    const kb = document.getElementById('user-page-kudos-breakdown');
+                    const kd = ud.kudos_details || {};
+                    const kdRows = [
+                        ['Accumulated', kd.accumulated],
+                        ['Gifted', kd.gifted],
+                        ['Admin', kd.admin],
+                        ['Received', kd.received],
+                        ['Donated', kd.donated],
+                        ['Recurring', kd.recurring],
+                    ].filter(function(r){return r[1] != null;});
+                    kb.innerHTML = kdRows.length > 0
+                        ? kdRows.map(function(r){return '<div class="stat-row"><span class="stat-label">'+escapeHtml(r[0])+':</span><span class="stat-value">'+Number(r[1]).toLocaleString(undefined,{maximumFractionDigits:2})+'</span></div>';}).join('')
+                        : '<div class="empty-state">No kudos breakdown available</div>';
                 })
                 .catch(error => {
                     if (error.name === 'AbortError') return;
@@ -1624,6 +1689,7 @@ class WorkerWebUI:
         console_logs: list[str] | None = None,
         faulted_jobs_history: list[dict[str, Any]] | None = None,
         errors_history: list[str] | None = None,
+        user_details: dict[str, Any] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -1656,6 +1722,7 @@ class WorkerWebUI:
             console_logs: Recent console log messages
             faulted_jobs_history: List of faulted jobs with details
             errors_history: List of recent error messages
+            user_details: Extended user details from the Horde API (worker_count, trusted, moderator, etc.)
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -1713,6 +1780,8 @@ class WorkerWebUI:
             self.status_data["faulted_jobs_history"] = faulted_jobs_history
         if errors_history is not None:
             self.status_data["errors_history"] = list(errors_history)
+        if user_details is not None:
+            self.status_data["user_details"] = user_details
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]

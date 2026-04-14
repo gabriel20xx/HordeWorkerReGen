@@ -6543,10 +6543,26 @@ class HordeWorkerProcessManager:
         # Get user kudos total and username
         user_kudos_total = None
         horde_username = None
+        user_details: dict[str, Any] = {}
         if self.user_info:
             horde_username = self.user_info.username
             if self.user_info.kudos_details:
                 user_kudos_total = self.user_info.kudos_details.accumulated
+                kd = self.user_info.kudos_details
+                kudos_details_dict: dict[str, Any] = {}
+                for field in ("accumulated", "gifted", "admin", "received", "donated", "recurring"):
+                    val = getattr(kd, field, None)
+                    if val is not None:
+                        kudos_details_dict[field] = float(val)
+                if kudos_details_dict:
+                    user_details["kudos_details"] = kudos_details_dict
+            for field in ("worker_count", "trusted", "moderator", "pseudonymous", "concurrency"):
+                val = getattr(self.user_info, field, None)
+                if val is not None:
+                    user_details[field] = val
+            worker_ids = getattr(self.user_info, "worker_ids", None)
+            if worker_ids:
+                user_details["worker_ids"] = [str(wid) for wid in worker_ids]
 
         # Update the web UI
         # Compute time_without_jobs dynamically so the webui counter increments
@@ -6588,6 +6604,7 @@ class HordeWorkerProcessManager:
                 if len(self._errors_history) != self._errors_history_last_sent_len
                 else None
             ),
+            user_details=user_details if user_details else None,
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 
