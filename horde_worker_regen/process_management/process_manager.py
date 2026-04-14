@@ -5555,7 +5555,7 @@ class HordeWorkerProcessManager:
                 }
                 workers.append(worker)
             except Exception as e:  # noqa: BLE001
-                logger.debug(f"Failed to get details for worker {worker_id}: {e}")
+                logger.warning(f"Failed to get details for worker {worker_id}: {e}")
         self._workers_details = workers
 
     async def _api_get_workers_details_loop(self) -> None:

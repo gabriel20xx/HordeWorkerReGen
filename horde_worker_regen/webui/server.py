@@ -1479,7 +1479,7 @@ class WorkerWebUI:
                                 capBadge(w.lora, 'LoRA');
                             const models = w.models || [];
                             const modelCount = models.length;
-                            const modelTitles = models.map(function(m){return m.replace(/"/g,'&quot;');}).join('\n');
+                            const modelTitles = models.map(function(m){return escapeHtml(m);}).join('\n');
                             const sizeStr = w.max_pixels ? ('\u2248'+Math.round(Math.sqrt(w.max_pixels))+'px') : '-';
                             const uptimeSecs = w.uptime || 0;
                             const uh = Math.floor(uptimeSecs/3600), um = Math.floor((uptimeSecs%3600)/60);
