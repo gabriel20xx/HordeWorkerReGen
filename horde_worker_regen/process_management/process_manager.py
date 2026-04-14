@@ -6553,7 +6553,10 @@ class HordeWorkerProcessManager:
                 for field in ("accumulated", "gifted", "admin", "received", "donated", "recurring"):
                     val = getattr(kd, field, None)
                     if val is not None:
-                        kudos_details_dict[field] = float(val)
+                        try:
+                            kudos_details_dict[field] = float(val)
+                        except (TypeError, ValueError):
+                            pass
                 if kudos_details_dict:
                     user_details["kudos_details"] = kudos_details_dict
             for field in ("worker_count", "trusted", "moderator", "pseudonymous", "concurrency"):
