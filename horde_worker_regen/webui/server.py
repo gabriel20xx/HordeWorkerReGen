@@ -1413,12 +1413,16 @@ class WorkerWebUI:
                     document.getElementById('user-page-trusted').className = 'stat-card-value ' + (trusted === true ? 'success' : (trusted === false ? 'error' : ''));
                     document.getElementById('user-page-worker-count').textContent = ud.worker_count != null ? ud.worker_count : '-';
                     const winfo = document.getElementById('user-page-worker-info');
-                    winfo.innerHTML = '<div class="stat-row"><span class="stat-label">Worker Name:</span><span class="stat-value">'+escapeHtml(data.worker_name||'-')+'</span></div>'+
-                        (ud.moderator != null ? '<div class="stat-row"><span class="stat-label">Moderator:</span><span class="stat-value">'+(ud.moderator?'\u2714 Yes':'\u2718 No')+'</span></div>' : '')+
-                        (ud.pseudonymous != null ? '<div class="stat-row"><span class="stat-label">Pseudonymous:</span><span class="stat-value">'+(ud.pseudonymous?'\u2714 Yes':'\u2718 No')+'</span></div>' : '')+
-                        (ud.concurrency != null ? '<div class="stat-row"><span class="stat-label">Concurrency:</span><span class="stat-value">'+escapeHtml(ud.concurrency)+'</span></div>' : '')+
-                        (ud.worker_ids && ud.worker_ids.length > 0 ? '<div class="stat-row" style="align-items:flex-start;"><span class="stat-label">Worker IDs:</span><span class="stat-value" style="font-family:monospace;font-size:0.78rem;word-break:break-all;">'+ud.worker_ids.map(function(id){return escapeHtml(id);}).join('<br>')+'</span></div>' : '');
-                    if (!winfo.innerHTML.trim()) winfo.innerHTML = '<div class="empty-state">No worker info available</div>';
+                    const winfoRows = [];
+                    winfoRows.push('<div class="stat-row"><span class="stat-label">Worker Name:</span><span class="stat-value">'+escapeHtml(data.worker_name||'-')+'</span></div>');
+                    if (ud.moderator != null) winfoRows.push('<div class="stat-row"><span class="stat-label">Moderator:</span><span class="stat-value">'+(ud.moderator?'\u2714 Yes':'\u2718 No')+'</span></div>');
+                    if (ud.pseudonymous != null) winfoRows.push('<div class="stat-row"><span class="stat-label">Pseudonymous:</span><span class="stat-value">'+(ud.pseudonymous?'\u2714 Yes':'\u2718 No')+'</span></div>');
+                    if (ud.concurrency != null) winfoRows.push('<div class="stat-row"><span class="stat-label">Concurrency:</span><span class="stat-value">'+escapeHtml(ud.concurrency)+'</span></div>');
+                    if (ud.worker_ids && ud.worker_ids.length > 0) {
+                        const idList = ud.worker_ids.map(function(id){return escapeHtml(id);}).join('<br>');
+                        winfoRows.push('<div class="stat-row" style="align-items:flex-start;"><span class="stat-label">Worker IDs:</span><span class="stat-value" style="font-family:monospace;font-size:0.78rem;word-break:break-all;">'+idList+'</span></div>');
+                    }
+                    winfo.innerHTML = winfoRows.join('');
                     const kb = document.getElementById('user-page-kudos-breakdown');
                     const kd = ud.kudos_details || {};
                     const kdRows = [
