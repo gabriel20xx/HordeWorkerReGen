@@ -5582,7 +5582,11 @@ class HordeWorkerProcessManager:
         while True:
             with logger.catch():
                 try:
-                    if self.horde_client_session is None:
+                    if self.horde_client_session is None or self.user_info is None:
+                        await asyncio.sleep(1)
+                        continue
+                    worker_ids = getattr(self.user_info, "worker_ids", None)
+                    if worker_ids is None:
                         await asyncio.sleep(1)
                         continue
                     await self.api_get_workers_details()
