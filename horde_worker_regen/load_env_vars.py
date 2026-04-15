@@ -29,9 +29,6 @@ def load_dotenv(dotenv_path: str = ".env") -> None:
             os.environ.setdefault(key, value)
 
 
-load_dotenv()
-
-
 def load_env_vars_from_config() -> None:  # FIXME: there is a dynamic way to do this
     """Load the environment variables from the config file."""
     yaml = YAML()

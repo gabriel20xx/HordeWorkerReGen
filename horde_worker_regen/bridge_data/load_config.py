@@ -21,6 +21,11 @@ else:
     class StrEnum(str, Enum):  # type: ignore[no-redef]
         """Backport of StrEnum for Python 3.10."""
 
+        @staticmethod
+        def _generate_next_value_(name: str, start: int, count: int, last_values: list[object]) -> str:
+            """Return the member name so `auto()` produces string values."""
+            return name
+
 from horde_worker_regen.bridge_data import AIWORKER_REGEN_PREFIX
 from horde_worker_regen.bridge_data.data_model import reGenBridgeData
 

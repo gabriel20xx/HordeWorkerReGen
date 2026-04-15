@@ -282,8 +282,9 @@ def init() -> int:
     if args.worker_name:
         os.environ["AIWORKER_DREAMER_WORKER_NAME"] = args.worker_name
 
-    from horde_worker_regen.load_env_vars import load_env_vars_from_config
+    from horde_worker_regen.load_env_vars import load_dotenv, load_env_vars_from_config
 
+    load_dotenv()
     if not args.load_config_from_env_vars:
         # Note: 'load_env_vars_from_config' means to translate the config file to environment variables
         # if 'load_config_from_env_vars' is True, then we are ignoring the config file

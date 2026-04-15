@@ -10,8 +10,9 @@ def download_all_models(
     directml: int | None = None,
 ) -> None:
     """Download all models specified in the config file."""
-    from horde_worker_regen.load_env_vars import load_env_vars_from_config
+    from horde_worker_regen.load_env_vars import load_dotenv, load_env_vars_from_config
 
+    load_dotenv()
     if not load_config_from_env_vars:
         load_env_vars_from_config()
 
