@@ -661,8 +661,9 @@ class ProcessMap(dict[int, HordeProcessInfo]):
 
         This detects jobs that are stuck in the INFERENCE_STARTING or INFERENCE_PROCESSING state with:
         1. Progress not advancing for timeout period (stuck at same percentage), OR
-        2. Progress stuck at exactly 0 % for zero_progress_timeout seconds (fastest early-stall
-           detection — see detailed note below), OR
+        2. Progress stuck at exactly 0 % for zero_progress_timeout seconds (or
+           no_step_heartbeat_timeout if zero_progress_timeout is None) — fastest early-stall
+           detection — see detailed note below, OR
         3. A single diffusion step taking longer than MAX_INFERENCE_STEP_TIMEOUT seconds, OR
         4. No heartbeat received for timeout period (including last step / VAE decode phase)
 
