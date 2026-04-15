@@ -35,8 +35,25 @@ class VersionMeta(BaseModel):
 
 
 def _version_tuple(v: str) -> tuple[int, ...]:
-    """Parse a version string into a tuple of integers for comparison."""
-    return tuple(int(x) for x in v.split(".")[:3])
+    """Parse a version string into a tuple of integers for comparison.
+
+    Only the first three components (MAJOR, MINOR, PATCH) are considered.
+    Versions with fewer than three components return a shorter tuple.
+
+    Args:
+        v: A version string such as '10.1.2'.
+
+    Returns:
+        A tuple of up to three integers representing the version components.
+
+    Raises:
+        ValueError: If the version string contains non-numeric components.
+    """
+    parts = v.split(".")[:3]
+    try:
+        return tuple(int(x) for x in parts)
+    except ValueError as e:
+        raise ValueError(f"Invalid version string {v!r}: version components must be numeric") from e
 
 
 def _compare_versions(a: str, b: str) -> int:
