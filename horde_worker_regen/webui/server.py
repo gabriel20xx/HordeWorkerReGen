@@ -1238,7 +1238,8 @@ class WorkerWebUI:
             function renderGrid() {
                 if (_lastRenderedImageKey !== renderToken) return;
                 var containerWidth = oic.offsetWidth || 320;
-                var containerAR = containerWidth / (oic.offsetHeight || 320);
+                var containerHeight = oic.offsetHeight || 320;
+                var gap = 4; // CSS gap in px; must match the gap value in the grid style below
                 // Average image aspect ratio (width/height); all images in a batch share the same resolution,
                 // so avgImgAR is effectively the single image AR.
                 var avgImgAR = imgDims.reduce(function(sum, d) { return sum + (d ? d.w / d.h : 1.0); }, 0) / count;
@@ -1250,20 +1251,28 @@ class WorkerWebUI:
                 }
                 var gridStyle, items;
                 if (count === 2) {
-                    // 1×2 side-by-side: each cell AR = C/2.  2×1 stacked: each cell AR = 2C.
-                    if (cellEff(containerAR / 2, avgImgAR) >= cellEff(containerAR * 2, avgImgAR)) {
+                    // 1×2 side-by-side: 1 horizontal gap; each cell AR = (W−gap)/2 / H.
+                    // 2×1 stacked:      1 vertical gap;   each cell AR = W / ((H−gap)/2).
+                    var ar1x2 = (containerWidth - gap) / 2 / containerHeight;
+                    var ar2x1 = containerWidth * 2 / (containerHeight - gap);
+                    if (cellEff(ar1x2, avgImgAR) >= cellEff(ar2x1, avgImgAR)) {
                         gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
                     } else {
                         gridStyle = 'grid-template-columns:1fr;grid-template-rows:repeat(2,1fr);';
                     }
                     items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                 } else if (count === 3) {
-                    // 1×3 row:    each cell AR = C/3.
-                    // 2+1 layout: top image spans full width (cell AR = 2C, half container height);
-                    //             two bottom images share the second row (each cell AR = C).
-                    //             Area-weighted efficiency = 0.5×cellEff(2C,a) + 0.5×cellEff(C,a).
-                    var eff1x3 = cellEff(containerAR / 3, avgImgAR);
-                    var eff2p1 = 0.5 * cellEff(2 * containerAR, avgImgAR) + 0.5 * cellEff(containerAR, avgImgAR);
+                    // 1×3 row:    2 horizontal gaps; each cell AR = (W−2×gap)/3 / H.
+                    // 2+1 layout: 1 vertical gap between rows; each row height = (H−gap)/2.
+                    //   Top cell spans full width: AR = W / rowH.
+                    //   Two bottom cells share a horizontal gap: AR = (W−gap)/2 / rowH.
+                    //   Area-weighted efficiency ≈ 0.5×cellEff(top) + 0.5×cellEff(bottom).
+                    var rowH = (containerHeight - gap) / 2;
+                    var ar1x3 = (containerWidth - 2 * gap) / 3 / containerHeight;
+                    var ar2p1top = containerWidth / rowH;
+                    var ar2p1bot = (containerWidth - gap) / 2 / rowH;
+                    var eff1x3 = cellEff(ar1x3, avgImgAR);
+                    var eff2p1 = 0.5 * cellEff(ar2p1top, avgImgAR) + 0.5 * cellEff(ar2p1bot, avgImgAR);
                     if (eff1x3 >= eff2p1) {
                         gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
                         items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
@@ -1273,11 +1282,16 @@ class WorkerWebUI:
                     }
                 } else {
                     // count === 4
-                    // 1×4 row:  each cell AR = C/4.  Requires ≥120 px per column (containerWidth ≥ 480).
-                    // 2×2 grid: each cell AR = C.
-                    // 0 (impossible efficiency) disables 1×4 when the container is too narrow.
-                    var eff1x4 = containerWidth >= 480 ? cellEff(containerAR / 4, avgImgAR) : 0;
-                    var eff2x2 = cellEff(containerAR, avgImgAR);
+                    // 1×4 row:  3 horizontal gaps; each column width = (W−3×gap)/4, cell AR = colW / H.
+                    //           Requires each column to be at least 120 px wide after subtracting gaps.
+                    // 2×2 grid: 1 horizontal + 1 vertical gap; each cell AR = (W−gap) / (H−gap).
+                    // 0 (impossible efficiency) disables 1×4 when columns would be narrower than 120 px.
+                    var minColumnWidthPx = 120;
+                    var col1x4 = (containerWidth - 3 * gap) / 4;
+                    var ar1x4 = col1x4 / containerHeight;
+                    var ar2x2 = (containerWidth - gap) / (containerHeight - gap);
+                    var eff1x4 = col1x4 >= minColumnWidthPx ? cellEff(ar1x4, avgImgAR) : 0;
+                    var eff2x2 = cellEff(ar2x2, avgImgAR);
                     if (eff1x4 >= eff2x2) {
                         gridStyle = 'grid-template-columns:repeat(4,1fr);grid-template-rows:1fr;';
                     } else {
