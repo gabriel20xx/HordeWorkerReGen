@@ -64,8 +64,10 @@ def _invoke_update_webui_status(
     jobs_lookup: dict | None = None,
     process_list: list | None = None,
 ) -> dict | None:
-    """Call update_webui_status on a minimal mock manager and return the
-    current_job dict that was passed to webui.update_status."""
+    """Call update_webui_status on a minimal mock manager and return the.
+
+    current_job dict that was passed to webui.update_status.
+    """
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
     mock_manager = MagicMock()
@@ -85,7 +87,7 @@ def _invoke_update_webui_status(
     # the non-zero floor for INFERENCE_STARTING / early INFERENCE_PROCESSING.
     mock_manager._calculate_granular_progress = (
         HordeWorkerProcessManager._calculate_granular_progress.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
     )
 
@@ -133,8 +135,10 @@ def _invoke_update_webui_status(
 
 
 def test_pending_submit_shown_over_inference_job() -> None:
-    """When a job is pending submission AND a new inference job is at 0%,
-    the webui must show the submitting job at 100%, not the new job at 0%."""
+    """When a job is pending submission AND a new inference job is at 0%.
+
+    the webui must show the submitting job at 100%, not the new job at 0%.
+    """
     job1 = _make_mock_job("a1a1a1a1")
     job2 = _make_mock_job("b2b2b2b2")
 
@@ -190,8 +194,10 @@ def test_no_pending_submit_shows_inference_job() -> None:
 
 
 def test_safety_check_shown_over_inference_job() -> None:
-    """When a job is being safety-checked AND a new inference job is at 0%,
-    the webui must show the safety-check job at 100%."""
+    """When a job is being safety-checked AND a new inference job is at 0%.
+
+    the webui must show the safety-check job at 100%.
+    """
     job1 = _make_mock_job("a1a1a1a1")  # in safety check
     job2 = _make_mock_job("b2b2b2b2")  # in inference
 
@@ -217,8 +223,10 @@ def test_safety_check_shown_over_inference_job() -> None:
 
 
 def test_pending_safety_shown_over_inference_job() -> None:
-    """When a job is pending safety check AND a new inference job is at 0%,
-    the webui must show the pending-safety job at 100%."""
+    """When a job is pending safety check AND a new inference job is at 0%.
+
+    the webui must show the pending-safety job at 100%.
+    """
     job1 = _make_mock_job("a1a1a1a1")
     job2 = _make_mock_job("b2b2b2b2")
 
@@ -242,8 +250,10 @@ def test_pending_safety_shown_over_inference_job() -> None:
 
 
 def test_pending_submit_takes_priority_over_safety_check() -> None:
-    """jobs_pending_submit has the highest priority: shown even when a job is
-    also in safety check."""
+    """jobs_pending_submit has the highest priority: shown even when a job is.
+
+    also in safety check.
+    """
     job1 = _make_mock_job("a1a1a1a1")  # in pending_submit
     job2 = _make_mock_job("b2b2b2b2")  # in safety check
 
@@ -379,8 +389,10 @@ def _invoke_update_webui_status_for_time_without_jobs(
     last_pop_no_jobs_available_time: float,
     fake_now: float,
 ) -> float:
-    """Call ``update_webui_status`` with controlled time values and return the
-    ``time_without_jobs`` kwarg that was passed to ``webui.update_status``."""
+    """Call ``update_webui_status`` with controlled time values and return the.
+
+    ``time_without_jobs`` kwarg that was passed to ``webui.update_status``.
+    """
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
     mock_manager = MagicMock()
@@ -682,9 +694,9 @@ class TestApiJobPopQueueGate:
 
     @staticmethod
     def _run(mock_manager: MagicMock) -> None:
-        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
-
         import asyncio
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
         bound = HordeWorkerProcessManager.api_job_pop.__get__(mock_manager, HordeWorkerProcessManager)
         asyncio.run(bound())

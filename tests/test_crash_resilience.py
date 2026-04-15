@@ -91,7 +91,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager._process_map.is_stuck_on_inference.return_value = True
 
         bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
 
         with patch("threading.Thread"):
@@ -133,7 +133,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager._process_map.is_stuck_on_inference.return_value = True
 
         bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
 
         with patch("threading.Thread"):
@@ -164,7 +164,7 @@ class TestBridgeDataLoopExceptionHandling:
             mock_manager._last_bridge_data_reload_time = 0.0
 
             bound_loop = HordeWorkerProcessManager._bridge_data_loop.__get__(
-                mock_manager, HordeWorkerProcessManager
+                mock_manager, HordeWorkerProcessManager,
             )
 
             with patch("horde_worker_regen.process_management.process_manager.os.path.getmtime") as mock_getmtime:
@@ -200,7 +200,7 @@ class TestBridgeDataLoopExceptionHandling:
             mock_manager._last_bridge_data_reload_time = 0.0
 
             bound_loop = HordeWorkerProcessManager._bridge_data_loop.__get__(
-                mock_manager, HordeWorkerProcessManager
+                mock_manager, HordeWorkerProcessManager,
             )
 
             with patch("horde_worker_regen.process_management.process_manager.os.path.getmtime") as mock_getmtime:
@@ -446,7 +446,7 @@ class TestApiSubmitJobBrokenDataHandling:
         mock_manager.job_faults = job_faults
         # Bind the real helper so cleanup actually runs
         mock_manager._discard_broken_job = types.MethodType(
-            HordeWorkerProcessManager._discard_broken_job, mock_manager
+            HordeWorkerProcessManager._discard_broken_job, mock_manager,
         )
 
         import asyncio
@@ -526,7 +526,7 @@ class TestJobSubmitLoopExceptionHandling:
 
         # Bind real _discard_broken_job so the queue is actually modified
         mock_manager._discard_broken_job = types.MethodType(
-            HordeWorkerProcessManager._discard_broken_job, mock_manager
+            HordeWorkerProcessManager._discard_broken_job, mock_manager,
         )
         mock_manager.jobs_lookup = {job_info: completed}
         mock_manager.job_pop_timestamps = {job_info: 0.0}
@@ -585,7 +585,7 @@ class TestJobSubmitLoopExceptionHandling:
         mock_manager.job_faults = {}
 
         mock_manager._discard_broken_job = types.MethodType(
-            HordeWorkerProcessManager._discard_broken_job, mock_manager
+            HordeWorkerProcessManager._discard_broken_job, mock_manager,
         )
 
         async def api_submit_job_removes_head_then_raises() -> None:
@@ -669,7 +669,7 @@ class _ReceiveLoopHarnessMixin:
         mock_manager.jobs_in_progress = jobs_in_progress if jobs_in_progress is not None else []
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound()  # must not raise
         return mock_manager
@@ -732,7 +732,7 @@ class TestIsStuckOnInference:
         process_map = MagicMock()
         process_map.__getitem__ = MagicMock(return_value=entry)
         process_map.is_stuck_on_inference = ProcessMap.is_stuck_on_inference.__get__(
-            process_map, ProcessMap
+            process_map, ProcessMap,
         )
         process_map.MAX_INFERENCE_STEP_TIMEOUT = ProcessMap.MAX_INFERENCE_STEP_TIMEOUT
         return process_map
@@ -1019,7 +1019,8 @@ class TestIsStuckOnInference:
         assert process_map.is_stuck_on_inference(0, 600) is False
 
     def test_inference_processing_per_step_timeout_elapsed_is_stuck(self) -> None:
-        """A process that has not received a new INFERENCE_STEP heartbeat within MAX_INFERENCE_STEP_TIMEOUT
+        """A process that has not received a new INFERENCE_STEP heartbeat within MAX_INFERENCE_STEP_TIMEOUT.
+
         seconds is detected as stuck, even though background heartbeats (PIPELINE_STATE_CHANGE) keep
         refreshing last_heartbeat_timestamp.
 
@@ -1044,7 +1045,8 @@ class TestIsStuckOnInference:
         assert process_map.is_stuck_on_inference(0, 600) is True
 
     def test_inference_processing_per_step_timeout_no_step_yet_not_stuck(self) -> None:
-        """When no INFERENCE_STEP heartbeat has arrived yet (last_inference_step_timestamp is None),
+        """When no INFERENCE_STEP heartbeat has arrived yet (last_inference_step_timestamp is None).
+
         the per-step check must NOT fire.
 
         A process that just transitioned to INFERENCE_PROCESSING and hasn't completed its first
@@ -1184,7 +1186,8 @@ class TestInferenceSemaphoreBoundedSemaphore:
         assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
 
     def test_replace_inference_starting_releases_semaphore_after_kill(self) -> None:
-        """For INFERENCE_STARTING, _replace_inference_process must release the semaphore
+        """For INFERENCE_STARTING, _replace_inference_process must release the semaphore.
+
         AFTER killing the process, not before.
 
         The child process is blocked at semaphore.acquire().  Releasing the semaphore before
@@ -1346,7 +1349,7 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         mock_manager.handle_job_fault = MagicMock(side_effect=lambda faulted_job, process_info: call_order.append("handle_job_fault"))
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound()
 
@@ -1364,7 +1367,6 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         This ensures _faulted_jobs_history correctly classifies the fault phase as 'During Inference'
         rather than the misleading 'Process Ending'.
         """
-
         job = MagicMock()
         job.id_ = "orphaned-job-id"
 
@@ -1401,7 +1403,7 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         mock_manager.handle_job_fault = MagicMock(side_effect=capture_fault)
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound()
 
@@ -1466,14 +1468,16 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
             mock_manager._process_restart_history = {}
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound()
         return mock_manager
 
     def test_inference_process_restarted_on_unexpected_end(self) -> None:
-        """When PROCESS_ENDED arrives for an inference process and we are not shutting down,
-        _start_inference_process must be called to restore the configured worker capacity."""
+        """When PROCESS_ENDED arrives for an inference process and we are not shutting down.
+
+        _start_inference_process must be called to restore the configured worker capacity.
+        """
         from horde_worker_regen.process_management.process_manager import HordeProcessType
 
         mock_manager = self._run_receive_process_ended(
@@ -1496,8 +1500,10 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         assert mock_manager._num_process_recoveries == 1
 
     def test_inference_process_not_restarted_during_shutdown(self) -> None:
-        """When PROCESS_ENDED arrives for an inference process while shutting down,
-        _start_inference_process must NOT be called."""
+        """When PROCESS_ENDED arrives for an inference process while shutting down.
+
+        _start_inference_process must NOT be called.
+        """
         from horde_worker_regen.process_management.process_manager import HordeProcessType
 
         mock_manager = self._run_receive_process_ended(
@@ -1508,8 +1514,10 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         mock_manager._start_inference_process.assert_not_called()
 
     def test_safety_process_not_restarted_on_end(self) -> None:
-        """When PROCESS_ENDED arrives for a safety process, _start_inference_process must NOT
-        be called (safety processes have separate restart logic)."""
+        """When PROCESS_ENDED arrives for a safety process, _start_inference_process must NOT.
+
+        be called (safety processes have separate restart logic).
+        """
         from horde_worker_regen.process_management.process_manager import HordeProcessType
 
         mock_manager = self._run_receive_process_ended(
@@ -1520,8 +1528,10 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         mock_manager._start_inference_process.assert_not_called()
 
     def test_process_starting_prior_state_restarts_with_rate_limiting(self) -> None:
-        """When PROCESS_ENDED arrives and the prior state was PROCESS_STARTING, the process
-        must be restarted (with rate-limiting) so that the slot is not left permanently dead."""
+        """When PROCESS_ENDED arrives and the prior state was PROCESS_STARTING, the process.
+
+        must be restarted (with rate-limiting) so that the slot is not left permanently dead.
+        """
         from horde_worker_regen.process_management.process_manager import HordeProcessType
 
         mock_manager = self._run_receive_process_ended(
@@ -1534,8 +1544,10 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         assert mock_manager._num_process_recoveries == 1
 
     def test_process_starting_prior_state_rate_limited_after_five_failures(self) -> None:
-        """When a process repeatedly ends in PROCESS_STARTING, restart is suppressed after
-        5 failures within 60s to prevent a tight crash loop."""
+        """When a process repeatedly ends in PROCESS_STARTING, restart is suppressed after.
+
+        5 failures within 60s to prevent a tight crash loop.
+        """
         import time
 
         from horde_worker_regen.process_management.process_manager import HordeProcessType
@@ -1560,8 +1572,10 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         assert mock_manager._num_process_recoveries == 0
 
     def test_restart_rate_limited_after_five_failures_in_sixty_seconds(self) -> None:
-        """When a process ends and restarts 5 times within 60 seconds, the 6th restart must
-        be suppressed to prevent a tight crash/restart loop."""
+        """When a process ends and restarts 5 times within 60 seconds, the 6th restart must.
+
+        be suppressed to prevent a tight crash/restart loop.
+        """
         import time
 
         from horde_worker_regen.process_management.process_manager import HordeProcessType
@@ -1587,8 +1601,10 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         assert mock_manager._num_process_recoveries == 0
 
     def test_restart_allowed_after_five_failures_spread_over_more_than_sixty_seconds(self) -> None:
-        """When 5 prior restarts are spread over more than 60 seconds, the next restart must
-        still be allowed (rate limit window has passed)."""
+        """When 5 prior restarts are spread over more than 60 seconds, the next restart must.
+
+        still be allowed (rate limit window has passed).
+        """
         import time
 
         from horde_worker_regen.process_management.process_manager import HordeProcessType
@@ -1604,7 +1620,7 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         # Pre-seed with only 4 entries so after the production code appends the current timestamp,
         # the deque contains 5 entries and restart_history[0] is 90s ago (outside the 60s window).
         mock_manager._process_restart_history = {
-            0: deque([now - 90, now - 4, now - 3, now - 2], maxlen=5)
+            0: deque([now - 90, now - 4, now - 3, now - 2], maxlen=5),
         }
 
         self._run_receive_process_ended(
@@ -1718,7 +1734,6 @@ class TestSendMemoryReportMessageVramFailure:
     def test_vram_warning_is_rate_limited(self) -> None:
         """Repeated VRAM failures within 10 s must not re-emit a WARNING; they use DEBUG instead."""
         import time
-        from unittest.mock import call
 
         mock = self._create_mock_horde_process()
         mock.get_vram_usage_bytes.side_effect = RuntimeError("CUDA error")
@@ -1850,7 +1865,8 @@ class TestSendInferenceResultEncodingResilience:
         assert decoded == b"\x89PNG\r\n\x1a\nfakedata"
 
     def test_single_encoding_failure_faults_entire_job(self) -> None:
-        """When any single image's encoding raises, the ENTIRE job must be faulted (state=faulted,
+        """When any single image's encoding raises, the ENTIRE job must be faulted (state=faulted.
+
         empty image list) rather than sending a partial result or crashing the process.
 
         Partial results are unsafe because the submission pipeline uses gen_iter to index
@@ -2085,7 +2101,6 @@ class TestSendInferenceResultFallbackOnFailure:
         """
         import io
 
-        import pytest
         from horde_worker_regen.process_management.messages import HordeProcessState
 
         proc = self._make_process()
@@ -2119,6 +2134,7 @@ class TestSendInferenceResultFallbackOnFailure:
         This models the second attempt in the caller's except block.
         """
         from horde_sdk.ai_horde_api import GENERATION_STATE
+
         from horde_worker_regen.process_management.messages import HordeProcessState
 
         proc = self._make_process()
@@ -2155,7 +2171,6 @@ class TestSendInferenceResultFallbackOnFailure:
         """
         import io
 
-        import pytest
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
         from horde_worker_regen.process_management.messages import HordeProcessState
 
@@ -2246,7 +2261,7 @@ class TestKeepSingleInferenceStates(_ReceiveLoopHarnessMixin):
         process_map = MagicMock()
         process_map.values.return_value = [p]
         process_map.keep_single_inference = ProcessMap.keep_single_inference.__get__(
-            process_map, ProcessMap
+            process_map, ProcessMap,
         )
         return process_map
 
@@ -2321,7 +2336,7 @@ class TestKeepSingleInferenceStates(_ReceiveLoopHarnessMixin):
         process_map = MagicMock()
         process_map.values.return_value = [p]
         process_map.keep_single_inference = ProcessMap.keep_single_inference.__get__(
-            process_map, ProcessMap
+            process_map, ProcessMap,
         )
 
         result, reason = process_map.keep_single_inference(
@@ -2335,7 +2350,8 @@ class TestKeepSingleInferenceStates(_ReceiveLoopHarnessMixin):
 
 
 class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
-    """Tests that the inference semaphore is released when PROCESS_ENDING is received for a
+    """Tests that the inference semaphore is released when PROCESS_ENDING is received for a.
+
     process that was in INFERENCE_PROCESSING.
 
     This prevents other processes from being permanently stuck in INFERENCE_STARTING when
@@ -2392,13 +2408,14 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         mock_manager._inference_semaphore = bounded_sem
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound()
         return mock_manager, bounded_sem
 
     def test_semaphore_released_when_process_ending_from_inference_processing(self) -> None:
-        """When PROCESS_ENDING arrives for a process in INFERENCE_PROCESSING, the inference
+        """When PROCESS_ENDING arrives for a process in INFERENCE_PROCESSING, the inference.
+
         semaphore must be released so that other processes stuck in INFERENCE_STARTING can
         acquire it and proceed.
         """
@@ -2415,7 +2432,8 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         )
 
     def test_semaphore_released_when_process_ending_from_post_processing_starting(self) -> None:
-        """When PROCESS_ENDING arrives for a process in POST_PROCESSING_STARTING, the inference
+        """When PROCESS_ENDING arrives for a process in POST_PROCESSING_STARTING, the inference.
+
         semaphore must also be released.
 
         The child emits POST_PROCESSING_STARTING BEFORE releasing the semaphore (see
@@ -2435,7 +2453,8 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         )
 
     def test_semaphore_not_released_when_process_ending_from_waiting_for_job(self) -> None:
-        """When PROCESS_ENDING arrives for a process in WAITING_FOR_JOB, the inference
+        """When PROCESS_ENDING arrives for a process in WAITING_FOR_JOB, the inference.
+
         semaphore must NOT be released (the process was not holding it).
         """
         _mock_manager, sem = self._run_receive_process_ending_with_semaphore(
@@ -2451,7 +2470,8 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         )
 
     def test_semaphore_double_release_safe_when_child_already_released(self) -> None:
-        """When PROCESS_ENDING arrives and the child already released the semaphore normally,
+        """When PROCESS_ENDING arrives and the child already released the semaphore normally.
+
         the PROCESS_ENDING handler's release attempt must not raise and must not inflate permits.
         """
         # semaphore_acquired=False: child already released via its finally block
@@ -2467,7 +2487,8 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         assert not second_acquired, "Semaphore must not have more than 1 permit (no inflation)"
 
     def test_semaphore_double_release_safe_from_post_processing_starting_when_child_already_released(self) -> None:
-        """When PROCESS_ENDING arrives from POST_PROCESSING_STARTING and the child already
+        """When PROCESS_ENDING arrives from POST_PROCESSING_STARTING and the child already.
+
         released the semaphore (normal path: emitted state then released), the handler's
         defensive release must not inflate the permit count.
         """
@@ -2484,7 +2505,8 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
 
 
 class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
-    """Tests that the VAE decode semaphore is released when PROCESS_ENDING is received for
+    """Tests that the VAE decode semaphore is released when PROCESS_ENDING is received for.
+
     a process that was in INFERENCE_POST_PROCESSING or POST_PROCESSING_STARTING.
 
     When the child is killed (e.g., OOM) while it holds the VAE decode semaphore, its
@@ -2536,13 +2558,14 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
         mock_manager._vae_decode_semaphore = vae_sem
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound()
         return mock_manager, vae_sem
 
     def test_vae_semaphore_released_when_process_ending_from_inference_post_processing(self) -> None:
-        """When PROCESS_ENDING arrives for a process in INFERENCE_POST_PROCESSING, the VAE
+        """When PROCESS_ENDING arrives for a process in INFERENCE_POST_PROCESSING, the VAE.
+
         decode semaphore must be released so that other processes are not blocked for up to
         VAE_SEMAPHORE_TIMEOUT seconds waiting to acquire it.
         """
@@ -2558,7 +2581,8 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
         )
 
     def test_vae_semaphore_released_when_process_ending_from_post_processing_starting(self) -> None:
-        """When PROCESS_ENDING arrives for a process in POST_PROCESSING_STARTING, the VAE
+        """When PROCESS_ENDING arrives for a process in POST_PROCESSING_STARTING, the VAE.
+
         decode semaphore must be released defensively in case the child acquired it but crashed
         before emitting INFERENCE_POST_PROCESSING.
         """
@@ -2574,7 +2598,8 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
         )
 
     def test_vae_semaphore_not_released_when_process_ending_from_inference_processing(self) -> None:
-        """When PROCESS_ENDING arrives for a process in INFERENCE_PROCESSING, the VAE decode
+        """When PROCESS_ENDING arrives for a process in INFERENCE_PROCESSING, the VAE decode.
+
         semaphore must NOT be released — the process did not hold it at that point.
         """
         _mock_manager, vae_sem = self._run_process_ending_with_vae_semaphore(
@@ -2591,7 +2616,8 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
         )
 
     def test_vae_semaphore_over_release_safe_when_already_released(self) -> None:
-        """When PROCESS_ENDING arrives from INFERENCE_POST_PROCESSING and the child had
+        """When PROCESS_ENDING arrives from INFERENCE_POST_PROCESSING and the child had.
+
         already released the VAE semaphore via its finally block, the defensive release
         must not raise an exception and must not inflate permits.
         """
@@ -2609,7 +2635,8 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
 
 
 class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
-    """Tests that _replace_inference_process() releases the VAE decode semaphore when the
+    """Tests that _replace_inference_process() releases the VAE decode semaphore when the.
+
     process state is INFERENCE_POST_PROCESSING.
 
     A process stuck in INFERENCE_POST_PROCESSING holds the VAE decode semaphore.  When the
@@ -2647,13 +2674,14 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
         mock_manager.jobs_in_progress = []
 
         bound = HordeWorkerProcessManager._replace_inference_process.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound(process_info)
         return vae_sem
 
     def test_vae_semaphore_released_when_replacing_inference_post_processing(self) -> None:
-        """When a process stuck in INFERENCE_POST_PROCESSING is replaced, the VAE decode
+        """When a process stuck in INFERENCE_POST_PROCESSING is replaced, the VAE decode.
+
         semaphore must be released so that other processes can proceed.
         """
         vae_sem = self._run_replace_inference_process(
@@ -2669,7 +2697,8 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
         )
 
     def test_vae_semaphore_released_when_replacing_post_processing_starting(self) -> None:
-        """When a process in POST_PROCESSING_STARTING is replaced, the VAE decode semaphore
+        """When a process in POST_PROCESSING_STARTING is replaced, the VAE decode semaphore.
+
         must also be released — the child may have already acquired it before crashing.
         """
         vae_sem = self._run_replace_inference_process(
@@ -2684,7 +2713,8 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
         )
 
     def test_vae_semaphore_over_release_safe_when_replacing_post_processing(self) -> None:
-        """When _replace_inference_process() is called for INFERENCE_POST_PROCESSING and the
+        """When _replace_inference_process() is called for INFERENCE_POST_PROCESSING and the.
+
         child had already released the VAE semaphore, the defensive release must not inflate
         permits beyond max=1 (BoundedSemaphore raises ValueError, which is caught).
         """
@@ -2700,7 +2730,8 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
         assert not second_acquired, "Defensive release must not inflate VAE semaphore permits"
 
     def test_vae_semaphore_not_released_when_replacing_inference_processing(self) -> None:
-        """When a process in INFERENCE_PROCESSING is replaced, the VAE decode semaphore
+        """When a process in INFERENCE_PROCESSING is replaced, the VAE decode semaphore.
+
         must NOT be released — it has not been acquired at that state.
         """
         vae_sem = self._run_replace_inference_process(
@@ -2718,7 +2749,8 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
 
 
 class TestNumBusyWithPostProcessing:
-    """Tests that num_busy_with_post_processing() counts both INFERENCE_POST_PROCESSING
+    """Tests that num_busy_with_post_processing() counts both INFERENCE_POST_PROCESSING.
+
     and POST_PROCESSING_STARTING states.
     """
 
@@ -2742,7 +2774,8 @@ class TestNumBusyWithPostProcessing:
         assert pm.num_busy_with_post_processing() == 1
 
     def test_post_processing_starting_counted(self) -> None:
-        """A process in POST_PROCESSING_STARTING must also be counted — it is transitioning
+        """A process in POST_PROCESSING_STARTING must also be counted — it is transitioning.
+
         into post-processing and is effectively busy.
         """
         from horde_worker_regen.process_management.process_manager import ProcessMap
@@ -2769,7 +2802,7 @@ class TestNumBusyWithPostProcessing:
                 HordeProcessState.POST_PROCESSING_STARTING,
                 HordeProcessState.INFERENCE_PROCESSING,
                 HordeProcessState.WAITING_FOR_JOB,
-            ]
+            ],
         )
         assert isinstance(pm, ProcessMap)
         assert pm.num_busy_with_post_processing() == 2
@@ -2819,7 +2852,8 @@ class TestCanAcceptJobPostProcessingComplete:
 
 
 class TestStartInferenceExceptionHandling:
-    """Tests that exceptions from start_inference() are caught, preventing the
+    """Tests that exceptions from start_inference() are caught, preventing the.
+
     process from ending before the job result is submitted.
     """
 
@@ -2833,7 +2867,8 @@ class TestStartInferenceExceptionHandling:
         return proc
 
     def test_start_inference_exception_sends_faulted_result(self) -> None:
-        """If start_inference() raises, the handler must send INFERENCE_FAILED so
+        """If start_inference() raises, the handler must send INFERENCE_FAILED so.
+
         the manager can retry, rather than letting the exception propagate and
         cause a PROCESS_ENDING with the job still in progress.
         """
@@ -2887,13 +2922,15 @@ class TestStartInferenceExceptionHandling:
 
 
 class TestVaeLockAcquiredFlag:
-    """Tests that _vae_lock_was_acquired is only set to True when the VAE
+    """Tests that _vae_lock_was_acquired is only set to True when the VAE.
+
     semaphore is actually acquired (not pre-emptively on timeout), and that
     _vae_acquire_attempted prevents repeated acquire attempts after a timeout.
     """
 
     def test_vae_lock_flag_false_on_timeout(self) -> None:
-        """When the VAE semaphore acquire times out, _vae_lock_was_acquired must remain
+        """When the VAE semaphore acquire times out, _vae_lock_was_acquired must remain.
+
         False so the finally block does not try to release a semaphore we never held.
         _vae_acquire_attempted must be True so subsequent callbacks don't retry.
         """
@@ -2933,11 +2970,10 @@ class TestVaeLockAcquiredFlag:
         )
 
     def test_vae_lock_not_retried_after_timeout(self) -> None:
-        """A second progress_callback invocation after a timeout must not re-attempt
+        """A second progress_callback invocation after a timeout must not re-attempt.
+
         acquire (which would block up to VAE_SEMAPHORE_TIMEOUT again and spam logs).
         """
-        import multiprocessing
-
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
         proc = MagicMock(spec=HordeInferenceProcess)
@@ -3004,7 +3040,8 @@ class TestVaeLockAcquiredFlag:
 
 
 class TestSemaphoreReleaseBroadExceptionHandling:
-    """Tests that unexpected non-ValueError exceptions during semaphore release
+    """Tests that unexpected non-ValueError exceptions during semaphore release.
+
     in the start_inference finally block do not propagate and crash the process.
     """
 
@@ -3065,7 +3102,8 @@ class TestSemaphoreReleaseBroadExceptionHandling:
         bad_sem.release.assert_called_once()
 
     def test_setup_exception_releases_semaphore(self) -> None:
-        """If send_process_state_change_message() raises during start_inference() setup
+        """If send_process_state_change_message() raises during start_inference() setup.
+
         (before the inference itself runs), the inference semaphore must still be released
         and _is_busy must be reset.  This tests the restructured try/finally that now
         covers the entire post-acquire body.
@@ -3089,7 +3127,7 @@ class TestSemaphoreReleaseBroadExceptionHandling:
 
         # send_process_state_change_message raises on the first call (during setup)
         proc.send_process_state_change_message = MagicMock(
-            side_effect=OSError("pipe broken")
+            side_effect=OSError("pipe broken"),
         )
         proc.send_heartbeat_message = MagicMock()
 
@@ -3164,12 +3202,13 @@ class TestReplaceHungInferenceStarting:
 
         # Bind the real method to the mock manager
         mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         return mock_manager
 
     def test_stuck_inference_starting_no_active_inference_replaced(self) -> None:
-        """An INFERENCE_STARTING process stuck longer than preload_timeout with no active
+        """An INFERENCE_STARTING process stuck longer than preload_timeout with no active.
+
         INFERENCE_PROCESSING must be detected and replaced.
         """
         proc = self._make_process(0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0)
@@ -3182,14 +3221,15 @@ class TestReplaceHungInferenceStarting:
         mock_manager._replace_inference_process.assert_called_once_with(proc)
 
     def test_stuck_inference_starting_with_active_inference_not_replaced(self) -> None:
-        """An INFERENCE_STARTING process must NOT be replaced when another process is in
+        """An INFERENCE_STARTING process must NOT be replaced when another process is in.
+
         INFERENCE_PROCESSING, because that process legitimately holds the semaphore.
         """
         inference_starting = self._make_process(
-            0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0
+            0, HordeProcessState.INFERENCE_STARTING, time_elapsed=9999.0,
         )
         inference_processing = self._make_process(
-            1, HordeProcessState.INFERENCE_PROCESSING, time_elapsed=10.0
+            1, HordeProcessState.INFERENCE_PROCESSING, time_elapsed=10.0,
         )
         mock_manager = self._make_manager([inference_starting, inference_processing])
 
@@ -3202,7 +3242,8 @@ class TestReplaceHungInferenceStarting:
         assert result is False
 
     def test_inference_starting_not_replaced_before_preload_timeout(self) -> None:
-        """An INFERENCE_STARTING process that has been waiting less than preload_timeout
+        """An INFERENCE_STARTING process that has been waiting less than preload_timeout.
+
         must NOT be detected as stuck yet.
         """
         # Only 10 seconds elapsed — well below preload_timeout (80 s)
@@ -3216,7 +3257,8 @@ class TestReplaceHungInferenceStarting:
         assert result is False
 
     def test_stuck_inference_starting_replaced_even_when_recently_recovered(self) -> None:
-        """An INFERENCE_STARTING process stuck longer than preload_timeout must be replaced
+        """An INFERENCE_STARTING process stuck longer than preload_timeout must be replaced.
+
         even when _recently_recovered is True, provided no INFERENCE_PROCESSING is active.
 
         With frequent recoveries the _recently_recovered flag can be True for most of the
@@ -3240,7 +3282,8 @@ class TestReplaceHungInferenceStarting:
     def test_stuck_inference_starting_not_replaced_when_inference_processing_active_recently_recovered(
         self,
     ) -> None:
-        """INFERENCE_STARTING must NOT be replaced when INFERENCE_PROCESSING is active,
+        """INFERENCE_STARTING must NOT be replaced when INFERENCE_PROCESSING is active.
+
         even when _recently_recovered is True.  The active INFERENCE_PROCESSING process
         legitimately holds the semaphore; INFERENCE_STARTING should wait for it.
         """
@@ -3257,7 +3300,8 @@ class TestReplaceHungInferenceStarting:
 
 
 class TestProcessEndingReleasesInferenceSemaphoreFromInferenceStarting(_ReceiveLoopHarnessMixin):
-    """Tests that the inference semaphore is released when PROCESS_ENDING is received for a
+    """Tests that the inference semaphore is released when PROCESS_ENDING is received for a.
+
     process whose prior state was INFERENCE_STARTING.
 
     This covers the race condition in _replace_inference_process(): the manager releases the
@@ -3307,7 +3351,7 @@ class TestProcessEndingReleasesInferenceSemaphoreFromInferenceStarting(_ReceiveL
         mock_manager._inference_semaphore = bounded_sem
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound()
         return mock_manager, bounded_sem
@@ -3331,7 +3375,8 @@ class TestProcessEndingReleasesInferenceSemaphoreFromInferenceStarting(_ReceiveL
         )
 
     def test_semaphore_not_inflated_when_process_ending_from_inference_starting_not_acquired(self) -> None:
-        """PROCESS_ENDING from INFERENCE_STARTING when the child never acquired the semaphore
+        """PROCESS_ENDING from INFERENCE_STARTING when the child never acquired the semaphore.
+
         must not inflate the permit count beyond 1 (BoundedSemaphore safety).
 
         Scenario: manager released the semaphore (count: 0→1), child was killed before
@@ -3538,7 +3583,8 @@ class TestPostProcessingVAESemaphore:
     def test_vae_semaphore_only_acquired_once_in_post_processing(self) -> None:
         """VAE semaphore must not be acquired twice even with multiple post_processing callbacks."""
         import multiprocessing
-        from unittest.mock import MagicMock, patch as _patch
+        from unittest.mock import MagicMock
+        from unittest.mock import patch as _patch
 
         proc = self._make_process()
 
@@ -3615,15 +3661,17 @@ class TestPostProcessingFaultMessage:
         return proc
 
     def _call_send_result_get_info(self, *, post_processing_was_started: bool, results=None) -> str:
-        """Call send_inference_result_message and return the ``info`` string passed
-        to the HordeInferenceResultMessage constructor."""
+        """Call send_inference_result_message and return the ``info`` string passed.
+
+        to the HordeInferenceResultMessage constructor.
+        """
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
         from horde_worker_regen.process_management.messages import HordeProcessState
 
         proc = self._make_proc_for_send_result(post_processing_was_started=post_processing_was_started)
 
         with patch(
-            "horde_worker_regen.process_management.inference_process.HordeInferenceResultMessage"
+            "horde_worker_regen.process_management.inference_process.HordeInferenceResultMessage",
         ) as mock_cls:
             mock_cls.return_value = MagicMock()
             HordeInferenceProcess.send_inference_result_message(
@@ -3639,7 +3687,8 @@ class TestPostProcessingFaultMessage:
     # ------------------------------------------------ send_inference_result_message tests
 
     def test_fault_info_is_post_processing_when_post_processing_was_started(self) -> None:
-        """When _post_processing_was_started is True and results is None, the fault
+        """When _post_processing_was_started is True and results is None, the fault.
+
         info string must say "post-processing produced no results" — not the generic
         "inference produced no results" — so operators can distinguish the failure phase.
         """
@@ -3649,7 +3698,8 @@ class TestPostProcessingFaultMessage:
         )
 
     def test_fault_info_is_inference_when_post_processing_was_not_started(self) -> None:
-        """When _post_processing_was_started is False (inference never reached
+        """When _post_processing_was_started is False (inference never reached.
+
         post-processing), the fault info must say "inference produced no results".
         """
         info = self._call_send_result_get_info(post_processing_was_started=False, results=None)
@@ -3658,7 +3708,8 @@ class TestPostProcessingFaultMessage:
         )
 
     def test_fault_info_is_post_processing_when_results_is_empty_list(self) -> None:
-        """An empty list (not None) returned by basic_inference() must also produce
+        """An empty list (not None) returned by basic_inference() must also produce.
+
         "post-processing produced no results" when post-processing was started.
         """
         info = self._call_send_result_get_info(post_processing_was_started=True, results=[])
@@ -3718,7 +3769,8 @@ class TestPostProcessingFaultMessage:
         ]
 
     def test_post_processing_complete_not_emitted_when_basic_inference_returns_none(self) -> None:
-        """When basic_inference() returns None and _in_post_processing is True (we entered
+        """When basic_inference() returns None and _in_post_processing is True (we entered.
+
         post-processing but it failed), POST_PROCESSING_COMPLETE must NOT be emitted.
 
         Emitting it would be misleading: the process-manager uses that state to update the
@@ -3737,7 +3789,8 @@ class TestPostProcessingFaultMessage:
         )
 
     def test_post_processing_complete_not_emitted_when_basic_inference_returns_empty_list(self) -> None:
-        """When basic_inference() returns an empty list and _in_post_processing is True,
+        """When basic_inference() returns an empty list and _in_post_processing is True.
+
         POST_PROCESSING_COMPLETE must NOT be emitted.
         """
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -3753,7 +3806,8 @@ class TestPostProcessingFaultMessage:
         )
 
     def test_post_processing_complete_not_emitted_when_no_post_processing(self) -> None:
-        """When post-processing was never entered (_in_post_processing is False),
+        """When post-processing was never entered (_in_post_processing is False).
+
         POST_PROCESSING_COMPLETE must not be emitted regardless of the result.
         """
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -3769,7 +3823,8 @@ class TestPostProcessingFaultMessage:
         )
 
     def test_post_processing_was_started_flag_set_in_finally_when_in_post_processing(self) -> None:
-        """The finally block must copy _in_post_processing → _post_processing_was_started
+        """The finally block must copy _in_post_processing → _post_processing_was_started.
+
         before resetting _in_post_processing, so send_inference_result_message can
         read the flag even after start_inference() has returned.
         """
@@ -3856,7 +3911,8 @@ class TestFrozenPayloadPromptRestore:
         return job_info
 
     def test_frozen_payload_prompt_restore_does_not_propagate(self) -> None:
-        """start_inference must return results (not None) when job_info.payload is a
+        """start_inference must return results (not None) when job_info.payload is a.
+
         frozen Pydantic model.
 
         With the old ``contextlib.suppress(AttributeError)`` the ValidationError raised
@@ -3887,7 +3943,8 @@ class TestFrozenPayloadPromptRestore:
         assert result == [fake_result], "start_inference must return the exact results from basic_inference()"
 
     def test_frozen_payload_prompt_restore_when_inference_fails(self) -> None:
-        """When basic_inference() raises, start_inference must still return None even
+        """When basic_inference() raises, start_inference must still return None even.
+
         if job_info.payload is a frozen model (the ValidationError from the finally block
         must not shadow the original inference exception).
         """
@@ -3908,7 +3965,8 @@ class TestFrozenPayloadPromptRestore:
 
 
 class TestStartInferencePipeBroken:
-    """Tests that a broken pipe to a child process causes the process to be
+    """Tests that a broken pipe to a child process causes the process to be.
+
     replaced and the job fault to be handled correctly (without double-faulting).
 
     The scenario:
@@ -3925,7 +3983,8 @@ class TestStartInferencePipeBroken:
         next_job_id: str,
         last_job_id: str | None,
     ) -> MagicMock:
-        """Build a minimal mock HordeWorkerProcessManager for the pipe-failure path of
+        """Build a minimal mock HordeWorkerProcessManager for the pipe-failure path of.
+
         ``start_inference()``.
 
         ``get_next_job_and_process`` is mocked to return a plain MagicMock whose
@@ -3990,7 +4049,7 @@ class TestStartInferencePipeBroken:
         # Bind the real start_inference method onto the mock manager so we exercise
         # the real control-flow path.
         mock_manager._start_inference = HordeWorkerProcessManager.start_inference.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         return mock_manager
 
@@ -4002,14 +4061,15 @@ class TestStartInferencePipeBroken:
         )
 
         with patch(
-            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage"
+            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage",
         ):
             mock_manager._start_inference()
 
         mock_manager._replace_inference_process.assert_called_once()
 
     def test_handle_job_fault_called_once_for_new_job(self) -> None:
-        """When next_job has a different ID from last_job_referenced, handle_job_fault
+        """When next_job has a different ID from last_job_referenced, handle_job_fault.
+
         must be called exactly once with next_job as the faulted_job.
         """
         next_job_id = "bbbbbbbb-0000-0000-0000-000000000002"
@@ -4020,7 +4080,7 @@ class TestStartInferencePipeBroken:
         )
 
         with patch(
-            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage"
+            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage",
         ):
             mock_manager._start_inference()
 
@@ -4033,7 +4093,8 @@ class TestStartInferencePipeBroken:
         )
 
     def test_handle_job_fault_suppressed_when_same_job_already_handled(self) -> None:
-        """When next_job has the same ID as last_job_referenced, handle_job_fault must
+        """When next_job has the same ID as last_job_referenced, handle_job_fault must.
+
         NOT be called for next_job because _replace_inference_process already faulted it.
         """
         same_id = "dddddddd-0000-0000-0000-000000000004"
@@ -4043,14 +4104,15 @@ class TestStartInferencePipeBroken:
         )
 
         with patch(
-            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage"
+            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage",
         ):
             mock_manager._start_inference()
 
         mock_manager.handle_job_fault.assert_not_called()
 
     def test_handle_job_fault_called_when_last_job_referenced_is_none(self) -> None:
-        """When the process has never run a job (last_job_referenced is None),
+        """When the process has never run a job (last_job_referenced is None).
+
         handle_job_fault must still be called for next_job.
         """
         next_job_id = "eeeeeeee-0000-0000-0000-000000000005"
@@ -4060,7 +4122,7 @@ class TestStartInferencePipeBroken:
         )
 
         with patch(
-            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage"
+            "horde_worker_regen.process_management.process_manager.HordeInferenceControlMessage",
         ):
             mock_manager._start_inference()
 
@@ -4128,7 +4190,7 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
         mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
 
         mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         return mock_manager
 
@@ -4253,7 +4315,7 @@ class TestReplaceHungWaitingForJob:
         mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
 
         mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         return mock_manager
 
@@ -4264,6 +4326,7 @@ class TestReplaceHungWaitingForJob:
         time_elapsed: float,
     ) -> MagicMock:
         import time as _time
+
         from horde_worker_regen.process_management.process_manager import HordeProcessType
 
         proc = MagicMock()
@@ -4278,7 +4341,8 @@ class TestReplaceHungWaitingForJob:
         return proc
 
     def test_stale_waiting_for_job_process_replaced_when_jobs_pending(self) -> None:
-        """A WAITING_FOR_JOB process whose heartbeat is older than 600s must be
+        """A WAITING_FOR_JOB process whose heartbeat is older than 600s must be.
+
         replaced when there are pending jobs (not _last_pop_no_jobs_available).
         The threshold is max(process_timeout, 600) so even high-performance-mode workers
         (process_timeout=100s) wait at least 600s before being replaced.
@@ -4324,7 +4388,8 @@ class TestReplaceHungWaitingForJob:
         assert result is False
 
     def test_waiting_for_job_not_replaced_below_600s_threshold(self) -> None:
-        """Even with process_timeout=100 (high_performance_mode), a process idle for only 500s
+        """Even with process_timeout=100 (high_performance_mode), a process idle for only 500s.
+
         must NOT be replaced because the effective threshold is max(process_timeout, 600)=600s.
         """
         # 500s stale, effective threshold=max(100, 600)=600s → must NOT trigger
@@ -4520,7 +4585,7 @@ class TestResultSubmittingStuckRecovery:
         mock_manager._process_map.values.return_value = processes
 
         mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         return mock_manager
 
@@ -4845,7 +4910,8 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         return proc
 
     def test_inference_post_processing_replaced_before_model_preloaded(self) -> None:
-        """When both INFERENCE_POST_PROCESSING and MODEL_PRELOADED processes are stuck,
+        """When both INFERENCE_POST_PROCESSING and MODEL_PRELOADED processes are stuck.
+
         the INFERENCE_POST_PROCESSING process must be replaced first.
 
         The idle MODEL_PRELOADED process is listed first in the process map to prove that
@@ -5517,7 +5583,8 @@ class TestReplaceHungProcessesLocalJobsPending:
 
 
 class TestInferenceBackgroundHeartbeat:
-    """Tests for the background heartbeat thread introduced to prevent false
+    """Tests for the background heartbeat thread introduced to prevent false.
+
     stuck-process detection during long-running computation phases (e.g., VAE decode).
     """
 
@@ -5545,7 +5612,8 @@ class TestInferenceBackgroundHeartbeat:
         return proc
 
     def test_heartbeat_thread_started_and_stopped(self) -> None:
-        """The background heartbeat thread must be started before basic_inference()
+        """The background heartbeat thread must be started before basic_inference().
+
         and stopped (via Event.set + join) after it returns.
         """
         import threading as _threading
@@ -5584,7 +5652,8 @@ class TestInferenceBackgroundHeartbeat:
         assert not heartbeat_threads[0].is_alive(), "The heartbeat thread must be stopped after inference"
 
     def test_heartbeat_thread_is_daemon(self) -> None:
-        """The background heartbeat thread must be a daemon thread so it does not
+        """The background heartbeat thread must be a daemon thread so it does not.
+
         prevent the process from exiting if it is somehow not stopped cleanly.
         """
         import threading as _threading
@@ -5618,7 +5687,8 @@ class TestInferenceBackgroundHeartbeat:
         assert daemon_values[-1] is True, "The inference heartbeat thread must be a daemon thread"
 
     def test_inference_heartbeat_loop_sends_heartbeat(self) -> None:
-        """_inference_heartbeat_loop must call send_heartbeat_message with
+        """_inference_heartbeat_loop must call send_heartbeat_message with.
+
         PIPELINE_STATE_CHANGE and the last known inference percent before the
         stop event fires.
         """
@@ -5651,7 +5721,8 @@ class TestInferenceBackgroundHeartbeat:
         )
 
     def test_inference_heartbeat_loop_suppresses_when_no_progress(self) -> None:
-        """When _last_inference_percent is None (no real progress yet), the heartbeat
+        """When _last_inference_percent is None (no real progress yet), the heartbeat.
+
         loop must NOT call send_heartbeat_message, preserving the process manager's
         no_step_heartbeat_timeout fast-path for early crash detection.
         """
@@ -5681,7 +5752,8 @@ class TestInferenceBackgroundHeartbeat:
         proc.send_heartbeat_message.assert_not_called()
 
     def test_last_inference_percent_updated_on_zero_fallback(self) -> None:
-        """When comfyui_progress is absent and _last_inference_percent is None (very start
+        """When comfyui_progress is absent and _last_inference_percent is None (very start.
+
         of inference), a 0% heartbeat is sent and _last_inference_percent is set to 0 so
         the background heartbeat thread can report meaningful (not None) progress.
         """
@@ -5715,7 +5787,8 @@ class TestInferenceBackgroundHeartbeat:
         )
 
     def test_progress_not_reset_to_zero_between_last_step_and_post_processing(self) -> None:
-        """Progress must NOT drop to 0 % when a no-comfyui_progress callback fires after
+        """Progress must NOT drop to 0 % when a no-comfyui_progress callback fires after.
+
         some inference progress has already been reported.
 
         This is the regression test for the 1 % flash that occurred between the final
@@ -5759,7 +5832,8 @@ class TestInferenceBackgroundHeartbeat:
             )
 
     def test_last_inference_percent_updated_on_inference_step(self) -> None:
-        """_last_inference_percent must be updated to the step's percentage when
+        """_last_inference_percent must be updated to the step's percentage when.
+
         an INFERENCE_STEP heartbeat is sent in _progress_callback_impl.
         """
         from hordelib.horde import ProgressReport, ProgressState
@@ -6021,7 +6095,8 @@ class TestHandleJobFaultRecordsHistory:
 
 
 class TestReplaceInferenceProcessBroadExceptionHandling:
-    """Tests that _replace_inference_process() continues and starts the replacement process
+    """Tests that _replace_inference_process() continues and starts the replacement process.
+
     even when semaphore/lock release operations raise unexpected exceptions (e.g. OSError).
 
     On some platforms or in certain failure modes, releasing a semaphore or lock can raise
@@ -6094,7 +6169,7 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
             mock_manager._aux_model_lock = ctx.Lock()
 
         bound = HordeWorkerProcessManager._replace_inference_process.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         mock_manager._bound_replace = bound
         mock_manager._bound_replace_process_info = process_info
@@ -6163,7 +6238,8 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
 
 
 class TestProcessEndingHandlerBroadExceptionHandling:
-    """Tests that the PROCESS_ENDING handler in receive_and_handle_process_messages continues
+    """Tests that the PROCESS_ENDING handler in receive_and_handle_process_messages continues.
+
     to fault jobs and restart the process even when semaphore releases raise unexpected exceptions.
 
     If _inference_semaphore.release() or _vae_decode_semaphore.release() raises an OSError
@@ -6231,7 +6307,7 @@ class TestProcessEndingHandlerBroadExceptionHandling:
             mock_manager._vae_decode_semaphore = bad_sem
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         bound()
         return mock_manager
@@ -6273,7 +6349,8 @@ class TestProcessEndingHandlerBroadExceptionHandling:
 
 
 class TestRecoveryTimerThreadIsDaemon:
-    """Tests that the _recently_recovered timer thread created by replace_hung_processes()
+    """Tests that the _recently_recovered timer thread created by replace_hung_processes().
+
     is a daemon thread.
 
     Non-daemon threads keep the interpreter alive even after sys.exit() is called,
@@ -6313,7 +6390,7 @@ class TestRecoveryTimerThreadIsDaemon:
         mock_manager._process_map.values.return_value = [proc]
 
         mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
-            mock_manager, HordeWorkerProcessManager
+            mock_manager, HordeWorkerProcessManager,
         )
         return mock_manager
 
@@ -6327,8 +6404,6 @@ class TestRecoveryTimerThreadIsDaemon:
         fake that does not actually spawn a thread (its ``start()`` is a no-op), so the test
         doesn't leave a background sleeper running for 600 s.
         """
-        import threading as _threading
-
         mock_manager = self._make_manager_with_stuck_inference()
 
         captured_daemon_values: list[bool | None] = []
@@ -6366,7 +6441,7 @@ class TestGetProcessByHordeModelNamePreference:
         pmap = MagicMock()
         pmap.values.return_value = processes
         pmap.get_process_by_horde_model_name = ProcessMap.get_process_by_horde_model_name.__get__(
-            pmap, ProcessMap
+            pmap, ProcessMap,
         )
         return pmap
 
@@ -6386,8 +6461,10 @@ class TestGetProcessByHordeModelNamePreference:
         return proc
 
     def test_returns_accepting_process_when_two_with_same_model(self) -> None:
-        """When P1 is INFERENCE_STARTING (busy) and P2 is MODEL_PRELOADED (ready),
-        get_process_by_horde_model_name must return P2, not P1."""
+        """When P1 is INFERENCE_STARTING (busy) and P2 is MODEL_PRELOADED (ready).
+
+        get_process_by_horde_model_name must return P2, not P1.
+        """
         p1 = self._make_process(1, HordeProcessState.INFERENCE_STARTING, "Fustercluck")
         p2 = self._make_process(2, HordeProcessState.MODEL_PRELOADED, "Fustercluck")
         pmap = self._make_process_map([p1, p2])
@@ -6534,8 +6611,10 @@ class TestGetNextJobAndProcessModelPreloading:
         )
 
     def test_skips_model_preloading_to_dispatch_preloaded(self) -> None:
-        """When job1's model is MODEL_PRELOADING and job2's model is MODEL_PRELOADED,
-        get_next_job_and_process must return job2 with its preloaded process."""
+        """When job1's model is MODEL_PRELOADING and job2's model is MODEL_PRELOADED.
+
+        get_next_job_and_process must return job2 with its preloaded process.
+        """
         mock_manager, job1, job2, proc2 = self._make_manager(
             first_job_model="SomeModel",
             first_process_state=HordeProcessState.MODEL_PRELOADING,

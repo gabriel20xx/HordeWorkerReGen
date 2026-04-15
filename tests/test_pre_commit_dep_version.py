@@ -23,7 +23,7 @@ def test_pre_commit_dep_versions(
         precommit_config = yaml.safe_load(f)
 
     # Initialize a dictionary to hold the versions of the dependencies
-    versions = {dep: None for dep in tracked_dependencies}
+    versions = dict.fromkeys(tracked_dependencies)
 
     # Extract versions from the pre-commit config
     for repo in precommit_config["repos"]:

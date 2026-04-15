@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from horde_worker_regen.process_management.messages import HordeProcessState
 
 
@@ -18,7 +16,7 @@ def test_calculate_granular_progress() -> None:
 
     # Bind the actual method to the mock
     mock_manager._calculate_granular_progress = HordeWorkerProcessManager._calculate_granular_progress.__get__(
-        mock_manager, HordeWorkerProcessManager
+        mock_manager, HordeWorkerProcessManager,
     )
 
     # Define test cases: (state, inference_progress, expected_progress)
@@ -68,7 +66,7 @@ def test_inference_progress_scaling() -> None:
 
     mock_manager = MagicMock(spec=HordeWorkerProcessManager)
     mock_manager._calculate_granular_progress = HordeWorkerProcessManager._calculate_granular_progress.__get__(
-        mock_manager, HordeWorkerProcessManager
+        mock_manager, HordeWorkerProcessManager,
     )
 
     # Test boundary conditions for inference scaling
@@ -87,7 +85,7 @@ def test_post_processing_progress_scaling() -> None:
 
     mock_manager = MagicMock(spec=HordeWorkerProcessManager)
     mock_manager._calculate_granular_progress = HordeWorkerProcessManager._calculate_granular_progress.__get__(
-        mock_manager, HordeWorkerProcessManager
+        mock_manager, HordeWorkerProcessManager,
     )
 
     # Test post-processing scaling

@@ -1,9 +1,7 @@
 """Tests for LogConsoleRewriter to ensure it doesn't corrupt tracebacks."""
 
 import io
-import sys
 
-import pytest
 import regex as re
 
 

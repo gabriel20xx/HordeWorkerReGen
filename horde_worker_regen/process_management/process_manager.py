@@ -6513,7 +6513,7 @@ class HordeWorkerProcessManager:
                             # step-level progress is still shown.
                             raw_progress = process.last_heartbeat_percent_complete
                             granular = self._calculate_granular_progress(
-                                process_state, raw_progress
+                                process_state, raw_progress,
                             )
                             progress = (
                                 max(granular, raw_progress) if raw_progress is not None else granular
@@ -6763,7 +6763,7 @@ class HordeWorkerProcessManager:
         api_get_user_info_loop.add_done_callback(self._handle_exception)
 
         api_get_workers_details_loop = asyncio.create_task(
-            self._api_get_workers_details_loop(), name="api_get_workers_details_loop"
+            self._api_get_workers_details_loop(), name="api_get_workers_details_loop",
         )
         api_get_workers_details_loop.add_done_callback(self._handle_exception)
 
