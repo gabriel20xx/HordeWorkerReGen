@@ -684,8 +684,9 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                 check 1, which requires the full ``inference_step_timeout`` (default 600 s).
                 Using ``no_step_heartbeat_timeout`` (default 300 s) here halves detection
                 time and avoids waiting 10 minutes when inference never started.
-                Do NOT apply the no-heartbeat check to INFERENCE_STARTING: a process blocked
-                on semaphore acquisition cannot send heartbeats and would be a false positive.
+                Do NOT apply this shorter ``no_step_heartbeat_timeout`` fast-path to
+                INFERENCE_STARTING: a process blocked on semaphore acquisition cannot send
+                heartbeats yet, so using the shorter timeout there would be a false positive.
         """
         state = self[process_id].last_process_state
         if state not in (
