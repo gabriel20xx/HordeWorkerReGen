@@ -111,6 +111,10 @@ exclude = '''
 '''
 
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+
 [tool.mypy]
 plugins = [
   "pydantic.mypy"

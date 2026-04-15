@@ -1430,7 +1430,7 @@ class HordeWorkerProcessManager:
     kudos_events: list[tuple[float, float]]
     """A list of kudos events, each is a tuple of the time the event occurred and the amount of kudos generated."""
     image_events: list[tuple[float, int]]
-    """A list of image completion events, each is a tuple of the time the event occurred and the number of images generated."""
+    """A list of image completion events: each tuple is (timestamp, images_generated)."""
     session_start_time: float = 0
     """The time at which the session started in epoch time."""
 
@@ -6643,10 +6643,8 @@ class HordeWorkerProcessManager:
                 for field in ("accumulated", "gifted", "admin", "received", "donated", "recurring"):
                     val = getattr(kd, field, None)
                     if val is not None:
-                        try:
+                        with contextlib.suppress(TypeError, ValueError):
                             kudos_details_dict[field] = float(val)
-                        except (TypeError, ValueError):
-                            pass
                 if kudos_details_dict:
                     user_details["kudos_details"] = kudos_details_dict
             for field in ("worker_count", "trusted", "moderator", "pseudonymous", "concurrency"):
@@ -6782,7 +6780,13 @@ class HordeWorkerProcessManager:
             webui_update_loop = asyncio.create_task(self._webui_update_loop(), name="webui_update_loop")
             webui_update_loop.add_done_callback(self._handle_exception)
 
-        tasks = [process_control_loop, api_call_loop, api_get_user_info_loop, api_get_workers_details_loop, job_submit_loop]
+        tasks = [
+            process_control_loop,
+            api_call_loop,
+            api_get_user_info_loop,
+            api_get_workers_details_loop,
+            job_submit_loop,
+        ]
 
         if bridge_data_loop is not None:
             tasks.append(bridge_data_loop)

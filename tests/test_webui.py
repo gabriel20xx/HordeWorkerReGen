@@ -431,8 +431,9 @@ async def test_webui_gallery_thumbnail_only() -> None:
         webui._gallery_dict[0] = {"gallery_id": 0, "base64": test_b64, "timestamp": 1.0, "model": "m1"}
 
         # Add an entry *with* a thumbnail (simulates PIL available; thumbnail_only stripping applies)
-        webui._gallery_dict[1] = {"gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2"}
-        webui.status_data["images_count"] = 2
+        webui._gallery_dict[1] = {
+            "gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2",
+        }
 
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/gallery?page=1&page_size=48",
@@ -589,7 +590,9 @@ async def test_webui_gallery_metadata_only() -> None:
         # Entry without thumbnail (base64 only)
         webui._gallery_dict[0] = {"gallery_id": 0, "base64": test_b64, "timestamp": 1.0, "model": "m1"}
         # Entry with both thumbnail and base64
-        webui._gallery_dict[1] = {"gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2"}
+        webui._gallery_dict[1] = {
+            "gallery_id": 1, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 2.0, "model": "m2",
+        }
 
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/gallery?page=1&page_size=48&metadata_only=true",
@@ -623,7 +626,9 @@ async def test_webui_gallery_image_thumbnail_only() -> None:
         )
 
         # Entry with both thumbnail and base64
-        webui._gallery_dict[5] = {"gallery_id": 5, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 1.0, "model": "m1"}
+        webui._gallery_dict[5] = {
+            "gallery_id": 5, "base64": test_b64, "thumbnail": "thumb_data", "timestamp": 1.0, "model": "m1",
+        }
         # Entry without thumbnail (base64 only); thumbnail_only should still work (no thumbnail to return)
         webui._gallery_dict[6] = {"gallery_id": 6, "base64": test_b64, "timestamp": 2.0, "model": "m2"}
 

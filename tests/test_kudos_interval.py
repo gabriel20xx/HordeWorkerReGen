@@ -5,7 +5,7 @@ from horde_worker_regen.process_management.process_manager import HordeWorkerPro
 
 def test_api_get_user_info_interval() -> None:
     """Test that the API get user info interval is set to a reasonable value.
-    
+
     This interval controls how often kudos information is displayed in the console.
     The value should be 60 seconds or higher to avoid spamming the console.
     """

@@ -475,7 +475,8 @@ def test_time_without_jobs_frozen_when_job_is_active() -> None:
     )
 
     assert result == accumulated_idle, (
-        f"Expected time_without_jobs={accumulated_idle} (frozen at accumulated total) while job is active, got {result}"
+        f"Expected time_without_jobs={accumulated_idle} (frozen at accumulated total)"
+        f" while job is active, got {result}"
     )
 
 

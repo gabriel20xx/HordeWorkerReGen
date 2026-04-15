@@ -4,11 +4,15 @@ import asyncio
 import sys
 import types
 from collections import deque
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from horde_worker_regen.process_management.messages import HordeProcessState
+
+if TYPE_CHECKING:
+    from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
 
 class TestIsProcessAlive:
@@ -1283,7 +1287,10 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         )
 
     def test_process_ending_without_job_in_progress_does_not_call_handle_job_fault(self) -> None:
-        """When HordeProcessState.PROCESS_ENDING arrives and the job is not in jobs_in_progress, handle_job_fault must not be called.
+        """PROCESS_ENDING without job in jobs_in_progress does not call handle_job_fault.
+
+        When HordeProcessState.PROCESS_ENDING arrives and the job is not in jobs_in_progress,
+        handle_job_fault must not be called.
 
         This covers the normal case: inference completed, the result was already processed
         (removing the job from jobs_in_progress), and now the process is shutting down.
@@ -1315,7 +1322,11 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         mock_manager.handle_job_fault.assert_not_called()
 
     def test_process_ending_calls_on_process_ending_after_fault(self) -> None:
-        """on_process_ending must be called after (not before) handle_job_fault to avoid clearing last_job_referenced."""
+        """on_process_ending must be called after handle_job_fault to preserve last_job_referenced.
+
+        on_process_ending must be called after (not before) handle_job_fault
+        to avoid clearing last_job_referenced.
+        """
         job = MagicMock()
         job.id_ = "orphaned-job-id"
 
@@ -1335,7 +1346,9 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         process_map = MagicMock()
         process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
         process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
-        process_map.on_process_ending = MagicMock(side_effect=lambda process_id: call_order.append("on_process_ending"))
+        process_map.on_process_ending = MagicMock(
+            side_effect=lambda process_id: call_order.append("on_process_ending"),
+        )
 
         q = queue_mod.Queue()
         q.put(msg)
@@ -1346,7 +1359,9 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         mock_manager._in_deadlock = False
         mock_manager._in_queue_deadlock = False
         mock_manager.jobs_in_progress = [job]
-        mock_manager.handle_job_fault = MagicMock(side_effect=lambda faulted_job, process_info: call_order.append("handle_job_fault"))
+        mock_manager.handle_job_fault = MagicMock(
+            side_effect=lambda faulted_job, process_info: call_order.append("handle_job_fault"),
+        )
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
             mock_manager, HordeWorkerProcessManager,
@@ -2118,15 +2133,17 @@ class TestSendInferenceResultFallbackOnFailure:
             m.job_image_results = kwargs.get("job_image_results", [])
             return m
 
-        with patch(self._TARGET, side_effect=fake_msg_cls):
-            with pytest.raises(RuntimeError, match="Simulated queue failure"):
-                proc.send_inference_result_message(
-                    process_state=HordeProcessState.INFERENCE_COMPLETE,
-                    job_info=MagicMock(),
-                    results=[good_result],
-                    time_elapsed=1.0,
-                    sanitized_negative_prompt=None,
-                )
+        with (
+            patch(self._TARGET, side_effect=fake_msg_cls),
+            pytest.raises(RuntimeError, match="Simulated queue failure"),
+        ):
+            proc.send_inference_result_message(
+                process_state=HordeProcessState.INFERENCE_COMPLETE,
+                job_info=MagicMock(),
+                results=[good_result],
+                time_elapsed=1.0,
+                sanitized_negative_prompt=None,
+            )
 
     def test_faulted_fallback_with_none_results_succeeds(self) -> None:
         """The faulted-fallback path (results=None) must succeed when the queue is working.
@@ -2831,22 +2848,27 @@ class TestCanAcceptJobPostProcessingComplete:
         assert info.can_accept_job() is False
 
     def test_waiting_for_job_can_accept(self) -> None:
+        """WAITING_FOR_JOB state allows accepting a new job."""
         info = self._make_process_info(HordeProcessState.WAITING_FOR_JOB)
         assert info.can_accept_job() is True
 
     def test_inference_complete_can_accept(self) -> None:
+        """INFERENCE_COMPLETE state allows accepting a new job."""
         info = self._make_process_info(HordeProcessState.INFERENCE_COMPLETE)
         assert info.can_accept_job() is True
 
     def test_model_preloaded_can_accept(self) -> None:
+        """MODEL_PRELOADED state allows accepting a new job."""
         info = self._make_process_info(HordeProcessState.MODEL_PRELOADED)
         assert info.can_accept_job() is True
 
     def test_inference_processing_cannot_accept(self) -> None:
+        """INFERENCE_PROCESSING state does not allow accepting a new job."""
         info = self._make_process_info(HordeProcessState.INFERENCE_PROCESSING)
         assert info.can_accept_job() is False
 
     def test_process_ending_cannot_accept(self) -> None:
+        """PROCESS_ENDING state does not allow accepting a new job."""
         info = self._make_process_info(HordeProcessState.PROCESS_ENDING)
         assert info.can_accept_job() is False
 
@@ -3660,7 +3682,9 @@ class TestPostProcessingFaultMessage:
         proc.process_message_queue = MagicMock()
         return proc
 
-    def _call_send_result_get_info(self, *, post_processing_was_started: bool, results=None) -> str:
+    def _call_send_result_get_info(
+        self, *, post_processing_was_started: bool, results: list[object] | None = None,
+    ) -> str:
         """Call send_inference_result_message and return the ``info`` string passed.
 
         to the HordeInferenceResultMessage constructor.

@@ -106,7 +106,7 @@ class LogConsoleRewriter(io.StringIO):
         self.original_iostream.flush()
 
 
-def test_log_console_rewriter_preserves_traceback():
+def test_log_console_rewriter_preserves_traceback() -> None:
     """Test that LogConsoleRewriter preserves traceback information."""
     # Create a StringIO to capture output
     output = io.StringIO()
@@ -130,7 +130,7 @@ def test_log_console_rewriter_preserves_traceback():
     assert "horde_worker_regen.run_worker" in result
 
 
-def test_log_console_rewriter_beautifies_normal_logs():
+def test_log_console_rewriter_beautifies_normal_logs() -> None:
     """Test that LogConsoleRewriter still beautifies normal log messages."""
     output = io.StringIO()
     rewriter = LogConsoleRewriter(output)
@@ -145,7 +145,7 @@ def test_log_console_rewriter_beautifies_normal_logs():
     assert "Worker" in result
 
 
-def test_log_console_rewriter_function_replacements():
+def test_log_console_rewriter_function_replacements() -> None:
     """Test that function name replacements work correctly in normal logs."""
     output = io.StringIO()
     rewriter = LogConsoleRewriter(output)
@@ -163,7 +163,7 @@ def test_log_console_rewriter_function_replacements():
     assert "New Job" in result
 
 
-def test_log_console_rewriter_after_traceback():
+def test_log_console_rewriter_after_traceback() -> None:
     """Test that rewriter returns to normal mode after a traceback."""
     output = io.StringIO()
     rewriter = LogConsoleRewriter(output)
