@@ -493,7 +493,7 @@ class WorkerWebUI:
                 <!-- OVERVIEW PAGE -->
                 <div class="page active" id="page-overview">
                     <div class="grid-4" style="margin-bottom: 14px;">
-                        <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-kudos-total">-</div></div>
+                        <div class="stat-card"><div class="stat-card-label">Kudos This Session</div><div class="stat-card-value success" id="user-kudos-session">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="images-per-hour">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value accent" id="jobs-popped">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="jobs-completed">0</div></div>
@@ -566,7 +566,6 @@ class WorkerWebUI:
                             <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value" id="user-page-username">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
-                            <div class="stat-card"><div class="stat-card-label">Kudos This Session</div><div class="stat-card-value accent" id="user-page-kudos-session">0</div></div>
                         </div>
                         <div class="grid-4" style="margin-bottom: 14px;">
                             <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="user-page-images-per-hour">0</div></div>
@@ -1353,7 +1352,7 @@ class WorkerWebUI:
                     const uptimeStr = formatUptime(data.uptime);
                     document.getElementById('uptime').textContent = uptimeStr;
                     document.getElementById('mobile-uptime').textContent = '\u23F1 ' + uptimeStr;
-                    document.getElementById('user-kudos-total').textContent = data.user_kudos_total ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
+                    document.getElementById('user-kudos-session').textContent = (data.kudos_earned_session || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('jobs-popped').textContent = data.jobs_popped;
                     document.getElementById('jobs-completed').textContent = data.jobs_completed;
@@ -1497,7 +1496,6 @@ class WorkerWebUI:
                     document.getElementById('user-page-username').textContent = data.horde_username || '-';
                     document.getElementById('user-page-kudos-total').textContent = data.user_kudos_total != null ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
                     document.getElementById('user-page-kudos-per-hour').textContent = (data.kudos_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
-                    document.getElementById('user-page-kudos-session').textContent = (data.kudos_earned_session || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('user-page-images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('user-page-jobs-completed').textContent = data.jobs_completed || 0;
                     const trusted = ud.trusted;
