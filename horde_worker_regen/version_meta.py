@@ -1,9 +1,9 @@
 import datetime
 import json
 import os
+import ssl
 import time
-
-import semver
+import urllib.request
 from loguru import logger
 from pydantic import BaseModel
 
@@ -34,6 +34,21 @@ class VersionMeta(BaseModel):
     required_min_version_info: dict[str, RequiredVersionInfo]
 
 
+def _version_tuple(v: str) -> tuple[int, ...]:
+    """Parse a version string into a tuple of integers for comparison."""
+    return tuple(int(x) for x in v.split(".")[:3])
+
+
+def _compare_versions(a: str, b: str) -> int:
+    """Compare two semver strings. Returns -1, 0, or 1."""
+    va, vb = _version_tuple(a), _version_tuple(b)
+    if va < vb:
+        return -1
+    if va > vb:
+        return 1
+    return 0
+
+
 def get_local_version_meta() -> VersionMeta:
     """Get the local _version_meta.json file as a `VersionMeta` object."""
     with open("horde_worker_regen/_version_meta.json") as f:
@@ -43,9 +58,9 @@ def get_local_version_meta() -> VersionMeta:
 
 def get_remote_version_meta() -> VersionMeta:
     """Get the remote version meta from the `VERSION_META_REMOTE_URL` as a `VersionMeta` object."""
-    import requests
-
-    data = requests.get(VERSION_META_REMOTE_URL).json()
+    ssl_ctx = ssl.create_default_context()
+    with urllib.request.urlopen(VERSION_META_REMOTE_URL, context=ssl_ctx) as response:
+        data = json.loads(response.read())
     return VersionMeta(**data)
 
 
@@ -66,7 +81,7 @@ def do_version_check() -> None:
         version_meta = get_local_version_meta()
 
     # If the required_min_version is not satisfied, raise an error
-    if not semver.compare(horde_worker_regen.__version__, version_meta.required_min_version) >= 0:
+    if not _compare_versions(horde_worker_regen.__version__, version_meta.required_min_version) >= 0:
         # Get the reason for the required update
         reason_for_update = version_meta.required_min_version_info[version_meta.required_min_version].reason_for_update
 
@@ -101,7 +116,7 @@ def do_version_check() -> None:
             input("Press Enter to continue...")
             exit(1)
 
-    if not semver.compare(horde_worker_regen.__version__, version_meta.recommended_version) >= 0:
+    if not _compare_versions(horde_worker_regen.__version__, version_meta.recommended_version) >= 0:
         logger.warning(
             f"Current worker version {horde_worker_regen.__version__} is not the recommended version. "
             f"Please consider updating to {version_meta.recommended_version}.",
@@ -109,10 +124,8 @@ def do_version_check() -> None:
         os.environ["AIWORKER_NOT_RECOMMENDED_VERSION"] = "1"
 
     if version_meta.beta_version_info:
-        current_version_semver = semver.VersionInfo.parse(horde_worker_regen.__version__)
-        current_version_simple = (
-            f"{current_version_semver.major}.{current_version_semver.minor}.{current_version_semver.patch}"
-        )
+        major, minor, patch = _version_tuple(horde_worker_regen.__version__)
+        current_version_simple = f"{major}.{minor}.{patch}"
 
         if current_version_simple in version_meta.beta_version_info:
             beta_info = version_meta.beta_version_info[current_version_simple]

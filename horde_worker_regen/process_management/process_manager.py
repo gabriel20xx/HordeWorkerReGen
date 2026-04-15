@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import aiohttp.client_exceptions
-import certifi
 import PIL
 import PIL.Image
 import psutil
@@ -100,7 +99,7 @@ from horde_worker_regen.process_management.worker_entry_points import start_infe
 if TYPE_CHECKING:
     from horde_worker_regen.webui.server import WorkerWebUI
 
-sslcontext = ssl.create_default_context(cafile=certifi.where())
+sslcontext = ssl.create_default_context()
 
 # Constants
 BYTES_TO_MEGABYTES = 1024 * 1024

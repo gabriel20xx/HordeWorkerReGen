@@ -3,9 +3,31 @@
 import os
 import pathlib
 
-from dotenv import load_dotenv
 from loguru import logger
 from ruamel.yaml import YAML
+
+
+def load_dotenv(dotenv_path: str = ".env") -> None:
+    """Load environment variables from a .env file into os.environ.
+
+    Only sets variables that are not already set. Supports basic .env syntax:
+    key=value, quoted values, and comment lines starting with '#'.
+    """
+    p = pathlib.Path(dotenv_path)
+    if not p.exists():
+        return
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if value and value[0] in ('"', "'") and len(value) >= 2 and value[-1] == value[0]:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+
 
 load_dotenv()
 

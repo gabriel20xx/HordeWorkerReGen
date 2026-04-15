@@ -4,7 +4,7 @@ import io
 import sys
 
 import pytest
-import regex as re
+import re
 
 
 class LogConsoleRewriter(io.StringIO):
