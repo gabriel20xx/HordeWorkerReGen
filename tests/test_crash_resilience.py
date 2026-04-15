@@ -4,11 +4,15 @@ import asyncio
 import sys
 import types
 from collections import deque
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from horde_worker_regen.process_management.messages import HordeProcessState
+
+if TYPE_CHECKING:
+    from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
 
 class TestIsProcessAlive:
@@ -1817,7 +1821,6 @@ class TestSendMemoryReportMessageVramFailure:
     def test_vram_warning_is_rate_limited(self) -> None:
         """Repeated VRAM failures within 10 s must not re-emit a WARNING; they use DEBUG instead."""
         import time
-        from unittest.mock import call
 
         mock = self._create_mock_horde_process()
         mock.get_vram_usage_bytes.side_effect = RuntimeError("CUDA error")
@@ -2184,7 +2187,6 @@ class TestSendInferenceResultFallbackOnFailure:
         """
         import io
 
-        import pytest
         from horde_worker_regen.process_management.messages import HordeProcessState
 
         proc = self._make_process()
@@ -2254,7 +2256,6 @@ class TestSendInferenceResultFallbackOnFailure:
         """
         import io
 
-        import pytest
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
         from horde_worker_regen.process_management.messages import HordeProcessState
 
@@ -3035,8 +3036,6 @@ class TestVaeLockAcquiredFlag:
         """A second progress_callback invocation after a timeout must not re-attempt
         acquire (which would block up to VAE_SEMAPHORE_TIMEOUT again and spam logs).
         """
-        import multiprocessing
-
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
         proc = MagicMock(spec=HordeInferenceProcess)
@@ -6426,8 +6425,6 @@ class TestRecoveryTimerThreadIsDaemon:
         fake that does not actually spawn a thread (its ``start()`` is a no-op), so the test
         doesn't leave a background sleeper running for 600 s.
         """
-        import threading as _threading
-
         mock_manager = self._make_manager_with_stuck_inference()
 
         captured_daemon_values: list[bool | None] = []

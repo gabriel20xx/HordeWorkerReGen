@@ -9,11 +9,11 @@ load_env_vars_from_config()
 
 # isort: on
 
-import argparse
+import argparse  # noqa: E402
 
-from horde_model_reference.model_reference_manager import ModelReferenceManager
+from horde_model_reference.model_reference_manager import ModelReferenceManager  # noqa: E402
 
-from horde_worker_regen.bridge_data.load_config import BridgeDataLoader, ConfigFormat
+from horde_worker_regen.bridge_data.load_config import BridgeDataLoader, ConfigFormat  # noqa: E402
 
 
 def convert_config_to_env(config_filename: str = "bridgeData.yaml", dot_env_filename: str = "bridgeData.env") -> None:
