@@ -5586,7 +5586,7 @@ class HordeWorkerProcessManager:
                         await asyncio.sleep(1)
                         continue
                     worker_ids = getattr(self.user_info, "worker_ids", None)
-                    if not worker_ids:
+                    if worker_ids is None:
                         await asyncio.sleep(1)
                         continue
                     await self.api_get_workers_details()
