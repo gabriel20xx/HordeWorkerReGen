@@ -14,7 +14,6 @@ def init_hordelib() -> None:
     logger.warning("hordelib.initialise() not called")
 
 
-PRECOMMIT_FILE_PATH = Path(__file__).parent.parent / ".pre-commit-config.yaml"
 REQUIREMENTS_FILE_PATH = Path(__file__).parent.parent / "requirements.txt"
 ROCM_REQUIREMENTS_FILE_PATH = Path(__file__).parent.parent / "requirements.rocm.txt"
 DIRECTML_REQUIREMENTS_FILE_PATH = Path(__file__).parent.parent / "requirements.directml.txt"
