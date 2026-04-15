@@ -646,8 +646,10 @@ class ProcessMap(dict[int, HordeProcessInfo]):
 
         This detects jobs that are stuck in the INFERENCE_STARTING or INFERENCE_PROCESSING state with:
         1. Progress not advancing for timeout period (stuck at same percentage), OR
-        2. A single diffusion step taking longer than MAX_INFERENCE_STEP_TIMEOUT seconds, OR
-        3. No heartbeat received for timeout period (including last step / VAE decode phase)
+        2. Progress stuck at exactly 0 % for no_step_heartbeat_timeout seconds (faster early-stall
+           detection — see detailed note below), OR
+        3. A single diffusion step taking longer than MAX_INFERENCE_STEP_TIMEOUT seconds, OR
+        4. No heartbeat received for timeout period (including last step / VAE decode phase)
 
         Detecting INFERENCE_PROCESSING stalls is critical: a process holding the inference semaphore
         while stuck prevents other processes from acquiring it, leaving them permanently stuck in
@@ -664,8 +666,26 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                 (b) the process is in the VAE decode / post-processing phase after all steps
                     completed and sent a 100 % PIPELINE_STATE_CHANGE heartbeat that reset the
                     step counter.
-                Do NOT apply this to INFERENCE_STARTING: a process blocked on semaphore
-                acquisition cannot send heartbeats and would be a false positive.
+                It also enables the faster 0 %-progress check (check 2 above): when progress
+                has been reported but never advanced from 0 % (meaning no real diffusion step
+                has produced any output), this shorter timeout is used instead of the full
+                ``inference_step_timeout``.  This handles two sub-cases that the existing
+                per-step check (check 3) cannot catch:
+                (i)  The ComfyUI callback fires repeatedly at step 0/N (percent = 0 %),
+                     refreshing ``last_inference_step_timestamp`` on every call and preventing
+                     the 30 s per-step timeout from ever triggering, while denoising never
+                     actually starts.
+                (ii) The callback fires via the PIPELINE_STATE_CHANGE path (no
+                     ``comfyui_progress`` data), so ``last_inference_step_timestamp`` is None
+                     and the per-step check is skipped entirely; the background heartbeat
+                     thread then keeps ``last_heartbeat_timestamp`` fresh every 30 s, which
+                     also prevents the no-heartbeat check (check 4) from firing.
+                In both sub-cases the only check that would otherwise catch the stall is
+                check 1, which requires the full ``inference_step_timeout`` (default 600 s).
+                Using ``no_step_heartbeat_timeout`` (default 300 s) here halves detection
+                time and avoids waiting 10 minutes when inference never started.
+                Do NOT apply the no-heartbeat check to INFERENCE_STARTING: a process blocked
+                on semaphore acquisition cannot send heartbeats and would be a false positive.
         """
         state = self[process_id].last_process_state
         if state not in (
@@ -682,6 +702,22 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         time_since_progress = time.time() - self[process_id].last_progress_timestamp
         if time_since_progress > inference_step_timeout and self[process_id].last_progress_value != 100:
             # Progress hasn't advanced in too long - job is stuck
+            return True
+
+        # Faster stall detection when progress is stuck at exactly 0 %.
+        # A process in INFERENCE_PROCESSING that has reported 0 % progress but has never
+        # advanced means no real diffusion step has produced any output.  The background
+        # heartbeat thread keeps last_heartbeat_timestamp fresh (preventing check 4 below),
+        # and repeated INFERENCE_STEP callbacks at step 0/N keep last_inference_step_timestamp
+        # fresh (preventing check 3 below).  The only safeguard would otherwise be check 1
+        # above at the full inference_step_timeout.  Use no_step_heartbeat_timeout instead
+        # to catch these early hangs twice as fast.
+        if (
+            state == HordeProcessState.INFERENCE_PROCESSING
+            and no_step_heartbeat_timeout is not None
+            and self[process_id].last_progress_value == 0
+            and time_since_progress > no_step_heartbeat_timeout
+        ):
             return True
 
         # Check if a single diffusion step is taking too long.

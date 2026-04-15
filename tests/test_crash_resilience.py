@@ -1111,6 +1111,105 @@ class TestIsStuckOnInference:
         assert process_map.is_stuck_on_inference(0, 600) is False
 
 
+    def test_zero_progress_with_fresh_heartbeats_uses_shorter_timeout(self) -> None:
+        """INFERENCE_PROCESSING stuck at 0 % with fresh heartbeats detects via no_step_heartbeat_timeout.
+
+        Core bug scenario: process stuck in INFERENCE_PROCESSING at 0 % progress:
+        - ComfyUI calls the progress callback at step 0/N (0 %) — either once via the
+          INFERENCE_STEP path (refreshing last_inference_step_timestamp each time) or via
+          the PIPELINE_STATE_CHANGE path (last_inference_step_timestamp stays None).
+        - The background heartbeat thread sends PIPELINE_STATE_CHANGE at 0 % every 30 s,
+          keeping last_heartbeat_timestamp fresh.
+        - Result: the per-step check (last_inference_step_timestamp check) never fires
+          (either masked by repeated INFERENCE_STEP at 0 % or inapplicable because
+          last_inference_step_timestamp is None), and the no-heartbeat check (check 4)
+          never fires because last_heartbeat_timestamp is always fresh.
+        - Without the new check the only protection is the full inference_step_timeout
+          (600 s).  With the new check the process is detected at no_step_heartbeat_timeout
+          (300 s).
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 350,  # 350 s since first 0 % progress
+            last_heartbeat_timestamp=time.time() - 5,  # background heartbeat just fired
+            heartbeats_inference_steps=0,  # reset by last PIPELINE_STATE_CHANGE heartbeat
+            last_progress_value=0,  # stuck at 0 % — no real diffusion step ever completed
+            last_inference_step_timestamp=time.time() - 5,  # INFERENCE_STEP at 0 % fired recently
+        )
+        process_map = self._make_process_map(entry)
+        # Without no_step_heartbeat_timeout: 350s > 600? No → not stuck yet (full timeout)
+        assert process_map.is_stuck_on_inference(0, 600) is False
+        # With no_step_heartbeat_timeout=300: 350s > 300 and progress_value==0 → stuck!
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is True
+
+    def test_zero_progress_not_yet_at_shorter_timeout(self) -> None:
+        """INFERENCE_PROCESSING at 0 % is NOT stuck if no_step_heartbeat_timeout not yet elapsed."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 200,  # 200 s < 300 s no_step_heartbeat_timeout
+            last_heartbeat_timestamp=time.time() - 5,
+            heartbeats_inference_steps=0,
+            last_progress_value=0,
+        )
+        process_map = self._make_process_map(entry)
+        # 200s < no_step_heartbeat_timeout=300 → not yet stuck
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is False
+
+    def test_zero_progress_without_shorter_timeout_falls_back_to_full_timeout(self) -> None:
+        """Without no_step_heartbeat_timeout the 0 % check does not apply; only the 600 s check fires."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 350,  # 350 s > 300 but < 600
+            last_heartbeat_timestamp=time.time() - 5,
+            heartbeats_inference_steps=0,
+            last_progress_value=0,
+        )
+        process_map = self._make_process_map(entry)
+        # no_step_heartbeat_timeout not provided → new check inactive; 350s < 600s → not stuck
+        assert process_map.is_stuck_on_inference(0, 600) is False
+
+    def test_zero_progress_check_does_not_apply_to_inference_starting(self) -> None:
+        """The 0 % faster detection must NOT apply to INFERENCE_STARTING.
+
+        A process blocked waiting to acquire the inference semaphore reports 0 % progress
+        but cannot send heartbeats.  Applying the new check to INFERENCE_STARTING would
+        create false positives for processes legitimately waiting on the semaphore.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 350,
+            last_heartbeat_timestamp=time.time() - 5,
+            heartbeats_inference_steps=0,
+            last_progress_value=0,
+        )
+        process_map = self._make_process_map(entry)
+        # State is INFERENCE_STARTING → new 0 % check must be skipped; 350s < 600s → not stuck
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is False
+
+    def test_nonzero_progress_does_not_trigger_zero_progress_check(self) -> None:
+        """The 0 % faster detection must NOT fire when progress has advanced past 0 %."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 350,  # stale — stuck at 50 %
+            last_heartbeat_timestamp=time.time() - 5,
+            heartbeats_inference_steps=0,
+            last_progress_value=50,  # progress DID advance, just now stalled at 50 %
+        )
+        process_map = self._make_process_map(entry)
+        # progress_value == 50 (not 0) → new check does not apply; 350s < 600s → not stuck yet
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is False
+
+
 class TestInferenceSemaphoreBoundedSemaphore:
     """Tests that _inference_semaphore is a BoundedSemaphore to prevent permit inflation."""
 
