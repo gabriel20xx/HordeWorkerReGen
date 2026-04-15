@@ -1914,8 +1914,7 @@ class WorkerWebUI:
             self.status_data["kudos_per_hour"] = kudos_per_hour
         if images_per_hour is not None:
             self.status_data["images_per_hour"] = images_per_hour
-        if current_job is not None:
-            self.status_data["current_job"] = current_job
+        self.status_data["current_job"] = current_job
         if job_queue is not None:
             self.status_data["job_queue"] = job_queue
         if processes is not None:
