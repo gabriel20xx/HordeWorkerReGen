@@ -423,6 +423,21 @@ class ProcessMap(dict[int, HordeProcessInfo]):
     background heartbeat interval so that the background keepalive fires before the per-step
     check triggers."""
 
+    ZERO_PROGRESS_TIMEOUT: float = 120.0
+    """Seconds to wait for progress to advance from 0 % before declaring the process stuck.
+
+    Used as the ``zero_progress_timeout`` argument to :meth:`is_stuck_on_inference` (check 2).
+    When a process is in INFERENCE_PROCESSING and has reported 0 % progress but no real
+    diffusion step has produced any output, this shorter timeout fires instead of the full
+    ``inference_step_timeout`` (600 s by default) or the VAE-decode-safe
+    ``no_step_heartbeat_timeout`` (300 s).
+
+    VAE decode — where ``no_step_heartbeat_timeout`` must stay at 300 s — only occurs at
+    100 % progress after all steps complete, so reducing the 0 %-stuck timeout does not risk
+    killing a legitimately-running VAE decode.  120 s gives ample time for the first
+    diffusion step to start (SDXL VRAM loading is typically 10–60 s) while catching hangs
+    that would otherwise take 300 s to detect."""
+
     def on_heartbeat(
         self,
         process_id: int,
@@ -640,12 +655,13 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         process_id: int,
         inference_step_timeout: int,
         no_step_heartbeat_timeout: int | None = None,
+        zero_progress_timeout: int | None = None,
     ) -> bool:
         """Return true if the process is actively doing inference but progress has stalled.
 
         This detects jobs that are stuck in the INFERENCE_STARTING or INFERENCE_PROCESSING state with:
         1. Progress not advancing for timeout period (stuck at same percentage), OR
-        2. Progress stuck at exactly 0 % for no_step_heartbeat_timeout seconds (faster early-stall
+        2. Progress stuck at exactly 0 % for zero_progress_timeout seconds (fastest early-stall
            detection — see detailed note below), OR
         3. A single diffusion step taking longer than MAX_INFERENCE_STEP_TIMEOUT seconds, OR
         4. No heartbeat received for timeout period (including last step / VAE decode phase)
@@ -665,11 +681,16 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                 (b) the process is in the VAE decode / post-processing phase after all steps
                     completed and sent a 100 % PIPELINE_STATE_CHANGE heartbeat that reset the
                     step counter.
-                It also enables the faster 0 %-progress check (check 2 above): when progress
-                has been reported but never advanced from 0 % (meaning no real diffusion step
-                has produced any output), this shorter timeout is used instead of the full
-                ``inference_step_timeout``.  This handles two sub-cases that the existing
-                per-step check (check 3) cannot catch:
+                For case (b), this timeout must be >= ``VAE_SEMAPHORE_TIMEOUT`` (300 s) to
+                avoid killing a legitimately-running VAE decode, which blocks on the semaphore
+                without sending heartbeats.
+                Do NOT apply this shorter fast-path to INFERENCE_STARTING: a process blocked
+                on semaphore acquisition cannot send heartbeats yet, so using the shorter
+                timeout there would be a false positive.
+            zero_progress_timeout: If provided, and the process is in INFERENCE_PROCESSING with
+                ``last_progress_value == 0`` (progress reported but never advanced), use this
+                timeout for check 2 instead of falling back to ``no_step_heartbeat_timeout``.
+                This handles two sub-cases that the existing per-step check (check 3) cannot catch:
                 (i)  The ComfyUI callback fires repeatedly at step 0/N (percent = 0 %),
                      refreshing ``last_inference_step_timestamp`` on every call and preventing
                      the 30 s per-step timeout from ever triggering, while denoising never
@@ -679,13 +700,12 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                      and the per-step check is skipped entirely; the background heartbeat
                      thread then keeps ``last_heartbeat_timestamp`` fresh every 30 s, which
                      also prevents the no-heartbeat check (check 4) from firing.
-                In both sub-cases the only check that would otherwise catch the stall is
-                check 1, which requires the full ``inference_step_timeout`` (default 600 s).
-                Using ``no_step_heartbeat_timeout`` (default 300 s) here halves detection
-                time and avoids waiting 10 minutes when inference never started.
-                Do NOT apply this shorter ``no_step_heartbeat_timeout`` fast-path to
-                INFERENCE_STARTING: a process blocked on semaphore acquisition cannot send
-                heartbeats yet, so using the shorter timeout there would be a false positive.
+                Unlike ``no_step_heartbeat_timeout``, this value is safe to set well below
+                300 s because VAE decode only occurs at 100 % progress — a process stuck at
+                0 % is never in the VAE decode phase.  Defaults to ``no_step_heartbeat_timeout``
+                if not provided (backward-compatible).
+                Do NOT apply this check to INFERENCE_STARTING (same reason as
+                ``no_step_heartbeat_timeout``).
         """
         state = self[process_id].last_process_state
         if state not in (
@@ -710,13 +730,17 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         # heartbeat thread keeps last_heartbeat_timestamp fresh (preventing check 4 below),
         # and repeated INFERENCE_STEP callbacks at step 0/N keep last_inference_step_timestamp
         # fresh (preventing check 3 below).  The only safeguard would otherwise be check 1
-        # above at the full inference_step_timeout.  Use no_step_heartbeat_timeout instead
-        # to catch these early hangs twice as fast.
+        # above at the full inference_step_timeout.
+        # Use zero_progress_timeout if provided; otherwise fall back to no_step_heartbeat_timeout.
+        # zero_progress_timeout can be much shorter than no_step_heartbeat_timeout because
+        # VAE decode (the reason no_step_heartbeat_timeout must stay at 300 s) only ever
+        # happens at 100 % progress, not at 0 %.
+        _zero_progress_effective = zero_progress_timeout if zero_progress_timeout is not None else no_step_heartbeat_timeout
         if (
             state == HordeProcessState.INFERENCE_PROCESSING
-            and no_step_heartbeat_timeout is not None
+            and _zero_progress_effective is not None
             and self[process_id].last_progress_value == 0
-            and time_since_progress > no_step_heartbeat_timeout
+            and time_since_progress > _zero_progress_effective
         ):
             return True
 
@@ -7096,8 +7120,13 @@ class HordeWorkerProcessManager:
             #   is no risk of a false-positive cascading replacement here.
             #   Pass a no_step_heartbeat_timeout so that a crash before any diffusion step is
             #   caught more quickly than the full inference_step_timeout.
+            #   Also pass zero_progress_timeout (shorter) for the stuck-at-0%-progress case:
+            #   when progress has been reported but never advanced from 0 % the VAE decode
+            #   concern (which forces no_step_heartbeat_timeout to stay at 300 s) does not apply
+            #   because VAE decode only happens at 100 % progress.  Using a shorter timeout here
+            #   cuts stuck-at-0%-job detection time from 300 s to ZERO_PROGRESS_TIMEOUT (120 s).
             #
-            #   The timeout must be >= the VAE decode semaphore timeout
+            #   The no_step_heartbeat_timeout must be >= the VAE decode semaphore timeout
             #   (HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT) because when all diffusion steps
             #   finish the 100 % PIPELINE_STATE_CHANGE heartbeat resets heartbeats_inference_steps
             #   to 0, and the process then blocks on vae_decode_semaphore.acquire() without sending
@@ -7111,12 +7140,17 @@ class HordeWorkerProcessManager:
             #   falsely declare it stuck right away.
             is_stuck_inference = False
             if process_info.last_process_state == HordeProcessState.INFERENCE_PROCESSING:
-                # Use VAE_SEMAPHORE_TIMEOUT from HordeInferenceProcess as the source of truth.
+                # Use VAE_SEMAPHORE_TIMEOUT from HordeInferenceProcess as the source of truth for
+                # no_step_heartbeat_timeout (check 4 — VAE decode protection).
+                # Use ZERO_PROGRESS_TIMEOUT for check 2 (stuck at 0 % with live heartbeats).
+                # ZERO_PROGRESS_TIMEOUT is shorter because VAE decode never happens at 0 % progress,
+                # so we do not need the full 300 s safety margin there.
                 no_step_timeout = HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT
                 is_stuck_inference = self._process_map.is_stuck_on_inference(
                     process_info.process_id,
                     self.bridge_data.inference_step_timeout,
                     no_step_heartbeat_timeout=no_step_timeout,
+                    zero_progress_timeout=int(ProcessMap.ZERO_PROGRESS_TIMEOUT),
                 )
             elif not self._recently_recovered:
                 is_stuck_inference = self._process_map.is_stuck_on_inference(
