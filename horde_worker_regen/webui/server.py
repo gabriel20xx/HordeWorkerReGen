@@ -403,7 +403,7 @@ class WorkerWebUI:
         .worker-meta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; font-size: 0.82rem; color: #475569; }
         .wm-item { display: flex; align-items: center; gap: 4px; }
         .models-pill { cursor: default; text-decoration: underline dotted; position: relative; }
-        .models-pill[data-tooltip]:not([data-tooltip=""]):hover::after { content: attr(data-tooltip); white-space: normal; overflow-wrap: break-word; position: absolute; bottom: calc(100% + 4px); left: 0; background: #334155; color: #f1f5f9; padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; line-height: 1.6; z-index: 1000; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 1px solid #475569; min-width: 420px; max-width: min(95vw, 820px); width: max-content; }
+        .models-pill[data-tooltip]:not([data-tooltip=""]):hover::after { content: attr(data-tooltip); white-space: normal; overflow-wrap: break-word; position: absolute; bottom: calc(100% + 4px); left: 0; background: #334155; color: #f1f5f9; padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; line-height: 1.6; z-index: 1000; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 1px solid #475569; min-width: min(420px, 95vw); max-width: min(95vw, 820px); width: max-content; }
         [data-theme="dark"] .models-pill[data-tooltip]:not([data-tooltip=""]):hover::after { background: #1e293b; border-color: #334155; }
         .worker-stats-row { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: #64748b; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px; }
         .ws-item { display: flex; align-items: center; gap: 4px; }
