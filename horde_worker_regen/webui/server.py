@@ -1237,7 +1237,8 @@ class WorkerWebUI:
             var imgDims = new Array(count).fill(null), loadedCount = 0;
             function renderGrid() {
                 if (_lastRenderedImageKey !== renderToken) return;
-                var containerAR = (oic.offsetWidth || 320) / (oic.offsetHeight || 320);
+                var containerWidth = oic.offsetWidth || 320;
+                var containerAR = containerWidth / (oic.offsetHeight || 320);
                 var avgImgAR = imgDims.reduce(function(sum, d) { return sum + (d ? d.w / d.h : 1.0); }, 0) / count;
                 var gridStyle, items;
                 if (count === 2) {
@@ -1245,8 +1246,9 @@ class WorkerWebUI:
                     gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
                     items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                 } else if (count === 3) {
-                    // 1×3: ideal cell AR = containerAR/3; 2+1: ideal cell AR = containerAR
-                    // Use 1×3 when image AR is closer to the narrow 1×3 cells (portrait images)
+                    // 1×3: ideal cell AR = containerAR/3; 2+1 row-1 cell AR = 2×containerAR, row-2 cell AR = containerAR
+                    // Min-waste crossover: avgImgAR = 2×containerAR/3 (equals midpoint of C/3 and C).
+                    // Use 1×3 when images are portrait enough to fill three narrow columns better.
                     if (Math.abs(avgImgAR - containerAR / 3) <= Math.abs(avgImgAR - containerAR)) {
                         gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
                         items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
@@ -1256,8 +1258,9 @@ class WorkerWebUI:
                     }
                 } else {
                     // 1×4: ideal cell AR = containerAR/4; 2×2: ideal cell AR = containerAR
-                    // Use 1×4 when image AR is closer to the narrow 1×4 cells (portrait images)
-                    if (Math.abs(avgImgAR - containerAR / 4) <= Math.abs(avgImgAR - containerAR)) {
+                    // Min-waste crossover: avgImgAR = containerAR/2 (geometric mean of C/4 and C).
+                    // Also require enough horizontal space so each of the 4 columns is at least 120px wide.
+                    if (avgImgAR < containerAR / 2 && containerWidth >= 480) {
                         gridStyle = 'grid-template-columns:repeat(4,1fr);grid-template-rows:1fr;';
                         items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                     } else {
