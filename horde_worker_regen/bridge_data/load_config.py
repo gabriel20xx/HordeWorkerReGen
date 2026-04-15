@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import sys
 from enum import auto
 from pathlib import Path
 
@@ -11,7 +12,19 @@ from horde_sdk.ai_horde_api.ai_horde_clients import AIHordeAPIManualClient
 from horde_sdk.ai_horde_worker.model_meta import ImageModelLoadResolver
 from loguru import logger
 from ruamel.yaml import YAML
-from strenum import StrEnum
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+
+    class StrEnum(str, Enum):  # type: ignore[no-redef]
+        """Backport of StrEnum for Python 3.10."""
+
+        @staticmethod
+        def _generate_next_value_(name: str, start: int, count: int, last_values: list[object]) -> str:
+            """Return the member name so `auto()` produces string values."""
+            return name
 
 from horde_worker_regen.bridge_data import AIWORKER_REGEN_PREFIX
 from horde_worker_regen.bridge_data.data_model import reGenBridgeData
