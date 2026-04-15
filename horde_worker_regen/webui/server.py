@@ -1239,17 +1239,32 @@ class WorkerWebUI:
                 if (_lastRenderedImageKey !== renderToken) return;
                 var containerWidth = oic.offsetWidth || 320;
                 var containerAR = containerWidth / (oic.offsetHeight || 320);
+                // Average image aspect ratio (width/height); all images in a batch share the same resolution,
+                // so avgImgAR is effectively the single image AR.
                 var avgImgAR = imgDims.reduce(function(sum, d) { return sum + (d ? d.w / d.h : 1.0); }, 0) / count;
+                // Fraction of a cell's area covered by an image using object-fit:contain.
+                // An image of AR imgAR in a cell of AR cellAR fills min(cellAR/imgAR, imgAR/cellAR) of the cell.
+                // Choosing the layout with the highest cellEff minimises leftover (unused) container space.
+                function cellEff(cellAR, imgAR) {
+                    return imgAR > cellAR ? cellAR / imgAR : imgAR / cellAR;
+                }
                 var gridStyle, items;
                 if (count === 2) {
-                    // Always side by side for 2 images
-                    gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
+                    // 1×2 side-by-side: each cell AR = C/2.  2×1 stacked: each cell AR = 2C.
+                    if (cellEff(containerAR / 2, avgImgAR) >= cellEff(containerAR * 2, avgImgAR)) {
+                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr;';
+                    } else {
+                        gridStyle = 'grid-template-columns:1fr;grid-template-rows:repeat(2,1fr);';
+                    }
                     items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                 } else if (count === 3) {
-                    // 1×3: ideal cell AR = containerAR/3; 2+1 row-1 cell AR = 2×containerAR, row-2 cell AR = containerAR
-                    // Min-waste crossover: avgImgAR = 2×containerAR/3 (equals midpoint of C/3 and C).
-                    // Use 1×3 when images are portrait enough to fill three narrow columns better.
-                    if (Math.abs(avgImgAR - containerAR / 3) <= Math.abs(avgImgAR - containerAR)) {
+                    // 1×3 row:    each cell AR = C/3.
+                    // 2+1 layout: top image spans full width (cell AR = 2C, half container height);
+                    //             two bottom images share the second row (each cell AR = C).
+                    //             Area-weighted efficiency = 0.5×cellEff(2C,a) + 0.5×cellEff(C,a).
+                    var eff1x3 = cellEff(containerAR / 3, avgImgAR);
+                    var eff2p1 = 0.5 * cellEff(2 * containerAR, avgImgAR) + 0.5 * cellEff(containerAR, avgImgAR);
+                    if (eff1x3 >= eff2p1) {
                         gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
                         items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                     } else {
@@ -1257,16 +1272,18 @@ class WorkerWebUI:
                         items = srcs.map(function(s, i) { return makeItem(s, i, i === 0); }).join('');
                     }
                 } else {
-                    // 1×4: ideal cell AR = containerAR/4; 2×2: ideal cell AR = containerAR
-                    // Min-waste crossover: avgImgAR = containerAR/2 (geometric mean of C/4 and C).
-                    // Also require enough horizontal space so each of the 4 columns is at least 120px wide.
-                    if (avgImgAR < containerAR / 2 && containerWidth >= 480) {
+                    // count === 4
+                    // 1×4 row:  each cell AR = C/4.  Requires ≥120 px per column (containerWidth ≥ 480).
+                    // 2×2 grid: each cell AR = C.
+                    // 0 (impossible efficiency) disables 1×4 when the container is too narrow.
+                    var eff1x4 = containerWidth >= 480 ? cellEff(containerAR / 4, avgImgAR) : 0;
+                    var eff2x2 = cellEff(containerAR, avgImgAR);
+                    if (eff1x4 >= eff2x2) {
                         gridStyle = 'grid-template-columns:repeat(4,1fr);grid-template-rows:1fr;';
-                        items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                     } else {
                         gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
-                        items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                     }
+                    items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                 }
                 oic.style.cssText = 'display:grid;width:100%;gap:4px;align-items:stretch;' + gridStyle;
                 oic.innerHTML = items;
