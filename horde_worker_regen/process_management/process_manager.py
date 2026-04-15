@@ -655,7 +655,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         process_id: int,
         inference_step_timeout: int,
         no_step_heartbeat_timeout: int | None = None,
-        zero_progress_timeout: int | None = None,
+        zero_progress_timeout: float | None = None,
     ) -> bool:
         """Return true if the process is actively doing inference but progress has stalled.
 
@@ -7150,7 +7150,7 @@ class HordeWorkerProcessManager:
                     process_info.process_id,
                     self.bridge_data.inference_step_timeout,
                     no_step_heartbeat_timeout=no_step_timeout,
-                    zero_progress_timeout=int(ProcessMap.ZERO_PROGRESS_TIMEOUT),
+                    zero_progress_timeout=ProcessMap.ZERO_PROGRESS_TIMEOUT,
                 )
             elif not self._recently_recovered:
                 is_stuck_inference = self._process_map.is_stuck_on_inference(
