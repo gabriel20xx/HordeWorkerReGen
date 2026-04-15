@@ -562,7 +562,7 @@ class WorkerWebUI:
                 <div class="page" id="page-user">
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128100; User Details</span></div>
-                        <div class="grid-4" style="margin-bottom: 14px;">
+                        <div class="grid-3" style="margin-bottom: 14px;">
                             <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value" id="user-page-username">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
