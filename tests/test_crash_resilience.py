@@ -1213,6 +1213,97 @@ class TestIsStuckOnInference:
         # progress_value == 50 (not 0) → new check does not apply; 350s < 600s → not stuck yet
         assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is False
 
+    def test_zero_progress_timeout_overrides_no_step_heartbeat_timeout_for_check2(self) -> None:
+        """zero_progress_timeout takes precedence over no_step_heartbeat_timeout for check 2.
+
+        When both parameters are provided, zero_progress_timeout is used for the stuck-at-0%
+        check (check 2) instead of no_step_heartbeat_timeout.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 130,  # 130 s at 0 %
+            last_heartbeat_timestamp=time.time() - 5,   # heartbeat is fresh
+            heartbeats_inference_steps=0,
+            last_progress_value=0,
+        )
+        process_map = self._make_process_map(entry)
+        # no_step_heartbeat_timeout=300 alone: 130s < 300s → NOT stuck
+        assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is False
+        # zero_progress_timeout=120 overrides for check 2: 130s > 120s → stuck
+        assert process_map.is_stuck_on_inference(
+            0, 600, no_step_heartbeat_timeout=300, zero_progress_timeout=120
+        ) is True
+
+    def test_zero_progress_timeout_not_yet_elapsed_not_stuck(self) -> None:
+        """INFERENCE_PROCESSING at 0 % is NOT stuck if zero_progress_timeout has not elapsed."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 100,  # 100 s < 120 s zero_progress_timeout
+            last_heartbeat_timestamp=time.time() - 5,
+            heartbeats_inference_steps=0,
+            last_progress_value=0,
+        )
+        process_map = self._make_process_map(entry)
+        # 100s < zero_progress_timeout=120 → not yet stuck
+        assert process_map.is_stuck_on_inference(
+            0, 600, no_step_heartbeat_timeout=300, zero_progress_timeout=120
+        ) is False
+
+    def test_zero_progress_timeout_does_not_affect_check4_vae_decode(self) -> None:
+        """zero_progress_timeout must NOT influence check 4 (VAE decode at 100 % progress).
+
+        When all diffusion steps complete the process enters VAE decode at 100 % progress.
+        At that point heartbeats_inference_steps resets to 0 and heartbeats may stop (blocking
+        on semaphore).  Check 4 uses no_step_heartbeat_timeout (300 s) to protect against
+        falsely killing a legitimately-running VAE decode.  zero_progress_timeout (120 s) must
+        NOT affect check 4 — it only applies when last_progress_value == 0.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 10,   # recently at 100 % (VAE decode phase)
+            last_heartbeat_timestamp=time.time() - 130, # 130 s since last heartbeat (blocking on sem)
+            heartbeats_inference_steps=0,               # reset when 100 % PIPELINE_STATE_CHANGE fired
+            last_progress_value=100,                    # all steps complete
+        )
+        process_map = self._make_process_map(entry)
+        # check 2 does NOT apply (last_progress_value == 100, not 0)
+        # check 4: 130s < no_step_heartbeat_timeout=300 → NOT stuck yet
+        assert process_map.is_stuck_on_inference(
+            0, 600, no_step_heartbeat_timeout=300, zero_progress_timeout=120
+        ) is False
+        # check 4: 130s > no_step_heartbeat_timeout=120 if we accidentally used it → would be stuck
+        # (this asserts that check 4 still uses no_step_heartbeat_timeout, not zero_progress_timeout)
+        assert process_map.is_stuck_on_inference(
+            0, 600, no_step_heartbeat_timeout=120, zero_progress_timeout=120
+        ) is True
+
+    def test_zero_progress_timeout_does_not_apply_to_inference_starting(self) -> None:
+        """zero_progress_timeout must NOT apply to INFERENCE_STARTING.
+
+        Same rationale as no_step_heartbeat_timeout: a process blocked waiting to acquire
+        the inference semaphore cannot send heartbeats and should not be killed early.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_STARTING,
+            last_progress_timestamp=time.time() - 130,
+            last_heartbeat_timestamp=time.time() - 5,
+            heartbeats_inference_steps=0,
+            last_progress_value=0,
+        )
+        process_map = self._make_process_map(entry)
+        # State is INFERENCE_STARTING → zero_progress_timeout check must be skipped
+        assert process_map.is_stuck_on_inference(
+            0, 600, no_step_heartbeat_timeout=300, zero_progress_timeout=120
+        ) is False
+
 
 class TestInferenceSemaphoreBoundedSemaphore:
     """Tests that _inference_semaphore is a BoundedSemaphore to prevent permit inflation."""
