@@ -402,9 +402,9 @@ class WorkerWebUI:
         .wcap-sfw { background: #f1f5f9; color: #64748b; }
         .worker-meta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; font-size: 0.82rem; color: #475569; }
         .wm-item { display: flex; align-items: center; gap: 4px; }
-        .models-pill { cursor: default; text-decoration: underline dotted; position: relative; }
-        .models-pill[data-tooltip]:not([data-tooltip=""]):hover::after { content: attr(data-tooltip); white-space: normal; overflow-wrap: break-word; position: absolute; bottom: calc(100% + 4px); left: 0; background: #334155; color: #f1f5f9; padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; line-height: 1.6; z-index: 1000; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 1px solid #475569; min-width: min(420px, 95vw); max-width: min(95vw, 820px); width: max-content; }
-        [data-theme="dark"] .models-pill[data-tooltip]:not([data-tooltip=""]):hover::after { background: #1e293b; border-color: #334155; }
+        .models-pill { cursor: default; text-decoration: underline dotted; }
+        .models-tooltip { display: none; position: fixed; background: #334155; color: #f1f5f9; padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; line-height: 1.6; z-index: 1000; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 1px solid #475569; white-space: normal; overflow-wrap: normal; word-break: normal; min-width: min(420px, 95vw); max-width: min(95vw, 820px); }
+        [data-theme="dark"] .models-tooltip { background: #1e293b; border-color: #334155; }
         .worker-stats-row { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: #64748b; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px; }
         .ws-item { display: flex; align-items: center; gap: 4px; }
         .ws-item.accent { color: var(--accent); font-weight: 600; }
@@ -649,7 +649,7 @@ class WorkerWebUI:
                         capBadge(w.lora, 'LoRA');
                     const models = w.models || [];
                     const modelCount = models.length;
-                    const modelTitles = models.join(', ');
+                    const modelTitles = models.map(function(m) { return m.replace(/ /g, '\u00A0'); }).join(', ');
                     const sizeStr = w.max_pixels ? ('\u2248'+Math.round(Math.sqrt(w.max_pixels))+'px') : '-';
                     const uptimeSecs = w.uptime || 0;
                     const uh = Math.floor(uptimeSecs/3600), um = Math.floor((uptimeSecs%3600)/60);
@@ -830,6 +830,42 @@ class WorkerWebUI:
                 overlayNavigate(e.key === 'ArrowLeft' ? -1 : 1);
             }
         });
+        (function() {
+            var _tt = null;
+            function _getTooltip() {
+                if (!_tt) { _tt = document.createElement('div'); _tt.className = 'models-tooltip'; document.body.appendChild(_tt); }
+                return _tt;
+            }
+            function _showTooltip(pill) {
+                var text = pill.getAttribute('data-tooltip');
+                if (!text) return;
+                var tt = _getTooltip();
+                tt.textContent = text;
+                tt.style.minWidth = '';
+                var maxVw = Math.floor(window.innerWidth * 0.95);
+                tt.style.maxWidth = Math.min(maxVw, 820) + 'px';
+                tt.style.left = '-9999px'; tt.style.top = '-9999px'; tt.style.display = 'block';
+                var w = tt.offsetWidth, h = tt.offsetHeight;
+                if (h > w) { tt.style.minWidth = Math.min(h, maxVw) + 'px'; w = tt.offsetWidth; h = tt.offsetHeight; }
+                var ttW = tt.offsetWidth, ttH = tt.offsetHeight;
+                var rect = pill.getBoundingClientRect();
+                var top = rect.top - ttH - 4;
+                if (top < 4) { top = rect.bottom + 4; }
+                var left = rect.left;
+                if (left + ttW > window.innerWidth - 4) { left = window.innerWidth - ttW - 4; }
+                if (left < 4) { left = 4; }
+                tt.style.left = left + 'px'; tt.style.top = top + 'px';
+            }
+            function _hideTooltip() { if (_tt) { _tt.style.display = 'none'; } }
+            document.addEventListener('mouseover', function(e) {
+                var pill = e.target.closest && e.target.closest('.models-pill[data-tooltip]');
+                if (pill && pill.getAttribute('data-tooltip')) { _showTooltip(pill); } else { _hideTooltip(); }
+            });
+            document.addEventListener('mouseout', function(e) {
+                var pill = e.target.closest && e.target.closest('.models-pill[data-tooltip]');
+                if (pill) { var to = e.relatedTarget; if (!to || !pill.contains(to)) { _hideTooltip(); } }
+            });
+        })();
         function formatUptime(seconds) {
             const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = Math.floor(seconds % 60);
             return h+'h '+m+'m '+s+'s';
