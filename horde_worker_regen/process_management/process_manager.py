@@ -6420,7 +6420,7 @@ class HordeWorkerProcessManager:
             state: Human-readable state label (e.g. ``"MODEL_PRELOADING"``).
 
         Returns:
-            A JSON-serialisable dictionary with job metadata.
+            A JSON-serializable dictionary with job metadata.
         """
         return {
             "id": str(job.id_.root)[:8] if job.id_ else "N/A",
@@ -6576,7 +6576,7 @@ class HordeWorkerProcessManager:
                 )
         else:
             # No job is actively in inference yet, but a process may be preloading a model
-            # for an upcoming job.  Show that process/job so the UI is not blank during the
+            # for an upcoming job. Show that process/job so the UI is not blank during the
             # model-loading phase.
             for process in self._process_map.values():
                 if process.last_process_state in (
