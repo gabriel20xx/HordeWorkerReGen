@@ -6600,6 +6600,36 @@ class HordeWorkerProcessManager:
                         else None
                     ),
                 }
+        else:
+            # No job is actively in inference yet, but a process may be preloading a model
+            # for an upcoming job.  Show that process/job so the UI is not blank during the
+            # model-loading phase.
+            for process in self._process_map.values():
+                if process.last_process_state in (
+                    HordeProcessState.MODEL_PRELOADING,
+                    HordeProcessState.MODEL_PRELOADED,
+                ) and process.last_job_referenced is not None:
+                    job = process.last_job_referenced
+                    process_state = process.last_process_state
+                    progress = self._calculate_granular_progress(process_state, None)
+                    current_job = {
+                        "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+                        "model": job.model,
+                        "progress": progress,
+                        "state": process_state.name,
+                        "is_complete": False,
+                        "batch_size": job.payload.n_iter if job.payload else None,
+                        "steps": job.payload.ddim_steps if job.payload else None,
+                        "width": job.payload.width if job.payload else None,
+                        "height": job.payload.height if job.payload else None,
+                        "sampler": job.payload.sampler_name if job.payload else None,
+                        "loras": (
+                            self._serialize_loras_for_webui(job.payload.loras)
+                            if job.payload and job.payload.loras
+                            else None
+                        ),
+                    }
+                    break
 
         # Get job queue (exclude jobs that are currently in progress)
         job_queue = []
