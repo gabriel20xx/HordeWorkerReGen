@@ -89,6 +89,13 @@ def _invoke_update_webui_status(
         )
     )
 
+    # Bind _build_current_job_dict so it returns a real dict rather than a MagicMock.
+    mock_manager._build_current_job_dict = (
+        HordeWorkerProcessManager._build_current_job_dict.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+    )
+
     # Bind lora serialiser so the elif body doesn't fail
     mock_manager._serialize_loras_for_webui.return_value = None
 
@@ -369,6 +376,89 @@ def test_raw_progress_used_for_mid_inference() -> None:
     )
 
 
+def test_model_preloading_shown_when_no_jobs_in_progress() -> None:
+    """When no jobs are in any active queue and a process is in MODEL_PRELOADING,
+    the WebUI current-job panel must show that job instead of 'No job in progress'.
+
+    This covers the scenario described in the issue:
+      - One process is in MODEL_PRELOADING
+      - All other processes are WAITING_FOR_JOB
+    The current-job container should display the preloading process/job.
+    """
+    job = _make_mock_job("preload1")
+    process = _make_mock_process(job, HordeProcessState.MODEL_PRELOADING, percent_complete=None)
+
+    current_job = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        process_list=[process],
+    )
+
+    assert current_job is not None, (
+        "Expected a current_job dict while MODEL_PRELOADING, but got None (UI would show 'No job in progress')"
+    )
+    assert current_job["state"] == "MODEL_PRELOADING", (
+        f"Expected state='MODEL_PRELOADING', got {current_job['state']!r}"
+    )
+    # _calculate_granular_progress maps MODEL_PRELOADING → 10%
+    assert current_job["progress"] == 10, (
+        f"Expected progress=10 for MODEL_PRELOADING, got {current_job['progress']}"
+    )
+    assert "preload" in current_job["id"], (
+        f"Expected job id to contain 'preload', got {current_job['id']!r}"
+    )
+
+
+def test_model_preloaded_shown_when_no_jobs_in_progress() -> None:
+    """MODEL_PRELOADED (model finished loading, waiting for START_INFERENCE) is
+    also surfaced as the current job so the UI stays active through that phase."""
+    job = _make_mock_job("preload2")
+    process = _make_mock_process(job, HordeProcessState.MODEL_PRELOADED, percent_complete=None)
+
+    current_job = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        process_list=[process],
+    )
+
+    assert current_job is not None, (
+        "Expected a current_job dict while MODEL_PRELOADED, but got None"
+    )
+    assert current_job["state"] == "MODEL_PRELOADED", (
+        f"Expected state='MODEL_PRELOADED', got {current_job['state']!r}"
+    )
+    # _calculate_granular_progress maps MODEL_PRELOADED → 20%
+    assert current_job["progress"] == 20, (
+        f"Expected progress=20 for MODEL_PRELOADED, got {current_job['progress']}"
+    )
+
+
+def test_waiting_for_job_not_shown_as_current_job() -> None:
+    """A process in WAITING_FOR_JOB must not be surfaced as the current job.
+
+    If all processes are idle (WAITING_FOR_JOB) and no job queues are active,
+    the UI must show 'No job in progress' (current_job=None).
+    """
+    job = _make_mock_job("idle1")
+    process = _make_mock_process(job, HordeProcessState.WAITING_FOR_JOB, percent_complete=None)
+
+    current_job = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        process_list=[process],
+    )
+
+    assert current_job is None, (
+        f"Expected current_job=None for idle WAITING_FOR_JOB process, got {current_job!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # time_without_jobs helpers & tests
 # ---------------------------------------------------------------------------
@@ -399,6 +489,9 @@ def _invoke_update_webui_status_for_time_without_jobs(
     mock_manager._WEBUI_POST_INFERENCE_STATES = HordeWorkerProcessManager._WEBUI_POST_INFERENCE_STATES
     mock_manager._calculate_granular_progress = (
         HordeWorkerProcessManager._calculate_granular_progress.__get__(mock_manager, HordeWorkerProcessManager)
+    )
+    mock_manager._build_current_job_dict = (
+        HordeWorkerProcessManager._build_current_job_dict.__get__(mock_manager, HordeWorkerProcessManager)
     )
     mock_manager._serialize_loras_for_webui.return_value = None
     mock_manager._process_map.values.return_value = []
