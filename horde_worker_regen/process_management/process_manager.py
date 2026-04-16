@@ -6406,6 +6406,40 @@ class HordeWorkerProcessManager:
             return inference_progress
         return 0
 
+    def _build_current_job_dict(
+        self,
+        job: "ImageGenerateJobPopResponse",
+        progress: int,
+        state: str,
+    ) -> dict:
+        """Build the current-job dictionary used by the WebUI status payload.
+
+        Args:
+            job: The job whose details should be shown.
+            progress: Overall progress percentage (0-100).
+            state: Human-readable state label (e.g. ``"MODEL_PRELOADING"``).
+
+        Returns:
+            A JSON-serialisable dictionary with job metadata.
+        """
+        return {
+            "id": str(job.id_.root)[:8] if job.id_ else "N/A",
+            "model": job.model,
+            "progress": progress,
+            "state": state,
+            "is_complete": state == "INFERENCE_COMPLETE",
+            "batch_size": job.payload.n_iter if job.payload else None,
+            "steps": job.payload.ddim_steps if job.payload else None,
+            "width": job.payload.width if job.payload else None,
+            "height": job.payload.height if job.payload else None,
+            "sampler": job.payload.sampler_name if job.payload else None,
+            "loras": (
+                self._serialize_loras_for_webui(job.payload.loras)
+                if job.payload and job.payload.loras
+                else None
+            ),
+        }
+
     def _serialize_loras_for_webui(self, loras: list | None) -> list[dict] | None:
         """Convert LorasPayloadEntry objects to JSON-serializable dictionaries.
 
@@ -6455,23 +6489,7 @@ class HordeWorkerProcessManager:
                         if process.last_process_state is not None:
                             state = process.last_process_state.name
                         break
-                current_job = {
-                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
-                    "model": job.model,
-                    "progress": 100,
-                    "state": state,
-                    "is_complete": False,
-                    "batch_size": job.payload.n_iter if job.payload else None,
-                    "steps": job.payload.ddim_steps if job.payload else None,
-                    "width": job.payload.width if job.payload else None,
-                    "height": job.payload.height if job.payload else None,
-                    "sampler": job.payload.sampler_name if job.payload else None,
-                    "loras": (
-                        self._serialize_loras_for_webui(job.payload.loras)
-                        if job.payload and job.payload.loras
-                        else None
-                    ),
-                }
+                current_job = self._build_current_job_dict(job, 100, state)
             except (IndexError, AttributeError):
                 # Pending submit list may have been modified, ignore and show no current job
                 pass
@@ -6490,23 +6508,7 @@ class HordeWorkerProcessManager:
                         state = process.last_process_state.name
                         break
 
-                current_job = {
-                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
-                    "model": job.model,
-                    "progress": 100,
-                    "state": state,
-                    "is_complete": False,
-                    "batch_size": job.payload.n_iter if job.payload else None,
-                    "steps": job.payload.ddim_steps if job.payload else None,
-                    "width": job.payload.width if job.payload else None,
-                    "height": job.payload.height if job.payload else None,
-                    "sampler": job.payload.sampler_name if job.payload else None,
-                    "loras": (
-                        self._serialize_loras_for_webui(job.payload.loras)
-                        if job.payload and job.payload.loras
-                        else None
-                    ),
-                }
+                current_job = self._build_current_job_dict(job, 100, state)
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
                 pass
@@ -6525,23 +6527,7 @@ class HordeWorkerProcessManager:
                     ):
                         state = process.last_process_state.name
                         break
-                current_job = {
-                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
-                    "model": job.model,
-                    "progress": 100,
-                    "state": state,
-                    "is_complete": False,
-                    "batch_size": job.payload.n_iter if job.payload else None,
-                    "steps": job.payload.ddim_steps if job.payload else None,
-                    "width": job.payload.width if job.payload else None,
-                    "height": job.payload.height if job.payload else None,
-                    "sampler": job.payload.sampler_name if job.payload else None,
-                    "loras": (
-                        self._serialize_loras_for_webui(job.payload.loras)
-                        if job.payload and job.payload.loras
-                        else None
-                    ),
-                }
+                current_job = self._build_current_job_dict(job, 100, state)
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
                 pass
@@ -6583,23 +6569,11 @@ class HordeWorkerProcessManager:
                             progress = process.last_heartbeat_percent_complete
                         break
 
-                current_job = {
-                    "id": str(job.id_.root)[:8] if job.id_ else "N/A",
-                    "model": job.model,
-                    "progress": progress if progress is not None else 0,
-                    "state": state or "Processing",
-                    "is_complete": state == "INFERENCE_COMPLETE" if state else False,
-                    "batch_size": job.payload.n_iter if job.payload else None,
-                    "steps": job.payload.ddim_steps if job.payload else None,
-                    "width": job.payload.width if job.payload else None,
-                    "height": job.payload.height if job.payload else None,
-                    "sampler": job.payload.sampler_name if job.payload else None,
-                    "loras": (
-                        self._serialize_loras_for_webui(job.payload.loras)
-                        if job.payload and job.payload.loras
-                        else None
-                    ),
-                }
+                current_job = self._build_current_job_dict(
+                    job,
+                    progress if progress is not None else 0,
+                    state or "Processing",
+                )
         else:
             # No job is actively in inference yet, but a process may be preloading a model
             # for an upcoming job.  Show that process/job so the UI is not blank during the
@@ -6612,23 +6586,7 @@ class HordeWorkerProcessManager:
                     job = process.last_job_referenced
                     process_state = process.last_process_state
                     progress = self._calculate_granular_progress(process_state, None)
-                    current_job = {
-                        "id": str(job.id_.root)[:8] if job.id_ else "N/A",
-                        "model": job.model,
-                        "progress": progress,
-                        "state": process_state.name,
-                        "is_complete": False,
-                        "batch_size": job.payload.n_iter if job.payload else None,
-                        "steps": job.payload.ddim_steps if job.payload else None,
-                        "width": job.payload.width if job.payload else None,
-                        "height": job.payload.height if job.payload else None,
-                        "sampler": job.payload.sampler_name if job.payload else None,
-                        "loras": (
-                            self._serialize_loras_for_webui(job.payload.loras)
-                            if job.payload and job.payload.loras
-                            else None
-                        ),
-                    }
+                    current_job = self._build_current_job_dict(job, progress, process_state.name)
                     break
 
         # Get job queue (exclude jobs that are currently in progress)
