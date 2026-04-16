@@ -6434,13 +6434,14 @@ class HordeWorkerProcessManager:
             "height": job.payload.height if job.payload else None,
             "sampler": job.payload.sampler_name if job.payload else None,
             "loras": (
-                self._serialize_loras_for_webui(job.payload.loras)
+                __class__._serialize_loras_for_webui(job.payload.loras)
                 if job.payload and job.payload.loras
                 else None
             ),
         }
 
-    def _serialize_loras_for_webui(self, loras: list | None) -> list[dict] | None:
+    @staticmethod
+    def _serialize_loras_for_webui(loras: list | None) -> list[dict] | None:
         """Convert LorasPayloadEntry objects to JSON-serializable dictionaries.
 
         Args:
