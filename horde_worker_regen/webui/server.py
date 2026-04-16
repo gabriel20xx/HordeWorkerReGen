@@ -300,9 +300,9 @@ class WorkerWebUI:
         .image-overlay-loading { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1002; pointer-events: none; }
         .image-overlay-loading .loading-spinner { width: 52px; height: 52px; border-width: 4px; border-color: rgba(255,255,255,0.2); border-top-color: #fff; }
         .image-overlay-content.is-loading .image-overlay-loading { display: block; }
-        .image-overlay-content.is-loading #overlay-image:not([src=""]) { opacity: 0.35; }
-        .image-overlay-content.is-loading #overlay-image[src=""] { visibility: hidden; min-width: 0; min-height: 0; }
-        @media (prefers-reduced-motion: reduce) { .image-overlay-loading .loading-spinner { animation: none; border-top-color: #fff; } }
+        .image-overlay-content.is-loading #overlay-image[src]:not([src=""]) { opacity: 0.35; }
+        .image-overlay-content.is-loading #overlay-image[src=""], .image-overlay-content.is-loading #overlay-image:not([src]) { visibility: hidden; min-width: 0; min-height: 0; }
+        @media (prefers-reduced-motion: reduce) { .image-overlay-loading .loading-spinner { animation: none; } }
 
         /* ---- Errors ---- */
         .errors-list { display: flex; flex-direction: column; max-height: 400px; overflow-y: auto; }
