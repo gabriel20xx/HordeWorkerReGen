@@ -297,6 +297,13 @@ class WorkerWebUI:
         .image-overlay-nav.prev { left: 12px; }
         .image-overlay-nav.next { right: 12px; }
         .image-overlay-counter { position: absolute; bottom: -32px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.8); font-size: 0.85rem; white-space: nowrap; font-weight: 500; }
+        .image-overlay-loading { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1002; pointer-events: none; }
+        .image-overlay-loading .loading-spinner { width: 52px; height: 52px; border-width: 4px; border-color: rgba(255,255,255,0.2); border-top-color: #fff; }
+        [data-theme="dark"] .image-overlay-loading .loading-spinner { border-color: rgba(255,255,255,0.2); border-top-color: #fff; }
+        .image-overlay-content.is-loading .image-overlay-loading { display: block; }
+        .image-overlay-content.is-loading #overlay-image[src]:not([src=""]) { opacity: 0.35; }
+        .image-overlay-content.is-loading #overlay-image[src=""], .image-overlay-content.is-loading #overlay-image:not([src]) { visibility: hidden; min-width: 0; min-height: 0; }
+        @media (prefers-reduced-motion: reduce) { .image-overlay-loading .loading-spinner { animation: none; } }
 
         /* ---- Errors ---- */
         .errors-list { display: flex; flex-direction: column; max-height: 400px; overflow-y: auto; }
@@ -610,9 +617,10 @@ class WorkerWebUI:
     </div>
     <div id="image-overlay" class="image-overlay">
         <button id="overlay-prev" class="image-overlay-nav prev" onclick="overlayNavigate(-1)" aria-label="Previous image" title="Previous image">&#8249;</button>
-        <div class="image-overlay-content">
+        <div id="overlay-content" class="image-overlay-content">
             <button class="image-overlay-close" onclick="closeImageOverlay()">&#10005; Close</button>
             <img id="overlay-image" src="" alt="Full resolution image" />
+            <div id="overlay-loading" class="image-overlay-loading"><div class="loading-spinner"></div></div>
             <div id="overlay-counter" class="image-overlay-counter"></div>
         </div>
         <button id="overlay-next" class="image-overlay-nav next" onclick="overlayNavigate(1)" aria-label="Next image" title="Next image">&#8250;</button>
@@ -780,11 +788,12 @@ class WorkerWebUI:
             _overlayFetchController = new AbortController();
             const ctrl = _overlayFetchController;
             const el = document.getElementById('overlay-image');
-            el.style.opacity = '0.35';
+            const content = document.getElementById('overlay-content');
+            content.classList.add('is-loading');
             fetch('/api/gallery/image?id=' + galleryId, { signal: ctrl.signal })
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-                .then(function(data) { if (ctrl !== _overlayFetchController) return; el.src = 'data:image/png;base64,' + data.base64; el.style.opacity = ''; })
-                .catch(function(err) { if (err.name === 'AbortError') return; console.error('Failed to load gallery image:', err); el.style.opacity = ''; });
+                .then(function(data) { if (ctrl !== _overlayFetchController) return; el.src = 'data:image/png;base64,' + data.base64; content.classList.remove('is-loading'); })
+                .catch(function(err) { if (err.name === 'AbortError') { if (ctrl === _overlayFetchController) content.classList.remove('is-loading'); return; } console.error('Failed to load gallery image:', err); content.classList.remove('is-loading'); });
         }
         function openGalleryImageOverlay(galleryId, galleryIds, localIdx) {
             if (_overlayFetchController) { _overlayFetchController.abort(); _overlayFetchController = null; }
@@ -815,6 +824,7 @@ class WorkerWebUI:
         }
         function closeImageOverlay() {
             if (_overlayFetchController) { _overlayFetchController.abort(); _overlayFetchController = null; }
+            document.getElementById('overlay-content').classList.remove('is-loading');
             document.getElementById('image-overlay').classList.remove('active');
             overlayImages = []; overlayIndex = -1; _galleryOverlayIds = null;
         }
