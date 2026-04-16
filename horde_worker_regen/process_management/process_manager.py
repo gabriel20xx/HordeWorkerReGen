@@ -3872,6 +3872,8 @@ class HordeWorkerProcessManager:
 
         if new_submit.image_result is None and not new_submit.is_faulted:
             logger.error(f"Job {new_submit.job_id} has no image result")
+            if new_submit.completed_job_info.state == GENERATION_STATE.faulted:
+                self._num_jobs_faulted += 1
             new_submit.fault()
             return new_submit
 
