@@ -578,12 +578,12 @@ class WorkerWebUI:
                         <div class="grid-3" style="margin-bottom: 14px;">
                             <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value" id="user-page-username">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
-                            <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Worker Count</div><div class="stat-card-value" id="user-page-worker-count">-</div></div>
                         </div>
                         <div class="grid-3" style="margin-bottom: 14px;">
                             <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="user-page-images-per-hour">0</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
                             <div class="stat-card"><div class="stat-card-label">Trusted</div><div class="stat-card-value" id="user-page-trusted">-</div></div>
-                            <div class="stat-card"><div class="stat-card-label">Worker Count</div><div class="stat-card-value" id="user-page-worker-count">-</div></div>
                         </div>
                         <div class="card">
                             <div class="card-header"><span class="card-title">&#127881; Kudos Breakdown</span></div>
