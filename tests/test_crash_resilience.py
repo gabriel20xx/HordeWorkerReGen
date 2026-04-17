@@ -5262,6 +5262,8 @@ class TestPreloadModelsPipeBroken:
         mock_manager.bridge_data.very_fast_disk_mode = False
         mock_manager.bridge_data.cycle_process_on_model_change = False
         mock_manager.get_model_baseline.return_value = None
+        # Preload cooldown is not active for this test: no stuck failures recorded.
+        mock_manager._is_model_in_preload_cooldown.return_value = False
 
         mock_manager._preload_models = HordeWorkerProcessManager.preload_models.__get__(
             mock_manager, HordeWorkerProcessManager,
@@ -6767,3 +6769,278 @@ class TestGetNextJobAndProcessModelPreloading:
             result = mock_manager._bound_get_next_job_and_process()
 
         assert result is None, "Should return None when no other job has a ready process"
+
+
+class TestPreloadStuckCooldown:
+    """Tests for the per-model preload-stuck cooldown mechanism.
+
+    When a model causes MODEL_PRELOADING to hang repeatedly (_PRELOAD_STUCK_FAILURE_THRESHOLD
+    times within _PRELOAD_STUCK_FAILURE_WINDOW seconds), it enters a cooldown period during
+    which jobs for that model are immediately permanently faulted instead of being dispatched
+    to a preloading process.  This prevents the worker from cycling indefinitely through a
+    model that cannot be loaded.
+    """
+
+    def _make_manager(self) -> MagicMock:
+        """Return a minimal manager mock wired with the real helper methods."""
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import (
+            HordeWorkerProcessManager,
+        )
+
+        mock_manager = MagicMock()
+        mock_manager._preload_stuck_failures = {}
+        mock_manager._PRELOAD_STUCK_FAILURE_THRESHOLD = (
+            HordeWorkerProcessManager._PRELOAD_STUCK_FAILURE_THRESHOLD
+        )
+        mock_manager._PRELOAD_STUCK_FAILURE_WINDOW = (
+            HordeWorkerProcessManager._PRELOAD_STUCK_FAILURE_WINDOW
+        )
+        mock_manager._PRELOAD_STUCK_COOLDOWN = HordeWorkerProcessManager._PRELOAD_STUCK_COOLDOWN
+        mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+
+        mock_manager._record_preload_stuck_failure = (
+            HordeWorkerProcessManager._record_preload_stuck_failure.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+        mock_manager._is_model_in_preload_cooldown = (
+            HordeWorkerProcessManager._is_model_in_preload_cooldown.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+        mock_manager._fault_cooldown_model_jobs = (
+            HordeWorkerProcessManager._fault_cooldown_model_jobs.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+        return mock_manager
+
+    # ------------------------------------------------------------------
+    # _record_preload_stuck_failure / _is_model_in_preload_cooldown
+    # ------------------------------------------------------------------
+
+    def test_no_cooldown_with_fewer_than_threshold_failures(self) -> None:
+        """A single stuck event must NOT trigger cooldown (threshold is 2)."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        now = _time.time()
+        mock_manager._record_preload_stuck_failure("ModelA", now)
+
+        assert not mock_manager._is_model_in_preload_cooldown("ModelA"), (
+            "One stuck event should not be enough to trigger cooldown"
+        )
+
+    def test_cooldown_triggered_at_threshold(self) -> None:
+        """Reaching the threshold within the window puts the model in cooldown."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        now = _time.time()
+        mock_manager._record_preload_stuck_failure("ModelA", now - 10)
+        mock_manager._record_preload_stuck_failure("ModelA", now)
+
+        assert mock_manager._is_model_in_preload_cooldown("ModelA"), (
+            "Two stuck events within the window should trigger cooldown"
+        )
+
+    def test_old_failures_pruned_outside_window(self) -> None:
+        """Failures older than _PRELOAD_STUCK_FAILURE_WINDOW do not count toward the threshold."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        window = mock_manager._PRELOAD_STUCK_FAILURE_WINDOW
+        now = _time.time()
+        # First failure is older than the window.
+        mock_manager._record_preload_stuck_failure("ModelA", now - window - 100)
+        # Second failure is recent.
+        mock_manager._record_preload_stuck_failure("ModelA", now)
+
+        assert not mock_manager._is_model_in_preload_cooldown("ModelA"), (
+            "Only failures within the window count; old failures must be pruned"
+        )
+
+    def test_cooldown_expires_after_duration(self) -> None:
+        """Once the cooldown duration elapses the model must leave cooldown."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        cooldown = mock_manager._PRELOAD_STUCK_COOLDOWN
+        # Both failures are older than the cooldown duration.
+        old_ts = _time.time() - cooldown - 1
+        mock_manager._record_preload_stuck_failure("ModelA", old_ts - 10)
+        mock_manager._record_preload_stuck_failure("ModelA", old_ts)
+
+        assert not mock_manager._is_model_in_preload_cooldown("ModelA"), (
+            "Cooldown must expire after _PRELOAD_STUCK_COOLDOWN seconds"
+        )
+
+    def test_unknown_model_not_in_cooldown(self) -> None:
+        """A model with no recorded failures is never in cooldown."""
+        mock_manager = self._make_manager()
+        assert not mock_manager._is_model_in_preload_cooldown("NewModel")
+
+    # ------------------------------------------------------------------
+    # _fault_cooldown_model_jobs
+    # ------------------------------------------------------------------
+
+    def _make_job(self, model: str, job_id: str = "job-001") -> MagicMock:
+        job = MagicMock()
+        job.model = model
+        job.id_ = job_id
+        return job
+
+    def test_fault_cooldown_model_jobs_permanently_faults_pending_jobs(self) -> None:
+        """_fault_cooldown_model_jobs must permanently fault jobs for models in cooldown.
+
+        The retry_count is set to MAX_JOB_RETRIES before handle_job_fault is called so
+        that the job is permanently faulted rather than re-queued for a second preload
+        attempt (which would also immediately fail, creating a tight fault loop).
+        """
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import (
+            HordeWorkerProcessManager,
+        )
+
+        mock_manager = self._make_manager()
+        now = _time.time()
+        mock_manager._record_preload_stuck_failure("BadModel", now - 5)
+        mock_manager._record_preload_stuck_failure("BadModel", now)
+
+        job = self._make_job("BadModel")
+        job_info = MagicMock()
+        job_info.retry_count = 0
+        mock_manager.jobs_pending_inference = [job]
+        mock_manager.jobs_lookup = {job: job_info}
+
+        mock_manager._fault_cooldown_model_jobs()
+
+        assert job_info.retry_count == HordeWorkerProcessManager.MAX_JOB_RETRIES, (
+            "retry_count must be set to MAX_JOB_RETRIES to force a permanent fault"
+        )
+        mock_manager.handle_job_fault.assert_called_once()
+        call_kwargs = mock_manager.handle_job_fault.call_args
+        assert call_kwargs.kwargs["faulted_job"] is job
+
+    def test_fault_cooldown_model_jobs_skips_healthy_models(self) -> None:
+        """Jobs for models NOT in cooldown must not be touched."""
+        mock_manager = self._make_manager()
+        # No failures recorded → no model is in cooldown.
+        job = self._make_job("GoodModel")
+        mock_manager.jobs_pending_inference = [job]
+
+        mock_manager._fault_cooldown_model_jobs()
+
+        mock_manager.handle_job_fault.assert_not_called()
+
+    def test_fault_cooldown_handles_already_removed_jobs_gracefully(self) -> None:
+        """If a job is removed from the pending queue before processing, no crash occurs."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        now = _time.time()
+        mock_manager._record_preload_stuck_failure("BadModel", now - 5)
+        mock_manager._record_preload_stuck_failure("BadModel", now)
+
+        job = self._make_job("BadModel")
+        # The job is NOT in jobs_pending_inference (already removed externally).
+        mock_manager.jobs_pending_inference = []
+        mock_manager.jobs_lookup = {job: MagicMock()}
+
+        # Should not raise.
+        mock_manager._fault_cooldown_model_jobs()
+        mock_manager.handle_job_fault.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # replace_hung_processes + _record_preload_stuck_failure integration
+    # ------------------------------------------------------------------
+
+    def test_replace_hung_processes_records_stuck_failure_for_model_preloading(self) -> None:
+        """replace_hung_processes must call _record_preload_stuck_failure for MODEL_PRELOADING timeouts.
+
+        When _check_and_replace_process returns True for a MODEL_PRELOADING process the
+        stuck failure for that model must be recorded so that the cooldown threshold can
+        eventually be reached.
+        """
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import (
+            HordeWorkerProcessManager,
+        )
+
+        stuck_model = "BadModel"
+        proc = MagicMock()
+        proc.process_id = 1
+        proc.last_process_state = HordeProcessState.MODEL_PRELOADING
+        proc.loaded_horde_model_name = stuck_model
+        proc.last_received_timestamp = _time.time() - 9999
+        proc.last_heartbeat_timestamp = _time.time() - 9999
+        proc.last_progress_timestamp = _time.time() - 9999
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._process_map.values.return_value = [proc]
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter([proc]))
+        mock_manager.jobs_pending_inference = []
+        mock_manager.jobs_in_progress = []
+        mock_manager._preload_stuck_failures = {}
+        mock_manager._PRELOAD_STUCK_FAILURE_THRESHOLD = (
+            HordeWorkerProcessManager._PRELOAD_STUCK_FAILURE_THRESHOLD
+        )
+        mock_manager._PRELOAD_STUCK_FAILURE_WINDOW = (
+            HordeWorkerProcessManager._PRELOAD_STUCK_FAILURE_WINDOW
+        )
+        mock_manager._PRELOAD_STUCK_COOLDOWN = HordeWorkerProcessManager._PRELOAD_STUCK_COOLDOWN
+
+        # Wire the real _record_preload_stuck_failure so we can inspect _preload_stuck_failures.
+        mock_manager._record_preload_stuck_failure = (
+            HordeWorkerProcessManager._record_preload_stuck_failure.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                elapsed = _time.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+        mock_manager._bound_replace_hung = (
+            HordeWorkerProcessManager.replace_hung_processes.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+
+        with patch("threading.Thread"):
+            mock_manager._bound_replace_hung()
+
+        assert stuck_model in mock_manager._preload_stuck_failures, (
+            "_preload_stuck_failures must contain the stuck model after MODEL_PRELOADING timeout"
+        )
+        assert len(mock_manager._preload_stuck_failures[stuck_model]) == 1, (
+            "Exactly one failure should be recorded for a single MODEL_PRELOADING timeout"
+        )
