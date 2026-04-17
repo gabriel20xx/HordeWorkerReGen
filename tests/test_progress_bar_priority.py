@@ -548,12 +548,16 @@ def test_model_preloading_other_queued_jobs_still_shown() -> None:
     job_queue = kwargs.get("job_queue", [])
 
     assert current_job is not None, "Expected current_job for MODEL_PRELOADING process"
-    assert "preload" in current_job["id"], "current_job should show the preloading job"
+    preloading_id = str(job_preloading.id_.root)[:8]
+    assert current_job["id"] == preloading_id, (
+        f"current_job should show the preloading job (id={preloading_id!r}), got {current_job['id']!r}"
+    )
     assert len(job_queue) == 1, (
         f"Expected exactly 1 job in queue (the non-preloading job), got {job_queue!r}"
     )
-    assert "queued" in job_queue[0]["id"], (
-        f"Expected the queued job in job_queue, got {job_queue[0]!r}"
+    queued_id = str(job_queued.id_.root)[:8]
+    assert job_queue[0]["id"] == queued_id, (
+        f"Expected the queued job (id={queued_id!r}) in job_queue, got {job_queue[0]!r}"
     )
 
 
