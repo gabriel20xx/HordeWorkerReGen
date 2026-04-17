@@ -7050,6 +7050,11 @@ class HordeWorkerProcessManager:
             return True
         return False
 
+    def _prune_preload_stuck_failures(self, failures: deque, cutoff: float) -> None:
+        """Remove failure timestamps older than *cutoff* from *failures* in-place."""
+        while failures and failures[0] < cutoff:
+            failures.popleft()
+
     def _record_preload_stuck_failure(self, model_name: str, timestamp: float) -> None:
         """Record a MODEL_PRELOADING timeout for *model_name* at *timestamp*.
 
@@ -7059,9 +7064,7 @@ class HordeWorkerProcessManager:
         """
         failures = self._preload_stuck_failures.setdefault(model_name, deque())
         # Prune stale entries before adding the new one so the count reflects the window.
-        cutoff = timestamp - self._PRELOAD_STUCK_FAILURE_WINDOW
-        while failures and failures[0] < cutoff:
-            failures.popleft()
+        self._prune_preload_stuck_failures(failures, timestamp - self._PRELOAD_STUCK_FAILURE_WINDOW)
         failures.append(timestamp)
 
         if len(failures) == self._PRELOAD_STUCK_FAILURE_THRESHOLD:
@@ -7084,10 +7087,8 @@ class HordeWorkerProcessManager:
         if not failures:
             return False
         now = time.time()
-        # Prune stale entries.
-        cutoff = now - self._PRELOAD_STUCK_FAILURE_WINDOW
-        while failures and failures[0] < cutoff:
-            failures.popleft()
+        # Prune stale entries before checking the count.
+        self._prune_preload_stuck_failures(failures, now - self._PRELOAD_STUCK_FAILURE_WINDOW)
         if len(failures) < self._PRELOAD_STUCK_FAILURE_THRESHOLD:
             return False
         # Still within the cooldown window from the most recent failure.
@@ -7105,6 +7106,9 @@ class HordeWorkerProcessManager:
         would just produce the same stuck-preloading loop.  The horde will re-assign them
         to another worker that may be able to load the model.
         """
+        # Snapshot the pending queue before iterating: handle_job_fault modifies
+        # jobs_pending_inference, and iterating over the snapshot avoids skipped items
+        # or double-processing if the same object appeared more than once.
         jobs_in_cooldown = [
             job
             for job in self.jobs_pending_inference
@@ -7112,7 +7116,10 @@ class HordeWorkerProcessManager:
         ]
         for job in jobs_in_cooldown:
             if job not in self.jobs_pending_inference:
-                continue  # already removed by a previous iteration
+                # Already removed by handle_job_fault from an earlier iteration (e.g. the
+                # same job object appeared under two different queue entries, which is an
+                # edge case but guarding here keeps the loop safe).
+                continue
             logger.warning(
                 f"Job {job.id_} for model {job.model!r} faulted immediately: "
                 "model is in preload cooldown due to repeated hung-preloading failures",

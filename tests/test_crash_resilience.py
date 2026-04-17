@@ -6782,7 +6782,12 @@ class TestPreloadStuckCooldown:
     """
 
     def _make_manager(self) -> MagicMock:
-        """Return a minimal manager mock wired with the real helper methods."""
+        """Create a manager mock configured for testing the preload cooldown mechanism.
+
+        Binds the real ``_record_preload_stuck_failure``, ``_is_model_in_preload_cooldown``,
+        and ``_fault_cooldown_model_jobs`` methods so that tests exercise the actual
+        cooldown logic while keeping all other interactions mocked.
+        """
         from collections import deque
 
         from horde_worker_regen.process_management.process_manager import (
@@ -6812,6 +6817,11 @@ class TestPreloadStuckCooldown:
         )
         mock_manager._fault_cooldown_model_jobs = (
             HordeWorkerProcessManager._fault_cooldown_model_jobs.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+        mock_manager._prune_preload_stuck_failures = (
+            HordeWorkerProcessManager._prune_preload_stuck_failures.__get__(
                 mock_manager, HordeWorkerProcessManager
             )
         )
@@ -7011,6 +7021,11 @@ class TestPreloadStuckCooldown:
         # Wire the real _record_preload_stuck_failure so we can inspect _preload_stuck_failures.
         mock_manager._record_preload_stuck_failure = (
             HordeWorkerProcessManager._record_preload_stuck_failure.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+        mock_manager._prune_preload_stuck_failures = (
+            HordeWorkerProcessManager._prune_preload_stuck_failures.__get__(
                 mock_manager, HordeWorkerProcessManager
             )
         )
