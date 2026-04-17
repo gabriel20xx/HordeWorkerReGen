@@ -4598,6 +4598,10 @@ class HordeWorkerProcessManager:
             # Record in history even when the job_info cannot be found so the fault is
             # still visible in the webui (fault_phase is unknown in this edge case).
             self._record_faulted_job_history(faulted_job)
+            # The job may have been removed from jobs_pending_inference before this call
+            # (e.g. _fault_cooldown_model_jobs strips it when metadata is missing).
+            # Restart the idle timer if that emptied the queue.
+            self._restart_idle_timer_if_queue_empty()
         else:
             # Check if the job should be retried
             if job_info.retry_count < self.MAX_JOB_RETRIES:
