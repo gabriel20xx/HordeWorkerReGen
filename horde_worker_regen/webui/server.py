@@ -262,6 +262,10 @@ class WorkerWebUI:
         .console-pause-btn:hover { background: #cbd5e1; }
         .console-pause-btn.paused { background: var(--accent); color: #fff; }
         .console-pause-btn.paused:hover { background: var(--accent-hover); }
+        .console-copy-btn { margin-left: 6px; background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; }
+        .console-copy-btn:hover { background: #cbd5e1; }
+        .console-copy-btn.copied { background: #22c55e; color: #fff; }
+        .console-copy-btn.copied:hover { background: #16a34a; }
 
         /* ---- Gallery ---- */
         .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; width: 100%; }
@@ -594,7 +598,7 @@ class WorkerWebUI:
                 <!-- LOGS PAGE -->
                 <div class="page" id="page-logs">
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button></div>
+                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button><button id="console-copy-btn" class="console-copy-btn" onclick="copyConsoleLogs()" title="Copy all console logs to clipboard">&#128203; Copy</button></div>
                         <div class="card" style="padding:0;overflow:hidden;">
                             <div id="console-logs" class="console-container" style="border-radius:12px;"><div style="text-align:center;color:#475569;padding:18px;">No logs available</div></div>
                         </div>
@@ -900,6 +904,18 @@ class WorkerWebUI:
             const btn = document.getElementById('console-pause-btn');
             if (consolePaused) { btn.textContent = '\u25B6 Resume'; btn.classList.add('paused'); btn.title = 'Resume console output'; btn.setAttribute('aria-pressed', 'true'); }
             else { btn.textContent = '\u25AE\u25AE Pause'; btn.classList.remove('paused'); btn.title = 'Pause console output'; btn.setAttribute('aria-pressed', 'false'); }
+        }
+        function copyConsoleLogs() {
+            const cl = document.getElementById('console-logs');
+            const text = cl ? cl.innerText : '';
+            const btn = document.getElementById('console-copy-btn');
+            navigator.clipboard.writeText(text).then(function() {
+                btn.textContent = '\u2714 Copied!'; btn.classList.add('copied');
+                setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('copied'); }, 2000);
+            }).catch(function() {
+                btn.textContent = '\u2716 Failed'; btn.classList.add('copied');
+                setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('copied'); }, 2000);
+            });
         }
         const ERRORS_PAGE_SIZE = 10;
         let errorsCurrentPage = 1, errorsTotal = 0, errorsTotalPages = 1, errorsPageData = [];
