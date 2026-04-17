@@ -2757,6 +2757,7 @@ class HordeWorkerProcessManager:
                         )
                         self.jobs_pending_inference.remove(message.sdk_api_job_info)
                         self._invalidate_megapixelsteps_cache()
+                        self._restart_idle_timer_if_queue_empty()
                     continue
 
                 job_info = self.jobs_lookup[message.sdk_api_job_info]
@@ -2775,6 +2776,8 @@ class HordeWorkerProcessManager:
                         self.jobs_pending_inference.remove(job)
                         self._invalidate_megapixelsteps_cache()
                         break
+
+                self._restart_idle_timer_if_queue_empty()
 
                 self.total_num_completed_jobs += 1
                 if self.bridge_data.unload_models_from_vram_often:
@@ -4595,6 +4598,10 @@ class HordeWorkerProcessManager:
             # Record in history even when the job_info cannot be found so the fault is
             # still visible in the webui (fault_phase is unknown in this edge case).
             self._record_faulted_job_history(faulted_job)
+            # The job may have been removed from jobs_pending_inference before this call
+            # (e.g. _fault_cooldown_model_jobs strips it when metadata is missing).
+            # Restart the idle timer if that emptied the queue.
+            self._restart_idle_timer_if_queue_empty()
         else:
             # Check if the job should be retried
             if job_info.retry_count < self.MAX_JOB_RETRIES:
@@ -4634,6 +4641,7 @@ class HordeWorkerProcessManager:
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
                 self._invalidate_megapixelsteps_cache()
+                self._restart_idle_timer_if_queue_empty()
 
             if (
                 self._skipped_line_next_job_and_process is not None
@@ -4767,6 +4775,20 @@ class HordeWorkerProcessManager:
         self._cached_pending_megapixelsteps = job_deque_megapixelsteps
         self._megapixelsteps_cache_valid = True
         return job_deque_megapixelsteps
+
+    def _restart_idle_timer_if_queue_empty(self) -> None:
+        """Restart the idle-timer anchor when the job queue becomes empty.
+
+        Called after removing a job from ``jobs_pending_inference`` to ensure the
+        ``time_without_jobs`` counter resumes incrementing immediately when the worker
+        becomes idle, rather than waiting for the next job-pop cycle to return a
+        "no jobs available" response (a gap of up to ``_job_pop_frequency`` seconds).
+
+        Only acts when the queue is actually empty *and* the anchor has already been
+        cleared (i.e. a job was successfully popped since the last idle period started).
+        """
+        if len(self.jobs_pending_inference) == 0 and self._last_pop_no_jobs_available_time == 0.0:
+            self._last_pop_no_jobs_available_time = time.time()
 
     def _invalidate_megapixelsteps_cache(self) -> None:
         """Invalidate the megapixelsteps cache when jobs are added or removed."""

@@ -727,6 +727,140 @@ def test_api_job_pop_flushes_idle_time_before_reset() -> None:
     )
 
 
+def test_idle_timer_restarts_immediately_when_last_job_leaves_queue() -> None:
+    """time_without_jobs counter must resume as soon as the last job leaves jobs_pending_inference.
+
+    Before the fix, after a successful job pop ``_last_pop_no_jobs_available_time`` was reset
+    to 0.0.  When the job finished (removed from ``jobs_pending_inference``) the anchor stayed
+    at 0.0, so the WebUI counter remained frozen until the *next* job-pop cycle returned "no
+    jobs available" — a gap of up to ``_job_pop_frequency`` seconds.
+
+    The fix sets ``_last_pop_no_jobs_available_time = time.time()`` the moment the queue
+    empties, so the live delta starts accumulating immediately.
+
+    This test drives ``handle_job_fault`` with a permanently-faulted job (retry_count already
+    at MAX_JOB_RETRIES) so that the job is removed from the queue, and verifies that
+    ``_last_pop_no_jobs_available_time`` becomes non-zero right after the last job is removed.
+    """
+    from collections import deque
+    from unittest.mock import patch
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    # Build a minimal fake job
+    fake_job = MagicMock()
+    fake_job.id_ = MagicMock()
+    fake_job.id_.root = "aaaabbbb-cccc-dddd-eeee-000011112222"
+    fake_job.model = "test_model"
+    fake_job.payload.loras = None
+    fake_job.payload.workflow = None
+
+    # job_info with retry_count already exhausted so handle_job_fault goes to the permanent-fault path
+    job_info = MagicMock()
+    job_info.retry_count = HordeWorkerProcessManager.MAX_JOB_RETRIES  # retry exhausted
+
+    # Build a minimal mock manager
+    mock_manager = MagicMock()
+    mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+
+    # Idle-timer state: anchor was reset to 0.0 when the job was successfully popped
+    fake_now = 2000.0
+    mock_manager._last_pop_no_jobs_available_time = 0.0
+    mock_manager._time_spent_no_jobs_available = 19.0
+
+    # The job is the only one in the queue
+    mock_manager.jobs_pending_inference = deque([fake_job])
+    mock_manager.jobs_in_progress = []
+    mock_manager.jobs_lookup = MagicMock()
+    mock_manager.jobs_lookup.get = lambda k, d=None: {fake_job: job_info}.get(k, d)
+
+    mock_manager._skipped_line_next_job_and_process = None
+    mock_manager._faulted_jobs_history = []
+    mock_manager._max_faulted_jobs_history = 10
+    mock_manager._num_jobs_faulted = 0
+    mock_manager._failed_models = {}
+
+    # Bind the real helper so the idle-timer restart logic actually runs
+    mock_manager._restart_idle_timer_if_queue_empty = (
+        HordeWorkerProcessManager._restart_idle_timer_if_queue_empty.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+    )
+
+    with patch("horde_worker_regen.process_management.process_manager.time.time", return_value=fake_now):
+        method = HordeWorkerProcessManager.handle_job_fault.__get__(mock_manager, HordeWorkerProcessManager)
+        method(faulted_job=fake_job)
+
+    # After the last job leaves the queue, the anchor must be non-zero so that
+    # update_webui_status can add a live delta and the counter keeps incrementing.
+    assert mock_manager._last_pop_no_jobs_available_time == fake_now, (
+        "Expected _last_pop_no_jobs_available_time to be set to current time immediately after "
+        f"the last job left jobs_pending_inference, got {mock_manager._last_pop_no_jobs_available_time}"
+    )
+
+    # The accumulated total must not have decreased
+    assert mock_manager._time_spent_no_jobs_available >= 19.0, (
+        f"Accumulated idle time must not decrease, got {mock_manager._time_spent_no_jobs_available}"
+    )
+
+
+def test_idle_timer_restarts_when_last_job_removed_before_handle_job_fault() -> None:
+    """Idle timer must restart even when the job was removed from the queue *before*
+    ``handle_job_fault`` is called with ``job_info is None`` (the metadata-missing path).
+
+    This covers the ``_fault_cooldown_model_jobs`` scenario: the job is stripped from
+    ``jobs_pending_inference`` externally before ``handle_job_fault`` is invoked.  Without
+    the fix in the ``job_info is None`` branch, the anchor remains ``0.0`` and the WebUI
+    counter stays frozen.
+    """
+    from unittest.mock import patch
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    fake_job = MagicMock()
+    fake_job.id_ = MagicMock()
+    fake_job.id_.root = "bbbbcccc-dddd-eeee-ffff-111122223333"
+    fake_job.model = "test_model"
+    fake_job.payload.loras = None
+    fake_job.payload.workflow = None
+
+    mock_manager = MagicMock()
+    mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+
+    fake_now = 3000.0
+    mock_manager._last_pop_no_jobs_available_time = 0.0
+    mock_manager._time_spent_no_jobs_available = 7.0
+
+    # The job has ALREADY been removed from the queue (simulating _fault_cooldown_model_jobs)
+    from collections import deque
+
+    mock_manager.jobs_pending_inference = deque()  # already empty
+    mock_manager.jobs_in_progress = []
+    # job is NOT in jobs_lookup (metadata-missing path)
+    mock_manager.jobs_lookup = MagicMock()
+    mock_manager.jobs_lookup.get = lambda k, d=None: None
+
+    mock_manager._faulted_jobs_history = []
+    mock_manager._max_faulted_jobs_history = 10
+
+    mock_manager._restart_idle_timer_if_queue_empty = (
+        HordeWorkerProcessManager._restart_idle_timer_if_queue_empty.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+    )
+
+    with patch("horde_worker_regen.process_management.process_manager.time.time", return_value=fake_now):
+        method = HordeWorkerProcessManager.handle_job_fault.__get__(mock_manager, HordeWorkerProcessManager)
+        method(faulted_job=fake_job)
+
+    assert mock_manager._last_pop_no_jobs_available_time == fake_now, (
+        "Expected idle-timer anchor to be restarted in the job_info-is-None path of handle_job_fault, "
+        f"got {mock_manager._last_pop_no_jobs_available_time}"
+    )
+    assert mock_manager._time_spent_no_jobs_available >= 7.0, (
+        f"Accumulated idle time must not decrease, got {mock_manager._time_spent_no_jobs_available}"
+    )
+
 
 class TestApiJobPopQueueGate:
     """Unit tests for the queue-size gate in api_job_pop.
