@@ -6654,7 +6654,7 @@ class HordeWorkerProcessManager:
         job_queue = []
         for job in list(self.jobs_pending_inference)[:MAX_WEBUI_QUEUE_ITEMS]:  # Limit to first N
             # Skip jobs that are already in progress or shown as current_job
-            if job not in self.jobs_in_progress and job is not _current_job_obj:
+            if job not in self.jobs_in_progress and job != _current_job_obj:
                 job_queue.append(
                     {
                         "id": str(job.id_.root)[:8] if job.id_ else "N/A",
