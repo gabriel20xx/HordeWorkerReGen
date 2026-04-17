@@ -907,18 +907,48 @@ class WorkerWebUI:
             if (consolePaused) { btn.textContent = '\u25B6 Resume'; btn.classList.add('paused'); btn.title = 'Resume console output'; btn.setAttribute('aria-pressed', 'true'); }
             else { btn.textContent = '\u25AE\u25AE Pause'; btn.classList.remove('paused'); btn.title = 'Pause console output'; btn.setAttribute('aria-pressed', 'false'); }
         }
+        let _consoleCopyTimeout = null;
+        function showConsoleCopySuccess(btn) {
+            if (_consoleCopyTimeout) { clearTimeout(_consoleCopyTimeout); _consoleCopyTimeout = null; }
+            btn.textContent = '\u2714 Copied!'; btn.classList.remove('error'); btn.classList.add('copied');
+            _consoleCopyTimeout = setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('copied'); _consoleCopyTimeout = null; }, 2000);
+        }
+        function showConsoleCopyError(btn) {
+            if (_consoleCopyTimeout) { clearTimeout(_consoleCopyTimeout); _consoleCopyTimeout = null; }
+            btn.textContent = '\u2716 Failed'; btn.classList.remove('copied'); btn.classList.add('error');
+            _consoleCopyTimeout = setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('error'); _consoleCopyTimeout = null; }, 2000);
+        }
+        function fallbackCopyText(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.top = '-9999px';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            let copied = false;
+            try { copied = document.execCommand('copy'); } catch (err) { copied = false; }
+            document.body.removeChild(textarea);
+            return copied;
+        }
         function copyConsoleLogs() {
             const cl = document.getElementById('console-logs');
             const logDivs = cl ? Array.from(cl.querySelectorAll('div')) : [];
             const text = logDivs.length > 0 ? logDivs.map(d => d.textContent).join('\n') : (cl ? cl.textContent : '');
             const btn = document.getElementById('console-copy-btn');
-            navigator.clipboard.writeText(text).then(function() {
-                btn.textContent = '\u2714 Copied!'; btn.classList.add('copied');
-                setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('copied'); }, 2000);
-            }).catch(function() {
-                btn.textContent = '\u2716 Failed'; btn.classList.add('error');
-                setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('error'); }, 2000);
-            });
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(function() {
+                    showConsoleCopySuccess(btn);
+                }).catch(function() {
+                    if (fallbackCopyText(text)) showConsoleCopySuccess(btn);
+                    else showConsoleCopyError(btn);
+                });
+                return;
+            }
+            if (fallbackCopyText(text)) showConsoleCopySuccess(btn);
+            else showConsoleCopyError(btn);
         }
         const ERRORS_PAGE_SIZE = 10;
         let errorsCurrentPage = 1, errorsTotal = 0, errorsTotalPages = 1, errorsPageData = [];
