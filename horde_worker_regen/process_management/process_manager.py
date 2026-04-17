@@ -5051,7 +5051,7 @@ class HordeWorkerProcessManager:
         if jobs_queued >= self.bridge_data.queue_size:
             return
 
-        if len(self.jobs_pending_inference) >= self.max_concurrent_inference_processes:
+        if len(self.jobs_pending_inference) >= self.max_inference_processes:
             return
 
         # We let the first job run through to make sure things are working
