@@ -780,6 +780,13 @@ def test_idle_timer_restarts_immediately_when_last_job_leaves_queue() -> None:
     mock_manager._num_jobs_faulted = 0
     mock_manager._failed_models = {}
 
+    # Bind the real helper so the idle-timer restart logic actually runs
+    mock_manager._restart_idle_timer_if_queue_empty = (
+        HordeWorkerProcessManager._restart_idle_timer_if_queue_empty.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+    )
+
     with patch("horde_worker_regen.process_management.process_manager.time.time", return_value=fake_now):
         method = HordeWorkerProcessManager.handle_job_fault.__get__(mock_manager, HordeWorkerProcessManager)
         method(faulted_job=fake_job)
