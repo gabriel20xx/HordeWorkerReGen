@@ -6793,6 +6793,7 @@ class HordeWorkerProcessManager:
             images_per_hour=images_per_hour,
             current_job=current_job,
             job_queue=job_queue,
+            max_queue_size=self.max_queue_size,
             processes=processes,
             models_loaded=models_loaded,
             ram_usage_mb=total_ram_mb,
