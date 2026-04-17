@@ -7129,6 +7129,16 @@ class HordeWorkerProcessManager:
                 # Force permanent fault: skip the normal retry so the job is not
                 # re-queued locally, which would only be faulted again right away.
                 job_info.retry_count = self.MAX_JOB_RETRIES
+            else:
+                # If the job metadata is missing, `handle_job_fault` may only log/history
+                # the fault and leave the job stuck in the local pending queue. Remove the
+                # queue entry here so cooldown enforcement always drains pending jobs.
+                logger.warning(
+                    f"Cooldown-faulting job {job.id_} for model {job.model!r} without "
+                    "jobs_lookup metadata; removing it from jobs_pending_inference first",
+                )
+                with contextlib.suppress(ValueError):
+                    self.jobs_pending_inference.remove(job)
             self.handle_job_fault(
                 faulted_job=job,
                 process_info=None,

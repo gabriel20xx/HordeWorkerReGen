@@ -6788,8 +6788,6 @@ class TestPreloadStuckCooldown:
         and ``_fault_cooldown_model_jobs`` methods so that tests exercise the actual
         cooldown logic while keeping all other interactions mocked.
         """
-        from collections import deque
-
         from horde_worker_regen.process_management.process_manager import (
             HordeWorkerProcessManager,
         )
@@ -6963,6 +6961,32 @@ class TestPreloadStuckCooldown:
         # Should not raise.
         mock_manager._fault_cooldown_model_jobs()
         mock_manager.handle_job_fault.assert_not_called()
+
+    def test_fault_cooldown_removes_job_from_queue_when_jobs_lookup_missing(self) -> None:
+        """When job_info is missing from jobs_lookup, the job must still be drained from pending.
+
+        Without this guard handle_job_fault only logs/records history for unknown jobs and
+        does not remove the entry from jobs_pending_inference, so the job would re-appear
+        on every preload_models() call for the entire cooldown duration.
+        """
+        import time as _time
+
+        mock_manager = self._make_manager()
+        now = _time.time()
+        mock_manager._record_preload_stuck_failure("BadModel", now - 5)
+        mock_manager._record_preload_stuck_failure("BadModel", now)
+
+        job = self._make_job("BadModel")
+        # The job has no jobs_lookup metadata (edge case: lookup was cleaned up early).
+        mock_manager.jobs_pending_inference = [job]
+        mock_manager.jobs_lookup = {}  # empty — job_info will be None
+
+        mock_manager._fault_cooldown_model_jobs()
+
+        # The job must have been removed from the queue before handle_job_fault was called.
+        assert job not in mock_manager.jobs_pending_inference, (
+            "Job must be removed from jobs_pending_inference when jobs_lookup has no entry"
+        )
 
     # ------------------------------------------------------------------
     # replace_hung_processes + _record_preload_stuck_failure integration
