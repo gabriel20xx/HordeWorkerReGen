@@ -580,9 +580,8 @@ class WorkerWebUI:
                             <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
                         </div>
-                        <div class="grid-4" style="margin-bottom: 14px;">
+                        <div class="grid-3" style="margin-bottom: 14px;">
                             <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="user-page-images-per-hour">0</div></div>
-                            <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="user-page-jobs-completed">0</div></div>
                             <div class="stat-card"><div class="stat-card-label">Trusted</div><div class="stat-card-value" id="user-page-trusted">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Worker Count</div><div class="stat-card-value" id="user-page-worker-count">-</div></div>
                         </div>
@@ -1626,7 +1625,6 @@ class WorkerWebUI:
                     document.getElementById('user-page-kudos-total').textContent = data.user_kudos_total != null ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
                     document.getElementById('user-page-kudos-per-hour').textContent = (data.kudos_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('user-page-images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
-                    document.getElementById('user-page-jobs-completed').textContent = data.jobs_completed || 0;
                     const trusted = ud.trusted;
                     document.getElementById('user-page-trusted').textContent = trusted === true ? '\u2714 Yes' : (trusted === false ? '\u2718 No' : '-');
                     document.getElementById('user-page-trusted').className = 'stat-card-value ' + (trusted === true ? 'success' : (trusted === false ? 'error' : ''));
