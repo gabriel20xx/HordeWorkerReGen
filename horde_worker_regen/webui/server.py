@@ -58,6 +58,7 @@ class WorkerWebUI:
             "images_per_hour": 0.0,
             "current_job": None,
             "job_queue": [],
+            "max_queue_size": 0,
             "processes": [],
             "models_loaded": [],
             "ram_usage_mb": 0,
@@ -535,7 +536,7 @@ class WorkerWebUI:
                         <div class="card">
                             <div class="card-header"><span class="card-title">&#128230; Job Queue &amp; Models</span></div>
                             <div style="margin-bottom: 14px;">
-                                <div style="font-size:0.75rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:7px;">Queue (<span id="queue-count">0</span>)</div>
+                                <div style="font-size:0.75rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:7px;">Queue (<span id="queue-count">0</span>/<span id="queue-max">0</span>)</div>
                                 <div id="job-queue" class="scrollable"><div class="empty-state">Queue is empty</div></div>
                             </div>
                             <div>
@@ -1562,7 +1563,9 @@ class WorkerWebUI:
                         }
                     }
                     const qd = document.getElementById('job-queue');
-                    document.getElementById('queue-count').textContent = data.job_queue.length;
+                    const queueCount = Number.isFinite(data.jobs_queued) ? data.jobs_queued : data.job_queue.length;
+                    document.getElementById('queue-count').textContent = queueCount;
+                    document.getElementById('queue-max').textContent = data.max_queue_size;
                     if (data.job_queue.length > 0) {
                         qd.innerHTML = data.job_queue.map(j => { const bi = j.batch_size&&j.batch_size>1?' ('+escapeHtml(j.batch_size)+'x batch)':''; return '<div class="job-item"><span class="job-id">'+escapeHtml(j.id||'N/A')+'</span>: '+escapeHtml(j.model||'Unknown model')+bi+'</div>'; }).join('');
                     } else { qd.innerHTML = '<div class="empty-state">Queue is empty</div>'; }
@@ -1899,6 +1902,7 @@ class WorkerWebUI:
         images_per_hour: float | None = None,
         current_job: dict[str, Any] | None = None,
         job_queue: list[dict[str, Any]] | None = None,
+        max_queue_size: int | None = None,
         processes: list[dict[str, Any]] | None = None,
         models_loaded: list[str] | None = None,
         ram_usage_mb: float | None = None,
@@ -1932,6 +1936,7 @@ class WorkerWebUI:
             images_per_hour: Current images generated per hour rate
             current_job: Information about the current job being processed
             job_queue: List of jobs in the queue
+            max_queue_size: Maximum number of jobs that can be queued
             processes: List of process information
             models_loaded: List of currently loaded models
             ram_usage_mb: RAM usage in MB
@@ -1977,6 +1982,8 @@ class WorkerWebUI:
         self.status_data["current_job"] = current_job
         if job_queue is not None:
             self.status_data["job_queue"] = job_queue
+        if max_queue_size is not None:
+            self.status_data["max_queue_size"] = max_queue_size
         if processes is not None:
             self.status_data["processes"] = processes
         if models_loaded is not None:
