@@ -6530,6 +6530,7 @@ class HordeWorkerProcessManager:
         # bar stays active (at 100%) for the current job until it is fully submitted before
         # resetting to 0% for the next generation.
         current_job = None
+        _current_job_obj = None  # Job object being shown as current_job (to exclude from queue)
         if self.jobs_pending_submit:
             # Show a job that has passed safety check and is waiting to be submitted to the API.
             # Checked first so the progress bar stays at 100% until submission completes, even
@@ -6641,16 +6642,19 @@ class HordeWorkerProcessManager:
                     HordeProcessState.MODEL_PRELOADED,
                 ) and process.last_job_referenced is not None:
                     job = process.last_job_referenced
+                    _current_job_obj = job
                     process_state = process.last_process_state
                     progress = self._calculate_granular_progress(process_state, None)
                     current_job = self._build_current_job_dict(job, progress, process_state.name)
                     break
 
-        # Get job queue (exclude jobs that are currently in progress)
+        # Get job queue (exclude jobs that are currently in progress or already shown as
+        # current_job, e.g. a MODEL_PRELOADING job that is pending inference but not yet
+        # dispatched to an active worker).
         job_queue = []
         for job in list(self.jobs_pending_inference)[:MAX_WEBUI_QUEUE_ITEMS]:  # Limit to first N
-            # Skip jobs that are already in progress
-            if job not in self.jobs_in_progress:
+            # Skip jobs that are already in progress or shown as current_job
+            if job not in self.jobs_in_progress and job is not _current_job_obj:
                 job_queue.append(
                     {
                         "id": str(job.id_.root)[:8] if job.id_ else "N/A",

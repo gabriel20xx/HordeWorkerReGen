@@ -63,9 +63,16 @@ def _invoke_update_webui_status(
     jobs_in_progress: list,
     jobs_lookup: dict | None = None,
     process_list: list | None = None,
+    jobs_pending_inference: list | None = None,
+    return_full_kwargs: bool = False,
 ) -> dict | None:
     """Call update_webui_status on a minimal mock manager and return the
-    current_job dict that was passed to webui.update_status."""
+    current_job dict that was passed to webui.update_status.
+
+    When *return_full_kwargs* is True, returns the complete kwargs dict passed to
+    webui.update_status instead of just current_job (useful for asserting on
+    job_queue and other fields).
+    """
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
     mock_manager = MagicMock()
@@ -76,7 +83,7 @@ def _invoke_update_webui_status(
     mock_manager.jobs_pending_safety_check = jobs_pending_safety_check
     mock_manager.jobs_in_progress = jobs_in_progress
     mock_manager.jobs_lookup = jobs_lookup or {}
-    mock_manager.jobs_pending_inference = []
+    mock_manager.jobs_pending_inference = jobs_pending_inference if jobs_pending_inference is not None else []
 
     # Bind class constants/sets
     mock_manager._WEBUI_POST_INFERENCE_STATES = HordeWorkerProcessManager._WEBUI_POST_INFERENCE_STATES
@@ -131,6 +138,8 @@ def _invoke_update_webui_status(
     # Extract the current_job kwarg passed to webui.update_status
     assert mock_manager.webui.update_status.called, "webui.update_status was not called"
     kwargs = mock_manager.webui.update_status.call_args.kwargs
+    if return_full_kwargs:
+        return kwargs
     return kwargs.get("current_job")
 
 
@@ -456,6 +465,95 @@ def test_waiting_for_job_not_shown_as_current_job() -> None:
 
     assert current_job is None, (
         f"Expected current_job=None for idle WAITING_FOR_JOB process, got {current_job!r}"
+    )
+
+
+def test_model_preloading_job_not_duplicated_in_queue() -> None:
+    """A job shown as current_job while MODEL_PRELOADING must not also appear in job_queue.
+
+    When a process is in MODEL_PRELOADING the job is displayed in the current-job
+    panel.  The same job lives in jobs_pending_inference but is not yet in
+    jobs_in_progress, so without the fix it would also appear in the queue list –
+    showing the same job twice in the UI.
+    """
+    job = _make_mock_job("preload1")
+    process = _make_mock_process(job, HordeProcessState.MODEL_PRELOADING, percent_complete=None)
+
+    kwargs = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        jobs_pending_inference=[job],  # job is pending inference but not yet in progress
+        process_list=[process],
+        return_full_kwargs=True,
+    )
+
+    current_job = kwargs.get("current_job")
+    job_queue = kwargs.get("job_queue", [])
+
+    assert current_job is not None, "Expected current_job to be set for MODEL_PRELOADING"
+    assert current_job["state"] == "MODEL_PRELOADING", (
+        f"Expected state='MODEL_PRELOADING', got {current_job['state']!r}"
+    )
+    assert len(job_queue) == 0, (
+        f"Expected job_queue to be empty (job already shown as current_job), "
+        f"but got {job_queue!r}"
+    )
+
+
+def test_model_preloaded_job_not_duplicated_in_queue() -> None:
+    """A job shown as current_job while MODEL_PRELOADED must not also appear in job_queue."""
+    job = _make_mock_job("preload2")
+    process = _make_mock_process(job, HordeProcessState.MODEL_PRELOADED, percent_complete=None)
+
+    kwargs = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        jobs_pending_inference=[job],
+        process_list=[process],
+        return_full_kwargs=True,
+    )
+
+    current_job = kwargs.get("current_job")
+    job_queue = kwargs.get("job_queue", [])
+
+    assert current_job is not None, "Expected current_job to be set for MODEL_PRELOADED"
+    assert current_job["state"] == "MODEL_PRELOADED"
+    assert len(job_queue) == 0, (
+        f"Expected job_queue to be empty (job already shown as current_job), "
+        f"but got {job_queue!r}"
+    )
+
+
+def test_model_preloading_other_queued_jobs_still_shown() -> None:
+    """When a job is in MODEL_PRELOADING as current_job, other pending jobs must still appear in queue."""
+    job_preloading = _make_mock_job("preload1")
+    job_queued = _make_mock_job("queued1")
+    process = _make_mock_process(job_preloading, HordeProcessState.MODEL_PRELOADING, percent_complete=None)
+
+    kwargs = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        jobs_pending_inference=[job_preloading, job_queued],
+        process_list=[process],
+        return_full_kwargs=True,
+    )
+
+    current_job = kwargs.get("current_job")
+    job_queue = kwargs.get("job_queue", [])
+
+    assert current_job is not None, "Expected current_job for MODEL_PRELOADING process"
+    assert "preload" in current_job["id"], "current_job should show the preloading job"
+    assert len(job_queue) == 1, (
+        f"Expected exactly 1 job in queue (the non-preloading job), got {job_queue!r}"
+    )
+    assert "queued" in job_queue[0]["id"], (
+        f"Expected the queued job in job_queue, got {job_queue[0]!r}"
     )
 
 
