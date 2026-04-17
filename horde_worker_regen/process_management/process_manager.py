@@ -2757,6 +2757,8 @@ class HordeWorkerProcessManager:
                         )
                         self.jobs_pending_inference.remove(message.sdk_api_job_info)
                         self._invalidate_megapixelsteps_cache()
+                        if len(self.jobs_pending_inference) == 0 and self._last_pop_no_jobs_available_time == 0.0:
+                            self._last_pop_no_jobs_available_time = time.time()
                     continue
 
                 job_info = self.jobs_lookup[message.sdk_api_job_info]
@@ -2775,6 +2777,9 @@ class HordeWorkerProcessManager:
                         self.jobs_pending_inference.remove(job)
                         self._invalidate_megapixelsteps_cache()
                         break
+
+                if len(self.jobs_pending_inference) == 0 and self._last_pop_no_jobs_available_time == 0.0:
+                    self._last_pop_no_jobs_available_time = time.time()
 
                 self.total_num_completed_jobs += 1
                 if self.bridge_data.unload_models_from_vram_often:
@@ -4634,6 +4639,8 @@ class HordeWorkerProcessManager:
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
                 self._invalidate_megapixelsteps_cache()
+                if len(self.jobs_pending_inference) == 0 and self._last_pop_no_jobs_available_time == 0.0:
+                    self._last_pop_no_jobs_available_time = time.time()
 
             if (
                 self._skipped_line_next_job_and_process is not None
