@@ -266,6 +266,8 @@ class WorkerWebUI:
         .console-copy-btn:hover { background: #cbd5e1; }
         .console-copy-btn.copied { background: #22c55e; color: #fff; }
         .console-copy-btn.copied:hover { background: #16a34a; }
+        .console-copy-btn.error { background: #ef4444; color: #fff; }
+        .console-copy-btn.error:hover { background: #dc2626; }
 
         /* ---- Gallery ---- */
         .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; width: 100%; }
@@ -907,14 +909,15 @@ class WorkerWebUI:
         }
         function copyConsoleLogs() {
             const cl = document.getElementById('console-logs');
-            const text = cl ? cl.innerText : '';
+            const logDivs = cl ? Array.from(cl.querySelectorAll('div')) : [];
+            const text = logDivs.length > 0 ? logDivs.map(d => d.textContent).join('\n') : (cl ? cl.textContent : '');
             const btn = document.getElementById('console-copy-btn');
             navigator.clipboard.writeText(text).then(function() {
                 btn.textContent = '\u2714 Copied!'; btn.classList.add('copied');
                 setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('copied'); }, 2000);
             }).catch(function() {
-                btn.textContent = '\u2716 Failed'; btn.classList.add('copied');
-                setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('copied'); }, 2000);
+                btn.textContent = '\u2716 Failed'; btn.classList.add('error');
+                setTimeout(function() { btn.textContent = '\uD83D\uDCCB Copy'; btn.classList.remove('error'); }, 2000);
             });
         }
         const ERRORS_PAGE_SIZE = 10;
