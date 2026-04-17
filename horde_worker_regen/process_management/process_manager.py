@@ -1349,6 +1349,16 @@ class HordeWorkerProcessManager:
     # Constants for job retry logic
     MAX_JOB_RETRIES = 1  # Number of retries for faulted jobs
 
+    # Constants for preload-stuck cooldown logic.
+    # When a model causes MODEL_PRELOADING to hang this many times within
+    # _PRELOAD_STUCK_FAILURE_WINDOW seconds, it is placed in a cooldown and new jobs for
+    # that model are immediately faulted (rather than silently retried) for
+    # _PRELOAD_STUCK_COOLDOWN seconds.  This prevents the worker from cycling indefinitely
+    # through a model that cannot be loaded on this machine.
+    _PRELOAD_STUCK_FAILURE_THRESHOLD: int = 2
+    _PRELOAD_STUCK_FAILURE_WINDOW: float = 600.0  # seconds
+    _PRELOAD_STUCK_COOLDOWN: float = 600.0  # seconds
+
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -1766,6 +1776,10 @@ class HordeWorkerProcessManager:
         # Track models that have failed
         self._failed_models: dict[str, int] = {}
         self._last_failed_models_print_time: float = 0.0
+
+        # Track per-model preload-stuck failure timestamps for cooldown logic.
+        # Maps model name → deque of epoch timestamps when that model caused a MODEL_PRELOADING timeout.
+        self._preload_stuck_failures: dict[str, deque[float]] = {}
 
         # Track per-process-slot restart timestamps for crash-loop rate limiting.
         self._process_restart_history: dict[int, deque[float]] = {}
@@ -3019,6 +3033,10 @@ class HordeWorkerProcessManager:
         if loaded_models == pending_models:
             return False
 
+        # Fault any pending jobs whose models are currently in the preload cooldown so that
+        # the horde can re-assign them rather than leaving them stranded in our local queue.
+        self._fault_cooldown_model_jobs()
+
         # logger.debug(f"Loaded models: {loaded_models}, queued: {queued_models}")
         # Starting from the left of the deque, preload models that are not yet loaded up to the
         # number of inference processes that are available
@@ -3027,6 +3045,20 @@ class HordeWorkerProcessManager:
                 raise ValueError(f"job.model is None ({job})")
 
             if job.model in loaded_models:
+                continue
+
+            # Do not attempt to preload a model that is in the hung-preloading cooldown.
+            # The cooldown is triggered by _record_preload_stuck_failure() (called from
+            # replace_hung_processes()) after _PRELOAD_STUCK_FAILURE_THRESHOLD consecutive
+            # MODEL_PRELOADING timeouts for this model within _PRELOAD_STUCK_FAILURE_WINDOW
+            # seconds.  Skipping here prevents the worker from cycling indefinitely through a
+            # model that cannot be loaded on this machine.
+            if self._is_model_in_preload_cooldown(job.model):
+                logger.opt(ansi=True).debug(
+                    "<fg #7b7d7d>"
+                    f"Skipping preload of {job.model!r}: model is in preload cooldown"
+                    "</>",
+                )
                 continue
 
             processes_with_model_for_queued_job: list[int] = self.get_processes_with_model_for_queued_job()
@@ -7018,6 +7050,104 @@ class HordeWorkerProcessManager:
             return True
         return False
 
+    def _prune_preload_stuck_failures(self, failures: deque, cutoff: float) -> None:
+        """Remove failure timestamps older than *cutoff* from *failures* in-place."""
+        while failures and failures[0] < cutoff:
+            failures.popleft()
+
+    def _record_preload_stuck_failure(self, model_name: str, timestamp: float) -> None:
+        """Record a MODEL_PRELOADING timeout for *model_name* at *timestamp*.
+
+        Prunes entries older than ``_PRELOAD_STUCK_FAILURE_WINDOW`` so the deque only
+        holds recent failures.  Logs a warning when the model first crosses
+        ``_PRELOAD_STUCK_FAILURE_THRESHOLD`` and enters the cooldown period.
+        """
+        failures = self._preload_stuck_failures.setdefault(model_name, deque())
+        # Prune stale entries before adding the new one so the count reflects the window.
+        self._prune_preload_stuck_failures(failures, timestamp - self._PRELOAD_STUCK_FAILURE_WINDOW)
+        failures.append(timestamp)
+
+        if len(failures) == self._PRELOAD_STUCK_FAILURE_THRESHOLD:
+            logger.warning(
+                f"Model {model_name!r} has failed to preload {self._PRELOAD_STUCK_FAILURE_THRESHOLD} "
+                f"times within {self._PRELOAD_STUCK_FAILURE_WINDOW:.0f}s. "
+                f"It will be suspended from preloading for {self._PRELOAD_STUCK_COOLDOWN:.0f}s "
+                "to prevent a stuck-preloading loop.",
+            )
+
+    def _is_model_in_preload_cooldown(self, model_name: str) -> bool:
+        """Return True if *model_name* has triggered the preload-stuck cooldown.
+
+        A model is in cooldown when it has at least ``_PRELOAD_STUCK_FAILURE_THRESHOLD``
+        recorded stuck-preloading events within the last ``_PRELOAD_STUCK_FAILURE_WINDOW``
+        seconds **and** fewer than ``_PRELOAD_STUCK_COOLDOWN`` seconds have elapsed since
+        the most recent failure.
+        """
+        failures = self._preload_stuck_failures.get(model_name)
+        if not failures:
+            return False
+        now = time.time()
+        # Prune stale entries before checking the count.
+        self._prune_preload_stuck_failures(failures, now - self._PRELOAD_STUCK_FAILURE_WINDOW)
+        if len(failures) < self._PRELOAD_STUCK_FAILURE_THRESHOLD:
+            return False
+        # Still within the cooldown window from the most recent failure.
+        return (now - failures[-1]) < self._PRELOAD_STUCK_COOLDOWN
+
+    def _fault_cooldown_model_jobs(self) -> None:
+        """Permanently fault all pending jobs whose models are in the preload cooldown.
+
+        Called at the start of :meth:`preload_models` so that jobs the worker has already
+        popped from the horde but cannot service (because the model keeps hanging on load)
+        are reported back to the horde quickly rather than sitting in the local queue for
+        the entire cooldown duration.
+
+        The jobs are permanently faulted (retries bypassed) because re-trying them locally
+        would just produce the same stuck-preloading loop.  The horde will re-assign them
+        to another worker that may be able to load the model.
+        """
+        # Snapshot the pending queue before iterating: handle_job_fault modifies
+        # jobs_pending_inference, and iterating over the snapshot avoids skipped items
+        # or double-processing if the same object appeared more than once.
+        jobs_in_cooldown = [
+            job
+            for job in self.jobs_pending_inference
+            if job.model is not None and self._is_model_in_preload_cooldown(job.model)
+        ]
+        for job in jobs_in_cooldown:
+            if job not in self.jobs_pending_inference:
+                # Already removed by handle_job_fault from an earlier iteration (e.g. the
+                # same job object appeared under two different queue entries, which is an
+                # edge case but guarding here keeps the loop safe).
+                continue
+            logger.warning(
+                f"Job {job.id_} for model {job.model!r} faulted immediately: "
+                "model is in preload cooldown due to repeated hung-preloading failures",
+            )
+            job_info = self.jobs_lookup.get(job)
+            if job_info is not None:
+                # Force permanent fault: skip the normal retry so the job is not
+                # re-queued locally, which would only be faulted again right away.
+                job_info.retry_count = self.MAX_JOB_RETRIES
+            else:
+                # If the job metadata is missing, `handle_job_fault` may only log/history
+                # the fault and leave the job stuck in the local pending queue. Remove the
+                # queue entry here so cooldown enforcement always drains pending jobs.
+                logger.warning(
+                    f"Cooldown-faulting job {job.id_} for model {job.model!r} without "
+                    "jobs_lookup metadata; removing it from jobs_pending_inference first",
+                )
+                with contextlib.suppress(ValueError):
+                    self.jobs_pending_inference.remove(job)
+            self.handle_job_fault(
+                faulted_job=job,
+                process_info=None,
+                fault_info=(
+                    f"model {job.model!r} is temporarily suspended from preloading after "
+                    f"{self._PRELOAD_STUCK_FAILURE_THRESHOLD} recent hung-preload failures"
+                ),
+            )
+
     _shutting_down = False
     """If true, the worker is scheduled to shut down."""
     _shutting_down_time = 0.0
@@ -7306,8 +7436,18 @@ class HordeWorkerProcessManager:
             ]
             for timeout, state, error_message in conditions:
                 for process_info in self._process_map.values():
+                    # For MODEL_PRELOADING: read the model name *before* calling
+                    # _check_and_replace_process because _replace_inference_process (called
+                    # internally) clears loaded_horde_model_name via on_process_ending().
+                    preload_model = (
+                        process_info.loaded_horde_model_name
+                        if state == HordeProcessState.MODEL_PRELOADING
+                        else None
+                    )
                     if self._check_and_replace_process(process_info, timeout, state, error_message):
                         any_replaced = any_process_replaced = True
+                        if preload_model is not None:
+                            self._record_preload_stuck_failure(preload_model, now)
 
         # If any subprocesses were actually replaced and we are not already inside a recovery
         # window, start the cascading-recovery guard timer.  Soft corrective actions such as
