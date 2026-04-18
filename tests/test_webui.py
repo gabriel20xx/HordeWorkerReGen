@@ -948,6 +948,106 @@ async def test_webui_status_api_includes_user_details() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_delete_worker_endpoint() -> None:
+    """Test the DELETE /api/worker/{worker_id} endpoint."""
+    webui = WorkerWebUI(port=0)
+
+    offline_worker: dict = {
+        "id": "offline-worker-uuid",
+        "name": "OldWorker",
+        "version": "1.0",
+        "type": "image",
+        "online": False,
+        "nsfw": False,
+        "trusted": False,
+        "img2img": False,
+        "painting": False,
+        "lora": False,
+        "max_pixels": 1048576,
+        "threads": 1,
+        "models": [],
+        "uptime": 0,
+        "kudos_rewards": 0.0,
+    }
+    online_worker: dict = {**offline_worker, "id": "online-worker-uuid", "name": "ActiveWorker", "online": True}
+    current_worker: dict = {**offline_worker, "id": "current-worker-uuid", "name": "CurrentWorker", "online": False}
+
+    user_details = {
+        "worker_count": 3,
+        "workers_list": [offline_worker, online_worker, current_worker],
+    }
+    webui.update_status(worker_name="CurrentWorker", user_details=user_details)
+
+    deleted_ids: list[str] = []
+
+    async def fake_delete(worker_id: str) -> bool:
+        deleted_ids.append(worker_id)
+        return True
+
+    webui.set_delete_worker_callback(fake_delete)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # 404 for unknown worker
+        async with aiohttp.ClientSession() as session, session.delete(
+            f"http://localhost:{actual_port}/api/worker/nonexistent-id",
+        ) as response:
+            assert response.status == 404
+
+        # 400 for online worker
+        async with aiohttp.ClientSession() as session, session.delete(
+            f"http://localhost:{actual_port}/api/worker/{online_worker['id']}",
+        ) as response:
+            assert response.status == 400
+            body = await response.json()
+            assert "online" in body["error"].lower()
+
+        # 400 for current (running) worker even though offline
+        async with aiohttp.ClientSession() as session, session.delete(
+            f"http://localhost:{actual_port}/api/worker/{current_worker['id']}",
+        ) as response:
+            assert response.status == 400
+            body = await response.json()
+            assert "web ui" in body["error"].lower() or "currently running" in body["error"].lower()
+
+        # 200 for valid offline, non-current worker
+        async with aiohttp.ClientSession() as session, session.delete(
+            f"http://localhost:{actual_port}/api/worker/{offline_worker['id']}",
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+            assert body["deleted_id"] == offline_worker["id"]
+
+        assert offline_worker["id"] in deleted_ids
+
+        # Callback returning False yields 502
+        async def failing_delete(worker_id: str) -> bool:
+            return False
+
+        webui.set_delete_worker_callback(failing_delete)
+        # Re-add the worker so validation passes
+        webui.update_status(user_details=user_details)
+        async with aiohttp.ClientSession() as session, session.delete(
+            f"http://localhost:{actual_port}/api/worker/{offline_worker['id']}",
+        ) as response:
+            assert response.status == 502
+
+        # 503 when no callback is registered
+        webui._delete_worker_callback = None
+        webui.update_status(user_details=user_details)
+        async with aiohttp.ClientSession() as session, session.delete(
+            f"http://localhost:{actual_port}/api/worker/{offline_worker['id']}",
+        ) as response:
+            assert response.status == 503
+
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     # Run simple tests
     test_webui_creation()
