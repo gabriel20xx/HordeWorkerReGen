@@ -664,8 +664,15 @@ class WorkerWebUI:
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); var parsed = s ? JSON.parse(s) : []; return Array.isArray(parsed) ? parsed : []; } catch(e) { return []; } })();
         let currentWorkerName = '';
-        function deleteWorker(workerId, workerName) {
+        // Event delegation: handle delete-button clicks on the workers list container.
+        document.addEventListener('click', function(evt) {
+            var btn = evt.target.closest('.worker-delete-btn');
+            if (!btn) return;
+            var workerId = btn.getAttribute('data-worker-id') || '';
+            var workerName = btn.getAttribute('data-worker-name') || 'Unknown';
+            if (!workerId) return;
             if (!confirm('Delete worker "' + workerName + '"?\n\nThis action cannot be undone.')) return;
+            btn.disabled = true;
             fetch('/api/worker/' + encodeURIComponent(workerId), { method: 'DELETE' })
                 .then(function(r) { return r.json().then(function(body) { return { ok: r.ok, body: body }; }); })
                 .then(function(result) {
@@ -675,10 +682,11 @@ class WorkerWebUI:
                         renderWorkersList();
                     } else {
                         alert('Failed to delete worker: ' + (result.body.error || 'Unknown error'));
+                        btn.disabled = false;
                     }
                 })
-                .catch(function(e) { alert('Error deleting worker: ' + e.message); });
-        }
+                .catch(function(e) { alert('Error deleting worker: ' + e.message); btn.disabled = false; });
+        });
         function renderWorkersList() {
             const workersList = Array.isArray(cachedWorkersList) ? cachedWorkersList : [];
             document.getElementById('user-workers-count').textContent = workersList.length;
@@ -713,7 +721,7 @@ class WorkerWebUI:
                     const isCurrentWorker = currentWorkerName && (w.name === currentWorkerName);
                     const canDelete = !w.online && !isCurrentWorker;
                     const deleteBtn = canDelete
-                        ? '<button class="worker-delete-btn" onclick="deleteWorker(\''+escapeHtml(w.id)+'\',\''+escapeHtml(w.name||'Unknown')+'\')" title="Delete this offline worker">\uD83D\uDDD1 Delete</button>'
+                        ? '<button class="worker-delete-btn" data-worker-id="'+escapeHtml(w.id||'')+'" data-worker-name="'+escapeHtml(w.name||'Unknown')+'" title="Delete this offline worker">\uD83D\uDDD1 Delete</button>'
                         : '';
                     return '<div class="worker-card">' +
                         '<div class="worker-card-header">' +
@@ -1760,9 +1768,9 @@ class WorkerWebUI:
         URL parameter:
             worker_id: The UUID of the worker to delete.
 
-        Returns 400 if the worker is online, is the currently running worker, or
-        if no delete callback has been registered.  Returns 404 if the worker_id is
-        not found in the current workers list.  Returns 200 on success.
+        Returns 400 if the worker is online or is the currently running worker.
+        Returns 503 if no delete callback has been registered.  Returns 404 if the
+        worker_id is not found in the current workers list.  Returns 200 on success.
         """
         worker_id = request.match_info.get("worker_id", "").strip()
         if not worker_id:
