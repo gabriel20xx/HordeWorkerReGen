@@ -1037,7 +1037,7 @@ async def test_delete_worker_endpoint() -> None:
             assert response.status == 502
 
         # 503 when no callback is registered
-        webui._delete_worker_callback = None
+        webui.set_delete_worker_callback(None)
         webui.update_status(user_details=user_details)
         async with aiohttp.ClientSession() as session, session.delete(
             f"http://localhost:{actual_port}/api/worker/{offline_worker['id']}",

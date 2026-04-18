@@ -92,12 +92,12 @@ class WorkerWebUI:
 
         self._setup_routes()
 
-    def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]]) -> None:
-        """Register an async callback used to delete a worker via the Horde API.
+    def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
+        """Register (or clear) the async callback used to delete a worker via the Horde API.
 
         Args:
             callback: An async callable that accepts a worker_id string and returns
-                      True on success or False on failure.
+                      True on success or False on failure.  Pass None to unregister.
         """
         self._delete_worker_callback = callback
 
@@ -1774,7 +1774,7 @@ class WorkerWebUI:
         """
         worker_id = request.match_info.get("worker_id", "").strip()
         if not worker_id:
-            raise web.HTTPBadRequest(reason="Missing worker_id")
+            return web.json_response({"error": "Missing worker_id"}, status=400)
 
         workers_list: list[dict[str, Any]] = []
         ud = self.status_data.get("user_details") or {}
@@ -1789,7 +1789,7 @@ class WorkerWebUI:
                 break
 
         if target is None:
-            raise web.HTTPNotFound(reason="Worker not found")
+            return web.json_response({"error": "Worker not found"}, status=404)
 
         # Guard: must be offline
         if target.get("online", False):
@@ -1809,11 +1809,11 @@ class WorkerWebUI:
         try:
             success = await self._delete_worker_callback(worker_id)
         except Exception as exc:  # noqa: BLE001
-            logger.error(f"Error deleting worker {worker_id}: {exc}")
+            logger.exception(f"Error deleting worker {worker_id}: {exc}")
             return web.json_response({"error": "Internal error while deleting worker"}, status=500)
 
         if not success:
-            return web.json_response({"error": "Horde API rejected the delete request"}, status=502)
+            return web.json_response({"error": "Failed to delete worker"}, status=502)
 
         return web.json_response({"deleted_id": worker_id})
 
