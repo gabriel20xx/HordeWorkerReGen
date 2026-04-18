@@ -2356,7 +2356,7 @@ class HordeWorkerProcessManager:
         # before the kill and the child was blocked in acquire(), the child could grab the
         # token and get killed mid-decode with SIGKILL, permanently leaking the permit.
         #
-        # Only trigger when progress was 100 % because the VAE decode semaphore is never
+        # Only trigger when progress was 100% because the VAE decode semaphore is never
         # acquired during INFERENCE_PROCESSING at lower progress values.  BoundedSemaphore
         # raises ValueError on over-release (child already released it, or never acquired),
         # which is the benign case.
