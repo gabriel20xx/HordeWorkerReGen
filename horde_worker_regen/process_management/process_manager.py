@@ -2164,11 +2164,41 @@ class HordeWorkerProcessManager:
         try:
             process_info.mp_process.join(timeout=1)
             process_info.mp_process.kill()
+            # Brief join after kill to confirm the process is dead before callers release
+            # shared semaphores (e.g. VAE decode semaphore).  Without this there is a small
+            # window where the old child could still acquire a semaphore after the manager
+            # released it defensively, permanently leaking the token.
+            process_info.mp_process.join(timeout=2)
         except Exception as e:
             logger.error(f"Failed to kill process {process_info.process_id}: {e}")
 
         if not self._shutting_down:
             logger.info(f"Ended inference process {process_info.process_id}")
+
+    def _release_vae_decode_semaphore_defensively(self, process_id: int, context: str) -> None:
+        """Attempt to release the VAE decode semaphore, logging benign over-releases at DEBUG.
+
+        Use this helper for defensive semaphore cleanup when a child process may have held
+        the VAE decode semaphore but died without releasing it.  ``BoundedSemaphore`` raises
+        ``ValueError`` on over-release (the child already released it, or never acquired it),
+        which is the expected benign case.
+
+        Args:
+            process_id: ID of the process being cleaned up (used in log messages).
+            context: Human-readable description of the calling context (used in log messages).
+        """
+        try:
+            self._vae_decode_semaphore.release()
+        except ValueError:
+            logger.debug(
+                f"VAE decode semaphore already released for process {process_id} "
+                f"{context} (child released it normally or never acquired it)",
+            )
+        except Exception as e:
+            logger.warning(
+                f"Unexpected error releasing VAE decode semaphore for process "
+                f"{process_id} {context}: {type(e).__name__}: {e}",
+            )
 
     _num_process_recoveries = 0
     """The number of times a child process crashed or was killed and recovered."""
@@ -2218,8 +2248,9 @@ class HordeWorkerProcessManager:
             job_to_remove = process_info.last_job_referenced
 
         # Snapshot the state before _end_inference_process() calls on_process_ending(),
-        # which resets last_process_state to PROCESS_ENDING.
+        # which resets last_process_state to PROCESS_ENDING and clears last_progress_value.
         prior_state = process_info.last_process_state
+        prior_progress_value = process_info.last_progress_value
 
         # Release the inference semaphore immediately for INFERENCE_PROCESSING and
         # POST_PROCESSING_STARTING so that any process waiting in INFERENCE_STARTING can
@@ -2261,7 +2292,7 @@ class HordeWorkerProcessManager:
                     f"{process_info.process_id}: {type(e).__name__}: {e}",
                 )
 
-        if process_info.last_process_state in (
+        if prior_state in (
             HordeProcessState.INFERENCE_POST_PROCESSING,
             HordeProcessState.POST_PROCESSING_STARTING,
         ):
@@ -2269,19 +2300,10 @@ class HordeWorkerProcessManager:
             # POST_PROCESSING_STARTING / INFERENCE_POST_PROCESSING was emitted. Release it
             # here so that the replacement process (and any other process) is not blocked
             # from acquiring it for up to VAE_SEMAPHORE_TIMEOUT seconds.
-            # BoundedSemaphore raises ValueError on over-release (child already released
-            # it normally or never acquired), which is the benign case.
-            try:
-                self._vae_decode_semaphore.release()
-            except ValueError:
-                logger.debug(
-                    f"VAE decode semaphore already released when replacing process {process_info.process_id}",
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Unexpected error releasing VAE decode semaphore when replacing process "
-                    f"{process_info.process_id}: {type(e).__name__}: {e}",
-                )
+            self._release_vae_decode_semaphore_defensively(
+                process_info.process_id,
+                "when replacing INFERENCE_POST_PROCESSING/POST_PROCESSING_STARTING process",
+            )
 
         elif process_info.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL:
             try:
@@ -2342,6 +2364,27 @@ class HordeWorkerProcessManager:
                     f"Unexpected error releasing inference semaphore when replacing INFERENCE_STARTING "
                     f"process {process_info.process_id}: {type(e).__name__}: {e}",
                 )
+
+        # When a process in INFERENCE_PROCESSING at 100% progress is killed, it may have
+        # already acquired the VAE decode semaphore in _progress_callback_impl (the
+        # _current_job_inference_steps_complete = True path, entered when the last diffusion
+        # step completes).  If SIGKILL bypassed the child's finally block, the semaphore
+        # count stays at 0, causing every subsequent job to block for up to
+        # VAE_SEMAPHORE_TIMEOUT (300 s) before timing out and continuing.
+        #
+        # Release the VAE decode semaphore here, AFTER the child has been killed (and
+        # confirmed dead via the post-kill join in _end_inference_process), to avoid the
+        # same race that affects INFERENCE_STARTING / inference semaphore: if we released
+        # before the kill and the child was blocked in acquire(), the child could grab the
+        # token and get killed mid-decode with SIGKILL, permanently leaking the permit.
+        #
+        # Only trigger when progress was 100% because the VAE decode semaphore is never
+        # acquired during INFERENCE_PROCESSING at lower progress values.
+        if prior_state == HordeProcessState.INFERENCE_PROCESSING and prior_progress_value == 100:
+            self._release_vae_decode_semaphore_defensively(
+                process_info.process_id,
+                "when replacing INFERENCE_PROCESSING process at 100% progress",
+            )
 
         self._start_inference_process(process_info.process_id)
 
@@ -2466,6 +2509,12 @@ class HordeWorkerProcessManager:
                 # This is used below to log/classify the state in which the process actually died,
                 # rather than always reporting PROCESS_ENDING.
                 prior_process_state = self._process_map[message.process_id].last_process_state
+                # Snapshot progress value before reset_heartbeat_state() (called later by
+                # on_process_ending() when the process is replaced) clears it.
+                # on_process_state_change() itself does not reset last_progress_value for the
+                # PROCESS_ENDING transition — it only resets on INFERENCE_STARTING.
+                # Snapshotting here is safe because this code runs before any replacement.
+                prior_process_progress_value = self._process_map[message.process_id].last_progress_value
 
                 self._process_map.on_process_state_change(
                     process_id=message.process_id,
@@ -2521,25 +2570,28 @@ class HordeWorkerProcessManager:
                     # POST_PROCESSING_STARTING is also included because the VAE decode semaphore
                     # may have been acquired between the state message and the INFERENCE_POST_PROCESSING
                     # state being sent (if the child crashed after acquiring the semaphore but before
-                    # emitting INFERENCE_POST_PROCESSING).  The VAE decode semaphore is a
-                    # BoundedSemaphore; over-releasing raises ValueError, which is the benign case
-                    # where the child never held (or already released) the permit.
+                    # emitting INFERENCE_POST_PROCESSING).
                     if prior_process_state in (
                         HordeProcessState.INFERENCE_POST_PROCESSING,
                         HordeProcessState.POST_PROCESSING_STARTING,
                     ):
-                        try:
-                            self._vae_decode_semaphore.release()
-                        except ValueError:
-                            logger.debug(
-                                f"VAE decode semaphore already released for process {message.process_id} "
-                                "on PROCESS_ENDING (child released it normally or never acquired it)",
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"Unexpected error releasing VAE decode semaphore for process "
-                                f"{message.process_id} on PROCESS_ENDING: {type(e).__name__}: {e}",
-                            )
+                        self._release_vae_decode_semaphore_defensively(
+                            message.process_id,
+                            "on PROCESS_ENDING from INFERENCE_POST_PROCESSING/POST_PROCESSING_STARTING",
+                        )
+                    # A process in INFERENCE_PROCESSING at 100% progress may have acquired
+                    # the VAE decode semaphore in _progress_callback_impl
+                    # (_current_job_inference_steps_complete = True path).  If the child's
+                    # finally block did not run (e.g. OOM kill, crash after state message),
+                    # the semaphore is leaked.  Release it defensively here.
+                    if (
+                        prior_process_state == HordeProcessState.INFERENCE_PROCESSING
+                        and prior_process_progress_value == 100
+                    ):
+                        self._release_vae_decode_semaphore_defensively(
+                            message.process_id,
+                            "on PROCESS_ENDING from INFERENCE_PROCESSING at 100% progress",
+                        )
                     # If the process is ending but still has a job in progress, fault the job
                     # so it is not silently lost. This can happen if an exception occurs in the
                     # child process before it sends the inference result message.
