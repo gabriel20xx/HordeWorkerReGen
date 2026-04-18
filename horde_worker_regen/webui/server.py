@@ -216,6 +216,8 @@ class WorkerWebUI:
         .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
         .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
         .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+        .overview-bottom-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+        .overview-bottom-grid-left { grid-row: span 2; }
 
         .stat-card { background: var(--card-bg); border-radius: 12px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); border: 1px solid var(--border); }
         .stat-card-label { font-size: 0.75rem; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
@@ -343,7 +345,7 @@ class WorkerWebUI:
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
         @media (max-width: 1200px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 768px) { .sidebar { transform: translateX(-100%); top: 80px; height: calc(100vh - 80px); } .sidebar.open { transform: translateX(0); } .mobile-navbar { display: flex; } .mobile-resources { display: flex; } .main-content { margin-left: 0; padding-top: 80px; } .topbar { display: none; } .content-area { padding: 14px 12px; } .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr; } .grid-2 { grid-template-columns: 1fr; } .grid-3-popped { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 768px) { .sidebar { transform: translateX(-100%); top: 80px; height: calc(100vh - 80px); } .sidebar.open { transform: translateX(0); } .mobile-navbar { display: flex; } .mobile-resources { display: flex; } .main-content { margin-left: 0; padding-top: 80px; } .topbar { display: none; } .content-area { padding: 14px 12px; } .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr; } .grid-2 { grid-template-columns: 1fr; } .grid-3-popped { grid-template-columns: repeat(2, 1fr); } .overview-bottom-grid { grid-template-columns: 1fr; } .overview-bottom-grid-left { grid-row: span 1; } }
         @media (max-width: 480px) { .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; } .stat-card-value { font-size: 1.4rem; } }
 
         /* ---- Theme toggle (square) ---- */
@@ -528,21 +530,18 @@ class WorkerWebUI:
                             <div id="overview-image-container" class="last-image-container"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
                         </div>
                     </div>
-                    <div class="grid-2">
-                        <div class="card">
+                    <div class="overview-bottom-grid">
+                        <div class="card overview-bottom-grid-left">
                             <div class="card-header"><span class="card-title">&#9881; Processes</span><span class="section-count" id="process-count">0</span></div>
                             <div id="processes" class="scrollable-tall"><div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128230; Job Queue &amp; Models</span></div>
-                            <div style="margin-bottom: 14px;">
-                                <div style="font-size:0.75rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:7px;">Queue (<span id="queue-count">0</span>/<span id="queue-max">0</span>)</div>
-                                <div id="job-queue" class="scrollable"><div class="empty-state">Queue is empty</div></div>
-                            </div>
-                            <div>
-                                <div style="font-size:0.75rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:7px;">Active Models</div>
-                                <div id="models-loaded" class="model-list"><span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span></div>
-                            </div>
+                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span style="font-size:0.75rem;font-weight:700;color:#475569;">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span></div>
+                            <div id="job-queue" class="scrollable"><div class="empty-state">Queue is empty</div></div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header"><span class="card-title">&#129302; Active Models</span></div>
+                            <div id="models-loaded" class="model-list"><span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span></div>
                         </div>
                     </div>
                 </div>
