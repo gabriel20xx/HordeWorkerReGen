@@ -42,6 +42,8 @@ from horde_sdk.ai_horde_api.ai_horde_clients import (
     AIHordeAPISimpleClient,
 )
 from horde_sdk.ai_horde_api.apimodels import (
+    DeleteWorkerRequest,
+    DeleteWorkerResponse,
     FindUserRequest,
     GenMetadataEntry,
     ImageGenerateJobPopRequest,
@@ -1826,6 +1828,7 @@ class HordeWorkerProcessManager:
                 port=self.bridge_data.webui_port,
                 update_interval=self.bridge_data.webui_update_interval,
             )
+            self.webui.set_delete_worker_callback(self._delete_worker)
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
             # Add a log handler to capture logs for webui with colored output
@@ -5744,6 +5747,39 @@ class HordeWorkerProcessManager:
 
         results = await asyncio.gather(*(_fetch_one(str(wid)) for wid in worker_ids))
         self._workers_details = [w for w in results if w is not None]
+
+    async def _delete_worker(self, worker_id: str) -> bool:
+        """Delete a worker from the Horde via the API.
+
+        Called by the web UI delete endpoint.  Only offline workers that are not the
+        currently running worker may be deleted (those guards are enforced in the web UI
+        handler before this method is called).
+
+        Args:
+            worker_id: The UUID of the worker to delete.
+
+        Returns:
+            True if the worker was deleted successfully, False otherwise.
+        """
+        if self.horde_client_session is None:
+            logger.warning(f"Cannot delete worker {worker_id}: horde client session is not available")
+            return False
+        try:
+            request = DeleteWorkerRequest(
+                apikey=self.bridge_data.api_key,
+                worker_id=worker_id,
+            )
+            response = await self.horde_client_session.submit_request(request, DeleteWorkerResponse)
+            if isinstance(response, RequestErrorResponse):
+                logger.error(f"Failed to delete worker {worker_id} (API error): {response}")
+                return False
+            logger.info(f"Successfully deleted worker {worker_id} (name: {response.deleted_name!r})")
+            # Refresh the workers details list so the UI picks up the change promptly.
+            await self.api_get_workers_details()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Exception while deleting worker {worker_id}: {exc}")
+            return False
 
     async def _api_get_workers_details_loop(self) -> None:
         """Periodically fetch per-worker detail records for the User page."""

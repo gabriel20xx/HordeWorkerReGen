@@ -4,6 +4,7 @@ import base64
 import io
 import math
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiohttp import web
@@ -85,7 +86,20 @@ class WorkerWebUI:
         # Monotonically increasing counter used to assign stable gallery_id values.
         self._next_gallery_id: int = 0
 
+        # Optional callback invoked when the UI requests a worker deletion.
+        # Signature: async (worker_id: str) -> bool  (True = success, False = failure)
+        self._delete_worker_callback: Callable[[str], Awaitable[bool]] | None = None
+
         self._setup_routes()
+
+    def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
+        """Register (or clear) the async callback used to delete a worker via the Horde API.
+
+        Args:
+            callback: An async callable that accepts a worker_id string and returns
+                      True on success or False on failure.  Pass None to unregister.
+        """
+        self._delete_worker_callback = callback
 
     def _setup_routes(self) -> None:
         """Set up the web server routes."""
@@ -97,6 +111,7 @@ class WorkerWebUI:
         self.app.router.add_get("/api/gallery/image", self._handle_gallery_image)
         self.app.router.add_get("/api/config", self._handle_config)
         self.app.router.add_get("/health", self._handle_health)
+        self.app.router.add_delete("/api/worker/{worker_id}", self._handle_delete_worker)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
         """Handle config API request."""
@@ -436,6 +451,13 @@ class WorkerWebUI:
         [data-theme="dark"] .worker-stats-row { color: #94a3b8; }
         [data-theme="dark"] .worker-card { background: #151e2e; border-color: #2d3f55; }
 
+        /* ---- Worker delete button ---- */
+        .worker-delete-btn { background: none; border: 1px solid #fca5a5; color: #dc2626; border-radius: 6px; padding: 2px 8px; font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; margin-left: 6px; flex-shrink: 0; }
+        .worker-delete-btn:hover { background: #fee2e2; }
+        .worker-delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        [data-theme="dark"] .worker-delete-btn { border-color: #7f1d1d; color: #fca5a5; }
+        [data-theme="dark"] .worker-delete-btn:hover { background: #450a0a; }
+
         /* ---- Gallery new-images banner ---- */
         #gallery-new-banner { display: none; background: #dbeafe; border: 1px solid #93c5fd; border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 500; color: #1d4ed8; }
         [data-theme="dark"] #gallery-new-banner { background: #1e3a5f; border-color: #2d5fa0; color: #93c5fd; }
@@ -640,6 +662,30 @@ class WorkerWebUI:
         const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'logs']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); var parsed = s ? JSON.parse(s) : []; return Array.isArray(parsed) ? parsed : []; } catch(e) { return []; } })();
+        let currentWorkerName = '';
+        // Event delegation: handle delete-button clicks on the workers list container.
+        document.addEventListener('click', function(evt) {
+            var btn = evt.target.closest('.worker-delete-btn');
+            if (!btn) return;
+            var workerId = btn.getAttribute('data-worker-id') || '';
+            var workerName = btn.getAttribute('data-worker-name') || 'Unknown';
+            if (!workerId) return;
+            if (!confirm('Delete worker "' + workerName + '"?\n\nThis action cannot be undone.')) return;
+            btn.disabled = true;
+            fetch('/api/worker/' + encodeURIComponent(workerId), { method: 'DELETE' })
+                .then(function(r) { return r.json().then(function(body) { return { ok: r.ok, body: body }; }); })
+                .then(function(result) {
+                    if (result.ok) {
+                        cachedWorkersList = cachedWorkersList.filter(function(w) { return w.id !== workerId; });
+                        try { localStorage.setItem('horde-workers-list', JSON.stringify(cachedWorkersList)); } catch(e) {}
+                        renderWorkersList();
+                    } else {
+                        alert('Failed to delete worker: ' + (result.body.error || 'Unknown error'));
+                        btn.disabled = false;
+                    }
+                })
+                .catch(function(e) { alert('Error deleting worker: ' + e.message); btn.disabled = false; });
+        });
         function renderWorkersList() {
             const workersList = Array.isArray(cachedWorkersList) ? cachedWorkersList : [];
             document.getElementById('user-workers-count').textContent = workersList.length;
@@ -671,12 +717,18 @@ class WorkerWebUI:
                     const kph = (w.kudos_rewards != null && uptimeSecs > 0)
                         ? (w.kudos_rewards / (uptimeSecs / 3600)).toLocaleString(undefined, {maximumFractionDigits:1})
                         : '-';
+                    const isCurrentWorker = currentWorkerName && (w.name === currentWorkerName);
+                    const canDelete = !w.online && !isCurrentWorker;
+                    const deleteBtn = canDelete
+                        ? '<button class="worker-delete-btn" data-worker-id="'+escapeHtml(w.id||'')+'" data-worker-name="'+escapeHtml(w.name||'Unknown')+'" title="Delete this offline worker">\uD83D\uDDD1 Delete</button>'
+                        : '';
                     return '<div class="worker-card">' +
                         '<div class="worker-card-header">' +
                         '<span class="worker-card-name">'+escapeHtml(w.name||'Unknown')+'</span>' +
                         (w.version ? '<span class="worker-version-badge">v'+escapeHtml(w.version)+'</span>' : '') +
                         (w.type ? '<span class="worker-type-badge">'+escapeHtml(w.type)+'</span>' : '') +
                         '<span class="worker-online-badge '+onlineCls+'">'+onlineTxt+'</span>' +
+                        deleteBtn +
                         '</div>' +
                         (caps ? '<div class="worker-caps-row">'+caps+'</div>' : '') +
                         '<div class="worker-meta-row">' +
@@ -1468,6 +1520,7 @@ class WorkerWebUI:
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('content').style.display = 'block';
                     const workerName = data.worker_name || 'Unknown';
+                    currentWorkerName = data.worker_name || '';
                     document.getElementById('topbar-worker-name').textContent = workerName;
                     document.getElementById('topbar-worker-sub').textContent = '@'+data.horde_username;
                     const badgeHtml = data.maintenance_mode
@@ -1707,6 +1760,61 @@ class WorkerWebUI:
 </html>
         """
         return web.Response(text=html, content_type="text/html")
+
+    async def _handle_delete_worker(self, request: web.Request) -> web.Response:
+        """Handle a request to delete an offline worker via the Horde API.
+
+        URL parameter:
+            worker_id: The UUID of the worker to delete.
+
+        Returns 400 if the worker is online or is the currently running worker.
+        Returns 503 if no delete callback has been registered.  Returns 404 if the
+        worker_id is not found in the current workers list.  Returns 200 on success.
+        """
+        worker_id = request.match_info.get("worker_id", "").strip()
+        if not worker_id:
+            return web.json_response({"error": "Missing worker_id"}, status=400)
+
+        workers_list: list[dict[str, Any]] = []
+        ud = self.status_data.get("user_details") or {}
+        if isinstance(ud, dict):
+            workers_list = ud.get("workers_list") or []
+
+        # Locate the worker in the cached list
+        target: dict[str, Any] | None = None
+        for w in workers_list:
+            if str(w.get("id", "")) == worker_id:
+                target = w
+                break
+
+        if target is None:
+            return web.json_response({"error": "Worker not found"}, status=404)
+
+        # Guard: must be offline
+        if target.get("online", False):
+            return web.json_response({"error": "Worker is online and cannot be deleted"}, status=400)
+
+        # Guard: must not be the currently running worker (matched by name)
+        current_worker_name: str = self.status_data.get("worker_name", "") or ""
+        if current_worker_name and target.get("name", "") == current_worker_name:
+            return web.json_response(
+                {"error": "Cannot delete the worker currently running the web UI"},
+                status=400,
+            )
+
+        if self._delete_worker_callback is None:
+            return web.json_response({"error": "Delete worker is not available"}, status=503)
+
+        try:
+            success = await self._delete_worker_callback(worker_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Error deleting worker {worker_id}: {exc}")
+            return web.json_response({"error": "Internal error while deleting worker"}, status=500)
+
+        if not success:
+            return web.json_response({"error": "Failed to delete worker"}, status=502)
+
+        return web.json_response({"deleted_id": worker_id})
 
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Handle status API request.
