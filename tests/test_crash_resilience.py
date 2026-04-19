@@ -2725,6 +2725,13 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
         # Use a no-op BoundedSemaphore for the inference semaphore (not under test here)
         mock_manager._inference_semaphore = ctx.BoundedSemaphore(1)
         mock_manager._vae_decode_semaphore = vae_sem
+        # Bind the real defensive-release helper so it actually releases the real semaphore
+        # (otherwise the MagicMock default swallows the call and the semaphore is never freed).
+        mock_manager._release_vae_decode_semaphore_defensively = (
+            HordeWorkerProcessManager._release_vae_decode_semaphore_defensively.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
             mock_manager, HordeWorkerProcessManager
@@ -2836,6 +2843,13 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
         mock_manager._disk_lock = ctx.Lock()
         mock_manager.jobs_lookup = {}
         mock_manager.jobs_in_progress = []
+        # Bind the real defensive-release helper so it actually releases the real semaphore
+        # (otherwise the MagicMock default swallows the call and the semaphore is never freed).
+        mock_manager._release_vae_decode_semaphore_defensively = (
+            HordeWorkerProcessManager._release_vae_decode_semaphore_defensively.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
 
         bound = HordeWorkerProcessManager._replace_inference_process.__get__(
             mock_manager, HordeWorkerProcessManager
