@@ -1,33 +1,35 @@
 """Tests for job state transitions between INFERENCE_PROCESSING, INFERENCE_POST_PROCESSING,
 and SAFETY_EVALUATING, and correctness of handle_job_fault cleanup."""
 
+from dataclasses import dataclass
 from unittest.mock import MagicMock
-
-import pytest
 
 from horde_worker_regen.process_management.messages import HordeProcessState
 
 
+@dataclass
+class _FakeJobID:
+    """Minimal job-ID stub with value-based equality so '==' returns a real bool."""
+
+    root: str
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _FakeJobID):
+            return self.root == other.root
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.root)
+
+
 def _make_mock_job(job_id: str = "a1b2c3d4") -> MagicMock:
-    """Return a minimal mock ImageGenerateJobPopResponse."""
+    """Return a minimal mock ImageGenerateJobPopResponse with a value-comparable id_."""
     job = MagicMock()
-    job.id_ = MagicMock()
-    job.id_.root = f"{job_id}-1234-5678-abcd-ef0123456789"
-    # Make id_ compare equal to itself by value via __eq__
-    job.id_.__eq__ = lambda _self, other: _self.root == getattr(other, "root", None)
+    job.id_ = _FakeJobID(root=f"{job_id}-1234-5678-abcd-ef0123456789")
     job.model = "test_model"
     job.payload = MagicMock()
     job.payload.n_iter = 1
     return job
-
-
-def _make_horde_job_info(job: MagicMock, job_id_str: str) -> MagicMock:
-    """Return a minimal mock HordeJobInfo wrapping *job*."""
-    info = MagicMock()
-    info.sdk_api_job_info = job
-    info.sdk_api_job_info.id_ = MagicMock()
-    info.sdk_api_job_info.id_.root = job_id_str
-    return info
 
 
 def _make_process_info(state: HordeProcessState) -> MagicMock:
@@ -121,19 +123,30 @@ class TestHandleJobFaultSafetyListCleanup:
         in_pending: bool = False,
         in_being_checked: bool = False,
     ) -> tuple:
-        """Return (mock_manager, faulted_job) with the faulted job optionally placed
-        in jobs_pending_safety_check and/or jobs_being_safety_checked."""
+        """Return (mock_manager, faulted_job, Manager) with the faulted job optionally placed
+        in jobs_pending_safety_check and/or jobs_being_safety_checked.
+
+        Each list also always contains one *non-matching* entry (different job ID) so that
+        negative assertions can verify only the correct entry is removed.
+        """
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
         job_id = "deadbeef"
         faulted_job = _make_mock_job(job_id)
-        faulted_job.id_.root = f"{job_id}-0000-0000-0000-000000000000"
+
+        other_job_id = "00000000"
 
         # Build a HordeJobInfo-like mock whose sdk_api_job_info.id_ matches faulted_job.id_
         def _make_matching_info() -> MagicMock:
             info = MagicMock()
             info.sdk_api_job_info = MagicMock()
-            info.sdk_api_job_info.id_ = faulted_job.id_
+            info.sdk_api_job_info.id_ = faulted_job.id_  # same _FakeJobID object — equal by value
+            return info
+
+        def _make_non_matching_info() -> MagicMock:
+            info = MagicMock()
+            info.sdk_api_job_info = MagicMock()
+            info.sdk_api_job_info.id_ = _FakeJobID(root=f"{other_job_id}-0000-0000-0000-000000000000")
             return info
 
         job_info = MagicMock()
@@ -144,8 +157,13 @@ class TestHandleJobFaultSafetyListCleanup:
         mock_manager.jobs_lookup = {faulted_job: job_info}
         mock_manager.jobs_pending_inference = []
         mock_manager.jobs_in_progress = []
-        mock_manager.jobs_pending_safety_check = [_make_matching_info()] if in_pending else []
-        mock_manager.jobs_being_safety_checked = [_make_matching_info()] if in_being_checked else []
+        # Each list always has a non-matching entry so we can test negative removal.
+        mock_manager.jobs_pending_safety_check = (
+            [_make_matching_info(), _make_non_matching_info()] if in_pending else [_make_non_matching_info()]
+        )
+        mock_manager.jobs_being_safety_checked = (
+            [_make_matching_info(), _make_non_matching_info()] if in_being_checked else [_make_non_matching_info()]
+        )
         mock_manager.jobs_pending_submit = []
         mock_manager._skipped_line_next_job_and_process = None
         mock_manager._failed_models = {}
@@ -153,18 +171,27 @@ class TestHandleJobFaultSafetyListCleanup:
         return mock_manager, faulted_job, HordeWorkerProcessManager
 
     def test_removes_from_jobs_pending_safety_check(self) -> None:
-        """When a job faults while in jobs_pending_safety_check it must be removed."""
+        """When a job faults while in jobs_pending_safety_check it must be removed.
+
+        The list also contains one entry for a different job; that entry must be preserved
+        (negative assertion) to confirm the cleanup targets only the faulted job's ID.
+        """
         mock_manager, faulted_job, Manager = self._build_manager_with_safety_lists(in_pending=True)
 
-        assert len(mock_manager.jobs_pending_safety_check) == 1
+        # 1 matching + 1 non-matching
+        assert len(mock_manager.jobs_pending_safety_check) == 2
 
         bound = Manager.handle_job_fault.__get__(mock_manager, Manager)
         bound(faulted_job=faulted_job, process_info=None)
 
-        assert len(mock_manager.jobs_pending_safety_check) == 0, (
-            "handle_job_fault must remove the job from jobs_pending_safety_check. "
-            "The previously dead-code guard (faulted_job in jobs_pending_safety_check) "
-            "caused this cleanup to never execute."
+        assert len(mock_manager.jobs_pending_safety_check) == 1, (
+            "handle_job_fault must remove only the faulted job from jobs_pending_safety_check, "
+            "leaving the non-matching entry intact."
+        )
+        # Confirm the remaining entry does NOT match the faulted job's id_
+        remaining = mock_manager.jobs_pending_safety_check[0]
+        assert remaining.sdk_api_job_info.id_ != faulted_job.id_, (
+            "The entry that survived cleanup must have a different id_ than the faulted job."
         )
 
     def test_removes_from_jobs_being_safety_checked(self) -> None:
@@ -174,18 +201,24 @@ class TestHandleJobFaultSafetyListCleanup:
         (though via dead code) but had no code at all for jobs_being_safety_checked.
         A job stuck in jobs_being_safety_checked would prevent clean shutdown because
         is_time_for_shutdown() gates on that list being empty.
+
+        The list also contains one non-matching entry that must be preserved.
         """
         mock_manager, faulted_job, Manager = self._build_manager_with_safety_lists(in_being_checked=True)
 
-        assert len(mock_manager.jobs_being_safety_checked) == 1
+        # 1 matching + 1 non-matching
+        assert len(mock_manager.jobs_being_safety_checked) == 2
 
         bound = Manager.handle_job_fault.__get__(mock_manager, Manager)
         bound(faulted_job=faulted_job, process_info=None)
 
-        assert len(mock_manager.jobs_being_safety_checked) == 0, (
-            "handle_job_fault must remove the job from jobs_being_safety_checked. "
-            "Without this, a crashed safety process leaves the job there forever, "
-            "blocking is_time_for_shutdown()."
+        assert len(mock_manager.jobs_being_safety_checked) == 1, (
+            "handle_job_fault must remove only the faulted job from jobs_being_safety_checked, "
+            "leaving the non-matching entry intact."
+        )
+        remaining = mock_manager.jobs_being_safety_checked[0]
+        assert remaining.sdk_api_job_info.id_ != faulted_job.id_, (
+            "The entry that survived cleanup must have a different id_ than the faulted job."
         )
 
     def test_removes_from_both_safety_lists(self) -> None:
@@ -198,16 +231,26 @@ class TestHandleJobFaultSafetyListCleanup:
         bound = Manager.handle_job_fault.__get__(mock_manager, Manager)
         bound(faulted_job=faulted_job, process_info=None)
 
-        assert len(mock_manager.jobs_pending_safety_check) == 0
-        assert len(mock_manager.jobs_being_safety_checked) == 0
+        # Only the non-matching entry should remain in each list
+        assert len(mock_manager.jobs_pending_safety_check) == 1
+        assert len(mock_manager.jobs_being_safety_checked) == 1
 
     def test_no_error_when_job_not_in_safety_lists(self) -> None:
-        """handle_job_fault must not raise when the job is in neither safety list."""
+        """handle_job_fault must not raise when the faulted job is in neither safety list.
+
+        Both lists still contain one non-matching entry; verify they are untouched.
+        """
         mock_manager, faulted_job, Manager = self._build_manager_with_safety_lists()
+
+        initial_pending = len(mock_manager.jobs_pending_safety_check)
+        initial_being_checked = len(mock_manager.jobs_being_safety_checked)
 
         bound = Manager.handle_job_fault.__get__(mock_manager, Manager)
         # Should not raise
         bound(faulted_job=faulted_job, process_info=None)
+
+        assert len(mock_manager.jobs_pending_safety_check) == initial_pending
+        assert len(mock_manager.jobs_being_safety_checked) == initial_being_checked
 
 
 class TestInferenceToPostProcessingTransition:
