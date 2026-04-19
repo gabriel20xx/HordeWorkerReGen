@@ -4730,7 +4730,7 @@ class HordeWorkerProcessManager:
                     fault_phase = "During Inference"
                 elif state == HordeProcessState.INFERENCE_POST_PROCESSING:
                     fault_phase = "Post Processing"
-                elif state == HordeProcessState.SAFETY_EVALUATING or state == HordeProcessState.SAFETY_EVALUATING:
+                elif state in (HordeProcessState.SAFETY_EVALUATING, HordeProcessState.SAFETY_STARTING):
                     fault_phase = "Safety Check"
                 elif state == HordeProcessState.PROCESS_STARTING:
                     fault_phase = "Process Starting"
@@ -4746,12 +4746,17 @@ class HordeWorkerProcessManager:
                 logger.debug(f"Removing job {faulted_job.id_} from jobs_in_progress")
                 self.jobs_in_progress.remove(faulted_job)
 
-            if faulted_job in self.jobs_pending_safety_check:
-                logger.debug(f"Removing job {faulted_job.id_} from jobs_pending_safety_check")
-                for horde_job_info in self.jobs_pending_safety_check:
-                    if horde_job_info.sdk_api_job_info.id_ == faulted_job.id_:
-                        self.jobs_pending_safety_check.remove(horde_job_info)
-                        break
+            for horde_job_info in list(self.jobs_pending_safety_check):
+                if horde_job_info.sdk_api_job_info.id_ == faulted_job.id_:
+                    logger.debug(f"Removing job {faulted_job.id_} from jobs_pending_safety_check")
+                    self.jobs_pending_safety_check.remove(horde_job_info)
+                    break
+
+            for horde_job_info in list(self.jobs_being_safety_checked):
+                if horde_job_info.sdk_api_job_info.id_ == faulted_job.id_:
+                    logger.debug(f"Removing job {faulted_job.id_} from jobs_being_safety_checked")
+                    self.jobs_being_safety_checked.remove(horde_job_info)
+                    break
 
             if job_info not in self.jobs_pending_submit:
                 self.jobs_pending_submit.append(job_info)
