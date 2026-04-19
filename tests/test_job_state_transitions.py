@@ -14,7 +14,7 @@ def _make_mock_job(job_id: str = "a1b2c3d4") -> MagicMock:
     job.id_ = MagicMock()
     job.id_.root = f"{job_id}-1234-5678-abcd-ef0123456789"
     # Make id_ compare equal to itself by value via __eq__
-    job.id_.__eq__ = lambda self, other: self.root == getattr(other, "root", None)
+    job.id_.__eq__ = lambda _self, other: _self.root == getattr(other, "root", None)
     job.model = "test_model"
     job.payload = MagicMock()
     job.payload.n_iter = 1
