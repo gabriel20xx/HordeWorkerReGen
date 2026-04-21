@@ -4996,7 +4996,15 @@ class HordeWorkerProcessManager:
         return job_pop_response
 
     _last_pop_maintenance_mode: bool = False
-    """Whether the last job pop showed the worker was in maintenance mode."""
+    """Maintenance-mode state latch.
+
+    Set to ``True`` when a job pop returns a maintenance-mode error response and
+    ``remove_maintenance()`` is triggered. While ``True`` it suppresses status
+    messages, user-info fetches, and repeated ``remove_maintenance()`` calls.
+    Cleared back to ``False`` once all inference processes have been reloaded
+    (in ``_process_control_loop``) or when a successful job pop is received.
+    Also surfaced to the web UI as ``maintenance_mode``.
+    """
     _last_pop_no_jobs_available: bool = False
     """Whether the last job pop attempt had a no jobs available response."""
     _last_pop_no_jobs_available_time: float = 0.0
