@@ -5246,16 +5246,6 @@ class HordeWorkerProcessManager:
             elif self.bridge_data.horde_model_stickiness > 0:
                 logger.debug("Models unstuck: asking to pop for all available models.")
 
-        # Allow up to max_inference_processes (max_threads + queue_size) jobs per model so
-        # the queue can fill fully regardless of queue_size setting.
-        models_to_remove = {
-            model
-            for model, count in collections.Counter([job.model for job in self.jobs_pending_inference]).items()
-            if count >= self.max_inference_processes
-        }
-        if len(models_to_remove) > 0:
-            models = models.difference(models_to_remove)
-
         if self.bridge_data.custom_models is not None and len(self.bridge_data.custom_models) > 0:
             logger.debug("Custom models are enabled, adding them to the list of models to pop")
             custom_model_names = {model["name"] for model in self.bridge_data.custom_models}
