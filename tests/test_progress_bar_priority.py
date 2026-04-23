@@ -969,8 +969,8 @@ class TestApiJobPopQueueGate:
 
     The gate must:
     - Stop popping when the number of not-yet-started jobs >= queue_size
-    - Also stop when total pending jobs >= max_concurrent_inference_processes
-    - Allow popping while there is still room in the prefetch queue AND thread capacity
+    - Also stop when total pending jobs >= max_inference_processes (max_threads + queue_size)
+    - Allow popping while there is still room in the prefetch queue AND total process capacity
     """
 
     def _make_manager(
@@ -992,6 +992,7 @@ class TestApiJobPopQueueGate:
 
         mock_manager.bridge_data.queue_size = queue_size
         mock_manager.max_concurrent_inference_processes = max_concurrent
+        mock_manager.max_inference_processes = max_concurrent + queue_size
 
         # Build minimal job lists - in_progress jobs are a prefix of pending_jobs
         # so that len() checks reflect reality.
@@ -1029,11 +1030,11 @@ class TestApiJobPopQueueGate:
         # Gate returned before reaching "if self.horde_client_session is None"
         sentinel.assert_not_called()
 
-    def test_gate_stops_when_pending_meets_max_concurrent(self) -> None:
-        """Pop gate returns early when total pending jobs >= max_concurrent_inference_processes."""
-        # 2 pending, 2 in-progress → 0 queued; queue_size=5 → first condition passes.
-        # max_concurrent=2, total pending=2 → second condition fires.
-        mock_manager = self._make_manager(queue_size=5, max_concurrent=2, jobs_pending=2, jobs_in_progress=2)
+    def test_gate_stops_when_pending_meets_max_inference(self) -> None:
+        """Pop gate returns early when total pending jobs >= max_inference_processes (max_threads + queue_size)."""
+        # 5 pending, 5 in-progress → 0 queued; queue_size=3 → first condition passes.
+        # max_inference_processes = max_concurrent(2) + queue_size(3) = 5; total pending=5 → second condition fires.
+        mock_manager = self._make_manager(queue_size=3, max_concurrent=2, jobs_pending=5, jobs_in_progress=5)
         sentinel = mock_manager.horde_client_session
 
         self._run(mock_manager)
