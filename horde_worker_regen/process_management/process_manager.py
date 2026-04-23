@@ -2404,6 +2404,12 @@ class HordeWorkerProcessManager:
         process_info = self._process_map.get_first_available_safety_process()
 
         if process_info is None:
+            # When replacing a stuck safety process no "available" (WAITING_FOR_JOB) process
+            # may exist.  Fall back to any safety process so the stuck one can be terminated.
+            if self._safety_processes_should_be_replaced:
+                process_info = self._process_map.get_safety_process()
+
+        if process_info is None:
             return
 
         # Send the process a message to end
@@ -7170,6 +7176,7 @@ class HordeWorkerProcessManager:
         if time_elapsed > timeout and process_info.last_process_state == state:
             logger.error(f"{process_info} {error_message}, replacing it")
             if process_info.process_type == HordeProcessType.SAFETY:
+                self._safety_processes_should_be_replaced = True
                 self._replace_all_safety_process()
             if process_info.process_type == HordeProcessType.INFERENCE:
                 self._replace_inference_process(process_info)
@@ -7462,6 +7469,36 @@ class HordeWorkerProcessManager:
                         process_id=process_info.process_id,
                         new_state=HordeProcessState.WAITING_FOR_JOB,
                     )
+                    any_replaced = True
+
+                # Detect a safety process stuck in SAFETY_EVALUATING or SAFETY_STARTING.
+                #
+                # A safety process stuck in these states will never return to WAITING_FOR_JOB,
+                # so get_first_available_safety_process() will always return None, blocking all
+                # new job pops indefinitely.  This check is placed BEFORE the
+                # _last_pop_no_jobs_available guard for the same reason as RESULT_SUBMITTING:
+                # the stuck safety process may be the sole reason no new jobs are available.
+                if (
+                    process_info.process_type == HordeProcessType.SAFETY
+                    and process_info.last_process_state
+                    in (HordeProcessState.SAFETY_EVALUATING, HordeProcessState.SAFETY_STARTING)
+                    and (now - process_info.last_received_timestamp) > self.bridge_data.process_timeout
+                ):
+                    logger.error(
+                        f"{process_info} has been stuck in {process_info.last_process_state.name} for "
+                        f"{now - process_info.last_received_timestamp:.0f}s; "
+                        "scheduling safety process replacement to unblock job scheduling",
+                    )
+                    # Move any job currently under safety evaluation back to the pending queue
+                    # so it will be re-evaluated by the replacement safety process.
+                    for job_info in list(self.jobs_being_safety_checked):
+                        logger.warning(
+                            f"Re-queuing job {job_info.sdk_api_job_info.id_} for safety re-evaluation "
+                            "due to stuck safety process",
+                        )
+                        self.jobs_being_safety_checked.remove(job_info)
+                        self.jobs_pending_safety_check.append(job_info)
+                    self._safety_processes_should_be_replaced = True
                     any_replaced = True
 
                 # Skip other state checks if no jobs are available since those states are job-related.
