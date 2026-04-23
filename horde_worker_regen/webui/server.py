@@ -1615,8 +1615,7 @@ class WorkerWebUI:
                         }
                     }
                     const qd = document.getElementById('job-queue');
-                    const queueCount = Number.isFinite(data.jobs_queued) ? data.jobs_queued : data.job_queue.length;
-                    document.getElementById('queue-count').textContent = queueCount;
+                    document.getElementById('queue-count').textContent = data.job_queue.length;
                     document.getElementById('queue-max').textContent = data.max_queue_size;
                     if (data.job_queue.length > 0) {
                         qd.innerHTML = data.job_queue.map(j => { const bi = j.batch_size&&j.batch_size>1?' ('+escapeHtml(j.batch_size)+'x batch)':''; return '<div class="job-item"><span class="job-id">'+escapeHtml(j.id||'N/A')+'</span>: '+escapeHtml(j.model||'Unknown model')+bi+'</div>'; }).join('');
