@@ -5125,7 +5125,7 @@ class HordeWorkerProcessManager:
         if jobs_queued >= self.bridge_data.queue_size:
             return
 
-        if len(self.jobs_pending_inference) >= self.max_concurrent_inference_processes:
+        if len(self.jobs_pending_inference) >= self.max_inference_processes:
             return
 
         # if self._testing_jobs_added >= self._testing_max_jobs:
@@ -5245,15 +5245,6 @@ class HordeWorkerProcessManager:
                     )
             elif self.bridge_data.horde_model_stickiness > 0:
                 logger.debug("Models unstuck: asking to pop for all available models.")
-
-        # We'll only allow one running plus one queued for a given model.
-        models_to_remove = {
-            model
-            for model, count in collections.Counter([job.model for job in self.jobs_pending_inference]).items()
-            if count >= 2
-        }
-        if len(models_to_remove) > 0:
-            models = models.difference(models_to_remove)
 
         if self.bridge_data.custom_models is not None and len(self.bridge_data.custom_models) > 0:
             logger.debug("Custom models are enabled, adding them to the list of models to pop")

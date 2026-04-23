@@ -969,8 +969,8 @@ class TestApiJobPopQueueGate:
 
     The gate must:
     - Stop popping when the number of not-yet-started jobs >= queue_size
-    - Also stop when total pending jobs >= max_concurrent_inference_processes
-    - Allow popping while there is still room in the prefetch queue AND thread capacity
+    - Also stop when total pending jobs >= max_inference_processes (max_threads + queue_size)
+    - Allow popping while there is still room in the prefetch queue AND total process capacity
     """
 
     def _make_manager(
@@ -992,6 +992,7 @@ class TestApiJobPopQueueGate:
 
         mock_manager.bridge_data.queue_size = queue_size
         mock_manager.max_concurrent_inference_processes = max_concurrent
+        mock_manager.max_inference_processes = max_concurrent + queue_size
 
         # Build minimal job lists - in_progress jobs are a prefix of pending_jobs
         # so that len() checks reflect reality.
@@ -1029,11 +1030,11 @@ class TestApiJobPopQueueGate:
         # Gate returned before reaching "if self.horde_client_session is None"
         sentinel.assert_not_called()
 
-    def test_gate_stops_when_pending_meets_max_concurrent(self) -> None:
-        """Pop gate returns early when total pending jobs >= max_concurrent_inference_processes."""
-        # 2 pending, 2 in-progress → 0 queued; queue_size=5 → first condition passes.
-        # max_concurrent=2, total pending=2 → second condition fires.
-        mock_manager = self._make_manager(queue_size=5, max_concurrent=2, jobs_pending=2, jobs_in_progress=2)
+    def test_gate_stops_when_pending_meets_max_inference(self) -> None:
+        """Pop gate returns early when total pending jobs >= max_inference_processes (max_threads + queue_size)."""
+        # 5 pending, 5 in-progress → 0 queued; queue_size=3 → first condition passes.
+        # max_inference_processes = max_concurrent(2) + queue_size(3) = 5; total pending=5 → second condition fires.
+        mock_manager = self._make_manager(queue_size=3, max_concurrent=2, jobs_pending=5, jobs_in_progress=5)
         sentinel = mock_manager.horde_client_session
 
         self._run(mock_manager)
@@ -1072,4 +1073,155 @@ class TestApiJobPopQueueGate:
 
         # Should not return from the gate; reaching here means gate correctly let the pop through
         self._run(mock_manager)
+
+
+class TestApiJobPopPerModelFilterRemoved:
+    """Integration tests verifying that the per-model job filter has been removed.
+
+    Previously, any model that already had >= 2 pending jobs was excluded from the
+    pop request. This meant a single-model setup with queue_size > 1 could never fill
+    the queue past 2 jobs. With the filter removed, the only capacity gate is the total
+    pending count vs. max_inference_processes (max_threads + queue_size).
+    """
+
+    @staticmethod
+    def _make_no_jobs_response() -> MagicMock:
+        """Return a mock API response indicating no job is currently available."""
+        r = MagicMock()
+        r.id_ = None
+        r.messages = None
+        r.skipped = MagicMock()
+        r.skipped.model_dump.return_value = {}
+        r.skipped.model_extra = None
+        return r
+
+    def _make_manager(
+        self,
+        model_name: str,
+        models_to_load: list[str],
+        jobs_pending: int,
+        jobs_in_progress: int,
+        queue_size: int,
+        max_concurrent: int,
+    ) -> MagicMock:
+        """Build a fully-wired mock manager that passes all gates and reaches the API call.
+
+        All jobs are assigned to *model_name*. The API response is pre-configured as
+        "no job available" (id_ = None) so no further job-processing mocks are needed.
+        """
+        mock_manager = MagicMock()
+        mock_manager._shutting_down = False
+        mock_manager._too_many_consecutive_failed_jobs = False
+        mock_manager._consecutive_failed_jobs = 0
+        mock_manager._consecutive_pop_failures = 0
+        mock_manager._consecutive_pop_failure_warn_threshold = 5
+        mock_manager._last_pop_maintenance_mode = False
+        mock_manager._replaced_due_to_maintenance = False
+
+        mock_manager.bridge_data.queue_size = queue_size
+        mock_manager.max_concurrent_inference_processes = max_concurrent
+        mock_manager.max_inference_processes = max_concurrent + queue_size
+
+        # Build jobs – all sharing the same model name so the old filter would have triggered.
+        pending_jobs = [MagicMock() for _ in range(jobs_pending)]
+        for job in pending_jobs:
+            job.model = model_name
+        # jobs_in_progress is intentionally a subset of jobs_pending_inference: in the real
+        # manager, in-progress jobs remain in the pending list while being actively processed.
+        mock_manager.jobs_pending_inference = pending_jobs
+        mock_manager.jobs_in_progress = pending_jobs[:jobs_in_progress]
+
+        # Intermediate guards
+        mock_manager._process_map.get_first_available_safety_process.return_value = MagicMock()
+        mock_manager._process_map.get_first_available_inference_process.return_value = MagicMock()
+        mock_manager.bridge_data.image_models_to_load = models_to_load
+        mock_manager.should_wait_for_pending_megapixelsteps.return_value = False
+        mock_manager._triggered_max_pending_megapixelsteps = False
+        mock_manager._last_job_pop_time = 0.0
+        mock_manager._job_pop_frequency = 0.0
+        mock_manager._error_job_pop_frequency = 30.0
+        mock_manager._default_job_pop_frequency = 4.0
+        mock_manager._process_map.values.return_value = []
+        mock_manager.bridge_data.horde_model_stickiness = 0
+        mock_manager.bridge_data.custom_models = None
+
+        # Idle-timer state
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._last_pop_no_jobs_available_time = 0.0
+        mock_manager._time_spent_no_jobs_available = 0.0
+
+        # API request attributes
+        mock_manager.bridge_data.api_key = "0" * 22
+        mock_manager.bridge_data.dreamer_worker_name = "test_worker"
+        mock_manager.bridge_data.blacklist = []
+        mock_manager.bridge_data.nsfw = False
+        mock_manager.bridge_data.max_power = 8
+        mock_manager.bridge_data.require_upfront_kudos = False
+        mock_manager.bridge_data.allow_img2img = True
+        mock_manager.bridge_data.allow_inpainting = True
+        mock_manager.bridge_data.allow_unsafe_ip = False
+        mock_manager.bridge_data.allow_post_processing = True
+        mock_manager.bridge_data.allow_controlnet = True
+        mock_manager.bridge_data.allow_sdxl_controlnet = False
+        mock_manager.bridge_data.extra_slow_worker = False
+        mock_manager.bridge_data.limit_max_steps = False
+        mock_manager.bridge_data.allow_lora = True
+        mock_manager.bridge_data.max_batch = 1
+
+        mock_manager.horde_client_session.submit_request = AsyncMock(
+            return_value=self._make_no_jobs_response(),
+        )
+
+        return mock_manager
+
+    @staticmethod
+    def _run(mock_manager: MagicMock) -> None:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        bound = HordeWorkerProcessManager.api_job_pop.__get__(mock_manager, HordeWorkerProcessManager)
+        asyncio.run(bound())
+
+    def test_single_model_two_pending_still_pops(self) -> None:
+        """A single model with 2 pending jobs must not be excluded from the pop request.
+
+        The old per-model filter used ``count >= 2``, which removed the only model from
+        the request set once two jobs were already pending. This caused the queue to
+        silently stall at 2 jobs regardless of queue_size.  With the filter removed, the
+        API pop must still be attempted.
+        """
+        mock_manager = self._make_manager(
+            model_name="stable_diffusion",
+            models_to_load=["stable_diffusion"],
+            jobs_pending=2,
+            jobs_in_progress=2,
+            queue_size=3,
+            max_concurrent=1,
+        )
+
+        self._run(mock_manager)
+
+        mock_manager.horde_client_session.submit_request.assert_called_once()
+        pop_request = mock_manager.horde_client_session.submit_request.call_args[0][0]
+        assert "stable_diffusion" in pop_request.models
+
+    def test_single_model_queue_fills_to_capacity(self) -> None:
+        """The queue can hold max_inference_processes - 1 pending jobs with a single model.
+
+        queue_size=3, max_concurrent=1 → max_inference_processes=4.
+        3 pending (1 in-progress + 2 pre-fetched) is within capacity; the API must be called.
+        """
+        mock_manager = self._make_manager(
+            model_name="stable_diffusion",
+            models_to_load=["stable_diffusion"],
+            jobs_pending=3,
+            jobs_in_progress=1,
+            queue_size=3,
+            max_concurrent=1,
+        )
+
+        self._run(mock_manager)
+
+        mock_manager.horde_client_session.submit_request.assert_called_once()
+        pop_request = mock_manager.horde_client_session.submit_request.call_args[0][0]
+        assert "stable_diffusion" in pop_request.models
 
