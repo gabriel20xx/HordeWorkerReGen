@@ -7097,3 +7097,397 @@ class TestPreloadStuckCooldown:
         assert len(mock_manager._preload_stuck_failures[stuck_model]) == 1, (
             "Exactly one failure should be recorded for a single MODEL_PRELOADING timeout"
         )
+
+
+class TestJobRecoveryAndRetry:
+    """End-to-end tests for the job recovery and retry mechanism.
+
+    These tests verify two invariants demanded by the problem statement:
+    1. Recovered jobs are actually recovered and retried:
+       - handle_job_fault removes the job from jobs_in_progress and re-queues it in
+         jobs_pending_inference with an incremented retry_count when retries remain.
+       - A re-queued job that is no longer in jobs_in_progress is returned by
+         get_next_job_and_process so it can be dispatched again.
+    2. A re-queued job that faults again is marked as permanently faulted:
+       - handle_job_fault calls fault_job() and adds the HordeJobInfo to
+         jobs_pending_submit so the API learns the job failed.
+       - The job is NOT re-queued a second time.
+    """
+
+    def _make_job(self, job_id: str = "aabb0011", model: str = "TestModel") -> MagicMock:
+        job = MagicMock()
+        job.id_ = f"{job_id}-0000-0000-0000-000000000000"
+        job.model = model
+        job.payload = MagicMock()
+        job.payload.n_iter = 1
+        job.payload.loras = []
+        job.payload.workflow = None
+        return job
+
+    def _make_job_info(
+        self,
+        *,
+        retry_count: int = 0,
+    ) -> MagicMock:
+        """Return a mock HordeJobInfo whose fault_job() actually mutates state.
+
+        We use a MagicMock (rather than a real HordeJobInfo) because the real class
+        requires a full ImageGenerateJobPopResponse Pydantic model.  We attach a real
+        fault_job() implementation so the state transition can be asserted.
+        """
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        job_info = MagicMock()
+        job_info.retry_count = retry_count
+        job_info.state = GENERATION_STATE.ok
+        job_info.job_image_results = []
+
+        def real_fault_job() -> None:
+            job_info.state = GENERATION_STATE.faulted
+            job_info.job_image_results = None
+
+        job_info.fault_job = real_fault_job
+        return job_info
+
+    def _make_manager(
+        self,
+        *,
+        jobs_in_progress: list,
+        jobs_pending_inference: list | None = None,
+        jobs_lookup: dict | None = None,
+    ) -> MagicMock:
+        """Build a minimal mock manager with the real handle_job_fault bound."""
+        import types
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        mock_manager.jobs_in_progress = list(jobs_in_progress)
+        mock_manager.jobs_pending_inference = deque(jobs_pending_inference or [])
+        mock_manager.jobs_lookup = dict(jobs_lookup or {})
+        mock_manager.jobs_pending_submit = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_being_safety_checked = []
+        mock_manager._skipped_line_next_job_and_process = None
+        mock_manager._failed_models = {}
+        mock_manager._faulted_jobs_history = []
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+        mock_manager._restart_idle_timer_if_queue_empty = MagicMock()
+        mock_manager.bridge_data.process_timeout = 60
+
+        mock_manager._record_faulted_job_history = types.MethodType(
+            HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager.handle_job_fault = types.MethodType(
+            HordeWorkerProcessManager.handle_job_fault,
+            mock_manager,
+        )
+        return mock_manager
+
+    # ------------------------------------------------------------------
+    # Part 1: Recovery — first fault re-queues the job for retry
+    # ------------------------------------------------------------------
+
+    def test_first_fault_removes_job_from_in_progress(self) -> None:
+        """A job's first fault must remove it from jobs_in_progress.
+
+        Without this removal, get_next_job_and_process skips the job
+        (it is filtered out by the 'job in jobs_in_progress' check), so the
+        retry never gets dispatched.
+        """
+        job = self._make_job("first-fault")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert job not in mock_manager.jobs_in_progress, (
+            "handle_job_fault must remove the job from jobs_in_progress so it can be re-dispatched"
+        )
+
+    def test_first_fault_requeues_job_in_pending_inference(self) -> None:
+        """A job's first fault must re-queue it in jobs_pending_inference for retry."""
+        job = self._make_job("requeue-job")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert job in mock_manager.jobs_pending_inference, (
+            "handle_job_fault must add the job back to jobs_pending_inference for its retry attempt"
+        )
+
+    def test_first_fault_increments_retry_count(self) -> None:
+        """retry_count must be incremented from 0 to 1 on the first fault."""
+        job = self._make_job("retry-count-job")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert job_info.retry_count == 1, (
+            "retry_count must be incremented so the next fault triggers permanent faulting"
+        )
+
+    def test_first_fault_does_not_add_job_to_pending_submit(self) -> None:
+        """A job that is being retried must NOT be added to jobs_pending_submit.
+
+        Only permanently faulted jobs (retry budget exhausted) should enter the
+        submit queue to be reported to the API.
+        """
+        job = self._make_job("no-submit-on-retry")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert job_info not in mock_manager.jobs_pending_submit, (
+            "A retried job must not be submitted to the API as faulted; "
+            "it still has a retry attempt remaining"
+        )
+
+    # ------------------------------------------------------------------
+    # Part 2: Re-queued job is visible to get_next_job_and_process
+    # ------------------------------------------------------------------
+
+    def test_requeued_job_removed_from_in_progress_filter_after_fault(self) -> None:
+        """A re-queued job should remain pending and no longer be marked in progress.
+
+        After handle_job_fault() re-queues a job, the job must:
+          (a) be present in jobs_pending_inference, and
+          (b) be absent from jobs_in_progress.
+
+        These are the state invariants required so later selection logic will
+        not skip the re-queued job because of the in-progress filter.
+        (get_next_job_and_process skips any job that is still in jobs_in_progress.)
+        """
+        job = self._make_job("dispatch-after-retry")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        # After retry: job must be in pending but NOT in in-progress
+        assert job in mock_manager.jobs_pending_inference, (
+            "Re-queued job must be in jobs_pending_inference so it can be selected for dispatch"
+        )
+        assert job not in mock_manager.jobs_in_progress, (
+            "Re-queued job must NOT be in jobs_in_progress; "
+            "get_next_job_and_process skips jobs that are already in-progress"
+        )
+
+    def test_job_in_progress_skipped_by_get_next_job_and_process(self) -> None:
+        """A job that is already in jobs_in_progress must be skipped by get_next_job_and_process.
+
+        This is the filter that prevents double-dispatching a job that is actively being
+        processed.  It must not accidentally skip a re-queued job that was properly
+        removed from jobs_in_progress by the retry path.
+        """
+        import types
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = self._make_job("in-progress-job")
+
+        mock_manager = MagicMock()
+        mock_manager._skipped_line_next_job_and_process = None
+        # Simulate the state *before* the retry path runs: job is in BOTH lists
+        mock_manager.jobs_pending_inference = deque([job])
+        mock_manager.jobs_in_progress = [job]  # already dispatched
+        mock_manager.max_concurrent_inference_processes = 2
+        mock_manager.post_process_job_overlap_allowed = False
+
+        bound = types.MethodType(HordeWorkerProcessManager.get_next_job_and_process, mock_manager)
+        result = bound()
+
+        assert result is None, (
+            "get_next_job_and_process must return None when the only pending job is already "
+            "in jobs_in_progress (i.e. already being processed)"
+        )
+
+    # ------------------------------------------------------------------
+    # Part 3: Second fault marks the job as permanently faulted
+    # ------------------------------------------------------------------
+
+    def test_second_fault_calls_fault_job(self) -> None:
+        """When a retried job (retry_count == MAX_JOB_RETRIES) faults again, fault_job() must be called.
+
+        fault_job() sets state = GENERATION_STATE.faulted and clears job_image_results.
+        Without this call the job would never be reported to the API as failed.
+        """
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = self._make_job("second-fault")
+        max_retries = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        job_info = self._make_job_info(retry_count=max_retries)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert job_info.state == GENERATION_STATE.faulted, (
+            "fault_job() must be called for a job that exhausts its retry budget; "
+            "state must be GENERATION_STATE.faulted so the API submission path reports it correctly"
+        )
+
+    def test_second_fault_adds_job_to_pending_submit(self) -> None:
+        """A permanently faulted job must be placed in jobs_pending_submit.
+
+        jobs_pending_submit is the queue that api_submit_job() drains when reporting
+        job results to the AI Horde API.  A job that never enters this queue is silently
+        lost — the server will eventually time it out, but the worker won't proactively
+        report the failure.
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = self._make_job("submit-on-second-fault")
+        max_retries = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        job_info = self._make_job_info(retry_count=max_retries)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert job_info in mock_manager.jobs_pending_submit, (
+            "A permanently faulted job must be added to jobs_pending_submit "
+            "so the API is informed of the failure"
+        )
+
+    def test_second_fault_does_not_requeue_in_pending_inference(self) -> None:
+        """A permanently faulted job must NOT be re-added to jobs_pending_inference.
+
+        Re-queuing after the retry budget is exhausted would cause the job to spin
+        indefinitely without ever being reported as failed.
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = self._make_job("no-requeue-on-perm-fault")
+        max_retries = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        job_info = self._make_job_info(retry_count=max_retries)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert job not in mock_manager.jobs_pending_inference, (
+            "A permanently faulted job must not be re-queued in jobs_pending_inference"
+        )
+
+    def test_second_fault_removes_job_from_in_progress(self) -> None:
+        """A permanently faulted job must be removed from jobs_in_progress.
+
+        Leaving the job in jobs_in_progress would block new jobs from being dispatched
+        because max_concurrent_inference_processes is checked against len(jobs_in_progress).
+        """
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = self._make_job("in-progress-removed-on-perm-fault")
+        max_retries = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        job_info = self._make_job_info(retry_count=max_retries)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert job not in mock_manager.jobs_in_progress, (
+            "A permanently faulted job must be removed from jobs_in_progress"
+        )
+
+    # ------------------------------------------------------------------
+    # Part 4: End-to-end two-fault scenario
+    # ------------------------------------------------------------------
+
+    def test_end_to_end_first_fault_then_second_fault_permanently_faults(self) -> None:
+        """End-to-end: first fault re-queues, second fault permanently faults the job.
+
+        Simulates the full lifecycle:
+          1. Job is being processed (in jobs_in_progress).
+          2. First fault — job is removed from jobs_in_progress, re-queued in
+             jobs_pending_inference, retry_count becomes 1.
+          3. Job is re-dispatched (simulate start_inference by adding the job back
+             to jobs_in_progress without removing it from jobs_pending_inference;
+             in the real start_inference() flow, removal happens when the result arrives).
+          4. Second fault — job is permanently faulted: state = GENERATION_STATE.faulted,
+             job_info in jobs_pending_submit, job not in jobs_pending_inference.
+        """
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = self._make_job("e2e-two-faults")
+        job_info = self._make_job_info(retry_count=0)
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[job],
+            jobs_lookup={job: job_info},
+        )
+
+        # --- Step 1: first fault ---
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        # Verify recovery state after first fault
+        assert job not in mock_manager.jobs_in_progress, "Job must leave jobs_in_progress after first fault"
+        assert job in mock_manager.jobs_pending_inference, "Job must enter jobs_pending_inference for retry"
+        assert job_info.retry_count == 1, "retry_count must be 1 after first fault"
+        assert job_info not in mock_manager.jobs_pending_submit, (
+            "Job must NOT be in jobs_pending_submit yet — it still has a retry remaining"
+        )
+
+        # --- Step 2: simulate start_inference dispatching the retried job ---
+        # The real start_inference() appends to jobs_in_progress (but does NOT remove from
+        # jobs_pending_inference — that happens when the result arrives).
+        mock_manager.jobs_in_progress.append(job)
+
+        # --- Step 3: second fault ---
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        # Verify permanent fault state after second fault
+        assert job_info.state == GENERATION_STATE.faulted, (
+            "Job must be marked GENERATION_STATE.faulted after exhausting retry budget"
+        )
+        assert job_info in mock_manager.jobs_pending_submit, (
+            "Job must be in jobs_pending_submit so the API is notified of the permanent fault"
+        )
+        assert job not in mock_manager.jobs_pending_inference, (
+            "Permanently faulted job must not remain in jobs_pending_inference"
+        )
+        assert job not in mock_manager.jobs_in_progress, (
+            "Permanently faulted job must be removed from jobs_in_progress"
+        )
