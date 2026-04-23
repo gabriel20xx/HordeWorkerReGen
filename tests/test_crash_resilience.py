@@ -7270,18 +7270,16 @@ class TestJobRecoveryAndRetry:
     # Part 2: Re-queued job is visible to get_next_job_and_process
     # ------------------------------------------------------------------
 
-    def test_requeued_job_returned_by_get_next_job_and_process(self) -> None:
-        """get_next_job_and_process must return a re-queued job that is not in jobs_in_progress.
+    def test_requeued_job_removed_from_in_progress_filter_after_fault(self) -> None:
+        """A re-queued job should remain pending and no longer be marked in progress.
 
-        After handle_job_fault re-queues a job, start_inference() calls
-        get_next_job_and_process() to find the next job to dispatch.  The
-        re-queued job must not be skipped by the 'job in jobs_in_progress' filter.
+        After handle_job_fault() re-queues a job, the job must:
+          (a) be present in jobs_pending_inference, and
+          (b) be absent from jobs_in_progress.
 
-        This test verifies the necessary state invariant by checking:
-          (a) the re-queued job is present in jobs_pending_inference, and
-          (b) the re-queued job is absent from jobs_in_progress.
-        Given these two conditions, get_next_job_and_process's filter
-        ``if job in jobs_in_progress: continue`` will not skip the job.
+        These are the state invariants required so later selection logic will
+        not skip the re-queued job because of the in-progress filter.
+        (get_next_job_and_process skips any job that is still in jobs_in_progress.)
         """
         job = self._make_job("dispatch-after-retry")
         job_info = self._make_job_info(retry_count=0)
@@ -7444,9 +7442,9 @@ class TestJobRecoveryAndRetry:
           1. Job is being processed (in jobs_in_progress).
           2. First fault — job is removed from jobs_in_progress, re-queued in
              jobs_pending_inference, retry_count becomes 1.
-          3. Job is re-dispatched (simulate start_inference by moving job back to
-             jobs_in_progress and removing it from jobs_pending_inference after
-             inference starts — per the real start_inference() behaviour).
+          3. Job is re-dispatched (simulate start_inference by adding the job back
+             to jobs_in_progress without removing it from jobs_pending_inference;
+             in the real start_inference() flow, removal happens when the result arrives).
           4. Second fault — job is permanently faulted: state = GENERATION_STATE.faulted,
              job_info in jobs_pending_submit, job not in jobs_pending_inference.
         """
