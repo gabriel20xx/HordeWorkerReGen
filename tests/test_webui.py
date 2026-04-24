@@ -1048,6 +1048,126 @@ async def test_delete_worker_endpoint() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_webui_errors_grouped_endpoint_basic() -> None:
+    """Test /api/errors/grouped groups identical errors and returns correct counts."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Empty history returns empty groups
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total_groups"] == 0
+        assert data["total_errors"] == 0
+        assert data["groups"] == []
+
+        # Populate with repeated errors
+        errors = ["alpha error", "beta error", "alpha error", "gamma error", "alpha error", "beta error"]
+        webui.update_status(errors_history=errors)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["total_errors"] == 6
+        assert data["total_groups"] == 3
+
+        # Groups must be sorted by count descending
+        messages = [g["message"] for g in data["groups"]]
+        counts = [g["count"] for g in data["groups"]]
+        assert messages[0] == "alpha error"
+        assert counts[0] == 3
+        assert set(messages[1:]) == {"beta error", "gamma error"}
+        assert counts[1] == 2
+        assert counts[2] == 1
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_grouped_endpoint_pagination() -> None:
+    """Test /api/errors/grouped returns paginated groups."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # 15 unique errors (one occurrence each)
+        errors = [f"error type {i}" for i in range(15)]
+        webui.update_status(errors_history=errors)
+
+        # Page 1, page_size=10 → 10 groups
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped?page=1&page_size=10",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total_groups"] == 15
+        assert data["total_pages"] == 2
+        assert len(data["groups"]) == 10
+
+        # Page 2 → 5 groups
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped?page=2&page_size=10",
+        ) as response:
+            assert response.status == 200
+            data2 = await response.json()
+        assert data2["page"] == 2
+        assert len(data2["groups"]) == 5
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_grouped_endpoint_edge_cases() -> None:
+    """Test /api/errors/grouped handles invalid params and out-of-range page."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        webui.update_status(errors_history=["err a", "err b", "err a"])
+
+        # Invalid page falls back to 1
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped?page=abc",
+        ) as response:
+            assert response.status == 200
+            data_inv = await response.json()
+        assert data_inv["page"] == 1
+
+        # Out-of-range page is clamped to total_pages
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped?page=999",
+        ) as response:
+            assert response.status == 200
+            data_clamped = await response.json()
+        assert data_clamped["page"] == data_clamped["total_pages"]
+
+        # page_size is capped at 100
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped?page_size=9999",
+        ) as response:
+            assert response.status == 200
+            data_cap = await response.json()
+        assert data_cap["page_size"] == 100
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     # Run simple tests
     test_webui_creation()
