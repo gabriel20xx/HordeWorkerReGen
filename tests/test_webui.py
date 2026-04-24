@@ -1097,7 +1097,7 @@ async def test_webui_errors_grouped_endpoint_basic() -> None:
 
 @pytest.mark.asyncio
 async def test_webui_errors_grouped_endpoint_normalisation() -> None:
-    """Test /api/errors/grouped groups errors that differ only by UUID/job/process ID."""
+    """Test /api/errors/grouped groups errors that differ only by UUID/job/process/hex ID."""
     webui = WorkerWebUI(port=0)
 
     try:
@@ -1109,12 +1109,16 @@ async def test_webui_errors_grouped_endpoint_normalisation() -> None:
         uuid2 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         pid1 = "98765"
         pid2 = "12345"
+        hex1 = "0xDEADBEEF"
+        hex2 = "0x1234ABCD"
 
         errors = [
             f"Job {uuid1} failed: connection timeout",
             f"Job {uuid2} failed: connection timeout",
             f"Process {pid1} crashed unexpectedly",
             f"Process {pid2} crashed unexpectedly",
+            f"Memory access violation at address {hex1}",
+            f"Memory access violation at address {hex2}",
         ]
         webui.update_status(errors_history=errors)
 
@@ -1124,11 +1128,15 @@ async def test_webui_errors_grouped_endpoint_normalisation() -> None:
             assert response.status == 200
             data = await response.json()
 
-        # Both UUID errors normalise to the same key → 1 group with count 2
-        # Both PID errors normalise to the same key → 1 group with count 2
-        assert data["total_groups"] == 2
+        # Each pair normalises to the same key → 3 groups, each with count 2
+        assert data["total_groups"] == 3
         counts = {g["count"] for g in data["groups"]}
         assert counts == {2}
+        messages = [g["message"] for g in data["groups"]]
+        # Each representative message must contain one of the original variable tokens
+        assert any(uuid1 in m or uuid2 in m for m in messages), "UUID group representative missing"
+        assert any(pid1 in m or pid2 in m for m in messages), "PID group representative missing"
+        assert any(hex1 in m or hex2 in m for m in messages), "hex group representative missing"
     finally:
         await webui.stop()
 
