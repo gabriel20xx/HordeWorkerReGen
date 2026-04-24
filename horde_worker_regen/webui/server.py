@@ -336,7 +336,7 @@ class WorkerWebUI:
         .error-item:last-child { margin-bottom: 0; }
         .error-group { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; margin-bottom: 5px; overflow: hidden; }
         .error-group:last-child { margin-bottom: 0; }
-        .error-group-header { display: flex; align-items: flex-start; gap: 8px; padding: 9px 13px; cursor: pointer; user-select: none; }
+        .error-group-header { display: flex; align-items: flex-start; gap: 8px; padding: 9px 13px; cursor: pointer; user-select: none; width: 100%; background: transparent; border: none; text-align: left; font: inherit; color: inherit; }
         .error-group-header:hover { background: rgba(239,68,68,0.06); }
         .error-group-msg { font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; flex: 1; }
         .error-count-badge { flex-shrink: 0; background: var(--error); color: #fff; font-size: 0.7rem; font-weight: 700; border-radius: 10px; padding: 1px 7px; line-height: 1.6; margin-top: 1px; }
@@ -346,6 +346,7 @@ class WorkerWebUI:
         .error-group.open .error-group-body { display: block; }
         .error-occurrence { font-family: 'Courier New', monospace; font-size: 0.75rem; color: #991b1b; padding: 3px 0; border-bottom: 1px solid #fecaca; white-space: pre-wrap; word-break: break-word; }
         .error-occurrence:last-child { border-bottom: none; }
+        .error-occurrence-more { font-size: 0.72rem; color: #9ca3af; padding: 3px 0; font-style: italic; }
         .errors-view-toggle { display: flex; gap: 4px; }
         .errors-view-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 3px 10px; font-size: 0.75rem; cursor: pointer; color: var(--text-muted); transition: background 0.15s, color 0.15s, border-color 0.15s; }
         .errors-view-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -1070,29 +1071,54 @@ class WorkerWebUI:
                 ed.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#10003;</span>No errors</div>';
                 pag.style.display = 'none'; cnt.textContent = '0'; return;
             }
+            const MAX_OCCURRENCES_SHOWN = 50;
             ed.innerHTML = errorsGroupedData.map((grp, idx) => {
                 const groupId = 'errgrp-' + errorsGroupedCurrentPage + '-' + idx;
-                const occurrences = Array.from({length: grp.count}, () =>
-                    '<div class="error-occurrence">'+escapeHtml(grp.message)+'</div>'
-                ).join('');
                 return '<div class="error-group" id="'+groupId+'">'
-                    + '<div class="error-group-header" onclick="toggleErrorGroup(\''+groupId+'\')">'
+                    + '<button class="error-group-header" onclick="toggleErrorGroup(\''+groupId+'\')" aria-expanded="false">'
                     + '<span class="error-group-toggle">&#9658;</span>'
                     + '<span class="error-group-msg">'+escapeHtml(grp.message)+'</span>'
                     + '<span class="error-count-badge">&times;'+grp.count+'</span>'
-                    + '</div>'
-                    + '<div class="error-group-body">'+occurrences+'</div>'
+                    + '</button>'
+                    + '<div class="error-group-body"></div>'
                     + '</div>';
             }).join('');
             pi.textContent = 'Page '+errorsGroupedCurrentPage+' of '+errorsGroupedTotalPages;
             pb.disabled = errorsGroupedCurrentPage <= 1;
             nb.disabled = errorsGroupedCurrentPage >= errorsGroupedTotalPages;
             pag.style.display = 'flex'; cnt.textContent = errorsTotal;
+            // Store group data on the DOM elements for lazy rendering
+            errorsGroupedData.forEach((grp, idx) => {
+                const groupId = 'errgrp-' + errorsGroupedCurrentPage + '-' + idx;
+                const el = document.getElementById(groupId);
+                if (el) el._grpData = grp;
+            });
         }
 
         function toggleErrorGroup(groupId) {
             const el = document.getElementById(groupId);
-            if (el) el.classList.toggle('open');
+            if (!el) return;
+            const isOpen = el.classList.toggle('open');
+            const btn = el.querySelector('.error-group-header');
+            if (btn) btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            // Lazy-render occurrences on first expand
+            if (isOpen) {
+                const body = el.querySelector('.error-group-body');
+                if (body && !body._rendered && el._grpData) {
+                    const MAX_OCCURRENCES_SHOWN = 50;
+                    const grp = el._grpData;
+                    const shown = Math.min(grp.count, MAX_OCCURRENCES_SHOWN);
+                    let html = '';
+                    for (let i = 0; i < shown; i++) {
+                        html += '<div class="error-occurrence">'+escapeHtml(grp.message)+'</div>';
+                    }
+                    if (grp.count > MAX_OCCURRENCES_SHOWN) {
+                        html += '<div class="error-occurrence-more">&hellip; and '+(grp.count - MAX_OCCURRENCES_SHOWN)+' more occurrence(s)</div>';
+                    }
+                    body.innerHTML = html;
+                    body._rendered = true;
+                }
+            }
         }
 
         function fetchErrorsPage(page) {
@@ -1995,7 +2021,7 @@ class WorkerWebUI:
         except ValueError:
             page_size = 10
         errors = self.status_data["errors_history"]
-        # Count occurrences of each unique error message while preserving insertion order
+        # Count occurrences of each unique error message
         counts: dict[str, int] = {}
         for msg in errors:
             counts[msg] = counts.get(msg, 0) + 1
