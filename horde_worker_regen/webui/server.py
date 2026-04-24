@@ -106,6 +106,7 @@ class WorkerWebUI:
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/api/status", self._handle_status)
         self.app.router.add_get("/api/errors", self._handle_errors)
+        self.app.router.add_get("/api/errors/grouped", self._handle_errors_grouped)
         self.app.router.add_get("/api/last_image", self._handle_last_image)
         self.app.router.add_get("/api/gallery", self._handle_gallery)
         self.app.router.add_get("/api/gallery/image", self._handle_gallery_image)
@@ -333,6 +334,22 @@ class WorkerWebUI:
         .errors-list { display: flex; flex-direction: column; max-height: 400px; overflow-y: auto; }
         .error-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; padding: 9px 13px; font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; margin-bottom: 5px; }
         .error-item:last-child { margin-bottom: 0; }
+        .error-group { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; margin-bottom: 5px; overflow: hidden; }
+        .error-group:last-child { margin-bottom: 0; }
+        .error-group-header { display: flex; align-items: flex-start; gap: 8px; padding: 9px 13px; cursor: pointer; user-select: none; }
+        .error-group-header:hover { background: rgba(239,68,68,0.06); }
+        .error-group-msg { font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; flex: 1; }
+        .error-count-badge { flex-shrink: 0; background: var(--error); color: #fff; font-size: 0.7rem; font-weight: 700; border-radius: 10px; padding: 1px 7px; line-height: 1.6; margin-top: 1px; }
+        .error-group-toggle { flex-shrink: 0; font-size: 0.7rem; color: #9ca3af; margin-top: 2px; transition: transform 0.15s; }
+        .error-group.open .error-group-toggle { transform: rotate(90deg); }
+        .error-group-body { display: none; border-top: 1px solid #fecaca; padding: 6px 13px; }
+        .error-group.open .error-group-body { display: block; }
+        .error-occurrence { font-family: 'Courier New', monospace; font-size: 0.75rem; color: #991b1b; padding: 3px 0; border-bottom: 1px solid #fecaca; white-space: pre-wrap; word-break: break-word; }
+        .error-occurrence:last-child { border-bottom: none; }
+        .errors-view-toggle { display: flex; gap: 4px; }
+        .errors-view-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 3px 10px; font-size: 0.75rem; cursor: pointer; color: var(--text-muted); transition: background 0.15s, color 0.15s, border-color 0.15s; }
+        .errors-view-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .errors-view-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
 
         .pagination-controls { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
         .pagination-controls button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
@@ -414,6 +431,11 @@ class WorkerWebUI:
         [data-theme="dark"] .image-grid-item { background: #151e2e; }
         [data-theme="dark"] .page-size-select { color: #cbd5e1; }
         [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
+        [data-theme="dark"] .error-group { background: #1a1010; border-color: #7f1d1d; }
+        [data-theme="dark"] .error-group-msg { color: #fca5a5; }
+        [data-theme="dark"] .error-group-body { border-top-color: #7f1d1d; }
+        [data-theme="dark"] .error-occurrence { color: #fca5a5; border-bottom-color: #7f1d1d; }
+        [data-theme="dark"] .error-group-header:hover { background: rgba(239,68,68,0.08); }
 
         /* ---- Worker cards (User page) ---- */
         .worker-card { background: var(--card-bg); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
@@ -627,7 +649,7 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#10060; Errors</span><span class="section-count" id="errors-count">0</span></div>
+                        <div class="section-header"><span class="section-title">&#10060; Errors</span><span class="section-count" id="errors-count">0</span><div class="errors-view-toggle" style="margin-left:auto;"><button class="errors-view-btn active" id="errors-btn-grouped" onclick="setErrorsView('grouped')">Grouped</button><button class="errors-view-btn" id="errors-btn-all" onclick="setErrorsView('all')">All</button></div></div>
                         <div class="card">
                             <div id="errors-history" class="errors-list"><div class="empty-state"><span class="empty-state-icon">&#10003;</span>No errors</div></div>
                             <div class="pagination-controls" id="errors-pagination" style="display:none;">
@@ -1004,6 +1026,75 @@ class WorkerWebUI:
         const ERRORS_PAGE_SIZE = 10;
         let errorsCurrentPage = 1, errorsTotal = 0, errorsTotalPages = 1, errorsPageData = [];
         let _errorsAbortController = null;
+        let errorsViewMode = 'grouped'; // 'grouped' or 'all'
+        // Grouped-view state
+        let errorsGroupedCurrentPage = 1, errorsGroupedTotalPages = 1, errorsGroupedData = [];
+        let _errorsGroupedAbortController = null;
+
+        function setErrorsView(mode) {
+            errorsViewMode = mode;
+            document.getElementById('errors-btn-grouped').classList.toggle('active', mode === 'grouped');
+            document.getElementById('errors-btn-all').classList.toggle('active', mode === 'all');
+            if (mode === 'grouped') {
+                errorsGroupedCurrentPage = 1;
+                fetchErrorsGroupedPage(1);
+            } else {
+                errorsCurrentPage = 1;
+                fetchErrorsPage(1);
+            }
+        }
+
+        function fetchErrorsGroupedPage(page) {
+            if (_errorsGroupedAbortController) _errorsGroupedAbortController.abort();
+            _errorsGroupedAbortController = new AbortController();
+            const ctrl = _errorsGroupedAbortController;
+            fetch('/api/errors/grouped?page='+page+'&page_size='+ERRORS_PAGE_SIZE, { signal: ctrl.signal })
+                .then(r => { if (!r.ok) throw new Error('HTTP error! status: '+r.status); return r.json(); })
+                .then(data => {
+                    if (ctrl !== _errorsGroupedAbortController) return;
+                    _errorsGroupedAbortController = null;
+                    errorsGroupedCurrentPage = data.page;
+                    errorsGroupedTotalPages = data.total_pages;
+                    errorsGroupedData = data.groups || [];
+                    errorsTotal = data.total_errors;
+                    renderErrorsGroupedPage();
+                })
+                .catch(err => { if (err.name !== 'AbortError') console.error('Failed to fetch /api/errors/grouped:', err); });
+        }
+
+        function renderErrorsGroupedPage() {
+            const ed = document.getElementById('errors-history'), pi = document.getElementById('errors-page-info'),
+                  pb = document.getElementById('errors-prev'), nb = document.getElementById('errors-next'),
+                  pag = document.getElementById('errors-pagination'), cnt = document.getElementById('errors-count');
+            if (errorsTotal === 0) {
+                ed.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#10003;</span>No errors</div>';
+                pag.style.display = 'none'; cnt.textContent = '0'; return;
+            }
+            ed.innerHTML = errorsGroupedData.map((grp, idx) => {
+                const groupId = 'errgrp-' + errorsGroupedCurrentPage + '-' + idx;
+                const occurrences = Array.from({length: grp.count}, () =>
+                    '<div class="error-occurrence">'+escapeHtml(grp.message)+'</div>'
+                ).join('');
+                return '<div class="error-group" id="'+groupId+'">'
+                    + '<div class="error-group-header" onclick="toggleErrorGroup(\''+groupId+'\')">'
+                    + '<span class="error-group-toggle">&#9658;</span>'
+                    + '<span class="error-group-msg">'+escapeHtml(grp.message)+'</span>'
+                    + '<span class="error-count-badge">\xd7'+grp.count+'</span>'
+                    + '</div>'
+                    + '<div class="error-group-body">'+occurrences+'</div>'
+                    + '</div>';
+            }).join('');
+            pi.textContent = 'Page '+errorsGroupedCurrentPage+' of '+errorsGroupedTotalPages;
+            pb.disabled = errorsGroupedCurrentPage <= 1;
+            nb.disabled = errorsGroupedCurrentPage >= errorsGroupedTotalPages;
+            pag.style.display = 'flex'; cnt.textContent = errorsTotal;
+        }
+
+        function toggleErrorGroup(groupId) {
+            const el = document.getElementById(groupId);
+            if (el) el.classList.toggle('open');
+        }
+
         function fetchErrorsPage(page) {
             if (_errorsAbortController) _errorsAbortController.abort();
             _errorsAbortController = new AbortController();
@@ -1035,8 +1126,13 @@ class WorkerWebUI:
             pag.style.display = 'flex'; cnt.textContent = errorsTotal;
         }
         function errorsChangePage(delta) {
-            const newPage = Math.min(Math.max(1, errorsCurrentPage + delta), errorsTotalPages);
-            if (newPage !== errorsCurrentPage) fetchErrorsPage(newPage);
+            if (errorsViewMode === 'grouped') {
+                const newPage = Math.min(Math.max(1, errorsGroupedCurrentPage + delta), errorsGroupedTotalPages);
+                if (newPage !== errorsGroupedCurrentPage) fetchErrorsGroupedPage(newPage);
+            } else {
+                const newPage = Math.min(Math.max(1, errorsCurrentPage + delta), errorsTotalPages);
+                if (newPage !== errorsCurrentPage) fetchErrorsPage(newPage);
+            }
         }
         const GALLERY_DEFAULT_PAGE_SIZE = 96;
         let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
@@ -1662,8 +1758,14 @@ class WorkerWebUI:
                     }
                     const newErrorsCount = data.errors_count || 0;
                     if (newErrorsCount !== errorsTotal) {
-                        if (newErrorsCount === 0) { errorsCurrentPage = 1; errorsTotal = 0; errorsTotalPages = 1; errorsPageData = []; renderErrorsPage(); }
-                        else fetchErrorsPage(errorsCurrentPage);
+                        if (newErrorsCount === 0) {
+                            errorsCurrentPage = 1; errorsTotal = 0; errorsTotalPages = 1; errorsPageData = [];
+                            errorsGroupedCurrentPage = 1; errorsGroupedTotalPages = 1; errorsGroupedData = [];
+                            if (errorsViewMode === 'grouped') renderErrorsGroupedPage(); else renderErrorsPage();
+                        } else {
+                            if (errorsViewMode === 'grouped') fetchErrorsGroupedPage(errorsGroupedCurrentPage);
+                            else fetchErrorsPage(errorsCurrentPage);
+                        }
                     }
                     const cl = document.getElementById('console-logs');
                     if (!consolePaused) {
@@ -1874,6 +1976,45 @@ class WorkerWebUI:
                 "page_size": page_size,
                 "total_pages": total_pages,
                 "errors": errors[start : start + page_size],
+            },
+        )
+
+    async def _handle_errors_grouped(self, request: web.Request) -> web.Response:
+        """Return errors grouped by message text, sorted by occurrence count descending.
+
+        Query parameters:
+            page: 1-based page number (default: 1)
+            page_size: groups per page (default: 10, max: 100)
+        """
+        try:
+            page = max(1, int(request.rel_url.query.get("page", "1")))
+        except ValueError:
+            page = 1
+        try:
+            page_size = min(100, max(1, int(request.rel_url.query.get("page_size", "10"))))
+        except ValueError:
+            page_size = 10
+        errors = self.status_data["errors_history"]
+        # Count occurrences of each unique error message while preserving insertion order
+        counts: dict[str, int] = {}
+        for msg in errors:
+            counts[msg] = counts.get(msg, 0) + 1
+        # Sort by count descending, then alphabetically for stable ordering
+        groups = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+        total_groups = len(groups)
+        total_errors = len(errors)
+        total_pages = max(1, math.ceil(total_groups / page_size))
+        page = min(page, total_pages)
+        start = (page - 1) * page_size
+        page_groups = [{"message": msg, "count": cnt} for msg, cnt in groups[start : start + page_size]]
+        return web.json_response(
+            {
+                "total_groups": total_groups,
+                "total_errors": total_errors,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "groups": page_groups,
             },
         )
 
