@@ -7491,3 +7491,331 @@ class TestJobRecoveryAndRetry:
         assert job not in mock_manager.jobs_in_progress, (
             "Permanently faulted job must be removed from jobs_in_progress"
         )
+
+
+class TestInferenceFailureCooldown:
+    """Tests for the inference-failure cooldown logic.
+
+    When a model causes enough permanently-faulted jobs within a short window, the
+    worker stops requesting that model from the API until the cooldown expires.
+    """
+
+    def _make_manager(self) -> MagicMock:
+        """Build a minimal mock manager with the real inference-failure cooldown methods bound."""
+        from horde_worker_regen.process_management.process_manager import (
+            HordeWorkerProcessManager,
+        )
+
+        mock_manager = MagicMock()
+        mock_manager._inference_failures = {}
+        mock_manager._INFERENCE_FAILURE_THRESHOLD = (
+            HordeWorkerProcessManager._INFERENCE_FAILURE_THRESHOLD
+        )
+        mock_manager._INFERENCE_FAILURE_WINDOW = (
+            HordeWorkerProcessManager._INFERENCE_FAILURE_WINDOW
+        )
+        mock_manager._INFERENCE_FAILURE_COOLDOWN = HordeWorkerProcessManager._INFERENCE_FAILURE_COOLDOWN
+
+        mock_manager._prune_preload_stuck_failures = (
+            HordeWorkerProcessManager._prune_preload_stuck_failures.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+        mock_manager._record_inference_failure = (
+            HordeWorkerProcessManager._record_inference_failure.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+        mock_manager._is_model_in_inference_cooldown = (
+            HordeWorkerProcessManager._is_model_in_inference_cooldown.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
+        return mock_manager
+
+    # ------------------------------------------------------------------
+    # _record_inference_failure / _is_model_in_inference_cooldown
+    # ------------------------------------------------------------------
+
+    def test_no_cooldown_with_fewer_than_threshold_failures(self) -> None:
+        """Fewer than threshold failures within the window must NOT trigger cooldown."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        threshold = mock_manager._INFERENCE_FAILURE_THRESHOLD
+        now = _time.time()
+
+        # Record (threshold - 1) failures — one short of triggering
+        for i in range(threshold - 1):
+            mock_manager._record_inference_failure("ModelA", now - i)
+
+        assert not mock_manager._is_model_in_inference_cooldown("ModelA"), (
+            f"{threshold - 1} failures should not be enough to trigger cooldown (threshold is {threshold})"
+        )
+
+    def test_cooldown_triggered_at_threshold(self) -> None:
+        """Reaching the threshold within the window puts the model in cooldown."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        threshold = mock_manager._INFERENCE_FAILURE_THRESHOLD
+        now = _time.time()
+
+        for i in range(threshold):
+            mock_manager._record_inference_failure("ModelA", now - (threshold - 1 - i) * 10)
+
+        assert mock_manager._is_model_in_inference_cooldown("ModelA"), (
+            f"{threshold} failures within the window should trigger cooldown"
+        )
+
+    def test_old_failures_pruned_outside_window(self) -> None:
+        """Failures older than _INFERENCE_FAILURE_WINDOW do not count toward the threshold."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        threshold = mock_manager._INFERENCE_FAILURE_THRESHOLD
+        window = mock_manager._INFERENCE_FAILURE_WINDOW
+        now = _time.time()
+
+        # Record (threshold - 1) old failures outside the window
+        for i in range(threshold - 1):
+            mock_manager._record_inference_failure("ModelA", now - window - 100 - i)
+
+        # One recent failure — not enough to hit threshold once old ones are pruned
+        mock_manager._record_inference_failure("ModelA", now)
+
+        assert not mock_manager._is_model_in_inference_cooldown("ModelA"), (
+            "Only failures within the window count; old failures must be pruned"
+        )
+
+    def test_cooldown_expires_after_duration(self) -> None:
+        """Once the cooldown duration elapses the model must leave cooldown."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        threshold = mock_manager._INFERENCE_FAILURE_THRESHOLD
+        cooldown = mock_manager._INFERENCE_FAILURE_COOLDOWN
+
+        # All failures older than the cooldown duration (but still within the failure window
+        # relative to each other so they would have triggered cooldown when they happened)
+        old_base = _time.time() - cooldown - 10
+        for i in range(threshold):
+            mock_manager._record_inference_failure("ModelA", old_base + i * 10)
+
+        assert not mock_manager._is_model_in_inference_cooldown("ModelA"), (
+            "Cooldown must expire after _INFERENCE_FAILURE_COOLDOWN seconds have passed since the last failure"
+        )
+
+    def test_unknown_model_not_in_cooldown(self) -> None:
+        """A model with no recorded failures is never in cooldown."""
+        mock_manager = self._make_manager()
+        assert not mock_manager._is_model_in_inference_cooldown("BrandNewModel")
+
+    def test_second_model_independent_of_first(self) -> None:
+        """Cooldown for one model must not affect another model."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        threshold = mock_manager._INFERENCE_FAILURE_THRESHOLD
+        now = _time.time()
+
+        for i in range(threshold):
+            mock_manager._record_inference_failure("ModelA", now - (threshold - 1 - i) * 5)
+
+        assert mock_manager._is_model_in_inference_cooldown("ModelA"), "ModelA should be in cooldown"
+        assert not mock_manager._is_model_in_inference_cooldown("ModelB"), (
+            "ModelB has no failures and must not be in cooldown"
+        )
+
+    # ------------------------------------------------------------------
+    # Integration: handle_job_fault records inference failures
+    # ------------------------------------------------------------------
+
+    def test_handle_job_fault_records_inference_failure_on_permanent_fault(self) -> None:
+        """handle_job_fault must call _record_inference_failure when permanently faulting a job."""
+        import types as _types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        # Build a job that will be permanently faulted (retry_count already at MAX)
+        job = MagicMock()
+        job.model = "FailingModel"
+        job.id_ = "job-perm-fault"
+
+        job_info = MagicMock()
+        job_info.retry_count = HordeWorkerProcessManager.MAX_JOB_RETRIES  # already exhausted
+        job_info.state = GENERATION_STATE.ok
+        job_info.job_image_results = []
+
+        def real_fault_job() -> None:
+            job_info.state = GENERATION_STATE.faulted
+            job_info.job_image_results = None
+
+        job_info.fault_job = real_fault_job
+
+        from collections import deque as _deque
+
+        mock_manager = MagicMock()
+        mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        mock_manager.jobs_in_progress = [job]
+        mock_manager.jobs_pending_inference = _deque([])
+        mock_manager.jobs_lookup = {job: job_info}
+        mock_manager.jobs_pending_submit = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_being_safety_checked = []
+        mock_manager._skipped_line_next_job_and_process = None
+        mock_manager._failed_models = {}
+        mock_manager._inference_failures = {}
+        mock_manager._faulted_jobs_history = []
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+        mock_manager._restart_idle_timer_if_queue_empty = MagicMock()
+        mock_manager.bridge_data.process_timeout = 60
+
+        mock_manager._record_faulted_job_history = _types.MethodType(
+            HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager._prune_preload_stuck_failures = _types.MethodType(
+            HordeWorkerProcessManager._prune_preload_stuck_failures,
+            mock_manager,
+        )
+        mock_manager._record_inference_failure = _types.MethodType(
+            HordeWorkerProcessManager._record_inference_failure,
+            mock_manager,
+        )
+        mock_manager._is_model_in_inference_cooldown = _types.MethodType(
+            HordeWorkerProcessManager._is_model_in_inference_cooldown,
+            mock_manager,
+        )
+        mock_manager.handle_job_fault = _types.MethodType(
+            HordeWorkerProcessManager.handle_job_fault,
+            mock_manager,
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert "FailingModel" in mock_manager._inference_failures, (
+            "handle_job_fault must record an inference failure for the model when permanently faulting"
+        )
+        assert len(mock_manager._inference_failures["FailingModel"]) == 1, (
+            "Exactly one inference failure should be recorded"
+        )
+
+    def test_handle_job_fault_does_not_record_inference_failure_on_retry(self) -> None:
+        """handle_job_fault must NOT record an inference failure when only queuing a retry."""
+        import types as _types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+        from collections import deque as _deque
+
+        # Job with retry_count=0 — first fault, should be retried, NOT permanently faulted
+        job = MagicMock()
+        job.model = "RetryModel"
+        job.id_ = "job-retry"
+
+        job_info = MagicMock()
+        job_info.retry_count = 0
+        job_info.state = GENERATION_STATE.ok
+        job_info.job_image_results = []
+        job_info.fault_job = MagicMock()
+
+        mock_manager = MagicMock()
+        mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        mock_manager.jobs_in_progress = [job]
+        mock_manager.jobs_pending_inference = _deque([])
+        mock_manager.jobs_lookup = {job: job_info}
+        mock_manager.jobs_pending_submit = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_being_safety_checked = []
+        mock_manager._skipped_line_next_job_and_process = None
+        mock_manager._failed_models = {}
+        mock_manager._inference_failures = {}
+        mock_manager._faulted_jobs_history = []
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+        mock_manager._restart_idle_timer_if_queue_empty = MagicMock()
+        mock_manager.bridge_data.process_timeout = 60
+
+        mock_manager._record_faulted_job_history = _types.MethodType(
+            HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager._prune_preload_stuck_failures = _types.MethodType(
+            HordeWorkerProcessManager._prune_preload_stuck_failures,
+            mock_manager,
+        )
+        mock_manager._record_inference_failure = _types.MethodType(
+            HordeWorkerProcessManager._record_inference_failure,
+            mock_manager,
+        )
+        mock_manager.handle_job_fault = _types.MethodType(
+            HordeWorkerProcessManager.handle_job_fault,
+            mock_manager,
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert "RetryModel" not in mock_manager._inference_failures or len(
+            mock_manager._inference_failures.get("RetryModel", [])
+        ) == 0, "No inference failure must be recorded for a job that is being retried (not permanently faulted)"
+
+    # ------------------------------------------------------------------
+    # Integration: api_job_pop excludes models in inference cooldown
+    # ------------------------------------------------------------------
+
+    def test_cooldown_models_excluded_from_models_set(self) -> None:
+        """Models in inference-failure cooldown must be removed from the request model list."""
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = self._make_manager()
+        threshold = mock_manager._INFERENCE_FAILURE_THRESHOLD
+        now = _time.time()
+
+        # Put "BadModel" into cooldown
+        for i in range(threshold):
+            mock_manager._record_inference_failure("BadModel", now - (threshold - 1 - i) * 5)
+
+        assert mock_manager._is_model_in_inference_cooldown("BadModel"), (
+            "Pre-condition: BadModel should be in inference cooldown"
+        )
+
+        # Simulate the filtering logic used in api_job_pop
+        all_models = {"BadModel", "GoodModel1", "GoodModel2"}
+        cooldown_models = {m for m in all_models if mock_manager._is_model_in_inference_cooldown(m)}
+        filtered_models = all_models - cooldown_models
+
+        assert "BadModel" not in filtered_models, (
+            "BadModel must be excluded from the request model list while in inference cooldown"
+        )
+        assert "GoodModel1" in filtered_models, "GoodModel1 must remain in the request model list"
+        assert "GoodModel2" in filtered_models, "GoodModel2 must remain in the request model list"
+
+    def test_cooldown_model_reinstated_after_expiry(self) -> None:
+        """A model removed from requests during cooldown must be reinstated once the cooldown expires."""
+        import time as _time
+
+        mock_manager = self._make_manager()
+        threshold = mock_manager._INFERENCE_FAILURE_THRESHOLD
+        cooldown = mock_manager._INFERENCE_FAILURE_COOLDOWN
+
+        # Record failures that are old enough for cooldown to have expired
+        old_base = _time.time() - cooldown - 10
+        for i in range(threshold):
+            mock_manager._record_inference_failure("RecoveredModel", old_base + i * 5)
+
+        assert not mock_manager._is_model_in_inference_cooldown("RecoveredModel"), (
+            "Model must no longer be in cooldown after _INFERENCE_FAILURE_COOLDOWN seconds"
+        )
+
+        all_models = {"RecoveredModel", "OtherModel"}
+        cooldown_models = {m for m in all_models if mock_manager._is_model_in_inference_cooldown(m)}
+        filtered_models = all_models - cooldown_models
+
+        assert "RecoveredModel" in filtered_models, (
+            "RecoveredModel must be reinstated in the request model list after its cooldown expires"
+        )
