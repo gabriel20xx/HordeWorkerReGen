@@ -1079,7 +1079,7 @@ class WorkerWebUI:
                     + '<div class="error-group-header" onclick="toggleErrorGroup(\''+groupId+'\')">'
                     + '<span class="error-group-toggle">&#9658;</span>'
                     + '<span class="error-group-msg">'+escapeHtml(grp.message)+'</span>'
-                    + '<span class="error-count-badge">\xd7'+grp.count+'</span>'
+                    + '<span class="error-count-badge">&times;'+grp.count+'</span>'
                     + '</div>'
                     + '<div class="error-group-body">'+occurrences+'</div>'
                     + '</div>';
