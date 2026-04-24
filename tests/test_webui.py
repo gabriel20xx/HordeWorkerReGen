@@ -1068,7 +1068,7 @@ async def test_webui_errors_grouped_endpoint_basic() -> None:
         assert data["total_errors"] == 0
         assert data["groups"] == []
 
-        # Populate with repeated errors
+        # Populate with repeated errors; "gamma error" only appears once and must be excluded
         errors = ["alpha error", "beta error", "alpha error", "gamma error", "alpha error", "beta error"]
         webui.update_status(errors_history=errors)
 
@@ -1079,16 +1079,56 @@ async def test_webui_errors_grouped_endpoint_basic() -> None:
             data = await response.json()
 
         assert data["total_errors"] == 6
-        assert data["total_groups"] == 3
+        # Only "alpha error" (×3) and "beta error" (×2) qualify; "gamma error" (×1) is excluded
+        assert data["total_groups"] == 2
 
         # Groups must be sorted by count descending
         messages = [g["message"] for g in data["groups"]]
         counts = [g["count"] for g in data["groups"]]
         assert messages[0] == "alpha error"
         assert counts[0] == 3
-        assert set(messages[1:]) == {"beta error", "gamma error"}
+        assert messages[1] == "beta error"
         assert counts[1] == 2
-        assert counts[2] == 1
+        # "gamma error" (single occurrence) must not appear in grouped view
+        assert "gamma error" not in messages
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_grouped_endpoint_normalisation() -> None:
+    """Test /api/errors/grouped groups errors that differ only by UUID/job/process ID."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        uuid1 = "11111111-2222-3333-4444-555555555555"
+        uuid2 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        pid1 = "98765"
+        pid2 = "12345"
+
+        errors = [
+            f"Job {uuid1} failed: connection timeout",
+            f"Job {uuid2} failed: connection timeout",
+            f"Process {pid1} crashed unexpectedly",
+            f"Process {pid2} crashed unexpectedly",
+        ]
+        webui.update_status(errors_history=errors)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        # Both UUID errors normalise to the same key → 1 group with count 2
+        # Both PID errors normalise to the same key → 1 group with count 2
+        assert data["total_groups"] == 2
+        counts = {g["count"] for g in data["groups"]}
+        assert counts == {2}
     finally:
         await webui.stop()
 
@@ -1103,8 +1143,8 @@ async def test_webui_errors_grouped_endpoint_pagination() -> None:
         await asyncio.sleep(0.5)
         actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
 
-        # 15 unique errors (one occurrence each)
-        errors = [f"error type {i}" for i in range(15)]
+        # 15 error types, each appearing twice so all qualify for the grouped view
+        errors = [msg for i in range(15) for msg in [f"error type {i}", f"error type {i}"]]
         webui.update_status(errors_history=errors)
 
         # Page 1, page_size=10 → 10 groups
@@ -1139,6 +1179,7 @@ async def test_webui_errors_grouped_endpoint_edge_cases() -> None:
         await asyncio.sleep(0.5)
         actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
 
+        # "err b" appears only once and will be excluded; "err a" appears twice and qualifies
         webui.update_status(errors_history=["err a", "err b", "err a"])
 
         # Invalid page falls back to 1
