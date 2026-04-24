@@ -801,6 +801,17 @@ def test_api_job_pop_flushes_idle_time_before_reset() -> None:
     mock_manager.bridge_data.max_batch = 1
     mock_manager.max_inference_processes = 1
 
+    # Inference-failure cooldown: no models in cooldown for this test
+    mock_manager._inference_failures = {}
+    mock_manager._INFERENCE_FAILURE_THRESHOLD = HordeWorkerProcessManager._INFERENCE_FAILURE_THRESHOLD
+    mock_manager._INFERENCE_FAILURE_WINDOW = HordeWorkerProcessManager._INFERENCE_FAILURE_WINDOW
+    mock_manager._INFERENCE_FAILURE_COOLDOWN = HordeWorkerProcessManager._INFERENCE_FAILURE_COOLDOWN
+    import types as _types
+    mock_manager._is_model_in_inference_cooldown = _types.MethodType(
+        HordeWorkerProcessManager._is_model_in_inference_cooldown,
+        mock_manager,
+    )
+
     # Mock the HTTP call and post-pop helpers
     mock_manager.horde_client_session.submit_request = AsyncMock(return_value=mock_response)
     mock_manager._get_source_images = AsyncMock(return_value=mock_response)
@@ -1144,6 +1155,19 @@ class TestApiJobPopPerModelFilterRemoved:
         mock_manager._process_map.values.return_value = []
         mock_manager.bridge_data.horde_model_stickiness = 0
         mock_manager.bridge_data.custom_models = None
+
+        # Inference-failure cooldown: no models in cooldown for this test
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+        import types as _types
+
+        mock_manager._inference_failures = {}
+        mock_manager._INFERENCE_FAILURE_THRESHOLD = HordeWorkerProcessManager._INFERENCE_FAILURE_THRESHOLD
+        mock_manager._INFERENCE_FAILURE_WINDOW = HordeWorkerProcessManager._INFERENCE_FAILURE_WINDOW
+        mock_manager._INFERENCE_FAILURE_COOLDOWN = HordeWorkerProcessManager._INFERENCE_FAILURE_COOLDOWN
+        mock_manager._is_model_in_inference_cooldown = _types.MethodType(
+            HordeWorkerProcessManager._is_model_in_inference_cooldown,
+            mock_manager,
+        )
 
         # Idle-timer state
         mock_manager._last_pop_no_jobs_available = False

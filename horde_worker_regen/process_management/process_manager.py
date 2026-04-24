@@ -1361,6 +1361,16 @@ class HordeWorkerProcessManager:
     _PRELOAD_STUCK_FAILURE_WINDOW: float = 600.0  # seconds
     _PRELOAD_STUCK_COOLDOWN: float = 600.0  # seconds
 
+    # Constants for inference-failure cooldown logic.
+    # When a model causes this many permanently-faulted jobs within
+    # _INFERENCE_FAILURE_WINDOW seconds it is placed in a cooldown: job-pop requests
+    # will exclude that model for _INFERENCE_FAILURE_COOLDOWN seconds.  This prevents
+    # the Horde server from penalising the worker (or placing it in maintenance mode)
+    # due to excessive fault reports for a broken model.
+    _INFERENCE_FAILURE_THRESHOLD: int = 3
+    _INFERENCE_FAILURE_WINDOW: float = 1200.0  # seconds (20 minutes)
+    _INFERENCE_FAILURE_COOLDOWN: float = 3600.0  # seconds (1 hour)
+
     # Constants for webui log capture
     # Compiled regex pattern for removing ANSI escape codes from logs
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -1782,6 +1792,10 @@ class HordeWorkerProcessManager:
         # Track per-model preload-stuck failure timestamps for cooldown logic.
         # Maps model name → deque of epoch timestamps when that model caused a MODEL_PRELOADING timeout.
         self._preload_stuck_failures: dict[str, deque[float]] = {}
+
+        # Track per-model inference failure timestamps for inference-failure cooldown logic.
+        # Maps model name → deque of epoch timestamps when that model caused a permanently-faulted job.
+        self._inference_failures: dict[str, deque[float]] = {}
 
         # Track per-process-slot restart timestamps for crash-loop rate limiting.
         self._process_restart_history: dict[int, deque[float]] = {}
@@ -4717,6 +4731,7 @@ class HordeWorkerProcessManager:
             if faulted_job.model is not None:
                 model_name = faulted_job.model
                 self._failed_models[model_name] = self._failed_models.get(model_name, 0) + 1
+                self._record_inference_failure(model_name, time.time())
 
             # Add faulted job details to history for webui display
             # Determine the phase during which the job faulted
@@ -5250,6 +5265,20 @@ class HordeWorkerProcessManager:
             logger.debug("Custom models are enabled, adding them to the list of models to pop")
             custom_model_names = {model["name"] for model in self.bridge_data.custom_models}
             models.update(custom_model_names)
+
+        # Exclude models that are in the inference-failure cooldown.  These models have
+        # produced enough permanently-faulted jobs recently that continuing to request
+        # them would risk the Horde server penalising this worker (or placing it in
+        # maintenance mode).  Once the cooldown expires the models are automatically
+        # included again.
+        cooldown_models = {m for m in models if self._is_model_in_inference_cooldown(m)}
+        if cooldown_models:
+            models -= cooldown_models
+            logger.warning(
+                f"Excluding {len(cooldown_models)} model(s) from job-pop request due to "
+                f"inference-failure cooldown: {sorted(cooldown_models)}.  "
+                f"They will be re-included after {self._INFERENCE_FAILURE_COOLDOWN:.0f}s.",
+            )
 
         if len(models) == 0:
             logger.debug("Not eligible to pop a job yet")
@@ -7217,6 +7246,48 @@ class HordeWorkerProcessManager:
             return False
         # Still within the cooldown window from the most recent failure.
         return (now - failures[-1]) < self._PRELOAD_STUCK_COOLDOWN
+
+    def _record_inference_failure(self, model_name: str, timestamp: float) -> None:
+        """Record a permanently-faulted inference job for *model_name* at *timestamp*.
+
+        Prunes entries older than ``_INFERENCE_FAILURE_WINDOW`` so the deque only
+        holds recent failures.  Logs a warning when the model first crosses
+        ``_INFERENCE_FAILURE_THRESHOLD`` and enters the inference-failure cooldown.
+        """
+        failures = self._inference_failures.setdefault(model_name, deque())
+        # Prune stale entries before adding the new one so the count reflects the window.
+        while failures and failures[0] < timestamp - self._INFERENCE_FAILURE_WINDOW:
+            failures.popleft()
+        failures.append(timestamp)
+
+        if len(failures) == self._INFERENCE_FAILURE_THRESHOLD:
+            logger.warning(
+                f"Model {model_name!r} has caused {self._INFERENCE_FAILURE_THRESHOLD} permanently-faulted "
+                f"jobs within {self._INFERENCE_FAILURE_WINDOW:.0f}s. "
+                f"It will be excluded from job-pop requests for {self._INFERENCE_FAILURE_COOLDOWN:.0f}s "
+                "to protect this worker from server penalties. "
+                "Consider removing the model from your config if this persists.",
+            )
+
+    def _is_model_in_inference_cooldown(self, model_name: str) -> bool:
+        """Return True if *model_name* has triggered the inference-failure cooldown.
+
+        A model is in cooldown when it has at least ``_INFERENCE_FAILURE_THRESHOLD``
+        permanently-faulted jobs within the last ``_INFERENCE_FAILURE_WINDOW`` seconds
+        **and** fewer than ``_INFERENCE_FAILURE_COOLDOWN`` seconds have elapsed since
+        the most recent failure.
+        """
+        failures = self._inference_failures.get(model_name)
+        if not failures:
+            return False
+        now = time.time()
+        # Prune stale entries before checking the count.
+        while failures and failures[0] < now - self._INFERENCE_FAILURE_WINDOW:
+            failures.popleft()
+        if len(failures) < self._INFERENCE_FAILURE_THRESHOLD:
+            return False
+        # Still within the cooldown window from the most recent failure.
+        return (now - failures[-1]) < self._INFERENCE_FAILURE_COOLDOWN
 
     def _fault_cooldown_model_jobs(self) -> None:
         """Permanently fault all pending jobs whose models are in the preload cooldown.
