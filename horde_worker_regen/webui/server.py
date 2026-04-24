@@ -3,6 +3,7 @@
 import base64
 import io
 import math
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -24,6 +25,14 @@ except ImportError:
 
 _THUMBNAIL_MAX_PX = 256
 """Maximum pixel dimension (width or height) for gallery thumbnails."""
+
+# Patterns for variable data stripped when normalising error messages for grouping.
+_ERROR_UUID_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
+_ERROR_HEX_ID_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
+_ERROR_LONG_NUM_RE = re.compile(r"\b\d{5,}\b")
 
 
 class WorkerWebUI:
@@ -2005,8 +2014,29 @@ class WorkerWebUI:
             },
         )
 
+    @staticmethod
+    def _normalize_error_message(msg: str) -> str:
+        """Return a normalised version of *msg* suitable for grouping.
+
+        Variable tokens that differ between occurrences of the same error
+        (UUIDs, long hex addresses, long numeric IDs) are replaced with a
+        placeholder so that the same underlying error is always mapped to the
+        same group key regardless of which job or process triggered it.
+        """
+        msg = _ERROR_UUID_RE.sub("<id>", msg)
+        msg = _ERROR_HEX_ID_RE.sub("<hex>", msg)
+        msg = _ERROR_LONG_NUM_RE.sub("<num>", msg)
+        return msg
+
     async def _handle_errors_grouped(self, request: web.Request) -> web.Response:
-        """Return errors grouped by message text, sorted by occurrence count descending.
+        """Return errors grouped by normalised message text, sorted by occurrence count descending.
+
+        Only groups with **2 or more** occurrences are returned – single isolated
+        errors are not considered a "group" and are omitted from this view.
+
+        Variable tokens in error messages (UUIDs, hex addresses, long numeric IDs
+        such as job IDs or process IDs) are stripped before grouping so that the
+        same underlying error triggered by different jobs is counted together.
 
         Query parameters:
             page: 1-based page number (default: 1)
@@ -2021,18 +2051,27 @@ class WorkerWebUI:
         except ValueError:
             page_size = 10
         errors = self.status_data["errors_history"]
-        # Count occurrences of each unique error message
+        # Group by normalised message; keep one representative original message per group.
         counts: dict[str, int] = {}
+        representatives: dict[str, str] = {}
         for msg in errors:
-            counts[msg] = counts.get(msg, 0) + 1
+            key = self._normalize_error_message(msg)
+            counts[key] = counts.get(key, 0) + 1
+            if key not in representatives:
+                representatives[key] = msg
+        # Only include groups with 2+ occurrences
+        qualified_groups = [(key, cnt) for key, cnt in counts.items() if cnt >= 2]
         # Sort by count descending, then alphabetically for stable ordering
-        groups = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+        groups = sorted(qualified_groups, key=lambda x: (-x[1], x[0]))
         total_groups = len(groups)
         total_errors = len(errors)
         total_pages = max(1, math.ceil(total_groups / page_size))
         page = min(page, total_pages)
         start = (page - 1) * page_size
-        page_groups = [{"message": msg, "count": cnt} for msg, cnt in groups[start : start + page_size]]
+        page_groups = [
+            {"message": representatives[key], "count": cnt}
+            for key, cnt in groups[start : start + page_size]
+        ]
         return web.json_response(
             {
                 "total_groups": total_groups,
