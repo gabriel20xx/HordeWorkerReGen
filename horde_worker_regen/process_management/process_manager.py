@@ -1365,7 +1365,7 @@ class HordeWorkerProcessManager:
     # When a model causes this many permanently-faulted jobs within
     # _INFERENCE_FAILURE_WINDOW seconds it is placed in a cooldown: job-pop requests
     # will exclude that model for _INFERENCE_FAILURE_COOLDOWN seconds.  This prevents
-    # the Horde server from penalising the worker (or placing it in maintenance mode)
+    # the Horde server from penalizing the worker (or placing it in maintenance mode)
     # due to excessive fault reports for a broken model.
     _INFERENCE_FAILURE_THRESHOLD: int = 3
     _INFERENCE_FAILURE_WINDOW: float = 1200.0  # seconds (20 minutes)
@@ -5268,7 +5268,7 @@ class HordeWorkerProcessManager:
 
         # Exclude models that are in the inference-failure cooldown.  These models have
         # produced enough permanently-faulted jobs recently that continuing to request
-        # them would risk the Horde server penalising this worker (or placing it in
+        # them would risk the Horde server penalizing this worker (or placing it in
         # maintenance mode).  Once the cooldown expires the models are automatically
         # included again.
         cooldown_models = {m for m in models if self._is_model_in_inference_cooldown(m)}

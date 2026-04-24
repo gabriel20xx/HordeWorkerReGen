@@ -7496,7 +7496,7 @@ class TestJobRecoveryAndRetry:
 class TestInferenceFailureCooldown:
     """Tests for the inference-failure cooldown logic.
 
-    When a model causes enough permanently-faulted jobs within a short window the
+    When a model causes enough permanently-faulted jobs within a short window, the
     worker stops requesting that model from the API until the cooldown expires.
     """
 
