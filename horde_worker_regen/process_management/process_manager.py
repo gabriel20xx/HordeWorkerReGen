@@ -2485,11 +2485,15 @@ class HordeWorkerProcessManager:
 
             if message.process_launch_identifier != known_launch_identifier:
                 logger.debug(
-                    f"Received a message from process {message.process_id} with launch identifier "
-                    f"{message.process_launch_identifier}, but expected {known_launch_identifier}. "
-                    "This is probably due to a process being replaced. Ignoring.",
+                    "Received a message from process {} with launch identifier {}, but expected {}. "
+                    "This is probably due to a process being replaced. Ignoring. "
+                    "(type={} info={})",
+                    message.process_id,
+                    message.process_launch_identifier,
+                    known_launch_identifier,
+                    type(message).__name__,
+                    message.info,
                 )
-                logger.debug(f"Message: {message}")
                 continue
 
             # If the process is updating us on its memory usage, update the process map for those values only
