@@ -7516,6 +7516,11 @@ class TestInferenceFailureCooldown:
         )
         mock_manager._INFERENCE_FAILURE_COOLDOWN = HordeWorkerProcessManager._INFERENCE_FAILURE_COOLDOWN
 
+        mock_manager._prune_preload_stuck_failures = (
+            HordeWorkerProcessManager._prune_preload_stuck_failures.__get__(
+                mock_manager, HordeWorkerProcessManager
+            )
+        )
         mock_manager._record_inference_failure = (
             HordeWorkerProcessManager._record_inference_failure.__get__(
                 mock_manager, HordeWorkerProcessManager
@@ -7672,6 +7677,10 @@ class TestInferenceFailureCooldown:
             HordeWorkerProcessManager._record_faulted_job_history,
             mock_manager,
         )
+        mock_manager._prune_preload_stuck_failures = _types.MethodType(
+            HordeWorkerProcessManager._prune_preload_stuck_failures,
+            mock_manager,
+        )
         mock_manager._record_inference_failure = _types.MethodType(
             HordeWorkerProcessManager._record_inference_failure,
             mock_manager,
@@ -7732,6 +7741,10 @@ class TestInferenceFailureCooldown:
 
         mock_manager._record_faulted_job_history = _types.MethodType(
             HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager._prune_preload_stuck_failures = _types.MethodType(
+            HordeWorkerProcessManager._prune_preload_stuck_failures,
             mock_manager,
         )
         mock_manager._record_inference_failure = _types.MethodType(

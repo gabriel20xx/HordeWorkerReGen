@@ -806,7 +806,13 @@ def test_api_job_pop_flushes_idle_time_before_reset() -> None:
     mock_manager._INFERENCE_FAILURE_THRESHOLD = HordeWorkerProcessManager._INFERENCE_FAILURE_THRESHOLD
     mock_manager._INFERENCE_FAILURE_WINDOW = HordeWorkerProcessManager._INFERENCE_FAILURE_WINDOW
     mock_manager._INFERENCE_FAILURE_COOLDOWN = HordeWorkerProcessManager._INFERENCE_FAILURE_COOLDOWN
+    mock_manager._last_warned_inference_cooldown_models = frozenset()
+    mock_manager._last_warned_inference_cooldown_at = 0.0
     import types as _types
+    mock_manager._prune_preload_stuck_failures = _types.MethodType(
+        HordeWorkerProcessManager._prune_preload_stuck_failures,
+        mock_manager,
+    )
     mock_manager._is_model_in_inference_cooldown = _types.MethodType(
         HordeWorkerProcessManager._is_model_in_inference_cooldown,
         mock_manager,
@@ -1164,6 +1170,12 @@ class TestApiJobPopPerModelFilterRemoved:
         mock_manager._INFERENCE_FAILURE_THRESHOLD = HordeWorkerProcessManager._INFERENCE_FAILURE_THRESHOLD
         mock_manager._INFERENCE_FAILURE_WINDOW = HordeWorkerProcessManager._INFERENCE_FAILURE_WINDOW
         mock_manager._INFERENCE_FAILURE_COOLDOWN = HordeWorkerProcessManager._INFERENCE_FAILURE_COOLDOWN
+        mock_manager._last_warned_inference_cooldown_models = frozenset()
+        mock_manager._last_warned_inference_cooldown_at = 0.0
+        mock_manager._prune_preload_stuck_failures = _types.MethodType(
+            HordeWorkerProcessManager._prune_preload_stuck_failures,
+            mock_manager,
+        )
         mock_manager._is_model_in_inference_cooldown = _types.MethodType(
             HordeWorkerProcessManager._is_model_in_inference_cooldown,
             mock_manager,

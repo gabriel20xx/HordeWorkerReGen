@@ -1796,6 +1796,9 @@ class HordeWorkerProcessManager:
         # Track per-model inference failure timestamps for inference-failure cooldown logic.
         # Maps model name → deque of epoch timestamps when that model caused a permanently-faulted job.
         self._inference_failures: dict[str, deque[float]] = {}
+        # Rate-limiting state for the inference-failure cooldown log warning in api_job_pop.
+        self._last_warned_inference_cooldown_models: frozenset[str] = frozenset()
+        self._last_warned_inference_cooldown_at: float = 0.0
 
         # Track per-process-slot restart timestamps for crash-loop rate limiting.
         self._process_restart_history: dict[int, deque[float]] = {}
@@ -5274,14 +5277,38 @@ class HordeWorkerProcessManager:
         cooldown_models = {m for m in models if self._is_model_in_inference_cooldown(m)}
         if cooldown_models:
             models -= cooldown_models
-            logger.warning(
-                f"Excluding {len(cooldown_models)} model(s) from job-pop request due to "
-                f"inference-failure cooldown: {sorted(cooldown_models)}.  "
-                f"They will be re-included after {self._INFERENCE_FAILURE_COOLDOWN:.0f}s.",
-            )
+            # Rate-limit the warning: only emit when the cooldown set changes or every
+            # min(_INFERENCE_FAILURE_COOLDOWN, 300) seconds to avoid log spam.
+            cooldown_models_frozen = frozenset(cooldown_models)
+            cooldown_warning_interval = min(self._INFERENCE_FAILURE_COOLDOWN, 300.0)
+            now_for_warn = time.time()
+            if (
+                cooldown_models_frozen != self._last_warned_inference_cooldown_models
+                or now_for_warn - self._last_warned_inference_cooldown_at >= cooldown_warning_interval
+            ):
+                logger.warning(
+                    f"Excluding {len(cooldown_models)} model(s) from job-pop request due to "
+                    f"inference-failure cooldown: {sorted(cooldown_models)}.  "
+                    f"They will be re-included after {self._INFERENCE_FAILURE_COOLDOWN:.0f}s.",
+                )
+                self._last_warned_inference_cooldown_models = cooldown_models_frozen
+                self._last_warned_inference_cooldown_at = now_for_warn
+            else:
+                logger.debug(
+                    "Skipping repeated inference-failure cooldown warning for models: "
+                    f"{sorted(cooldown_models)}",
+                )
 
         if len(models) == 0:
-            logger.debug("Not eligible to pop a job yet")
+            if cooldown_models:
+                logger.warning(
+                    "Skipping job-pop request because all candidate models are currently "
+                    "in inference-failure cooldown: "
+                    f"{sorted(cooldown_models)}. Configured cooldown duration: "
+                    f"{self._INFERENCE_FAILURE_COOLDOWN:.0f}s.",
+                )
+            else:
+                logger.debug("Not eligible to pop a job yet")
             return
 
         try:
@@ -7256,8 +7283,7 @@ class HordeWorkerProcessManager:
         """
         failures = self._inference_failures.setdefault(model_name, deque())
         # Prune stale entries before adding the new one so the count reflects the window.
-        while failures and failures[0] < timestamp - self._INFERENCE_FAILURE_WINDOW:
-            failures.popleft()
+        self._prune_preload_stuck_failures(failures, timestamp - self._INFERENCE_FAILURE_WINDOW)
         failures.append(timestamp)
 
         if len(failures) == self._INFERENCE_FAILURE_THRESHOLD:
@@ -7282,8 +7308,7 @@ class HordeWorkerProcessManager:
             return False
         now = time.time()
         # Prune stale entries before checking the count.
-        while failures and failures[0] < now - self._INFERENCE_FAILURE_WINDOW:
-            failures.popleft()
+        self._prune_preload_stuck_failures(failures, now - self._INFERENCE_FAILURE_WINDOW)
         if len(failures) < self._INFERENCE_FAILURE_THRESHOLD:
             return False
         # Still within the cooldown window from the most recent failure.
