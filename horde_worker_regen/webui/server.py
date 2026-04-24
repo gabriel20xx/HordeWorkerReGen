@@ -26,6 +26,14 @@ except ImportError:
 _THUMBNAIL_MAX_PX = 256
 """Maximum pixel dimension (width or height) for gallery thumbnails."""
 
+# Patterns for variable data stripped when normalising error messages for grouping.
+_ERROR_UUID_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
+_ERROR_HEX_ID_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
+_ERROR_LONG_NUM_RE = re.compile(r"\b\d{5,}\b")
+
 
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
@@ -2006,16 +2014,6 @@ class WorkerWebUI:
             },
         )
 
-    # Patterns for variable data that should be stripped when normalising error messages
-    # for grouping purposes (so that the same error with a different job/process ID is
-    # still considered the same error).
-    _UUID_RE = re.compile(
-        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
-        re.IGNORECASE,
-    )
-    _HEX_ID_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
-    _LONG_NUM_RE = re.compile(r"\b\d{5,}\b")
-
     @staticmethod
     def _normalize_error_message(msg: str) -> str:
         """Return a normalised version of *msg* suitable for grouping.
@@ -2025,9 +2023,9 @@ class WorkerWebUI:
         placeholder so that the same underlying error is always mapped to the
         same group key regardless of which job or process triggered it.
         """
-        msg = WorkerWebUI._UUID_RE.sub("<id>", msg)
-        msg = WorkerWebUI._HEX_ID_RE.sub("<hex>", msg)
-        msg = WorkerWebUI._LONG_NUM_RE.sub("<num>", msg)
+        msg = _ERROR_UUID_RE.sub("<id>", msg)
+        msg = _ERROR_HEX_ID_RE.sub("<hex>", msg)
+        msg = _ERROR_LONG_NUM_RE.sub("<num>", msg)
         return msg
 
     async def _handle_errors_grouped(self, request: web.Request) -> web.Response:
@@ -2062,9 +2060,9 @@ class WorkerWebUI:
             if key not in representatives:
                 representatives[key] = msg
         # Only include groups with 2+ occurrences
-        filtered = [(key, cnt) for key, cnt in counts.items() if cnt >= 2]
+        qualified_groups = [(key, cnt) for key, cnt in counts.items() if cnt >= 2]
         # Sort by count descending, then alphabetically for stable ordering
-        groups = sorted(filtered, key=lambda x: (-x[1], x[0]))
+        groups = sorted(qualified_groups, key=lambda x: (-x[1], x[0]))
         total_groups = len(groups)
         total_errors = len(errors)
         total_pages = max(1, math.ceil(total_groups / page_size))
