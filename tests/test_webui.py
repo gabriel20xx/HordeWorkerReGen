@@ -1220,8 +1220,6 @@ async def test_webui_errors_grouped_endpoint_edge_cases() -> None:
 @pytest.mark.asyncio
 async def test_webui_stats_endpoint() -> None:
     """Test that /api/stats returns a snapshots list and records data via update_status."""
-    import time as _time
-
     webui = WorkerWebUI(port=0)
 
     try:
@@ -1275,13 +1273,19 @@ async def test_webui_stats_endpoint() -> None:
         webui.update_status(jobs_completed=7)
         assert len(webui._stats_snapshots) == 2
 
+        # VRAM percentage must be capped at 100 even when usage exceeds total.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(vram_usage_mb=10000.0, total_vram_mb=8192.0)
+        snap_over = webui._stats_snapshots[-1]
+        assert snap_over["vram"] == 100.0, "vram_pct must be capped at 100%"
+
         # Verify /api/stats returns all recorded snapshots.
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
             assert response.status == 200
             data2 = await response.json()
-        assert len(data2["snapshots"]) == 2
+        assert len(data2["snapshots"]) == 3
 
     finally:
         await webui.stop()

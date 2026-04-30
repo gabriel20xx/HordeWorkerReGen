@@ -1969,8 +1969,7 @@ class WorkerWebUI:
         function fetchStats(force) {
             var now = Date.now();
             if (!force && (now - _statsLastFetchTime < _STATS_FETCH_THROTTLE_MS)) {
-                // Not yet time for a new fetch; re-render from cached data if available.
-                if (_statsData) renderStatsPage(_statsData);
+                // Not yet time for a new fetch; avoid re-rendering unchanged cached charts.
                 return;
             }
             if (_statsFetchInProgress) return;
@@ -2015,18 +2014,16 @@ class WorkerWebUI:
                 return noData ? '-' : v.toLocaleString(undefined, { maximumFractionDigits: dec || 0 });
             }
 
-            // Summary stats: deltas of cumulative counters within the window
+            // Summary stats: deltas of cumulative counters within the window.
+            // These are only meaningful when the selected window contains at least
+            // two snapshots; with a single snapshot, the counters are cumulative and
+            // would overstate activity within the window.
             var imagesGenerated = 0, kudosEarned = 0, jobsPopped = 0, jobsFaulted = 0;
             if (snaps.length >= 2) {
                 imagesGenerated = Math.max(0, snaps[snaps.length - 1].jc - snaps[0].jc);
                 kudosEarned     = Math.max(0, snaps[snaps.length - 1].ks - snaps[0].ks);
                 jobsPopped      = Math.max(0, snaps[snaps.length - 1].jp - snaps[0].jp);
                 jobsFaulted     = Math.max(0, snaps[snaps.length - 1].jf - snaps[0].jf);
-            } else if (snaps.length === 1) {
-                imagesGenerated = snaps[0].jc || 0;
-                kudosEarned     = snaps[0].ks || 0;
-                jobsPopped      = snaps[0].jp || 0;
-                jobsFaulted     = snaps[0].jf || 0;
             }
             var avgIph = _avgField(snaps, 'iph');
             var avgKph = _avgField(snaps, 'kph');
@@ -2327,7 +2324,7 @@ class WorkerWebUI:
         self._last_stats_snapshot_time = now
         sd = self.status_data
         vram_total: float = float(sd.get("total_vram_mb") or 0)
-        vram_pct = round((float(sd.get("vram_usage_mb", 0)) / vram_total) * 100, 1) if vram_total > 0 else 0.0
+        vram_pct = min(100.0, round((float(sd.get("vram_usage_mb", 0)) / vram_total) * 100, 1)) if vram_total > 0 else 0.0
         snapshot: dict[str, float | int] = {
             "t": round(now, 1),
             "cpu": round(float(sd.get("cpu_usage_percent", 0)), 1),
