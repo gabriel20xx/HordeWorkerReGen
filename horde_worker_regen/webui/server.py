@@ -2043,8 +2043,8 @@ class WorkerWebUI:
         """
         try:
             body = await request.json()
-        except Exception:  # noqa: BLE001
-            return web.json_response({"error": "Invalid JSON body"}, status=400)
+        except (ValueError, TypeError) as exc:
+            return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
 
         paused = body.get("paused")
         if not isinstance(paused, bool):
@@ -2057,7 +2057,7 @@ class WorkerWebUI:
             self._set_job_pops_paused_callback(paused)
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"Error setting job pops paused={paused}: {exc}")
-            return web.json_response({"error": "Internal error"}, status=500)
+            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
 
         self.status_data["job_pops_paused"] = paused
         return web.json_response({"job_pops_paused": paused})
