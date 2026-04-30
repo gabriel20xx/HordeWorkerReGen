@@ -34,6 +34,12 @@ _ERROR_UUID_RE = re.compile(
 _ERROR_HEX_ID_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
 _ERROR_LONG_NUM_RE = re.compile(r"\b\d{5,}\b")
 
+_STATS_SNAPSHOT_INTERVAL = 10.0
+"""Minimum seconds between statistics snapshots recorded by WorkerWebUI."""
+
+_MAX_STATS_SNAPSHOTS = 2160
+"""Maximum number of statistics snapshots to keep (approx. 6 hours at 10-second intervals)."""
+
 
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
@@ -95,6 +101,11 @@ class WorkerWebUI:
         # Monotonically increasing counter used to assign stable gallery_id values.
         self._next_gallery_id: int = 0
 
+        # Ring buffer for time-series statistics snapshots served by /api/stats.
+        self._stats_snapshots: list[dict[str, float | int]] = []
+        # Unix timestamp of the most recently recorded snapshot (0 = none yet).
+        self._last_stats_snapshot_time: float = 0.0
+
         # Optional callback invoked when the UI requests a worker deletion.
         # Signature: async (worker_id: str) -> bool  (True = success, False = failure)
         self._delete_worker_callback: Callable[[str], Awaitable[bool]] | None = None
@@ -114,6 +125,7 @@ class WorkerWebUI:
         """Set up the web server routes."""
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/api/status", self._handle_status)
+        self.app.router.add_get("/api/stats", self._handle_stats)
         self.app.router.add_get("/api/errors", self._handle_errors)
         self.app.router.add_get("/api/errors/grouped", self._handle_errors_grouped)
         self.app.router.add_get("/api/last_image", self._handle_last_image)
@@ -494,6 +506,18 @@ class WorkerWebUI:
         #gallery-new-banner { display: none; background: #dbeafe; border: 1px solid #93c5fd; border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 500; color: #1d4ed8; }
         [data-theme="dark"] #gallery-new-banner { background: #1e3a5f; border-color: #2d5fa0; color: #93c5fd; }
 
+        /* ---- Statistics page ---- */
+        .stats-window-group { display: flex; gap: 4px; }
+        .stats-window-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 3px 11px; font-size: 0.78rem; font-weight: 600; cursor: pointer; color: var(--text-muted); transition: background 0.15s, color 0.15s, border-color 0.15s; }
+        .stats-window-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .stats-window-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+        .chart-container { position: relative; width: 100%; height: 150px; }
+        .chart-container canvas { display: block; }
+        .chart-container-sm { position: relative; width: 100%; height: 110px; }
+        .chart-container-sm canvas { display: block; }
+        .chart-label { font-size: 0.75rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
+        [data-theme="dark"] .chart-label { color: #94a3b8; }
+
     </style>
 </head>
 <body>
@@ -528,6 +552,9 @@ class WorkerWebUI:
             </button>
             <button class="nav-item" onclick="showPage('logs', this)" id="nav-logs">
                 <span class="nav-icon">&#128203;</span> Logs
+            </button>
+            <button class="nav-item" onclick="showPage('stats', this)" id="nav-stats">
+                <span class="nav-icon">&#128202;</span> Statistics
             </button>
         </nav>
     </aside>
@@ -671,6 +698,60 @@ class WorkerWebUI:
                     </div>
                 </div>
 
+                <!-- STATISTICS PAGE -->
+                <div class="page" id="page-stats">
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="section-title">&#128202; Statistics</span>
+                            <div class="stats-window-group" style="margin-left:auto;">
+                                <button class="stats-window-btn active" id="stats-win-15m" onclick="setStatsWindow(900, this)">15m</button>
+                                <button class="stats-window-btn" id="stats-win-1h" onclick="setStatsWindow(3600, this)">1h</button>
+                                <button class="stats-window-btn" id="stats-win-6h" onclick="setStatsWindow(21600, this)">6h</button>
+                                <button class="stats-window-btn" id="stats-win-all" onclick="setStatsWindow(null, this)">All</button>
+                            </div>
+                        </div>
+                        <div class="grid-4" style="margin-bottom:14px;">
+                            <div class="stat-card"><div class="stat-card-label">Images Generated</div><div class="stat-card-value success" id="stats-images-generated">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Kudos Earned</div><div class="stat-card-value success" id="stats-kudos-earned">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Avg Images / hr</div><div class="stat-card-value accent" id="stats-avg-iph">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Avg Kudos / hr</div><div class="stat-card-value accent" id="stats-avg-kph">-</div></div>
+                        </div>
+                        <div class="grid-2" style="margin-bottom:14px;">
+                            <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value" id="stats-jobs-popped">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="stats-jobs-faulted">-</div></div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#128202; Images / Hour</span></div>
+                        <div class="card" style="padding:14px 16px;">
+                            <div class="chart-container"><canvas id="chart-iph" aria-label="Images per hour over time"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#128142; Kudos / Hour</span></div>
+                        <div class="card" style="padding:14px 16px;">
+                            <div class="chart-container"><canvas id="chart-kph" aria-label="Kudos per hour over time"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
+                        <div class="grid-3">
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">CPU %</div>
+                                <div class="chart-container-sm"><canvas id="chart-cpu" aria-label="CPU usage over time"></canvas></div>
+                            </div>
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">GPU %</div>
+                                <div class="chart-container-sm"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
+                            </div>
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">VRAM %</div>
+                                <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -691,7 +772,7 @@ class WorkerWebUI:
             if (str === null || str === undefined) return '';
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
-        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'logs']);
+        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'stats', 'logs']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); var parsed = s ? JSON.parse(s) : []; return Array.isArray(parsed) ? parsed : []; } catch(e) { return []; } })();
         let currentWorkerName = '';
@@ -813,6 +894,9 @@ class WorkerWebUI:
             if (pageId === 'user') {
                 // Render cached workers immediately so the list is visible before the next status poll.
                 renderWorkersList();
+            }
+            if (pageId === 'stats') {
+                fetchStats();
             }
         }
         window.addEventListener('popstate', function() {
@@ -1856,10 +1940,250 @@ class WorkerWebUI:
                     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS)
                         console.warn('Failed to fetch status '+consecutiveErrors+' times in a row. Check server connection.');
                 })
-                .finally(() => { statusAbortController = null; scheduleUpdate(); });
+                .finally(() => {
+                    statusAbortController = null;
+                    // Refresh stats data if the statistics page is currently visible.
+                    if (document.getElementById('page-stats').classList.contains('active')) fetchStats();
+                    scheduleUpdate();
+                });
         }
         const DEFAULT_UPDATE_INTERVAL_MS = 1000;
         const CONFIG_FETCH_TIMEOUT_MS = 5000;
+        // ========================================================
+        // STATISTICS PAGE
+        // ========================================================
+        let _statsData = null;
+        let _statsWindowSecs = 900; // default 15 minutes
+        let _statsFetchInProgress = false;
+        let _statsAbortController = null;
+        let _statsLastFetchTime = 0;
+        const _STATS_FETCH_THROTTLE_MS = 9000; // don't re-fetch more often than every 9 seconds
+
+        function setStatsWindow(windowSecs, btn) {
+            _statsWindowSecs = windowSecs;
+            document.querySelectorAll('.stats-window-btn').forEach(function(b) { b.classList.remove('active'); });
+            if (btn) btn.classList.add('active');
+            if (_statsData) renderStatsPage(_statsData);
+        }
+
+        function fetchStats(force) {
+            var now = Date.now();
+            if (!force && (now - _statsLastFetchTime < _STATS_FETCH_THROTTLE_MS)) {
+                // Not yet time for a new fetch; re-render from cached data if available.
+                if (_statsData) renderStatsPage(_statsData);
+                return;
+            }
+            if (_statsFetchInProgress) return;
+            _statsFetchInProgress = true;
+            _statsLastFetchTime = now;
+            if (_statsAbortController) _statsAbortController.abort();
+            _statsAbortController = new AbortController();
+            var ctrl = _statsAbortController;
+            fetch('/api/stats', { signal: ctrl.signal })
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(data) {
+                    if (ctrl !== _statsAbortController) return;
+                    _statsAbortController = null;
+                    _statsFetchInProgress = false;
+                    _statsData = data;
+                    renderStatsPage(data);
+                })
+                .catch(function(err) {
+                    _statsFetchInProgress = false;
+                    if (err.name !== 'AbortError') console.error('Failed to fetch /api/stats:', err);
+                });
+        }
+
+        function _getWindowedSnapshots(snapshots) {
+            if (!snapshots || snapshots.length === 0) return [];
+            if (_statsWindowSecs === null) return snapshots;
+            var cutoff = snapshots[snapshots.length - 1].t - _statsWindowSecs;
+            return snapshots.filter(function(s) { return s.t >= cutoff; });
+        }
+
+        function _avgField(arr, key) {
+            if (!arr.length) return 0;
+            return arr.reduce(function(s, x) { return s + (x[key] || 0); }, 0) / arr.length;
+        }
+
+        function renderStatsPage(data) {
+            var allSnaps = data.snapshots || [];
+            var snaps = _getWindowedSnapshots(allSnaps);
+            var noData = allSnaps.length === 0;
+
+            function fmtVal(v, dec) {
+                return noData ? '-' : v.toLocaleString(undefined, { maximumFractionDigits: dec || 0 });
+            }
+
+            // Summary stats: deltas of cumulative counters within the window
+            var imagesGenerated = 0, kudosEarned = 0, jobsPopped = 0, jobsFaulted = 0;
+            if (snaps.length >= 2) {
+                imagesGenerated = Math.max(0, snaps[snaps.length - 1].jc - snaps[0].jc);
+                kudosEarned     = Math.max(0, snaps[snaps.length - 1].ks - snaps[0].ks);
+                jobsPopped      = Math.max(0, snaps[snaps.length - 1].jp - snaps[0].jp);
+                jobsFaulted     = Math.max(0, snaps[snaps.length - 1].jf - snaps[0].jf);
+            } else if (snaps.length === 1) {
+                imagesGenerated = snaps[0].jc || 0;
+                kudosEarned     = snaps[0].ks || 0;
+                jobsPopped      = snaps[0].jp || 0;
+                jobsFaulted     = snaps[0].jf || 0;
+            }
+            var avgIph = _avgField(snaps, 'iph');
+            var avgKph = _avgField(snaps, 'kph');
+
+            var el = function(id) { return document.getElementById(id); };
+            el('stats-images-generated').textContent = noData ? '-' : imagesGenerated.toLocaleString();
+            el('stats-kudos-earned').textContent     = noData ? '-' : kudosEarned.toLocaleString(undefined, { maximumFractionDigits: 2 });
+            el('stats-avg-iph').textContent          = fmtVal(avgIph, 2);
+            el('stats-avg-kph').textContent          = fmtVal(avgKph, 2);
+            el('stats-jobs-popped').textContent      = noData ? '-' : jobsPopped.toLocaleString();
+            el('stats-jobs-faulted').textContent     = noData ? '-' : jobsFaulted.toLocaleString();
+
+            // Charts
+            drawLineChart('chart-iph',  snaps.map(function(s) { return { t: s.t, v: s.iph  }; }), { color: '#10b981' });
+            drawLineChart('chart-kph',  snaps.map(function(s) { return { t: s.t, v: s.kph  }; }), { color: '#6366f1' });
+            drawLineChart('chart-cpu',  snaps.map(function(s) { return { t: s.t, v: s.cpu  }; }), { color: '#f59e0b', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-gpu',  snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), { color: '#3b82f6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-vram', snaps.map(function(s) { return { t: s.t, v: s.vram }; }), { color: '#8b5cf6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+        }
+
+        function drawLineChart(canvasId, points, opts) {
+            var canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            var parent = canvas.parentElement;
+            var cssW = (parent ? parent.offsetWidth : 0) || 400;
+            var cssH = (parent ? parent.offsetHeight : 0) || 150;
+            var dpr = window.devicePixelRatio || 1;
+            var pxW = Math.round(cssW * dpr);
+            var pxH = Math.round(cssH * dpr);
+            if (canvas.width !== pxW || canvas.height !== pxH) {
+                canvas.width  = pxW;
+                canvas.height = pxH;
+                canvas.style.width  = cssW + 'px';
+                canvas.style.height = cssH + 'px';
+            }
+            var ctx = canvas.getContext('2d');
+            ctx.save();
+            ctx.scale(dpr, dpr);
+            var w = cssW, h = cssH;
+            var pad = { top: 12, right: 14, bottom: 32, left: 46 };
+            var chartW = w - pad.left - pad.right;
+            var chartH = h - pad.top - pad.bottom;
+            var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            var gridColor = isDark ? '#2d3f55' : '#e2e8f0';
+            var textColor = isDark ? '#94a3b8' : '#64748b';
+            var bgColor   = isDark ? '#1e293b' : '#ffffff';
+            var lineColor = opts.color || '#6366f1';
+            // Parse hex color for fill rgba
+            var r = 99, g = 102, b = 241;
+            var cm = lineColor.match(/^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+            if (cm) { r = parseInt(cm[1], 16); g = parseInt(cm[2], 16); b = parseInt(cm[3], 16); }
+            var fillAlpha = isDark ? '0.14' : '0.08';
+
+            // Background
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, w, h);
+
+            if (!points || points.length === 0) {
+                ctx.fillStyle = textColor;
+                ctx.font = '12px -apple-system, system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('No data yet \u2014 data is recorded every 10 seconds', w / 2, h / 2);
+                ctx.restore();
+                return;
+            }
+
+            // Y range
+            var yMin = opts.yMin !== undefined ? opts.yMin : 0;
+            var rawMax = points.reduce(function(m, p) { return Math.max(m, p.v); }, 0);
+            var yMax = opts.yMax !== undefined ? opts.yMax : Math.max(rawMax * 1.15, yMin + 1);
+            if (rawMax === 0 && opts.yMax === undefined) yMax = Math.max(yMax, 10);
+            var yRange = yMax - yMin || 1;
+
+            // X range
+            var tMin = points[0].t, tMax = points[points.length - 1].t;
+            var tRange = tMax - tMin || 1;
+
+            function cxf(t) { return pad.left + ((t - tMin) / tRange) * chartW; }
+            function cyf(v) { return pad.top + (1 - (v - yMin) / yRange) * chartH; }
+
+            // Horizontal grid lines + Y labels (5 levels: 0%, 25%, 50%, 75%, 100%)
+            var levels = 4;
+            ctx.strokeStyle = gridColor;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.font = '10px -apple-system, system-ui, sans-serif';
+            ctx.fillStyle = textColor;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            for (var i = 0; i <= levels; i++) {
+                var frac = i / levels;
+                var yPx = pad.top + frac * chartH;
+                ctx.beginPath(); ctx.moveTo(pad.left, yPx); ctx.lineTo(pad.left + chartW, yPx); ctx.stroke();
+                var val = yMin + (1 - frac) * yRange;
+                var lbl = opts.yFmt ? opts.yFmt(val) : (val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val % 1 === 0 ? Math.round(val) : val.toFixed(1));
+                ctx.fillText(lbl, pad.left - 5, yPx);
+            }
+            ctx.setLineDash([]);
+
+            // X axis time labels (up to 5)
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            var numXLabels = Math.min(4, points.length - 1);
+            if (numXLabels < 1) numXLabels = 1;
+            for (var j = 0; j <= numXLabels; j++) {
+                var tVal = tMin + (j / numXLabels) * tRange;
+                var xPx = cxf(tVal);
+                var d = new Date(tVal * 1000);
+                var xLbl = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+                ctx.fillText(xLbl, xPx, pad.top + chartH + 5);
+            }
+
+            // Clip to chart area
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(pad.left, pad.top, chartW, chartH);
+            ctx.clip();
+
+            // Fill area under the line
+            ctx.beginPath();
+            ctx.moveTo(cxf(points[0].t), cyf(yMin));
+            for (var k = 0; k < points.length; k++) ctx.lineTo(cxf(points[k].t), cyf(points[k].v));
+            ctx.lineTo(cxf(points[points.length - 1].t), cyf(yMin));
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + fillAlpha + ')';
+            ctx.fill();
+
+            // Line
+            ctx.beginPath();
+            for (var n = 0; n < points.length; n++) {
+                var xc = cxf(points[n].t), yc = cyf(points[n].v);
+                if (n === 0) ctx.moveTo(xc, yc); else ctx.lineTo(xc, yc);
+            }
+            ctx.strokeStyle = lineColor;
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            ctx.restore(); // end clip
+
+            // Chart border
+            ctx.strokeStyle = gridColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(pad.left, pad.top, chartW, chartH);
+
+            ctx.restore(); // end dpr scale
+        }
+
+        // Redraw charts on window resize when stats page is active
+        window.addEventListener('resize', function() {
+            if (_statsData && document.getElementById('page-stats').classList.contains('active')) {
+                renderStatsPage(_statsData);
+            }
+        });
+
         async function fetchWithTimeout(url, timeoutMs) {
             const controller = new AbortController();
             const timerId = setTimeout(() => controller.abort(new Error('Request timed out after '+timeoutMs+'ms')), timeoutMs);
@@ -1983,6 +2307,42 @@ class WorkerWebUI:
     async def _handle_health(self, request: web.Request) -> web.Response:
         """Handle health check request."""
         return web.json_response({"status": "ok"})
+
+    async def _handle_stats(self, request: web.Request) -> web.Response:
+        """Return historical statistics snapshots for the statistics page.
+
+        Returns all stored snapshots in chronological order (oldest first).
+        Each snapshot contains a Unix timestamp plus CPU/GPU/VRAM usage
+        percentages, images/hour, kudos/hour, and cumulative job/kudos counters
+        for the current session.
+        """
+        return web.json_response({"snapshots": self._stats_snapshots})
+
+    def _record_stats_snapshot(self) -> None:
+        """Append a statistics snapshot to the ring buffer if enough time has elapsed."""
+        now = time.time()
+        if now - self._last_stats_snapshot_time < _STATS_SNAPSHOT_INTERVAL:
+            return
+        self._last_stats_snapshot_time = now
+        sd = self.status_data
+        vram_total: float = float(sd.get("total_vram_mb") or 0)
+        vram_pct = round((float(sd.get("vram_usage_mb", 0)) / vram_total) * 100, 1) if vram_total > 0 else 0.0
+        snapshot: dict[str, float | int] = {
+            "t": round(now, 1),
+            "cpu": round(float(sd.get("cpu_usage_percent", 0)), 1),
+            "gpu": round(float(sd.get("gpu_usage_percent", 0)), 1),
+            "vram": vram_pct,
+            "iph": round(float(sd.get("images_per_hour", 0)), 2),
+            "kph": round(float(sd.get("kudos_per_hour", 0)), 2),
+            "jc": int(sd.get("jobs_completed", 0)),
+            "jf": int(sd.get("jobs_faulted", 0)),
+            "jp": int(sd.get("jobs_popped", 0)),
+            "ks": round(float(sd.get("kudos_earned_session", 0)), 2),
+        }
+        self._stats_snapshots.append(snapshot)
+        if len(self._stats_snapshots) > _MAX_STATS_SNAPSHOTS:
+            self._stats_snapshots = self._stats_snapshots[-_MAX_STATS_SNAPSHOTS:]
+
 
     async def _handle_errors(self, request: web.Request) -> web.Response:
         """Return a paginated slice of the error history.
@@ -2331,6 +2691,9 @@ class WorkerWebUI:
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]
+
+        # Record a statistics snapshot (throttled to at most once per _STATS_SNAPSHOT_INTERVAL).
+        self._record_stats_snapshot()
 
     async def start(self) -> None:
         """Start the web server."""
