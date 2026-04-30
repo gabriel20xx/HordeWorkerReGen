@@ -1291,6 +1291,84 @@ async def test_webui_stats_endpoint() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_job_pops_pause_endpoint() -> None:
+    """Test the POST /api/job_pops/pause endpoint."""
+    webui = WorkerWebUI(port=0)
+    paused_calls: list[bool] = []
+
+    def fake_set_paused(paused: bool) -> None:
+        paused_calls.append(paused)
+
+    webui.set_job_pops_paused_callback(fake_set_paused)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # --- success: pause ---
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": True},
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        assert body["job_pops_paused"] is True
+        assert webui.status_data["job_pops_paused"] is True
+        assert paused_calls[-1] is True
+
+        # --- success: resume ---
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": False},
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        assert body["job_pops_paused"] is False
+        assert webui.status_data["job_pops_paused"] is False
+        assert paused_calls[-1] is False
+
+        # --- 400: missing 'paused' field ---
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"other": "value"},
+        ) as response:
+            assert response.status == 400
+            body = await response.json()
+        assert "paused" in body["error"].lower()
+
+        # --- 400: 'paused' is not a boolean ---
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": "yes"},
+        ) as response:
+            assert response.status == 400
+            body = await response.json()
+        assert "paused" in body["error"].lower()
+
+        # --- 400: non-JSON body ---
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            data=b"not json at all",
+            headers={"Content-Type": "application/json"},
+        ) as response:
+            assert response.status == 400
+
+        # --- 503: no callback registered ---
+        webui.set_job_pops_paused_callback(None)
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": True},
+        ) as response:
+            assert response.status == 503
+            body = await response.json()
+        assert "error" in body
+
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     # Run simple tests
     test_webui_creation()
