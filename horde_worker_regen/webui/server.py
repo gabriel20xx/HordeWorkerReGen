@@ -8,6 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 from loguru import logger
 
@@ -581,7 +582,7 @@ class WorkerWebUI:
             <div class="topbar-meta">
                 <span id="worker-status-badge"></span>
                 <span class="topbar-uptime">&#9201; <span id="uptime">--</span></span>
-                <button class="job-pops-pause-btn" id="job-pops-pause-btn" onclick="toggleJobPopsPause()" title="Pause or resume accepting new jobs from the Horde">&#9646;&#9646; Pause Jobs</button>
+                <button class="job-pops-pause-btn" id="job-pops-pause-btn" onclick="toggleJobPopsPause()" title="Pause or resume accepting new jobs from the Horde" aria-pressed="false">&#9646;&#9646; Pause Jobs</button>
                 <button class="theme-toggle" onclick="toggleTheme()" id="topbar-theme-toggle" aria-label="Toggle theme">&#127769;</button>
             </div>
         </div>
@@ -2043,7 +2044,7 @@ class WorkerWebUI:
         """
         try:
             body = await request.json()
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
             return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
 
         paused = body.get("paused")

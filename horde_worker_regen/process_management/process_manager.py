@@ -1687,8 +1687,8 @@ class HordeWorkerProcessManager:
         self._directml = directml
 
         self._replaced_due_to_maintenance = False
+        # Whether job pops have been paused by the user via the web UI.
         self._job_pops_paused = False
-        """Whether job pops have been paused by the user via the web UI."""
 
         # If there is only one model to load and only one inference process, then we can only run one job at a time
         # and there is no point in having more than one inference process
