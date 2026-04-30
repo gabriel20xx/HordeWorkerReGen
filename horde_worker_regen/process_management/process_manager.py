@@ -1687,6 +1687,8 @@ class HordeWorkerProcessManager:
         self._directml = directml
 
         self._replaced_due_to_maintenance = False
+        # Whether job pops have been paused by the user via the web UI.
+        self._job_pops_paused = False
 
         # If there is only one model to load and only one inference process, then we can only run one job at a time
         # and there is no point in having more than one inference process
@@ -1846,6 +1848,7 @@ class HordeWorkerProcessManager:
                 update_interval=self.bridge_data.webui_update_interval,
             )
             self.webui.set_delete_worker_callback(self._delete_worker)
+            self.webui.set_job_pops_paused_callback(self.set_job_pops_paused)
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
             # Add a log handler to capture logs for webui with colored output
@@ -1909,6 +1912,24 @@ class HordeWorkerProcessManager:
             f"Ensured worker with name {self.bridge_data.dreamer_worker_name} "
             f"({worker_details.id_}) is removed from maintenance.",
         )
+
+    def set_job_pops_paused(self, paused: bool) -> None:
+        """Pause or resume accepting new job pops.
+
+        When paused, :meth:`api_job_pop` returns immediately without contacting
+        the Horde API, so no new jobs are accepted.  Any jobs already in the
+        queue continue to be processed normally.
+
+        Args:
+            paused: ``True`` to pause new job pops, ``False`` to resume.
+        """
+        if self._job_pops_paused == paused:
+            return
+        self._job_pops_paused = paused
+        if paused:
+            logger.info("Job pops paused by web UI")
+        else:
+            logger.info("Job pops resumed by web UI")
 
     def enable_performance_mode(self) -> None:
         """Enable performance mode."""
@@ -5101,6 +5122,10 @@ class HordeWorkerProcessManager:
             self._last_pop_no_jobs_available = False
             return
 
+        # Skip if job pops have been paused by the user via the web UI
+        if self._job_pops_paused:
+            return
+
         # Skip if the client session is not initialized yet (during startup)
         if self.horde_client_session is None:
             return
@@ -6964,6 +6989,7 @@ class HordeWorkerProcessManager:
                 else None
             ),
             user_details=user_details if user_details else None,
+            job_pops_paused=self._job_pops_paused,
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 
