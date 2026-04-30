@@ -1957,7 +1957,7 @@ class WorkerWebUI:
         let _statsFetchInProgress = false;
         let _statsAbortController = null;
         let _statsLastFetchTime = 0;
-        const _STATS_FETCH_THROTTLE_MS = 9000; // don't re-fetch more often than every 9 seconds
+        const _STATS_FETCH_THROTTLE_MS = 9000; // just under the 10-second server snapshot interval
 
         function setStatsWindow(windowSecs, btn) {
             _statsWindowSecs = windowSecs;
@@ -2089,7 +2089,7 @@ class WorkerWebUI:
                 ctx.font = '12px -apple-system, system-ui, sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText('No data yet \u2014 data is recorded every 10 seconds', w / 2, h / 2);
+                ctx.fillText('No data yet \u2014 data is collected every few seconds', w / 2, h / 2);
                 ctx.restore();
                 return;
             }
@@ -2136,7 +2136,8 @@ class WorkerWebUI:
                 var tVal = tMin + (j / numXLabels) * tRange;
                 var xPx = cxf(tVal);
                 var d = new Date(tVal * 1000);
-                var xLbl = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+                var hh = ('0' + d.getHours()).slice(-2), mm = ('0' + d.getMinutes()).slice(-2);
+                var xLbl = hh + ':' + mm;
                 ctx.fillText(xLbl, xPx, pad.top + chartH + 5);
             }
 
