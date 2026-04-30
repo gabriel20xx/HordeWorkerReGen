@@ -1218,6 +1218,80 @@ async def test_webui_errors_grouped_endpoint_edge_cases() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_stats_endpoint() -> None:
+    """Test that /api/stats returns a snapshots list and records data via update_status."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Initially the snapshot list should be empty.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert "snapshots" in data
+        assert data["snapshots"] == []
+
+        # Force the first snapshot by backdating the timestamp.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(
+            jobs_completed=5,
+            jobs_faulted=1,
+            jobs_popped=6,
+            kudos_earned_session=50.0,
+            kudos_per_hour=25.0,
+            images_per_hour=10.0,
+            cpu_usage_percent=40.0,
+            gpu_usage_percent=70.0,
+            vram_usage_mb=4096.0,
+            total_vram_mb=8192.0,
+        )
+        assert len(webui._stats_snapshots) == 1
+
+        snap = webui._stats_snapshots[0]
+        assert "t" in snap
+        assert snap["jc"] == 5
+        assert snap["jf"] == 1
+        assert snap["jp"] == 6
+        assert snap["ks"] == 50.0
+        assert snap["iph"] == 10.0
+        assert snap["kph"] == 25.0
+        assert snap["cpu"] == 40.0
+        assert snap["gpu"] == 70.0
+        assert snap["vram"] == 50.0  # 4096/8192 = 50%
+
+        # A second call within the interval must NOT add another snapshot.
+        webui.update_status(jobs_completed=6)
+        assert len(webui._stats_snapshots) == 1
+
+        # Force a second snapshot.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(jobs_completed=7)
+        assert len(webui._stats_snapshots) == 2
+
+        # VRAM percentage must be capped at 100 even when usage exceeds total.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(vram_usage_mb=10000.0, total_vram_mb=8192.0)
+        snap_over = webui._stats_snapshots[-1]
+        assert snap_over["vram"] == 100.0, "vram_pct must be capped at 100%"
+
+        # Verify /api/stats returns all recorded snapshots.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            assert response.status == 200
+            data2 = await response.json()
+        assert len(data2["snapshots"]) == 3
+
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_job_pops_pause_endpoint() -> None:
     """Test the POST /api/job_pops/pause endpoint."""
     webui = WorkerWebUI(port=0)
