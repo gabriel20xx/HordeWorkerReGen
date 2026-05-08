@@ -1371,6 +1371,121 @@ async def test_job_pops_pause_endpoint() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_webui_gallery_model_filter() -> None:
+    """Test that /api/gallery?model=... filters images by model name (case-insensitive)."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 1.0, "model": "stable_diffusion"})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 2.0, "model": "sdxl"})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 3.0, "model": "stable_diffusion"})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 4.0, "model": None})
+
+        # No filter: all 4 images returned.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 4
+
+        # Filter by "stable_diffusion": 2 images.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&model=stable_diffusion",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 2
+        assert all(img["model"] == "stable_diffusion" for img in data["images"])
+
+        # Filter is case-insensitive: "Stable_Diffusion" matches "stable_diffusion".
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&model=Stable_Diffusion",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 2
+
+        # Filter by "sdxl": 1 image.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&model=sdxl",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 1
+        assert data["images"][0]["model"] == "sdxl"
+
+        # Filter by a model that doesn't exist: 0 images, 1 total_pages.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&model=nonexistent",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 0
+        assert data["images"] == []
+        assert data["total_pages"] == 1
+
+        # Empty model param: behaves like no filter.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&model=",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 4
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_gallery_models_endpoint() -> None:
+    """Test that /api/gallery/models returns sorted unique non-empty model names."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+
+        # Empty gallery: models list should be empty.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/models",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["models"] == []
+
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 1.0, "model": "sdxl"})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 2.0, "model": "stable_diffusion"})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 3.0, "model": "sdxl"})  # duplicate
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 4.0, "model": None})   # excluded
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 5.0, "model": "animefull"})
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/models",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        # Should be sorted, unique, and exclude None/empty entries.
+        assert data["models"] == sorted({"sdxl", "stable_diffusion", "animefull"})
+        assert len(data["models"]) == 3
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     # Run simple tests
     test_webui_creation()
