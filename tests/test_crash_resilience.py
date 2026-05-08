@@ -7819,3 +7819,55 @@ class TestInferenceFailureCooldown:
         assert "RecoveredModel" in filtered_models, (
             "RecoveredModel must be reinstated in the request model list after its cooldown expires"
         )
+
+
+class TestReplaceHungProcessesProcessStartingTimeout:
+    """Regression tests for PROCESS_STARTING timeout selection in replace_hung_processes()."""
+
+    def test_process_starting_uses_max_of_process_and_preload_timeout(self) -> None:
+        """PROCESS_STARTING stuck checks must use at least process_timeout."""
+        from horde_worker_regen.process_management.process_manager import HordeProcessType, HordeWorkerProcessManager
+
+        process = MagicMock()
+        process.process_id = 1
+        process.process_type = HordeProcessType.INFERENCE
+        process.last_process_state = HordeProcessState.PROCESS_STARTING
+        process.last_received_timestamp = 0.0
+        process.last_heartbeat_timestamp = 0.0
+        process.last_progress_timestamp = 0.0
+        process.last_heartbeat_percent_complete = None
+        process.last_job_referenced = None
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = True
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.values.return_value = [process]
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._check_and_replace_process.return_value = False
+        mock_manager.jobs_pending_inference = []
+        mock_manager.jobs_in_progress = []
+
+        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+
+        with patch("threading.Thread"):
+            bound_method()
+
+        expected_timeout = max(mock_manager.bridge_data.process_timeout, mock_manager.bridge_data.preload_timeout)
+        starting_calls = [
+            call
+            for call in mock_manager._check_and_replace_process.call_args_list
+            if call.args[2] == HordeProcessState.PROCESS_STARTING
+        ]
+        assert len(starting_calls) == 1, "PROCESS_STARTING stuck check should run exactly once per process"
+        assert starting_calls[0].args[1] == expected_timeout, (
+            "PROCESS_STARTING stuck timeout must use max(process_timeout, preload_timeout)"
+        )

@@ -7544,10 +7544,16 @@ class HordeWorkerProcessManager:
                 any_replaced = any_process_replaced = True
             else:
                 # Check PROCESS_STARTING first - this should always be checked regardless of job availability
-                # since processes should complete initialization even when no jobs are available
+                # since processes should complete initialization even when no jobs are available.
+                # Use a startup timeout that is at least process_timeout so expensive child-process
+                # initialization (imports/model manager setup) isn't misclassified as a stuck preload.
+                process_starting_timeout = max(
+                    self.bridge_data.process_timeout,
+                    self.bridge_data.preload_timeout,
+                )
                 if self._check_and_replace_process(
                     process_info,
-                    self.bridge_data.preload_timeout,
+                    process_starting_timeout,
                     HordeProcessState.PROCESS_STARTING,
                     "seems to be stuck starting",
                 ):
