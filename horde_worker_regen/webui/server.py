@@ -2623,12 +2623,13 @@ class WorkerWebUI:
         model_filter = request.rel_url.query.get("model", "").strip()
 
         # Gallery is stored oldest-first (insertion order); serve newest-first to the UI.
-        images_reversed = list(reversed(self._gallery_dict.values()))
-
-        # Apply model filter if one was provided.
+        # Apply model filter before reversing so the intermediate list is as small as possible.
         if model_filter:
             model_filter_lower = model_filter.lower()
-            images_reversed = [e for e in images_reversed if (e.get("model") or "").lower() == model_filter_lower]
+            images_filtered = [e for e in self._gallery_dict.values() if (e.get("model") or "").lower() == model_filter_lower]
+        else:
+            images_filtered = list(self._gallery_dict.values())
+        images_reversed = list(reversed(images_filtered))
 
         total = len(images_reversed)
         total_pages = max(1, math.ceil(total / page_size))
