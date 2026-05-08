@@ -1,6 +1,6 @@
 torch-directml==0.2.5.dev240914
 
-horde_sdk~=0.17.0
+horde_sdk~=0.17.1
 horde_safety~=0.3.0
 horde_engine~=2.22.2
 horde_model_reference~=0.10.0
