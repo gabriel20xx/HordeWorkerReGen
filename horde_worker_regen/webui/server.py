@@ -145,6 +145,7 @@ class WorkerWebUI:
         self.app.router.add_get("/api/errors/grouped", self._handle_errors_grouped)
         self.app.router.add_get("/api/last_image", self._handle_last_image)
         self.app.router.add_get("/api/gallery", self._handle_gallery)
+        self.app.router.add_get("/api/gallery/models", self._handle_gallery_models)
         self.app.router.add_get("/api/gallery/image", self._handle_gallery_image)
         self.app.router.add_get("/api/config", self._handle_config)
         self.app.router.add_get("/health", self._handle_health)
@@ -347,6 +348,11 @@ class WorkerWebUI:
         @keyframes gallery-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
         .image-grid-item.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
         [data-theme="dark"] .image-grid-item.loading { background: linear-gradient(90deg, #1e293b 25%, #2d3f55 50%, #1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
+        .gallery-filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+        .gallery-filter-bar label { font-size: 0.82rem; font-weight: 500; color: #475569; white-space: nowrap; }
+        .gallery-filter-bar select { font-size: 0.82rem; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; color: #1e293b; cursor: pointer; max-width: 320px; }
+        [data-theme="dark"] .gallery-filter-bar label { color: #94a3b8; }
+        [data-theme="dark"] .gallery-filter-bar select { background: #1e293b; border-color: #334155; color: #e2e8f0; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 320px; overflow: hidden; }
         .last-image-container.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
@@ -661,6 +667,12 @@ class WorkerWebUI:
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128444; Gallery</span><span class="section-count" id="gallery-count">0</span></div>
                         <div class="card">
+                            <div class="gallery-filter-bar">
+                                <label for="gallery-model-filter">Filter by model:</label>
+                                <select id="gallery-model-filter" onchange="galleryChangeModelFilter(this.value)">
+                                    <option value="">All models</option>
+                                </select>
+                            </div>
                             <div id="gallery-new-banner" role="button" tabindex="0" onclick="fetchGalleryPage(1)" onkeydown="if(event.key==='Enter'||event.key===' '){fetchGalleryPage(1);event.preventDefault();}">&#128444; New images available &#8212; click to view latest</div>
                             <div id="gallery-loading" style="display:none;text-align:center;padding:24px 16px;"><div class="loading-spinner" style="margin:0 auto 8px;"></div><span class="loading-text">Loading gallery&#8230;</span></div>
                             <div id="gallery-empty" class="empty-state" style="display:none;"><span class="empty-state-icon">&#128444;</span>No images generated yet</div>
@@ -901,6 +913,7 @@ class WorkerWebUI:
                 if (location.hash !== newHash) history.pushState({page: pageId}, '', newHash);
             }
             if (pageId === 'gallery') {
+                populateGalleryModelFilter();
                 const gridEl = document.getElementById('gallery-grid');
                 const gridEmpty = !gridEl || !gridEl.querySelector('.image-grid-item');
                 if (gridEmpty) {
@@ -1321,6 +1334,7 @@ class WorkerWebUI:
         let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
         // Sync the select element's initial value with the JS constant (single source of truth)
         document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
+        let galleryModelFilter = ''; // Empty string = show all models
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
         // Set to true when new images arrive while the gallery tab is not active.
         // Consumed by showPage() to refresh or show the banner on return.
@@ -1469,7 +1483,8 @@ class WorkerWebUI:
             if (geEl) geEl.style.display = 'none';
             // Phase 1: fetch lightweight metadata only so the page skeleton can be shown
             // immediately without waiting for all thumbnail data to transfer.
-            fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+'&metadata_only=true')
+            const modelParam = galleryModelFilter ? '&model='+encodeURIComponent(galleryModelFilter) : '';
+            fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+'&metadata_only=true'+modelParam)
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                 .then(data => {
                     if (glEl) glEl.style.display = 'none';
@@ -1496,7 +1511,8 @@ class WorkerWebUI:
         function refreshGalleryPage1() {
             if (galleryFetchInProgress) return;
             galleryFetchInProgress = true;
-            fetch('/api/gallery?page=1&page_size='+galleryPageSize+'&metadata_only=true')
+            const modelParam = galleryModelFilter ? '&model='+encodeURIComponent(galleryModelFilter) : '';
+            fetch('/api/gallery?page=1&page_size='+galleryPageSize+'&metadata_only=true'+modelParam)
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                 .then(data => {
                     galleryFetchInProgress = false;
@@ -1583,6 +1599,32 @@ class WorkerWebUI:
         function galleryChangePageSize(val) {
             galleryPageSize = parseInt(val, 10) || GALLERY_DEFAULT_PAGE_SIZE;
             fetchGalleryPage(1);
+        }
+        function galleryChangeModelFilter(val) {
+            galleryModelFilter = val;
+            fetchGalleryPage(1);
+        }
+        function populateGalleryModelFilter() {
+            fetch('/api/gallery/models')
+                .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                .then(data => {
+                    const sel = document.getElementById('gallery-model-filter');
+                    if (!sel) return;
+                    const prev = sel.value;
+                    sel.innerHTML = '<option value="">All models</option>';
+                    (data.models || []).forEach(function(m) {
+                        const opt = document.createElement('option');
+                        opt.value = m; opt.textContent = m;
+                        if (m === prev) opt.selected = true;
+                        sel.appendChild(opt);
+                    });
+                    // If the previously selected model is no longer in the list, reset to "all".
+                    if (prev && !data.models.includes(prev)) {
+                        sel.value = '';
+                        if (galleryModelFilter !== '') { galleryModelFilter = ''; fetchGalleryPage(1); }
+                    }
+                })
+                .catch(err => { console.error('Gallery models fetch error:', err); });
         }
         function isScrolledToBottom(el, tol) { return el.scrollHeight - el.clientHeight <= el.scrollTop + tol; }
         function ansiToHtml(text) {
@@ -2566,6 +2608,8 @@ class WorkerWebUI:
                 only lightweight metadata (gallery_id, timestamp, model) is returned.
                 Use this to render the page skeleton quickly; images can then be
                 fetched individually via ``/api/gallery/image``.
+            model: if provided, only return images whose ``model`` field matches this
+                value (case-insensitive).  Pass an empty string or omit to return all.
         """
         try:
             page = max(1, int(request.rel_url.query.get("page", "1")))
@@ -2576,10 +2620,22 @@ class WorkerWebUI:
         except ValueError:
             page_size = 96
         metadata_only = request.rel_url.query.get("metadata_only", "").lower() in ("1", "true", "yes")
+        model_filter = request.rel_url.query.get("model", "").strip()
 
         # Gallery is stored oldest-first (insertion order); serve newest-first to the UI.
-        images_reversed = list(reversed(self._gallery_dict.values()))
-        total = len(self._gallery_dict)
+        # When a model filter is active, materialise a filtered list first (smallest possible
+        # intermediate); when no filter is active, use reversed() directly to avoid allocating
+        # a full copy of the values list.
+        if model_filter:
+            model_filter_lower = model_filter.lower()
+            images_reversed: list[dict[str, Any]] = list(
+                reversed([e for e in self._gallery_dict.values() if (e.get("model") or "").lower() == model_filter_lower])
+            )
+            total = len(images_reversed)
+        else:
+            total = len(self._gallery_dict)
+            images_reversed = list(reversed(self._gallery_dict.values()))
+
         total_pages = max(1, math.ceil(total / page_size))
         page = min(page, total_pages)
         start = (page - 1) * page_size
@@ -2609,6 +2665,23 @@ class WorkerWebUI:
                 "images": page_images,
             },
         )
+
+    async def _handle_gallery_models(self, request: web.Request) -> web.Response:
+        """Return the sorted list of unique model names present in the gallery.
+
+        The list is alphabetically sorted and excludes entries where ``model``
+        is ``None`` or an empty string.
+
+        Returns:
+            JSON object with a single key ``models``: a sorted list of unique
+            non-empty model name strings.
+        """
+        seen: set[str] = set()
+        for entry in self._gallery_dict.values():
+            model = entry.get("model")
+            if model:
+                seen.add(model)
+        return web.json_response({"models": sorted(seen)})
 
     async def _handle_gallery_image(self, request: web.Request) -> web.Response:
         """Return a single gallery image by its stable ``gallery_id``.
