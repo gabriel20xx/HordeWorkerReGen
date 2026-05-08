@@ -94,6 +94,7 @@ class WorkerWebUI:
             "errors_history": [],
             "images_count": 0,
             "user_details": {},
+            "images_per_model": {},
         }
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
@@ -551,6 +552,15 @@ class WorkerWebUI:
         .chart-container-sm canvas { display: block; }
         .chart-label { font-size: 0.75rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
         [data-theme="dark"] .chart-label { color: #94a3b8; }
+        .model-images-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .model-images-table th { text-align: left; font-weight: 700; color: var(--text-muted); padding: 5px 8px 7px 8px; border-bottom: 1px solid var(--border); }
+        .model-images-table th:last-child { text-align: right; }
+        .model-images-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+        .model-images-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+        .model-images-table tr:last-child td { border-bottom: none; }
+        .model-images-bar-cell { width: 40%; }
+        .model-images-bar-wrap { background: var(--border); border-radius: 3px; height: 7px; overflow: hidden; }
+        .model-images-bar { background: var(--accent); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
 
     </style>
 </head>
@@ -760,6 +770,14 @@ class WorkerWebUI:
                         <div class="grid-2" style="margin-bottom:14px;">
                             <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value" id="stats-jobs-popped">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="stats-jobs-faulted">-</div></div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#127760; Images by Model (Session)</span></div>
+                        <div class="card" style="padding:14px 16px;">
+                            <div id="stats-model-table-wrap">
+                                <div class="text-muted" style="font-size:0.85rem;">No images generated yet.</div>
+                            </div>
                         </div>
                     </div>
                     <div class="section">
@@ -2160,6 +2178,30 @@ class WorkerWebUI:
             el('stats-jobs-popped').textContent      = noData ? '-' : jobsPopped.toLocaleString();
             el('stats-jobs-faulted').textContent     = noData ? '-' : jobsFaulted.toLocaleString();
 
+            // Per-model image count table (session totals, not windowed)
+            var modelWrap = document.getElementById('stats-model-table-wrap');
+            if (modelWrap) {
+                var ipm = data.images_per_model || {};
+                var modelEntries = Object.keys(ipm).map(function(k) { return { name: k, count: ipm[k] }; });
+                modelEntries.sort(function(a, b) { return b.count - a.count; });
+                if (modelEntries.length === 0) {
+                    modelWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No images generated yet.</div>';
+                } else {
+                    var maxCount = modelEntries[0].count;
+                    var rows = modelEntries.map(function(e) {
+                        var pct = maxCount > 0 ? Math.round((e.count / maxCount) * 100) : 0;
+                        return '<tr>' +
+                            '<td>' + escapeHtml(e.name) + '</td>' +
+                            '<td class="model-images-bar-cell"><div class="model-images-bar-wrap"><div class="model-images-bar" style="width:' + pct + '%"></div></div></td>' +
+                            '<td>' + e.count.toLocaleString() + '</td>' +
+                            '</tr>';
+                    }).join('');
+                    modelWrap.innerHTML = '<table class="model-images-table">' +
+                        '<thead><tr><th>Model</th><th class="model-images-bar-cell"></th><th>Images</th></tr></thead>' +
+                        '<tbody>' + rows + '</tbody></table>';
+                }
+            }
+
             // Charts
             drawLineChart('chart-iph',  snaps.map(function(s) { return { t: s.t, v: s.iph  }; }), { color: '#10b981' });
             drawLineChart('chart-kph',  snaps.map(function(s) { return { t: s.t, v: s.kph  }; }), { color: '#6366f1' });
@@ -2460,14 +2502,21 @@ class WorkerWebUI:
         return web.json_response({"status": "ok"})
 
     async def _handle_stats(self, request: web.Request) -> web.Response:
-        """Return historical statistics snapshots for the statistics page.
+        """Return historical statistics snapshots and per-model image counts.
 
         Returns all stored snapshots in chronological order (oldest first).
         Each snapshot contains a Unix timestamp plus CPU/GPU/VRAM usage
         percentages, images/hour, kudos/hour, and cumulative job/kudos counters
         for the current session.
+
+        Response shape::
+
+            {
+                "snapshots": [...],
+                "images_per_model": {"model-name": <int count>, ...}
+            }
         """
-        return web.json_response({"snapshots": self._stats_snapshots})
+        return web.json_response({"snapshots": self._stats_snapshots, "images_per_model": self.status_data.get("images_per_model", {})})
 
     def _record_stats_snapshot(self) -> None:
         """Append a statistics snapshot to the ring buffer if enough time has elapsed."""
@@ -2773,6 +2822,7 @@ class WorkerWebUI:
         faulted_jobs_history: list[dict[str, Any]] | None = None,
         errors_history: list[str] | None = None,
         user_details: dict[str, Any] | None = None,
+        images_per_model: dict[str, int] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -2808,6 +2858,7 @@ class WorkerWebUI:
             faulted_jobs_history: List of faulted jobs with details
             errors_history: List of recent error messages
             user_details: Extended user details from the Horde API (worker_count, trusted, moderator, etc.)
+            images_per_model: Cumulative per-model image counts for the current session
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -2873,6 +2924,8 @@ class WorkerWebUI:
             self.status_data["errors_history"] = list(errors_history)
         if user_details is not None:
             self.status_data["user_details"] = user_details
+        if images_per_model is not None:
+            self.status_data["images_per_model"] = dict(images_per_model)
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]

@@ -1237,6 +1237,9 @@ async def test_webui_stats_endpoint() -> None:
             data = await response.json()
         assert "snapshots" in data
         assert data["snapshots"] == []
+        # images_per_model field must be present and empty initially.
+        assert "images_per_model" in data
+        assert data["images_per_model"] == {}
 
         # Force the first snapshot by backdating the timestamp.
         webui._last_stats_snapshot_time = 0.0
@@ -1288,6 +1291,22 @@ async def test_webui_stats_endpoint() -> None:
             assert response.status == 200
             data2 = await response.json()
         assert len(data2["snapshots"]) == 3
+
+        # images_per_model is reflected from update_status and can be set and cleared.
+        webui.update_status(images_per_model={"ModelA": 5, "ModelB": 2})
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            data3 = await response.json()
+        assert data3["images_per_model"] == {"ModelA": 5, "ModelB": 2}
+
+        # Passing an empty dict clears the field correctly.
+        webui.update_status(images_per_model={})
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            data4 = await response.json()
+        assert data4["images_per_model"] == {}
 
     finally:
         await webui.stop()
