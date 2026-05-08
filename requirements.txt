@@ -10,6 +10,6 @@ horde_model_reference~=0.10.0
 
 ruamel.yaml
 
-pydantic>=2.9.2
+pydantic==2.13.4
 typing_extensions
 loguru
