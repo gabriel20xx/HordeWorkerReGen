@@ -7,6 +7,7 @@ import sys
 from enum import auto
 from pathlib import Path
 
+from horde_model_reference.meta_consts import MODEL_REFERENCE_CATEGORY
 from horde_model_reference.model_reference_manager import ModelReferenceManager
 from horde_sdk.ai_horde_api.ai_horde_clients import AIHordeAPIManualClient
 from horde_sdk.ai_horde_worker.model_meta import ImageModelLoadResolver
@@ -307,7 +308,8 @@ class BridgeDataLoader:
             )
 
         # Remove models not in the model reference manager
-        known_models = load_resolver.resolve_all_model_names()
+        # Use get_model_reference directly to avoid fetching unused categories and spurious error logs
+        known_models = set(horde_model_reference_manager.get_model_reference(MODEL_REFERENCE_CATEGORY.image_generation).keys())
 
         total_resolved_models = len(bridge_data.image_models_to_load)
 
