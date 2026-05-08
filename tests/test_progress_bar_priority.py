@@ -760,6 +760,7 @@ def test_api_job_pop_flushes_idle_time_before_reset() -> None:
 
     # Guard conditions that must NOT cause an early return
     mock_manager._shutting_down = False
+    mock_manager._job_pops_paused = False
     mock_manager.horde_client_session = MagicMock()
     mock_manager._too_many_consecutive_failed_jobs = False
     mock_manager._consecutive_failed_jobs = 0
@@ -1004,6 +1005,7 @@ class TestApiJobPopQueueGate:
         """
         mock_manager = MagicMock()
         mock_manager._shutting_down = False
+        mock_manager._job_pops_paused = False
         mock_manager._too_many_consecutive_failed_jobs = False
         mock_manager._consecutive_failed_jobs = 0
 
@@ -1128,6 +1130,7 @@ class TestApiJobPopPerModelFilterRemoved:
         """
         mock_manager = MagicMock()
         mock_manager._shutting_down = False
+        mock_manager._job_pops_paused = False
         mock_manager._too_many_consecutive_failed_jobs = False
         mock_manager._consecutive_failed_jobs = 0
         mock_manager._consecutive_pop_failures = 0
