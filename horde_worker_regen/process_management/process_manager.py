@@ -1785,6 +1785,9 @@ class HordeWorkerProcessManager:
         self.kudos_events: list[tuple[float, float]] = []
         self.image_events: list[tuple[float, int]] = []
 
+        # Cumulative per-model image counts for the current session.
+        self._images_per_model: dict[str, int] = {}
+
         self._api_messages_received = {}
 
         # Track models that have failed
@@ -4205,6 +4208,11 @@ class HordeWorkerProcessManager:
             self.kudos_generated_this_session += job_submit_response.reward
             self.kudos_events.append((time.time(), job_submit_response.reward))
             self.image_events.append((time.time(), new_submit.batch_count))
+            model_name = new_submit.completed_job_info.sdk_api_job_info.model
+            if model_name:
+                self._images_per_model[model_name] = (
+                    self._images_per_model.get(model_name, 0) + new_submit.batch_count
+                )
             new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
 
             # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
@@ -6990,6 +6998,7 @@ class HordeWorkerProcessManager:
             ),
             user_details=user_details if user_details else None,
             job_pops_paused=self._job_pops_paused,
+            images_per_model=self._images_per_model if self._images_per_model else None,
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 
