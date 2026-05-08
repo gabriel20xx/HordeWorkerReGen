@@ -42,7 +42,7 @@ def main(
             try:
                 with logger.catch(reraise=True):
                     all_refs = horde_model_reference_manager.get_all_model_references(overwrite_existing=True)
-                    if not all_refs.get(MODEL_REFERENCE_CATEGORY.stable_diffusion):
+                    if not all_refs.get(MODEL_REFERENCE_CATEGORY.image_generation):
                         logger.error(
                             "Image generation model references not found. Retrying in 5 seconds...",
                         )
