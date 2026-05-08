@@ -1005,6 +1005,7 @@ class TestApiJobPopQueueGate:
         """
         mock_manager = MagicMock()
         mock_manager._shutting_down = False
+        mock_manager._job_pops_paused = False
         mock_manager._too_many_consecutive_failed_jobs = False
         mock_manager._consecutive_failed_jobs = 0
 
