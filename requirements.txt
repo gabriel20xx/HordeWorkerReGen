@@ -1,12 +1,12 @@
 torch==2.11.0
 
-aiodns>=3.0.0,<4.0.0 # 4.x.x has an undetermined breaking change causing an "Could not contact DNS servers" error
+aiodns>=4.0.0,<5.0.0 # 4.x.x has an undetermined breaking change causing an "Could not contact DNS servers" error
 certifi # Required for SSL cert resolution
 
-horde_sdk~=0.17.1
+horde_sdk~=0.18.0
 horde_safety~=0.3.0
 horde_engine~=2.22.2
-horde_model_reference~=0.10.0
+horde_model_reference~=2.1.5
 
 ruamel.yaml
 
