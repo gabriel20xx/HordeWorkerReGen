@@ -32,7 +32,7 @@ import PIL.Image
 import psutil
 import yarl
 from aiohttp import ClientSession
-from horde_model_reference.meta_consts import MODEL_REFERENCE_CATEGORY, STABLE_DIFFUSION_BASELINE_CATEGORY
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE, MODEL_REFERENCE_CATEGORY
 from horde_model_reference.model_reference_manager import ModelReferenceManager
 from horde_model_reference.model_reference_records import GenericModelRecord
 from horde_sdk import RequestErrorResponse
@@ -182,7 +182,7 @@ class HordeProcessInfo:
     """Last time we updated the process info. If we're regularly working, then this value should change frequently."""
     loaded_horde_model_name: str | None
     """The name of the horde model that is (supposedly) currently loaded in this process."""
-    loaded_horde_model_baseline: STABLE_DIFFUSION_BASELINE_CATEGORY | str | None
+    loaded_horde_model_baseline: KNOWN_IMAGE_GENERATION_BASELINE | str | None
     """The baseline of the horde model that is (supposedly) currently loaded in this process."""
     last_control_flag: HordeControlFlag | None
     """The last control flag sent, to avoid duplication."""
@@ -580,7 +580,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         self,
         process_id: int,
         horde_model_name: str | None,
-        horde_model_baseline: STABLE_DIFFUSION_BASELINE_CATEGORY | str | None = None,
+        horde_model_baseline: KNOWN_IMAGE_GENERATION_BASELINE | str | None = None,
         last_job_referenced: ImageGenerateJobPopResponse | None = None,
     ) -> None:
         """Update the model load state for the given process ID.
@@ -588,7 +588,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         Args:
             process_id (int): The ID of the process to update.
             horde_model_name (str): The name of the horde model to update.
-            horde_model_baseline (STABLE_DIFFUSION_BASELINE_CATEGORY): The baseline of the horde model to update.
+            horde_model_baseline (KNOWN_IMAGE_GENERATION_BASELINE): The baseline of the horde model to update.
             load_state (ModelLoadState): The load state of the model.
             last_job_referenced (ImageGenerateJobPopResponse | None, optional): The last job referenced by this \
                  process. Defaults to None.
@@ -873,7 +873,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
                     logger.debug(f"Model {model} not found in stable diffusion model reference. Is it a custom model?")
                     continue
 
-                if model_info.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_xl and (
+                if model_info.baseline == KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl and (
                     p.can_accept_job()
                     or p.last_process_state == HordeProcessState.INFERENCE_POST_PROCESSING
                 ):
@@ -1523,7 +1523,7 @@ class HordeWorkerProcessManager:
     stable_diffusion_reference: dict[str, GenericModelRecord] | None
     """The class which contains the list of models from horde_model_reference."""
 
-    def get_model_baseline(self, model_name: str) -> STABLE_DIFFUSION_BASELINE_CATEGORY | str | None:
+    def get_model_baseline(self, model_name: str) -> KNOWN_IMAGE_GENERATION_BASELINE | str | None:
         """Return the baseline of the model."""
         if self.stable_diffusion_reference is None:
             return None
@@ -2015,13 +2015,13 @@ class HordeWorkerProcessManager:
 
         horde_model_record = self.stable_diffusion_reference[horde_model_name]
 
-        if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_1:
+        if horde_model_record.baseline == KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1:
             return int(3 * 1024 * 1024 * 1024)
-        if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_2_512:
+        if horde_model_record.baseline == KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_2_512:
             return 4 * 1024 * 1024 * 1024
-        if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_2_768:
+        if horde_model_record.baseline == KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_2_768:
             return 5 * 1024 * 1024 * 1024
-        if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_xl:
+        if horde_model_record.baseline == KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl:
             return int(5.75 * 1024 * 1024 * 1024)
 
         raise ValueError(f"Model {horde_model_name} has an unknown baseline {horde_model_record.baseline}")
@@ -5965,7 +5965,7 @@ class HordeWorkerProcessManager:
                                         next_job_heavy_model_and_workflow = (
                                             next_model_record is not None
                                             and next_model_record.baseline
-                                            == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_xl
+                                            == KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl
                                             and next_workflow in KNOWN_SLOW_WORKFLOWS
                                         )
 
