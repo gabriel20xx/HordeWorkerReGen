@@ -1,5 +1,4 @@
 torch-directml==0.2.5.dev240914
-certifi # Required for SSL cert resolution
 
 horde_sdk~=0.17.0
 horde_safety~=0.3.0
