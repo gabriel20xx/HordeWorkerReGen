@@ -1068,7 +1068,7 @@ async def test_webui_errors_grouped_endpoint_basic() -> None:
         assert data["total_errors"] == 0
         assert data["groups"] == []
 
-        # Populate with repeated errors; "gamma error" only appears once and must be excluded
+        # Populate with repeated errors; "gamma error" only appears once but must still be shown
         errors = ["alpha error", "beta error", "alpha error", "gamma error", "alpha error", "beta error"]
         webui.update_status(errors_history=errors)
 
@@ -1079,8 +1079,8 @@ async def test_webui_errors_grouped_endpoint_basic() -> None:
             data = await response.json()
 
         assert data["total_errors"] == 6
-        # Only "alpha error" (×3) and "beta error" (×2) qualify; "gamma error" (×1) is excluded
-        assert data["total_groups"] == 2
+        # All 3 unique messages are included as groups (single-occurrence errors appear as a group of 1)
+        assert data["total_groups"] == 3
 
         # Groups must be sorted by count descending
         messages = [g["message"] for g in data["groups"]]
@@ -1089,8 +1089,10 @@ async def test_webui_errors_grouped_endpoint_basic() -> None:
         assert counts[0] == 3
         assert messages[1] == "beta error"
         assert counts[1] == 2
-        # "gamma error" (single occurrence) must not appear in grouped view
-        assert "gamma error" not in messages
+        # "gamma error" (single occurrence) must appear in grouped view as a group of 1
+        assert "gamma error" in messages
+        gamma_count = next(g["count"] for g in data["groups"] if g["message"] == "gamma error")
+        assert gamma_count == 1
     finally:
         await webui.stop()
 
@@ -1151,7 +1153,7 @@ async def test_webui_errors_grouped_endpoint_pagination() -> None:
         await asyncio.sleep(0.5)
         actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
 
-        # 15 error types, each appearing twice so all qualify for the grouped view
+        # 15 error types, each appearing twice
         errors = [msg for i in range(15) for msg in [f"error type {i}", f"error type {i}"]]
         webui.update_status(errors_history=errors)
 
@@ -1187,7 +1189,7 @@ async def test_webui_errors_grouped_endpoint_edge_cases() -> None:
         await asyncio.sleep(0.5)
         actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
 
-        # "err b" appears only once and will be excluded; "err a" appears twice and qualifies
+        # "err b" appears only once but will still be included; "err a" appears twice
         webui.update_status(errors_history=["err a", "err b", "err a"])
 
         # Invalid page falls back to 1
