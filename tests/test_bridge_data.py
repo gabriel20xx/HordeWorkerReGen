@@ -37,10 +37,7 @@ def test_bridge_data_loader_yaml_template() -> None:
     """Test that the bridge data template file can be loaded and parsed by a BridgeDataLoader."""
     bridge_data_loader = BridgeDataLoader()
 
-    horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=False,
-        override_existing=False,
-    )
+    horde_model_reference_manager = ModelReferenceManager()
     bridge_data = bridge_data_loader.load(
         file_path="bridgeData_template.yaml",
         file_format=ConfigFormat.yaml,
@@ -56,10 +53,7 @@ def test_bridge_data_loader_yaml_local_if_present() -> None:
     """Test that the bridge data file can be loaded and parsed by a BridgeDataLoader (if present)."""
     bridge_data_loader = BridgeDataLoader()
 
-    horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=False,
-        override_existing=False,
-    )
+    horde_model_reference_manager = ModelReferenceManager()
 
     if not pathlib.Path("bridgeData.yaml").is_file():
         pytest.skip("bridgeData.yaml not found")
@@ -82,10 +76,7 @@ def test_bridge_data_load_from_env_vars() -> None:
     os.environ["AIWORKER_REGEN_HORDE_URL"] = "https://localhost:8080"
     os.environ["AIWORKER_REGEN_MODELS_TO_LOAD"] = "['model1', 'model2']"
 
-    horde_model_reference_manager = ModelReferenceManager(
-        download_and_convert_legacy_dbs=False,
-        override_existing=False,
-    )
+    horde_model_reference_manager = ModelReferenceManager()
 
     bridge_data = BridgeDataLoader.load_from_env_vars(
         horde_model_reference_manager=horde_model_reference_manager,
