@@ -6998,7 +6998,7 @@ class HordeWorkerProcessManager:
             ),
             user_details=user_details if user_details else None,
             job_pops_paused=self._job_pops_paused,
-            images_per_model=self._images_per_model if self._images_per_model else None,
+            images_per_model=self._images_per_model,
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 

@@ -2460,12 +2460,19 @@ class WorkerWebUI:
         return web.json_response({"status": "ok"})
 
     async def _handle_stats(self, request: web.Request) -> web.Response:
-        """Return historical statistics snapshots for the statistics page.
+        """Return historical statistics snapshots and per-model image counts.
 
         Returns all stored snapshots in chronological order (oldest first).
         Each snapshot contains a Unix timestamp plus CPU/GPU/VRAM usage
         percentages, images/hour, kudos/hour, and cumulative job/kudos counters
         for the current session.
+
+        Response shape::
+
+            {
+                "snapshots": [...],
+                "images_per_model": {"model-name": <int count>, ...}
+            }
         """
         return web.json_response({"snapshots": self._stats_snapshots, "images_per_model": self.status_data.get("images_per_model", {})})
 
