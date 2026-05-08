@@ -2500,8 +2500,7 @@ class WorkerWebUI:
     async def _handle_errors_grouped(self, request: web.Request) -> web.Response:
         """Return errors grouped by normalised message text, sorted by occurrence count descending.
 
-        Only groups with **2 or more** occurrences are returned – single isolated
-        errors are not considered a "group" and are omitted from this view.
+        All errors are included – single-occurrence errors appear as a group of 1.
 
         Variable tokens in error messages (UUIDs, hex addresses, long numeric IDs
         such as job IDs or process IDs) are stripped before grouping so that the
@@ -2528,8 +2527,8 @@ class WorkerWebUI:
             counts[key] = counts.get(key, 0) + 1
             if key not in representatives:
                 representatives[key] = msg
-        # Only include groups with 2+ occurrences
-        qualified_groups = [(key, cnt) for key, cnt in counts.items() if cnt >= 2]
+        # Include all groups (single-occurrence errors appear as a group of 1)
+        qualified_groups = list(counts.items())
         # Sort by count descending, then alphabetically for stable ordering
         groups = sorted(qualified_groups, key=lambda x: (-x[1], x[0]))
         total_groups = len(groups)
