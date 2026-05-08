@@ -41,8 +41,11 @@ def main(
         while True:
             try:
                 with logger.catch(reraise=True):
-                    all_refs = horde_model_reference_manager.get_all_model_references(overwrite_existing=True)
-                    if not all_refs.get(MODEL_REFERENCE_CATEGORY.image_generation):
+                    sd_ref = horde_model_reference_manager.get_model_reference(
+                        MODEL_REFERENCE_CATEGORY.image_generation,
+                        overwrite_existing=True,
+                    )
+                    if not sd_ref:
                         logger.error(
                             "Image generation model references not found. Retrying in 5 seconds...",
                         )
