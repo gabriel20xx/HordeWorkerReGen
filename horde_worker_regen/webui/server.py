@@ -394,7 +394,7 @@ class WorkerWebUI:
         .error-group:last-child { margin-bottom: 0; }
         .error-group-header { display: flex; align-items: flex-start; gap: 8px; padding: 9px 13px; cursor: pointer; user-select: none; width: 100%; background: transparent; border: none; text-align: left; font: inherit; color: inherit; }
         .error-group-header:hover { background: rgba(239,68,68,0.06); }
-        .error-group-msg { font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; flex: 1; }
+        .error-group-msg { font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; flex: 1; min-width: 0; }
         .error-count-badge { flex-shrink: 0; background: var(--error); color: #fff; font-size: 0.7rem; font-weight: 700; border-radius: 10px; padding: 1px 7px; line-height: 1.6; margin-top: 1px; }
         .error-group-toggle { flex-shrink: 0; font-size: 0.7rem; color: #9ca3af; margin-top: 2px; transition: transform 0.15s; }
         .error-group.open .error-group-toggle { transform: rotate(90deg); }
