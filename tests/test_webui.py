@@ -1144,6 +1144,82 @@ async def test_webui_errors_grouped_endpoint_normalisation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_errors_grouped_normalises_timestamps() -> None:
+    """Test /api/errors/grouped groups errors that differ only by timestamp (seconds)."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Simulate the same error logged at different times in the webui HH:mm:ss format
+        # and also in the full ISO YYYY-MM-DD HH:mm:ss.SSS format used by file logs.
+        errors = [
+            "12:34:56 | ERROR    | Job failed: connection timeout",
+            "12:34:57 | ERROR    | Job failed: connection timeout",
+            "12:34:58 | ERROR    | Job failed: connection timeout",
+            "2026-02-04 21:44:06.123 | ERROR    | Inference process crashed",
+            "2026-02-04 21:44:07.456 | ERROR    | Inference process crashed",
+        ]
+        webui.update_status(errors_history=errors)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        # All three "Job failed" messages must collapse into one group; the two
+        # "Inference process crashed" messages must collapse into another.
+        assert data["total_errors"] == 5
+        assert data["total_groups"] == 2
+
+        counts = {g["count"] for g in data["groups"]}
+        assert counts == {3, 2}
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_grouped_normalises_short_ids() -> None:
+    """Test /api/errors/grouped groups errors that differ only by short numeric IDs."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Short process IDs (2+ digits) that were previously not normalised
+        # by the old 5-digit threshold must now be treated as equivalent.
+        errors = [
+            "Failed to kill process 12: [Errno 3] No such process",
+            "Failed to kill process 37: [Errno 3] No such process",
+            "Inference slot 10 became unresponsive",
+            "Inference slot 11 became unresponsive",
+            "Inference slot 12 became unresponsive",
+        ]
+        webui.update_status(errors_history=errors)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        # The two "Failed to kill process" messages share the same normalised key;
+        # the three "Inference slot" messages also share a key → 2 groups total.
+        assert data["total_errors"] == 5
+        assert data["total_groups"] == 2
+
+        counts = sorted(g["count"] for g in data["groups"])
+        assert counts == [2, 3]
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_errors_grouped_endpoint_pagination() -> None:
     """Test /api/errors/grouped returns paginated groups."""
     webui = WorkerWebUI(port=0)
@@ -1153,8 +1229,10 @@ async def test_webui_errors_grouped_endpoint_pagination() -> None:
         await asyncio.sleep(0.5)
         actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
 
-        # 15 error types, each appearing twice
-        errors = [msg for i in range(15) for msg in [f"error type {i}", f"error type {i}"]]
+        # 15 distinct error types, each appearing twice.  Use letter-based labels so
+        # that number normalisation does not collapse them into fewer groups.
+        error_labels = "abcdefghijklmno"  # exactly 15 characters
+        errors = [msg for label in error_labels for msg in [f"error type {label}", f"error type {label}"]]
         webui.update_status(errors_history=errors)
 
         # Page 1, page_size=10 → 10 groups

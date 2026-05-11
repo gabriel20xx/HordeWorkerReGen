@@ -33,7 +33,15 @@ _ERROR_UUID_RE = re.compile(
     re.IGNORECASE,
 )
 _ERROR_HEX_ID_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
-_ERROR_LONG_NUM_RE = re.compile(r"\b\d{5,}\b")
+# Matches any numeric token with 2 or more digits so that short IDs such as
+# process-slot numbers, short PIDs, or job counters are normalised alongside
+# the longer job/process IDs they accompany.
+_ERROR_NUM_TOKEN_RE = re.compile(r"\b\d{2,}\b")
+# Timestamps in log lines: full ISO-style (YYYY-MM-DD HH:mm:ss[.SSS]) and
+# the short HH:mm:ss[.SSS] format used by the webui log sink.
+_ERROR_TIMESTAMP_RE = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?\b|\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b",
+)
 
 _STATS_SNAPSHOT_INTERVAL = 10.0
 """Minimum seconds between statistics snapshots recorded by WorkerWebUI."""
@@ -2581,13 +2589,15 @@ class WorkerWebUI:
         """Return a normalised version of *msg* suitable for grouping.
 
         Variable tokens that differ between occurrences of the same error
-        (UUIDs, long hex addresses, long numeric IDs) are replaced with a
-        placeholder so that the same underlying error is always mapped to the
-        same group key regardless of which job or process triggered it.
+        (timestamps, UUIDs, hex addresses, numeric IDs) are replaced with
+        placeholders so that the same underlying error is always mapped to the
+        same group key regardless of when it occurred or which job/process
+        triggered it.
         """
+        msg = _ERROR_TIMESTAMP_RE.sub("<time>", msg)
         msg = _ERROR_UUID_RE.sub("<id>", msg)
         msg = _ERROR_HEX_ID_RE.sub("<hex>", msg)
-        msg = _ERROR_LONG_NUM_RE.sub("<num>", msg)
+        msg = _ERROR_NUM_TOKEN_RE.sub("<num>", msg)
         return msg
 
     async def _handle_errors_grouped(self, request: web.Request) -> web.Response:
