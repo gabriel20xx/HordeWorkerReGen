@@ -552,7 +552,9 @@ class WorkerWebUI:
         .chart-container-sm canvas { display: block; }
         .chart-label { font-size: 0.75rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
         [data-theme="dark"] .chart-label { color: #94a3b8; }
+        #stats-model-table-wrap { max-height: 300px; overflow-y: auto; }
         .model-images-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .model-images-table thead th { position: sticky; top: 0; background: var(--card-bg); z-index: 1; }
         .model-images-table th { text-align: left; font-weight: 700; color: var(--text-muted); padding: 5px 8px 7px 8px; border-bottom: 1px solid var(--border); }
         .model-images-table th:last-child { text-align: right; }
         .model-images-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
