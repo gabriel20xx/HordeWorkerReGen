@@ -3714,7 +3714,7 @@ class HordeWorkerProcessManager:
         reload on processes that will be needed shortly.
         """
         for process_info in self._process_map.get_inference_processes():
-            if process_info.can_accept_job():
+            if process_info.can_accept_job() and process_info.loaded_horde_model_name is not None:
                 self.unload_from_ram(process_info.process_id)
 
     def unload_from_ram(self, process_id: int) -> None:
