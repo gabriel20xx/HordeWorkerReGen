@@ -1931,7 +1931,6 @@ class HordeWorkerProcessManager:
         self._job_pops_paused = paused
         if paused:
             logger.info("Job pops paused by web UI")
-            self._unload_idle_inference_models()
         else:
             logger.info("Job pops resumed by web UI")
 
@@ -3703,13 +3702,19 @@ class HordeWorkerProcessManager:
                     self._replace_inference_process(process_info)
 
     def _unload_idle_inference_models(self) -> None:
-        """Unload models from all idle (not busy) inference processes.
+        """Unload models from all inference processes that can accept a new job.
 
-        Called when job pops are paused to free up RAM/VRAM immediately and
-        to clean up processes that finish their current job while paused.
+        ``can_accept_job()`` covers WAITING_FOR_JOB, MODEL_PRELOADED,
+        MODEL_LOADED, INFERENCE_COMPLETE, and ALCHEMY_COMPLETE — i.e. every
+        process that is holding a model in RAM/VRAM but is not actively
+        running inference — so this reclaims the maximum amount of memory.
+
+        Called by the main control loop while job pops are paused *and* there
+        is no remaining work queued or in progress, to avoid forcing a model
+        reload on processes that will be needed shortly.
         """
         for process_info in self._process_map.get_inference_processes():
-            if not process_info.is_process_busy():
+            if process_info.can_accept_job():
                 self.unload_from_ram(process_info.process_id)
 
     def unload_from_ram(self, process_id: int) -> None:
@@ -5935,7 +5940,14 @@ class HordeWorkerProcessManager:
                         async with self._jobs_safety_check_lock:
                             self.start_evaluate_safety()
 
-                    if self._job_pops_paused:
+                    if (
+                        self._job_pops_paused
+                        and len(self.jobs_pending_inference) == 0
+                        and len(self.jobs_in_progress) == 0
+                        and len(self.jobs_pending_safety_check) == 0
+                        and len(self.jobs_being_safety_checked) == 0
+                        and len(self.jobs_pending_submit) == 0
+                    ):
                         self._unload_idle_inference_models()
 
                     free_process_or_model_loaded = (
