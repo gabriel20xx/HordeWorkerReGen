@@ -33,7 +33,12 @@ _ERROR_UUID_RE = re.compile(
     re.IGNORECASE,
 )
 _ERROR_HEX_ID_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
-_ERROR_LONG_NUM_RE = re.compile(r"\b\d{5,}\b")
+_ERROR_LONG_NUM_RE = re.compile(r"\b\d{2,}\b")
+# Timestamps in log lines (both full ISO format and the short HH:mm:ss webui format).
+_ERROR_TIMESTAMP_RE = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?\b"  # YYYY-MM-DD HH:mm:ss[.SSS]
+    r"|\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b",  # HH:mm:ss[.SSS]
+)
 
 _STATS_SNAPSHOT_INTERVAL = 10.0
 """Minimum seconds between statistics snapshots recorded by WorkerWebUI."""
@@ -2579,10 +2584,12 @@ class WorkerWebUI:
         """Return a normalised version of *msg* suitable for grouping.
 
         Variable tokens that differ between occurrences of the same error
-        (UUIDs, long hex addresses, long numeric IDs) are replaced with a
-        placeholder so that the same underlying error is always mapped to the
-        same group key regardless of which job or process triggered it.
+        (timestamps, UUIDs, hex addresses, numeric IDs) are replaced with
+        placeholders so that the same underlying error is always mapped to the
+        same group key regardless of when it occurred or which job/process
+        triggered it.
         """
+        msg = _ERROR_TIMESTAMP_RE.sub("<time>", msg)
         msg = _ERROR_UUID_RE.sub("<id>", msg)
         msg = _ERROR_HEX_ID_RE.sub("<hex>", msg)
         msg = _ERROR_LONG_NUM_RE.sub("<num>", msg)
