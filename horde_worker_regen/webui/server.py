@@ -34,10 +34,10 @@ _ERROR_UUID_RE = re.compile(
 )
 _ERROR_HEX_ID_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
 _ERROR_LONG_NUM_RE = re.compile(r"\b\d{2,}\b")
-# Timestamps in log lines (both full ISO format and the short HH:mm:ss webui format).
+# Timestamps in log lines: full ISO-style (YYYY-MM-DD HH:mm:ss[.SSS]) and
+# the short HH:mm:ss[.SSS] format used by the webui log sink.
 _ERROR_TIMESTAMP_RE = re.compile(
-    r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?\b"  # YYYY-MM-DD HH:mm:ss[.SSS]
-    r"|\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b",  # HH:mm:ss[.SSS]
+    r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?\b|\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b",
 )
 
 _STATS_SNAPSHOT_INTERVAL = 10.0
