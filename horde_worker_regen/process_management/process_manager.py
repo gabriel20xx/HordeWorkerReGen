@@ -1931,6 +1931,7 @@ class HordeWorkerProcessManager:
         self._job_pops_paused = paused
         if paused:
             logger.info("Job pops paused by web UI")
+            self._unload_idle_inference_models()
         else:
             logger.info("Job pops resumed by web UI")
 
@@ -3700,6 +3701,16 @@ class HordeWorkerProcessManager:
                     and not self._shutting_down
                 ):
                     self._replace_inference_process(process_info)
+
+    def _unload_idle_inference_models(self) -> None:
+        """Unload models from all idle (not busy) inference processes.
+
+        Called when job pops are paused to free up RAM/VRAM immediately and
+        to clean up processes that finish their current job while paused.
+        """
+        for process_info in self._process_map.get_inference_processes():
+            if not process_info.is_process_busy():
+                self.unload_from_ram(process_info.process_id)
 
     def unload_from_ram(self, process_id: int) -> None:
         """Unload models from a process.
@@ -5923,6 +5934,9 @@ class HordeWorkerProcessManager:
                     if len(self.jobs_pending_safety_check) > 0:
                         async with self._jobs_safety_check_lock:
                             self.start_evaluate_safety()
+
+                    if self._job_pops_paused:
+                        self._unload_idle_inference_models()
 
                     free_process_or_model_loaded = (
                         self.is_free_inference_process_available() or self.is_any_model_preloaded()
