@@ -2537,6 +2537,8 @@ class WorkerWebUI:
         duration_seconds = body.get("duration_seconds")
         if duration_seconds is not None and not isinstance(duration_seconds, (int, float)):
             return web.json_response({"error": "Field 'duration_seconds' must be a number or null"}, status=400)
+        if duration_seconds is not None and duration_seconds <= 0:
+            return web.json_response({"error": "Field 'duration_seconds' must be a positive number"}, status=400)
 
         if self._set_job_pops_paused_callback is None:
             return web.json_response({"error": "Pause job pops is not available"}, status=503)
