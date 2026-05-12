@@ -396,9 +396,9 @@ class WorkerWebUI:
 
         /* ---- Errors ---- */
         .errors-list { display: flex; flex-direction: column; max-height: 400px; overflow-y: auto; }
-        .error-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; padding: 9px 13px; font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; margin-bottom: 5px; }
+        .error-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; padding: 9px 13px; font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; margin-bottom: 5px; flex-shrink: 0; }
         .error-item:last-child { margin-bottom: 0; }
-        .error-group { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; margin-bottom: 5px; overflow: hidden; }
+        .error-group { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; margin-bottom: 5px; overflow: hidden; flex-shrink: 0; }
         .error-group:last-child { margin-bottom: 0; }
         .error-group-header { display: flex; align-items: flex-start; gap: 8px; padding: 9px 13px; cursor: pointer; user-select: none; width: 100%; background: transparent; border: none; text-align: left; font: inherit; color: inherit; }
         .error-group-header:hover { background: rgba(239,68,68,0.06); }
