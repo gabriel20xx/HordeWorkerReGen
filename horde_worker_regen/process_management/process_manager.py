@@ -1938,6 +1938,11 @@ class HordeWorkerProcessManager:
                 self._last_pop_no_jobs_available_time = 0.0
         else:
             logger.info("Job pops resumed by web UI")
+            # Restart the idle timer immediately if the queue is already empty
+            # so that time_without_jobs resumes incrementing without having to
+            # wait up to _job_pop_frequency seconds for the next api_job_pop
+            # no-jobs response to set a new anchor.
+            self._restart_idle_timer_if_queue_empty()
 
     def enable_performance_mode(self) -> None:
         """Enable performance mode."""
