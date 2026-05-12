@@ -1931,6 +1931,11 @@ class HordeWorkerProcessManager:
         self._job_pops_paused = paused
         if paused:
             logger.info("Job pops paused by web UI")
+            # Freeze the idle timer so that time spent paused does not count
+            # toward "time without jobs".
+            if self._last_pop_no_jobs_available_time > 0.0:
+                self._time_spent_no_jobs_available += time.time() - self._last_pop_no_jobs_available_time
+                self._last_pop_no_jobs_available_time = 0.0
         else:
             logger.info("Job pops resumed by web UI")
 
@@ -4913,7 +4918,10 @@ class HordeWorkerProcessManager:
 
         Only acts when the queue is actually empty *and* the anchor has already been
         cleared (i.e. a job was successfully popped since the last idle period started).
+        Does not restart while job pops are paused so that paused time is not counted.
         """
+        if self._job_pops_paused:
+            return
         if len(self.jobs_pending_inference) == 0 and self._last_pop_no_jobs_available_time == 0.0:
             self._last_pop_no_jobs_available_time = time.time()
 
