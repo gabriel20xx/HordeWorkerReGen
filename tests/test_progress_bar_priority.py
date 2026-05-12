@@ -981,6 +981,117 @@ def test_idle_timer_restarts_when_last_job_removed_before_handle_job_fault() -> 
     )
 
 
+def test_set_job_pops_paused_freezes_idle_timer() -> None:
+    """Pausing job pops must flush the in-flight delta and reset the anchor.
+
+    When ``set_job_pops_paused(True)`` is called while the idle timer is running
+    (anchor > 0), the elapsed time since the anchor must be accumulated into
+    ``_time_spent_no_jobs_available`` and ``_last_pop_no_jobs_available_time``
+    must be reset to 0.0 so that further calls to ``update_webui_status`` or
+    ``_restart_idle_timer_if_queue_empty`` do not keep counting paused time.
+    """
+    import types as _types
+    from collections import deque
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    accumulated = 10.0
+    anchor = 500.0
+    fake_now = 530.0  # 30 s since the anchor
+
+    mock_manager = MagicMock()
+    mock_manager._job_pops_paused = False
+    mock_manager._last_pop_no_jobs_available_time = anchor
+    mock_manager._time_spent_no_jobs_available = accumulated
+    # _restart_idle_timer_if_queue_empty is not called on pause, but wire it up
+    # as the real method just in case to avoid silent MagicMock swallowing bugs.
+    mock_manager._restart_idle_timer_if_queue_empty = _types.MethodType(
+        HordeWorkerProcessManager._restart_idle_timer_if_queue_empty,
+        mock_manager,
+    )
+    mock_manager.jobs_pending_inference = deque()
+
+    with patch("horde_worker_regen.process_management.process_manager.time.time", return_value=fake_now):
+        method = HordeWorkerProcessManager.set_job_pops_paused.__get__(mock_manager, HordeWorkerProcessManager)
+        method(True)
+
+    assert mock_manager._last_pop_no_jobs_available_time == 0.0, (
+        f"Expected anchor reset to 0.0 after pause, got {mock_manager._last_pop_no_jobs_available_time}"
+    )
+    expected_accumulated = accumulated + (fake_now - anchor)  # 10 + 30 = 40
+    assert mock_manager._time_spent_no_jobs_available == expected_accumulated, (
+        f"Expected _time_spent_no_jobs_available={expected_accumulated} after pause, "
+        f"got {mock_manager._time_spent_no_jobs_available}"
+    )
+
+
+def test_set_job_pops_resumed_restarts_idle_timer_when_queue_empty() -> None:
+    """Resuming job pops must restart the idle anchor immediately when the queue is empty.
+
+    After ``set_job_pops_paused(False)``, ``_last_pop_no_jobs_available_time`` must
+    become non-zero straight away (rather than waiting up to ``_job_pop_frequency``
+    seconds for the next no-jobs response to set a new anchor).
+    """
+    import types as _types
+    from collections import deque
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    fake_now = 700.0
+
+    mock_manager = MagicMock()
+    mock_manager._job_pops_paused = True
+    mock_manager._last_pop_no_jobs_available_time = 0.0  # frozen while paused
+    mock_manager._time_spent_no_jobs_available = 25.0
+    mock_manager.jobs_pending_inference = deque()  # queue is empty
+
+    # Bind the real helper so the idle-timer restart logic executes.
+    mock_manager._restart_idle_timer_if_queue_empty = _types.MethodType(
+        HordeWorkerProcessManager._restart_idle_timer_if_queue_empty,
+        mock_manager,
+    )
+
+    with patch("horde_worker_regen.process_management.process_manager.time.time", return_value=fake_now):
+        method = HordeWorkerProcessManager.set_job_pops_paused.__get__(mock_manager, HordeWorkerProcessManager)
+        method(False)
+
+    assert mock_manager._last_pop_no_jobs_available_time == fake_now, (
+        "Expected idle anchor to be restarted to current time on resume with empty queue, "
+        f"got {mock_manager._last_pop_no_jobs_available_time}"
+    )
+
+
+def test_idle_timer_does_not_restart_while_paused() -> None:
+    """_restart_idle_timer_if_queue_empty must not restart the anchor while paused.
+
+    Even if the queue is empty, the idle timer must not resume accumulating time
+    while job pops are paused, so that paused time is excluded from
+    ``time_without_jobs``.
+    """
+    import types as _types
+    from collections import deque
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    fake_now = 800.0
+
+    mock_manager = MagicMock()
+    mock_manager._job_pops_paused = True
+    mock_manager._last_pop_no_jobs_available_time = 0.0
+    mock_manager.jobs_pending_inference = deque()  # empty queue
+
+    with patch("horde_worker_regen.process_management.process_manager.time.time", return_value=fake_now):
+        method = HordeWorkerProcessManager._restart_idle_timer_if_queue_empty.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        method()
+
+    assert mock_manager._last_pop_no_jobs_available_time == 0.0, (
+        "Expected anchor to remain 0.0 while paused, "
+        f"got {mock_manager._last_pop_no_jobs_available_time}"
+    )
+
+
 class TestApiJobPopQueueGate:
     """Unit tests for the queue-size gate in api_job_pop.
 
