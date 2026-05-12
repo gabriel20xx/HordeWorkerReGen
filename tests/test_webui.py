@@ -1394,10 +1394,10 @@ async def test_webui_stats_endpoint() -> None:
 async def test_job_pops_pause_endpoint() -> None:
     """Test the POST /api/job_pops/pause endpoint."""
     webui = WorkerWebUI(port=0)
-    paused_calls: list[bool] = []
+    paused_calls: list[tuple[bool, float | None]] = []
 
-    def fake_set_paused(paused: bool) -> None:
-        paused_calls.append(paused)
+    def fake_set_paused(paused: bool, pause_until: float | None) -> None:
+        paused_calls.append((paused, pause_until))
 
     webui.set_job_pops_paused_callback(fake_set_paused)
 
@@ -1406,7 +1406,7 @@ async def test_job_pops_pause_endpoint() -> None:
         await asyncio.sleep(0.5)
         actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
 
-        # --- success: pause ---
+        # --- success: pause indefinitely ---
         async with aiohttp.ClientSession() as session, session.post(
             f"http://localhost:{actual_port}/api/job_pops/pause",
             json={"paused": True},
@@ -1414,8 +1414,28 @@ async def test_job_pops_pause_endpoint() -> None:
             assert response.status == 200
             body = await response.json()
         assert body["job_pops_paused"] is True
+        assert body["job_pops_pause_until"] is None
         assert webui.status_data["job_pops_paused"] is True
-        assert paused_calls[-1] is True
+        assert webui.status_data["job_pops_pause_until"] is None
+        assert paused_calls[-1][0] is True
+        assert paused_calls[-1][1] is None
+
+        # --- success: pause for 15 minutes ---
+        import time as _time
+        before = _time.time()
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": True, "duration_seconds": 900},
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        after = _time.time()
+        assert body["job_pops_paused"] is True
+        assert body["job_pops_pause_until"] is not None
+        assert before + 900 <= body["job_pops_pause_until"] <= after + 900
+        assert webui.status_data["job_pops_pause_until"] == body["job_pops_pause_until"]
+        assert paused_calls[-1][0] is True
+        assert paused_calls[-1][1] is not None
 
         # --- success: resume ---
         async with aiohttp.ClientSession() as session, session.post(
@@ -1425,8 +1445,10 @@ async def test_job_pops_pause_endpoint() -> None:
             assert response.status == 200
             body = await response.json()
         assert body["job_pops_paused"] is False
+        assert body["job_pops_pause_until"] is None
         assert webui.status_data["job_pops_paused"] is False
-        assert paused_calls[-1] is False
+        assert webui.status_data["job_pops_pause_until"] is None
+        assert paused_calls[-1][0] is False
 
         # --- 400: missing 'paused' field ---
         async with aiohttp.ClientSession() as session, session.post(
@@ -1445,6 +1467,15 @@ async def test_job_pops_pause_endpoint() -> None:
             assert response.status == 400
             body = await response.json()
         assert "paused" in body["error"].lower()
+
+        # --- 400: 'duration_seconds' is not a number ---
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": True, "duration_seconds": "long"},
+        ) as response:
+            assert response.status == 400
+            body = await response.json()
+        assert "duration_seconds" in body["error"].lower()
 
         # --- 400: non-JSON body ---
         async with aiohttp.ClientSession() as session, session.post(

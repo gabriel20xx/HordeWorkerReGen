@@ -49,6 +49,9 @@ _STATS_SNAPSHOT_INTERVAL = 10.0
 _MAX_STATS_SNAPSHOTS = 2160
 """Maximum number of statistics snapshots to keep (approx. 6 hours at 10-second intervals)."""
 
+_UNSET: Any = object()
+"""Sentinel used to distinguish an explicitly-passed ``None`` from an omitted argument."""
+
 
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
@@ -94,6 +97,7 @@ class WorkerWebUI:
             "gpu_usage_percent": 0,
             "maintenance_mode": False,
             "job_pops_paused": False,
+            "job_pops_pause_until": None,
             "user_kudos_total": 0.0,
             "last_image_base64": [],
             "last_image_submission_timestamp": 0.0,
@@ -122,8 +126,8 @@ class WorkerWebUI:
         self._delete_worker_callback: Callable[[str], Awaitable[bool]] | None = None
 
         # Optional callback invoked when the UI requests a pause/resume of job pops.
-        # Signature: (paused: bool) -> None
-        self._set_job_pops_paused_callback: Callable[[bool], None] | None = None
+        # Signature: (paused: bool, pause_until: float | None) -> None
+        self._set_job_pops_paused_callback: Callable[[bool, float | None], None] | None = None
 
         self._setup_routes()
 
@@ -136,12 +140,15 @@ class WorkerWebUI:
         """
         self._delete_worker_callback = callback
 
-    def set_job_pops_paused_callback(self, callback: Callable[[bool], None] | None) -> None:
+    def set_job_pops_paused_callback(self, callback: Callable[[bool, float | None], None] | None) -> None:
         """Register (or clear) the callback used to pause or resume job pops.
 
         Args:
-            callback: A callable that accepts a single bool (``True`` = pause,
-                      ``False`` = resume).  Pass ``None`` to unregister.
+            callback: A callable that accepts two arguments: a bool (``True`` =
+                      pause, ``False`` = resume) and an optional float giving the
+                      Unix timestamp at which the pause should automatically
+                      expire (``None`` for an indefinite pause).  Pass ``None``
+                      to unregister.
         """
         self._set_job_pops_paused_callback = callback
 
@@ -338,6 +345,7 @@ class WorkerWebUI:
         .console-copy-btn.error:hover { background: #dc2626; }
 
         /* ---- Job pops pause button ---- */
+        .job-pops-pause-wrap { position: relative; display: inline-flex; }
         .job-pops-pause-btn { background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; white-space: nowrap; }
         .job-pops-pause-btn:hover { background: #cbd5e1; }
         .job-pops-pause-btn.paused { background: #e0e7ff; color: #3730a3; border-color: #a5b4fc; }
@@ -346,6 +354,12 @@ class WorkerWebUI:
         [data-theme="dark"] .job-pops-pause-btn:hover { background: #2d3f55; }
         [data-theme="dark"] .job-pops-pause-btn.paused { background: #312e81; color: #a5b4fc; border-color: #6366f1; }
         [data-theme="dark"] .job-pops-pause-btn.paused:hover { background: #3730a3; }
+        .job-pops-pause-menu { position: absolute; top: calc(100% + 4px); right: 0; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 150px; z-index: 200; overflow: hidden; }
+        .job-pops-pause-menu button { display: block; width: 100%; padding: 8px 14px; background: none; border: none; text-align: left; font-size: 0.82rem; font-weight: 600; color: #334155; cursor: pointer; transition: background 0.12s; }
+        .job-pops-pause-menu button:hover { background: #f1f5f9; }
+        [data-theme="dark"] .job-pops-pause-menu { background: #1e293b; border-color: #334155; }
+        [data-theme="dark"] .job-pops-pause-menu button { color: #94a3b8; }
+        [data-theme="dark"] .job-pops-pause-menu button:hover { background: #263348; }
 
         /* ---- Gallery ---- */
         .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; width: 100%; }
@@ -635,7 +649,15 @@ class WorkerWebUI:
             <div class="topbar-meta">
                 <span id="worker-status-badge"></span>
                 <span class="topbar-uptime">&#9201; <span id="uptime">--</span></span>
-                <button class="job-pops-pause-btn" id="job-pops-pause-btn" onclick="toggleJobPopsPause()" title="Pause or resume accepting new jobs from the Horde" aria-pressed="false">&#9646;&#9646; Pause Jobs</button>
+                <div class="job-pops-pause-wrap">
+                <button class="job-pops-pause-btn" id="job-pops-pause-btn" onclick="handleJobPopsPauseBtn(event)" title="Pause or resume accepting new jobs from the Horde" aria-pressed="false">&#9646;&#9646; Pause Jobs</button>
+                <div class="job-pops-pause-menu" id="job-pops-pause-menu" style="display:none;" role="menu">
+                    <button onclick="setJobPopsPause(900)">15 minutes</button>
+                    <button onclick="setJobPopsPause(3600)">1 hour</button>
+                    <button onclick="setJobPopsPause(10800)">3 hours</button>
+                    <button onclick="setJobPopsPause(null)">Indefinitely</button>
+                </div>
+                </div>
                 <button class="theme-toggle" onclick="toggleTheme()" id="topbar-theme-toggle" aria-label="Toggle theme">&#127769;</button>
             </div>
         </div>
@@ -1145,40 +1167,103 @@ class WorkerWebUI:
             else { btn.textContent = '\u25AE\u25AE Pause'; btn.classList.remove('paused'); btn.title = 'Pause console output'; btn.setAttribute('aria-pressed', 'false'); }
         }
         let _jobPopsPauseInFlight = false;
-        function toggleJobPopsPause() {
+        let _jobPopsPauseUntil = null;
+        function _formatPauseRemaining(pauseUntil) {
+            if (pauseUntil === null || pauseUntil === undefined) return null;
+            const rem = Math.max(0, Math.round(pauseUntil - Date.now() / 1000));
+            if (rem <= 0) return '0s';
+            if (rem < 60) return rem + 's';
+            const m = Math.floor(rem / 60), s = rem % 60;
+            if (rem < 3600) return m + 'm ' + (s > 0 ? s + 's' : '');
+            const h = Math.floor(rem / 3600), rm = Math.floor((rem % 3600) / 60);
+            return h + 'h ' + (rm > 0 ? rm + 'm' : '');
+        }
+        function _updatePauseBtn(paused, pauseUntil) {
+            const btn = document.getElementById('job-pops-pause-btn');
+            if (!btn) return;
+            if (paused) {
+                const rem = _formatPauseRemaining(pauseUntil);
+                btn.textContent = '\u25B6 Resume Jobs' + (rem ? ' (' + rem.trim() + ')' : '');
+                btn.classList.add('paused');
+                btn.title = 'Resume accepting new jobs from the Horde';
+                btn.setAttribute('aria-pressed', 'true');
+            } else {
+                btn.textContent = '\u25AE\u25AE Pause Jobs';
+                btn.classList.remove('paused');
+                btn.title = 'Pause or resume accepting new jobs from the Horde';
+                btn.setAttribute('aria-pressed', 'false');
+            }
+        }
+        function handleJobPopsPauseBtn(event) {
+            const btn = document.getElementById('job-pops-pause-btn');
+            if (btn && btn.classList.contains('paused')) {
+                closePauseMenu();
+                setJobPopsPause(false);
+            } else {
+                const menu = document.getElementById('job-pops-pause-menu');
+                if (!menu) return;
+                const open = menu.style.display !== 'none';
+                if (open) { closePauseMenu(); } else { menu.style.display = 'block'; }
+            }
+        }
+        function closePauseMenu() {
+            const menu = document.getElementById('job-pops-pause-menu');
+            if (menu) menu.style.display = 'none';
+        }
+        document.addEventListener('click', function(e) {
+            const wrap = document.querySelector('.job-pops-pause-wrap');
+            if (wrap && !wrap.contains(e.target)) closePauseMenu();
+        });
+        function setJobPopsPause(durationSeconds) {
+            closePauseMenu();
             if (_jobPopsPauseInFlight) return;
             const btn = document.getElementById('job-pops-pause-btn');
-            const currentlyPaused = btn && btn.classList.contains('paused');
-            const newPaused = !currentlyPaused;
             _jobPopsPauseInFlight = true;
             if (btn) btn.disabled = true;
+            const body = durationSeconds === false
+                ? {paused: false}
+                : {paused: true, duration_seconds: durationSeconds};
             fetch('/api/job_pops/pause', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({paused: newPaused})
+                body: JSON.stringify(body)
             })
-            .then(r => {
-                if (!r.ok) throw new Error('HTTP '+r.status);
-                return r.json();
-            })
+            .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
             .then(data => {
-                if (btn) {
-                    if (data.job_pops_paused) {
-                        btn.textContent = '\u25B6 Resume Jobs';
-                        btn.classList.add('paused');
-                        btn.title = 'Resume accepting new jobs from the Horde';
-                        btn.setAttribute('aria-pressed', 'true');
-                    } else {
-                        btn.textContent = '\u25AE\u25AE Pause Jobs';
-                        btn.classList.remove('paused');
-                        btn.title = 'Pause accepting new jobs from the Horde';
-                        btn.setAttribute('aria-pressed', 'false');
-                    }
-                }
+                _jobPopsPauseUntil = data.job_pops_pause_until || null;
+                _updatePauseBtn(data.job_pops_paused, _jobPopsPauseUntil);
+                _updateStatusBadges(null, data.job_pops_paused, _jobPopsPauseUntil);
             })
             .catch(err => { console.error('Error toggling job pops pause:', err); })
             .finally(() => { _jobPopsPauseInFlight = false; if (btn) btn.disabled = false; });
         }
+        let _lastMaintenanceMode = false;
+        let _lastJobPopsPaused = false;
+        function _updateStatusBadges(maintenanceMode, paused, pauseUntil) {
+            if (maintenanceMode !== null) _lastMaintenanceMode = maintenanceMode;
+            if (paused !== null && paused !== undefined) _lastJobPopsPaused = paused;
+            const maint = _lastMaintenanceMode;
+            const isPaused = _lastJobPopsPaused;
+            const rem = isPaused ? _formatPauseRemaining(pauseUntil !== undefined ? pauseUntil : _jobPopsPauseUntil) : null;
+            const remTxt = rem ? ' \u2022 ' + rem.trim() : '';
+            const badgeHtml = maint
+                ? '<span class="status-badge status-maintenance">Maintenance</span>'
+                : (isPaused
+                    ? '<span class="status-badge status-paused">Paused' + remTxt + '</span>'
+                    : '<span class="status-badge status-active">Active</span>');
+            document.getElementById('worker-status-badge').innerHTML = badgeHtml;
+            document.getElementById('mobile-status-badge').innerHTML = maint
+                ? '<span class="status-badge status-maintenance" style="font-size:0.68rem;padding:2px 7px;">Maint.</span>'
+                : (isPaused
+                    ? '<span class="status-badge status-paused" style="font-size:0.68rem;padding:2px 7px;">Paused' + remTxt + '</span>'
+                    : '<span class="status-badge status-active" style="font-size:0.68rem;padding:2px 7px;">Active</span>');
+            if (!_jobPopsPauseInFlight) _updatePauseBtn(isPaused, _jobPopsPauseUntil);
+        }
+        setInterval(function() {
+            if (_lastJobPopsPaused && _jobPopsPauseUntil !== null) {
+                _updateStatusBadges(null, null, _jobPopsPauseUntil);
+            }
+        }, 1000);
         let _consoleCopyTimeout = null;
         function showConsoleCopySuccess(btn) {
             if (_consoleCopyTimeout) { clearTimeout(_consoleCopyTimeout); _consoleCopyTimeout = null; }
@@ -1872,31 +1957,8 @@ class WorkerWebUI:
                     currentWorkerName = data.worker_name || '';
                     document.getElementById('topbar-worker-name').textContent = workerName;
                     document.getElementById('topbar-worker-sub').textContent = '@'+data.horde_username;
-                    const badgeHtml = data.maintenance_mode
-                        ? '<span class="status-badge status-maintenance">Maintenance</span>'
-                        : (data.job_pops_paused
-                            ? '<span class="status-badge status-paused">Paused</span>'
-                            : '<span class="status-badge status-active">Active</span>');
-                    document.getElementById('worker-status-badge').innerHTML = badgeHtml;
-                    document.getElementById('mobile-status-badge').innerHTML = data.maintenance_mode
-                        ? '<span class="status-badge status-maintenance" style="font-size:0.68rem;padding:2px 7px;">Maint.</span>'
-                        : (data.job_pops_paused
-                            ? '<span class="status-badge status-paused" style="font-size:0.68rem;padding:2px 7px;">Paused</span>'
-                            : '<span class="status-badge status-active" style="font-size:0.68rem;padding:2px 7px;">Active</span>');
-                    const pauseBtn = document.getElementById('job-pops-pause-btn');
-                    if (pauseBtn) {
-                        if (data.job_pops_paused) {
-                            pauseBtn.textContent = '\u25B6 Resume Jobs';
-                            pauseBtn.classList.add('paused');
-                            pauseBtn.title = 'Resume accepting new jobs from the Horde';
-                            pauseBtn.setAttribute('aria-pressed', 'true');
-                        } else {
-                            pauseBtn.textContent = '\u25AE\u25AE Pause Jobs';
-                            pauseBtn.classList.remove('paused');
-                            pauseBtn.title = 'Pause accepting new jobs from the Horde';
-                            pauseBtn.setAttribute('aria-pressed', 'false');
-                        }
-                    }
+                    _jobPopsPauseUntil = data.job_pops_pause_until || null;
+                    _updateStatusBadges(data.maintenance_mode, data.job_pops_paused, _jobPopsPauseUntil);
                     const uptimeStr = formatUptime(data.uptime);
                     document.getElementById('uptime').textContent = uptimeStr;
                     document.getElementById('mobile-uptime').textContent = '\u23F1 ' + uptimeStr;
@@ -2454,9 +2516,14 @@ class WorkerWebUI:
         """Handle a request to pause or resume accepting new job pops.
 
         Expected JSON body: ``{"paused": true}`` or ``{"paused": false}``.
+        When pausing, an optional ``duration_seconds`` field (number) may be
+        included to request a timed pause that auto-expires after the given
+        number of seconds.  Omit ``duration_seconds`` or set it to ``null``
+        for an indefinite pause.
 
         Returns 400 on malformed input, 503 if no callback is registered, and
-        200 with ``{"job_pops_paused": <bool>}`` on success.
+        200 with ``{"job_pops_paused": <bool>, "job_pops_pause_until": <float|null>}``
+        on success.
         """
         try:
             body = await request.json()
@@ -2467,17 +2534,26 @@ class WorkerWebUI:
         if not isinstance(paused, bool):
             return web.json_response({"error": "Field 'paused' must be a boolean"}, status=400)
 
+        duration_seconds = body.get("duration_seconds")
+        if duration_seconds is not None and not isinstance(duration_seconds, (int, float)):
+            return web.json_response({"error": "Field 'duration_seconds' must be a number or null"}, status=400)
+
         if self._set_job_pops_paused_callback is None:
             return web.json_response({"error": "Pause job pops is not available"}, status=503)
 
+        pause_until: float | None = None
+        if paused and duration_seconds is not None:
+            pause_until = time.time() + float(duration_seconds)
+
         try:
-            self._set_job_pops_paused_callback(paused)
+            self._set_job_pops_paused_callback(paused, pause_until)
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"Error setting job pops paused={paused}: {exc}")
             return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
 
         self.status_data["job_pops_paused"] = paused
-        return web.json_response({"job_pops_paused": paused})
+        self.status_data["job_pops_pause_until"] = pause_until
+        return web.json_response({"job_pops_paused": paused, "job_pops_pause_until": pause_until})
 
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Handle status API request.
@@ -2827,6 +2903,7 @@ class WorkerWebUI:
         gpu_usage_percent: float | None = None,
         maintenance_mode: bool | None = None,
         job_pops_paused: bool | None = None,
+        job_pops_pause_until: float | None = _UNSET,
         user_kudos_total: float | None = None,
         last_image_base64: list[str] | None = None,
         last_image_submission_timestamp: float | None = None,
@@ -2863,6 +2940,7 @@ class WorkerWebUI:
             gpu_usage_percent: GPU usage percentage
             maintenance_mode: Whether worker is in maintenance mode
             job_pops_paused: Whether new job pops are currently paused by the user
+            job_pops_pause_until: Unix timestamp at which a timed pause will auto-expire (None = indefinite)
             user_kudos_total: Total kudos accumulated by the user
             last_image_base64: List of base64 encoded last generated images (supports batch jobs)
             last_image_submission_timestamp: Timestamp when the last image was submitted
@@ -2922,6 +3000,8 @@ class WorkerWebUI:
             self.status_data["maintenance_mode"] = maintenance_mode
         if job_pops_paused is not None:
             self.status_data["job_pops_paused"] = job_pops_paused
+        if job_pops_pause_until is not _UNSET:
+            self.status_data["job_pops_pause_until"] = job_pops_pause_until
         if user_kudos_total is not None:
             self.status_data["user_kudos_total"] = user_kudos_total
         if last_image_base64 is not None:

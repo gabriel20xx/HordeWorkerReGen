@@ -1689,6 +1689,8 @@ class HordeWorkerProcessManager:
         self._replaced_due_to_maintenance = False
         # Whether job pops have been paused by the user via the web UI.
         self._job_pops_paused = False
+        # Unix timestamp at which a timed pause should auto-expire (None = indefinite).
+        self._job_pops_pause_until: float | None = None
 
         # If there is only one model to load and only one inference process, then we can only run one job at a time
         # and there is no point in having more than one inference process
@@ -1916,7 +1918,7 @@ class HordeWorkerProcessManager:
             f"({worker_details.id_}) is removed from maintenance.",
         )
 
-    def set_job_pops_paused(self, paused: bool) -> None:
+    def set_job_pops_paused(self, paused: bool, pause_until: float | None = None) -> None:
         """Pause or resume accepting new job pops.
 
         When paused, :meth:`api_job_pop` returns immediately without contacting
@@ -1925,12 +1927,21 @@ class HordeWorkerProcessManager:
 
         Args:
             paused: ``True`` to pause new job pops, ``False`` to resume.
+            pause_until: Unix timestamp at which the pause should automatically
+                expire.  Only meaningful when ``paused`` is ``True``.  Pass
+                ``None`` to pause indefinitely.
         """
-        if self._job_pops_paused == paused:
+        if self._job_pops_paused == paused and self._job_pops_pause_until == pause_until:
             return
         self._job_pops_paused = paused
+        self._job_pops_pause_until = pause_until if paused else None
         if paused:
-            logger.info("Job pops paused by web UI")
+            if pause_until is not None:
+                remaining = max(0.0, pause_until - time.time())
+                minutes = remaining / 60.0
+                logger.info(f"Job pops paused by web UI for {minutes:.0f} minutes")
+            else:
+                logger.info("Job pops paused by web UI indefinitely")
             # Freeze the idle timer so that time spent paused does not count
             # toward "time without jobs".
             if self._last_pop_no_jobs_available_time > 0.0:
@@ -5161,7 +5172,15 @@ class HordeWorkerProcessManager:
 
         # Skip if job pops have been paused by the user via the web UI
         if self._job_pops_paused:
-            return
+            # Auto-resume if a timed pause has expired.
+            if self._job_pops_pause_until is not None and time.time() >= self._job_pops_pause_until:
+                logger.info("Timed job-pop pause expired; resuming automatically")
+                self.set_job_pops_paused(False)
+                if self.webui is not None:
+                    self.webui.status_data["job_pops_paused"] = False
+                    self.webui.status_data["job_pops_pause_until"] = None
+            else:
+                return
 
         # Skip if the client session is not initialized yet (during startup)
         if self.horde_client_session is None:
@@ -7037,6 +7056,7 @@ class HordeWorkerProcessManager:
             ),
             user_details=user_details if user_details else None,
             job_pops_paused=self._job_pops_paused,
+            job_pops_pause_until=self._job_pops_pause_until,
             images_per_model=self._images_per_model,
         )
         self._errors_history_last_sent_len = len(self._errors_history)
