@@ -1048,6 +1048,57 @@ async def test_delete_worker_endpoint() -> None:
         await webui.stop()
 
 
+def test_normalize_error_message_strips_short_timestamps() -> None:
+    """_normalize_error_message must collapse HH:mm:ss prefixes to the same key."""
+    normalize = WorkerWebUI._normalize_error_message
+    # Same message at different seconds → identical normalised form
+    assert normalize("12:34:56 | ERROR    | Job failed") == normalize("12:34:57 | ERROR    | Job failed")
+    assert normalize("00:00:00 | ERROR    | msg") == normalize("23:59:59 | ERROR    | msg")
+    # Short format with optional milliseconds
+    assert normalize("12:34:56.123 | ERROR    | msg") == normalize("12:34:57.456 | ERROR    | msg")
+
+
+def test_normalize_error_message_strips_full_timestamps() -> None:
+    """_normalize_error_message must collapse YYYY-MM-DD HH:mm:ss[.SSS] prefixes."""
+    normalize = WorkerWebUI._normalize_error_message
+    # Full ISO format with space separator
+    assert normalize("2026-02-04 21:44:06.123 | ERROR | msg") == normalize(
+        "2026-02-05 09:00:00.000 | ERROR | msg"
+    )
+    # Full ISO format with T separator
+    assert normalize("2026-02-04T21:44:06 | ERROR | msg") == normalize(
+        "2026-02-05T09:00:00 | ERROR | msg"
+    )
+
+
+def test_normalize_error_message_strips_timestamps_in_body() -> None:
+    """_normalize_error_message removes timestamps embedded anywhere in the message."""
+    normalize = WorkerWebUI._normalize_error_message
+    assert normalize("12:34:56 | ERROR | Failed at 12:34:55") == normalize(
+        "12:34:57 | ERROR | Failed at 14:22:33"
+    )
+
+
+def test_normalize_error_message_multiline_exception() -> None:
+    """_normalize_error_message groups multiline exception tracebacks correctly."""
+    normalize = WorkerWebUI._normalize_error_message
+    msg_a = (
+        "12:34:56 | ERROR    | Job failed\n"
+        "Traceback (most recent call last):\n"
+        "  File \"app.py\", line 42, in run\n"
+        "    result = process()\n"
+        "RuntimeError: Connection refused"
+    )
+    msg_b = (
+        "12:34:57 | ERROR    | Job failed\n"
+        "Traceback (most recent call last):\n"
+        "  File \"app.py\", line 42, in run\n"
+        "    result = process()\n"
+        "RuntimeError: Connection refused"
+    )
+    assert normalize(msg_a) == normalize(msg_b)
+
+
 @pytest.mark.asyncio
 async def test_webui_errors_grouped_endpoint_basic() -> None:
     """Test /api/errors/grouped groups identical errors and returns correct counts."""
