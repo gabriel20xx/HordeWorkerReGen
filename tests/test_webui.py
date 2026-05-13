@@ -1048,6 +1048,57 @@ async def test_delete_worker_endpoint() -> None:
         await webui.stop()
 
 
+def test_normalize_error_message_strips_short_timestamps() -> None:
+    """_normalize_error_message must collapse HH:mm:ss prefixes to the same key."""
+    normalize = WorkerWebUI._normalize_error_message
+    # Same message at different seconds → identical normalised form
+    assert normalize("12:34:56 | ERROR    | Job failed") == normalize("12:34:57 | ERROR    | Job failed")
+    assert normalize("00:00:00 | ERROR    | msg") == normalize("23:59:59 | ERROR    | msg")
+    # Short format with optional milliseconds
+    assert normalize("12:34:56.123 | ERROR    | msg") == normalize("12:34:57.456 | ERROR    | msg")
+
+
+def test_normalize_error_message_strips_full_timestamps() -> None:
+    """_normalize_error_message must collapse YYYY-MM-DD HH:mm:ss[.SSS] prefixes."""
+    normalize = WorkerWebUI._normalize_error_message
+    # Full ISO format with space separator
+    assert normalize("2026-02-04 21:44:06.123 | ERROR | msg") == normalize(
+        "2026-02-05 09:00:00.000 | ERROR | msg"
+    )
+    # Full ISO format with T separator
+    assert normalize("2026-02-04T21:44:06 | ERROR | msg") == normalize(
+        "2026-02-05T09:00:00 | ERROR | msg"
+    )
+
+
+def test_normalize_error_message_strips_timestamps_in_body() -> None:
+    """_normalize_error_message removes timestamps embedded anywhere in the message."""
+    normalize = WorkerWebUI._normalize_error_message
+    assert normalize("12:34:56 | ERROR | Failed at 12:34:55") == normalize(
+        "12:34:57 | ERROR | Failed at 14:22:33"
+    )
+
+
+def test_normalize_error_message_multiline_exception() -> None:
+    """_normalize_error_message groups multiline exception tracebacks correctly."""
+    normalize = WorkerWebUI._normalize_error_message
+    msg_a = (
+        "12:34:56 | ERROR    | Job failed\n"
+        "Traceback (most recent call last):\n"
+        "  File \"app.py\", line 42, in run\n"
+        "    result = process()\n"
+        "RuntimeError: Connection refused"
+    )
+    msg_b = (
+        "12:34:57 | ERROR    | Job failed\n"
+        "Traceback (most recent call last):\n"
+        "  File \"app.py\", line 42, in run\n"
+        "    result = process()\n"
+        "RuntimeError: Connection refused"
+    )
+    assert normalize(msg_a) == normalize(msg_b)
+
+
 @pytest.mark.asyncio
 async def test_webui_errors_grouped_endpoint_basic() -> None:
     """Test /api/errors/grouped groups identical errors and returns correct counts."""
@@ -1093,6 +1144,15 @@ async def test_webui_errors_grouped_endpoint_basic() -> None:
         assert "gamma error" in messages
         gamma_count = next(g["count"] for g in data["groups"] if g["message"] == "gamma error")
         assert gamma_count == 1
+
+        # Every group must include an 'occurrences' list whose length is min(count, cap)
+        from horde_worker_regen.webui.server import _MAX_OCCURRENCES_PER_GROUP as _CAP
+        for grp in data["groups"]:
+            assert "occurrences" in grp, f"Group {grp['message']!r} missing 'occurrences'"
+            assert len(grp["occurrences"]) == min(grp["count"], _CAP)
+        # The occurrences must be the actual original messages (not the representative repeated)
+        alpha_grp = next(g for g in data["groups"] if g["message"] == "alpha error")
+        assert all(occ == "alpha error" for occ in alpha_grp["occurrences"])
     finally:
         await webui.stop()
 
@@ -1253,6 +1313,89 @@ async def test_webui_errors_grouped_endpoint_pagination() -> None:
             data2 = await response.json()
         assert data2["page"] == 2
         assert len(data2["groups"]) == 5
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_grouped_occurrences_contain_individual_messages() -> None:
+    """Each group's 'occurrences' list must contain the actual individual error messages.
+
+    Errors that differ only by variable tokens (UUIDs, timestamps, numeric IDs) must be
+    grouped together, and the occurrences list must include every original raw message so
+    the user can see the full timeline of when each error variant appeared.
+    """
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Three distinct timestamps → three occurrences of the same logical error.
+        errors = [
+            "12:34:56 | ERROR    | Job failed: connection timeout",
+            "12:34:57 | ERROR    | Job failed: connection timeout",
+            "12:34:58 | ERROR    | Job failed: connection timeout",
+            "12:34:59 | ERROR    | Unrelated error",
+        ]
+        webui.update_status(errors_history=errors)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["total_groups"] == 2
+
+        # Find the "Job failed" group
+        job_grp = next(g for g in data["groups"] if "Job failed" in g["message"])
+        assert job_grp["count"] == 3
+        assert len(job_grp["occurrences"]) == 3
+        # Each occurrence must be the original message with its distinct timestamp
+        occurrence_texts = set(job_grp["occurrences"])
+        assert "12:34:56 | ERROR    | Job failed: connection timeout" in occurrence_texts
+        assert "12:34:57 | ERROR    | Job failed: connection timeout" in occurrence_texts
+        assert "12:34:58 | ERROR    | Job failed: connection timeout" in occurrence_texts
+
+        # The unrelated error group must have exactly one occurrence
+        unrelated_grp = next(g for g in data["groups"] if "Unrelated" in g["message"])
+        assert unrelated_grp["count"] == 1
+        assert len(unrelated_grp["occurrences"]) == 1
+        assert unrelated_grp["occurrences"][0] == "12:34:59 | ERROR    | Unrelated error"
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_grouped_occurrences_capped_at_max() -> None:
+    """When a group has more than _MAX_OCCURRENCES_PER_GROUP occurrences, only the first
+    _MAX_OCCURRENCES_PER_GROUP are included; the count still reflects the true total.
+    """
+    from horde_worker_regen.webui.server import _MAX_OCCURRENCES_PER_GROUP
+
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        total = _MAX_OCCURRENCES_PER_GROUP + 10
+        errors = ["same error message"] * total
+        webui.update_status(errors_history=errors)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["total_groups"] == 1
+        grp = data["groups"][0]
+        assert grp["count"] == total
+        assert len(grp["occurrences"]) == _MAX_OCCURRENCES_PER_GROUP
     finally:
         await webui.stop()
 

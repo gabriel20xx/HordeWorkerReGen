@@ -49,6 +49,9 @@ _STATS_SNAPSHOT_INTERVAL = 10.0
 _MAX_STATS_SNAPSHOTS = 2160
 """Maximum number of statistics snapshots to keep (approx. 6 hours at 10-second intervals)."""
 
+_MAX_OCCURRENCES_PER_GROUP = 50
+"""Maximum individual occurrences returned per error group in the /api/errors/grouped response."""
+
 _UNSET: Any = object()
 """Sentinel used to distinguish an explicitly-passed ``None`` from an omitted argument."""
 
@@ -1388,15 +1391,15 @@ class WorkerWebUI:
             if (isOpen) {
                 const body = el.querySelector('.error-group-body');
                 if (body && !body._rendered && el._grpData) {
-                    const MAX_OCCURRENCES_SHOWN = 50;
                     const grp = el._grpData;
-                    const shown = Math.min(grp.count, MAX_OCCURRENCES_SHOWN);
+                    const occurrences = grp.occurrences || [];
                     let html = '';
-                    for (let i = 0; i < shown; i++) {
-                        html += '<div class="error-occurrence">'+escapeHtml(grp.message)+'</div>';
+                    for (let i = 0; i < occurrences.length; i++) {
+                        html += '<div class="error-occurrence">'+escapeHtml(occurrences[i])+'</div>';
                     }
-                    if (grp.count > MAX_OCCURRENCES_SHOWN) {
-                        html += '<div class="error-occurrence-more">&hellip; and '+(grp.count - MAX_OCCURRENCES_SHOWN)+' more occurrence(s)</div>';
+                    const remaining = grp.count - occurrences.length;
+                    if (remaining > 0) {
+                        html += '<div class="error-occurrence-more">&hellip; and '+remaining+' more occurrence(s)</div>';
                     }
                     body.innerHTML = html;
                     body._rendered = true;
@@ -2700,14 +2703,20 @@ class WorkerWebUI:
         except ValueError:
             page_size = 10
         errors = self.status_data["errors_history"]
-        # Group by normalised message; keep one representative original message per group.
+        # Group by normalised message; keep one representative original message per group
+        # and record up to _MAX_OCCURRENCES_PER_GROUP individual occurrences for timeline
+        # display while still counting every occurrence for the true total.
         counts: dict[str, int] = {}
         representatives: dict[str, str] = {}
+        occurrences: dict[str, list[str]] = {}
         for msg in errors:
             key = self._normalize_error_message(msg)
             counts[key] = counts.get(key, 0) + 1
             if key not in representatives:
                 representatives[key] = msg
+                occurrences[key] = []
+            if len(occurrences[key]) < _MAX_OCCURRENCES_PER_GROUP:
+                occurrences[key].append(msg)
         # Include all groups (single-occurrence errors appear as a group of 1)
         qualified_groups = list(counts.items())
         # Sort by count descending, then alphabetically for stable ordering
@@ -2718,7 +2727,11 @@ class WorkerWebUI:
         page = min(page, total_pages)
         start = (page - 1) * page_size
         page_groups = [
-            {"message": representatives[key], "count": cnt}
+            {
+                "message": representatives[key],
+                "count": cnt,
+                "occurrences": occurrences[key],
+            }
             for key, cnt in groups[start : start + page_size]
         ]
         return web.json_response(
