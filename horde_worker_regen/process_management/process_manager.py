@@ -5177,8 +5177,7 @@ class HordeWorkerProcessManager:
                 logger.info("Timed job-pop pause expired; resuming automatically")
                 self.set_job_pops_paused(False)
                 if self.webui is not None:
-                    self.webui.status_data["job_pops_paused"] = False
-                    self.webui.status_data["job_pops_pause_until"] = None
+                    self.webui.update_status(job_pops_paused=False, job_pops_pause_until=None)
             else:
                 return
 

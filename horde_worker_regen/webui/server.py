@@ -1230,7 +1230,7 @@ class WorkerWebUI:
             })
             .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
             .then(data => {
-                _jobPopsPauseUntil = data.job_pops_pause_until || null;
+                _jobPopsPauseUntil = data.job_pops_pause_until ?? null;
                 _updatePauseBtn(data.job_pops_paused, _jobPopsPauseUntil);
                 _updateStatusBadges(null, data.job_pops_paused, _jobPopsPauseUntil);
             })
@@ -1957,7 +1957,7 @@ class WorkerWebUI:
                     currentWorkerName = data.worker_name || '';
                     document.getElementById('topbar-worker-name').textContent = workerName;
                     document.getElementById('topbar-worker-sub').textContent = '@'+data.horde_username;
-                    _jobPopsPauseUntil = data.job_pops_pause_until || null;
+                    _jobPopsPauseUntil = data.job_pops_pause_until ?? null;
                     _updateStatusBadges(data.maintenance_mode, data.job_pops_paused, _jobPopsPauseUntil);
                     const uptimeStr = formatUptime(data.uptime);
                     document.getElementById('uptime').textContent = uptimeStr;
@@ -2905,7 +2905,7 @@ class WorkerWebUI:
         gpu_usage_percent: float | None = None,
         maintenance_mode: bool | None = None,
         job_pops_paused: bool | None = None,
-        job_pops_pause_until: float | None = _UNSET,
+        job_pops_pause_until: float | None | object = _UNSET,
         user_kudos_total: float | None = None,
         last_image_base64: list[str] | None = None,
         last_image_submission_timestamp: float | None = None,
