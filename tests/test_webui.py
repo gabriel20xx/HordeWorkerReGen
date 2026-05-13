@@ -1145,10 +1145,11 @@ async def test_webui_errors_grouped_endpoint_basic() -> None:
         gamma_count = next(g["count"] for g in data["groups"] if g["message"] == "gamma error")
         assert gamma_count == 1
 
-        # Every group must include an 'occurrences' list whose length equals the count
+        # Every group must include an 'occurrences' list whose length is min(count, cap)
+        from horde_worker_regen.webui.server import _MAX_OCCURRENCES_PER_GROUP as _CAP
         for grp in data["groups"]:
             assert "occurrences" in grp, f"Group {grp['message']!r} missing 'occurrences'"
-            assert len(grp["occurrences"]) == grp["count"]
+            assert len(grp["occurrences"]) == min(grp["count"], _CAP)
         # The occurrences must be the actual original messages (not the representative repeated)
         alpha_grp = next(g for g in data["groups"] if g["message"] == "alpha error")
         assert all(occ == "alpha error" for occ in alpha_grp["occurrences"])

@@ -2704,7 +2704,8 @@ class WorkerWebUI:
             page_size = 10
         errors = self.status_data["errors_history"]
         # Group by normalised message; keep one representative original message per group
-        # and record every individual occurrence for timeline display.
+        # and record up to _MAX_OCCURRENCES_PER_GROUP individual occurrences for timeline
+        # display while still counting every occurrence for the true total.
         counts: dict[str, int] = {}
         representatives: dict[str, str] = {}
         occurrences: dict[str, list[str]] = {}
@@ -2713,9 +2714,9 @@ class WorkerWebUI:
             counts[key] = counts.get(key, 0) + 1
             if key not in representatives:
                 representatives[key] = msg
-            if key not in occurrences:
                 occurrences[key] = []
-            occurrences[key].append(msg)
+            if len(occurrences[key]) < _MAX_OCCURRENCES_PER_GROUP:
+                occurrences[key].append(msg)
         # Include all groups (single-occurrence errors appear as a group of 1)
         qualified_groups = list(counts.items())
         # Sort by count descending, then alphabetically for stable ordering
@@ -2729,7 +2730,7 @@ class WorkerWebUI:
             {
                 "message": representatives[key],
                 "count": cnt,
-                "occurrences": occurrences[key][:_MAX_OCCURRENCES_PER_GROUP],
+                "occurrences": occurrences[key],
             }
             for key, cnt in groups[start : start + page_size]
         ]
