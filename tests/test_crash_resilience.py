@@ -5171,22 +5171,20 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
             f"actual replacement order: {replace_order}"
         )
 
-    def test_all_in_progress_states_replaced_before_model_preloaded(self) -> None:
-        """All in-progress states must be cleared before the idle MODEL_PRELOADED state.
+    def test_post_processing_starting_replaced_before_model_preloaded(self) -> None:
+        """A process stuck in POST_PROCESSING_STARTING must be replaced before MODEL_PRELOADED.
 
-        MODEL_PRELOADED is listed first in the process map so that a per-process-first
-        loop would replace it before the in-progress states.  The multi-pass condition-first
-        loop must clear all in-progress states first regardless of process map ordering.
+        POST_PROCESSING_STARTING is the state the child emits just before acquiring the VAE
+        decode semaphore.  A process stuck here for longer than post_process_timeout is a
+        resource-holder (or potential holder) and must be cleared before idle states.
         """
         replace_order: list[int] = []
 
-        post_proc = self._make_process(1, HordeProcessState.INFERENCE_POST_PROCESSING)
-        preloading = self._make_process(2, HordeProcessState.MODEL_PRELOADING)
-        downloading = self._make_process(3, HordeProcessState.DOWNLOADING_AUX_MODEL)
-        preloaded = self._make_process(4, HordeProcessState.MODEL_PRELOADED)
+        post_proc_starting = self._make_process(1, HordeProcessState.POST_PROCESSING_STARTING)
+        preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED)
 
-        # MODEL_PRELOADED (id=4) is first — a per-process-first loop would replace it first.
-        mock_manager = self._make_manager([preloaded, post_proc, preloading, downloading])
+        # MODEL_PRELOADED is listed first — a per-process-first loop would replace it first.
+        mock_manager = self._make_manager([preloaded, post_proc_starting])
 
         def fake_check_and_replace(
             process_info: MagicMock,
@@ -5210,13 +5208,92 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
             result = mock_manager._bound_replace_hung()
 
         assert result is True
-        # All four must be replaced
-        assert set(replace_order) == {1, 2, 3, 4}, f"All processes must be replaced; got {replace_order}"
-        # MODEL_PRELOADED (id=4) must come after all in-progress states
-        preloaded_pos = replace_order.index(4)
-        for in_progress_id in (1, 2, 3):
+        assert 1 in replace_order, "POST_PROCESSING_STARTING process must be replaced"
+        assert 2 in replace_order, "MODEL_PRELOADED process must be replaced"
+        assert replace_order.index(1) < replace_order.index(2), (
+            "POST_PROCESSING_STARTING (id=1) must be cleared before MODEL_PRELOADED (id=2); "
+            f"actual replacement order: {replace_order}"
+        )
+
+    def test_post_processing_starting_replaced_when_stuck(self) -> None:
+        """A process stuck in POST_PROCESSING_STARTING must be replaced even when MODEL_PRELOADED is not stuck."""
+        post_proc_starting = self._make_process(1, HordeProcessState.POST_PROCESSING_STARTING, time_elapsed=9999.0)
+        # MODEL_PRELOADED process is fresh (not stuck)
+        preloaded = self._make_process(2, HordeProcessState.MODEL_PRELOADED, time_elapsed=10.0)
+
+        mock_manager = self._make_manager([post_proc_starting, preloaded])
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        # Only post_proc_starting should be replaced
+        mock_manager._replace_inference_process.assert_called_once_with(post_proc_starting)
+
+    def test_all_in_progress_states_replaced_before_model_preloaded(self) -> None:
+        """All in-progress states must be cleared before the idle MODEL_PRELOADED state.
+
+        MODEL_PRELOADED is listed first in the process map so that a per-process-first
+        loop would replace it before the in-progress states.  The multi-pass condition-first
+        loop must clear all in-progress states first regardless of process map ordering.
+        """
+        replace_order: list[int] = []
+
+        post_proc = self._make_process(1, HordeProcessState.INFERENCE_POST_PROCESSING)
+        post_proc_starting = self._make_process(2, HordeProcessState.POST_PROCESSING_STARTING)
+        preloading = self._make_process(3, HordeProcessState.MODEL_PRELOADING)
+        downloading = self._make_process(4, HordeProcessState.DOWNLOADING_AUX_MODEL)
+        preloaded = self._make_process(5, HordeProcessState.MODEL_PRELOADED)
+
+        # MODEL_PRELOADED (id=5) is first — a per-process-first loop would replace it first.
+        mock_manager = self._make_manager([preloaded, post_proc, post_proc_starting, preloading, downloading])
+
+        def fake_check_and_replace(
+            process_info: MagicMock,
+            timeout: float,
+            state: HordeProcessState,
+            error_msg: str,
+        ) -> bool:
+            if process_info.last_process_state == state:
+                import time as _t
+
+                elapsed = _t.time() - process_info.last_received_timestamp
+                if elapsed > timeout:
+                    replace_order.append(process_info.process_id)
+                    mock_manager._replace_inference_process(process_info)
+                    return True
+            return False
+
+        mock_manager._check_and_replace_process = fake_check_and_replace
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        # All five must be replaced
+        assert set(replace_order) == {1, 2, 3, 4, 5}, f"All processes must be replaced; got {replace_order}"
+        # MODEL_PRELOADED (id=5) must come after all in-progress states
+        preloaded_pos = replace_order.index(5)
+        for in_progress_id in (1, 2, 3, 4):
             assert replace_order.index(in_progress_id) < preloaded_pos, (
-                f"In-progress process id={in_progress_id} must be replaced before MODEL_PRELOADED (id=4); "
+                f"In-progress process id={in_progress_id} must be replaced before MODEL_PRELOADED (id=5); "
                 f"actual order: {replace_order}"
             )
 
