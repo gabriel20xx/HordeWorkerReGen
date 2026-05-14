@@ -4724,6 +4724,7 @@ class TestResultSubmittingStuckRecovery:
         mock_manager.bridge_data.download_timeout = 300
         mock_manager.bridge_data.post_process_timeout = 60
         mock_manager.bridge_data.max_batch = 1
+        mock_manager.bridge_data.exit_on_unhandled_faults = False
         mock_manager._process_map.is_stuck_on_inference.return_value = False
         mock_manager._check_and_replace_process.return_value = False
         mock_manager._process_map.values.return_value = processes
@@ -5934,10 +5935,82 @@ class TestReplaceHungProcessesPausedPops:
 
         mock_manager._replace_inference_process.assert_not_called()
         mock_manager._purge_jobs.assert_not_called()
+        assert mock_manager._hung_processes_detected is False, (
+            "Bulk all-processes-timeout detection must not start when pops are paused and there is no local work"
+        )
         assert result is False, (
             "All-processes-timed-out bulk replacement must be skipped when pops are paused "
             "and there is no local work"
         )
+
+    def test_shutdown_timeout_still_recovers_when_paused_and_no_local_work(self) -> None:
+        """Shutdown timeout recovery must still run while pops are paused and local queues are empty."""
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = 0
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.last_received_timestamp = _time.time()
+        proc.last_heartbeat_timestamp = _time.time()
+        proc.last_progress_timestamp = _time.time()
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+
+        mock_manager = self._make_manager(
+            [proc],
+            job_pops_paused=True,
+            last_pop_no_jobs=False,
+            jobs_pending_inference=[],
+            jobs_in_progress=[],
+        )
+        mock_manager._shutting_down = True
+        mock_manager._shutting_down_time = _time.time() - (60 * 5 + 1)
+        mock_manager._hung_processes_detected = True
+        mock_manager._hung_processes_detected_time = _time.time() - 21
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._purge_jobs.assert_called_once()
+        mock_manager._abort.assert_called_once()
+        assert result is True, "Shutdown timeout must escalate to purge+abort even when pops are paused"
+
+    def test_all_processes_timeout_detection_runs_when_last_pop_no_jobs_but_local_work_exists(self) -> None:
+        """A stale no-jobs pop must not suppress all-processes-timeout detection when local work exists."""
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = 0
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.MODEL_PRELOADED
+        proc.last_received_timestamp = _time.time() - 9999
+        proc.last_heartbeat_timestamp = _time.time() - 9999
+        proc.last_progress_timestamp = _time.time() - 9999
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+
+        job = MagicMock()
+        mock_manager = self._make_manager(
+            [proc],
+            job_pops_paused=False,
+            last_pop_no_jobs=True,
+            jobs_pending_inference=[job],
+            jobs_in_progress=[],
+        )
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is False
+        assert mock_manager._hung_processes_detected is True, (
+            "All-processes-timeout detection must start when local work exists, even if the last pop saw no jobs"
+        )
+        mock_manager._purge_jobs.assert_not_called()
 
     def test_stale_waiting_for_job_replaced_when_paused_but_local_jobs_pending(self) -> None:
         """A stale WAITING_FOR_JOB process MUST be replaced when pops are paused but local

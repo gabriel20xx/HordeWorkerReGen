@@ -7818,7 +7818,9 @@ class HordeWorkerProcessManager:
             self._recently_recovered = True
             threading.Thread(target=timed_unset_recently_recovered, daemon=True).start()
 
-        if self._last_pop_no_jobs_available or (self._job_pops_paused and no_local_work):
+        shutdown_timed_out = self._shutting_down and (now - self._shutting_down_time) > (60 * 5)
+
+        if (self._last_pop_no_jobs_available or self._job_pops_paused) and no_local_work and not shutdown_timed_out:
             # Either the API told us there are no jobs, or pops are paused and there is
             # nothing in our local queue — skip the "all processes timed out" bulk-replacement
             # check because idle processes timing out in this state is expected and normal.
@@ -7830,11 +7832,9 @@ class HordeWorkerProcessManager:
             for process_info in self._process_map.values()
         )
 
-        shutdown_timed_out = self._shutting_down and (now - self._shutting_down_time) > (60 * 5)
-
         # If all processes are unresponsive o we should replace all processes
         # *except* if we've already done so recently or the last job pop was a "no jobs available" response
-        if (all_processes_timed_out and not (self._last_pop_no_jobs_available or self._recently_recovered)) or (
+        if (all_processes_timed_out and not ((self._last_pop_no_jobs_available and no_local_work) or self._recently_recovered)) or (
             shutdown_timed_out
         ):
             if not self._hung_processes_detected:
