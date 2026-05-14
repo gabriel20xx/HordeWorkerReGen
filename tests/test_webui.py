@@ -563,6 +563,8 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
         assert 'id="topbar-sysram-bar" style="width:0%" aria-label="System RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-ram-bar" style="width:0%" aria-label="Worker RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert "document.getElementById('topbar-total-ram-val').textContent = totalRamVal;" in html
+        assert "const gpu = Math.max(sysGpuRaw, workerGpu);" in html
+        assert "const sysVram = Math.max(vramTotalMb > 0 ? Math.min(100, Math.round((sysVramMb / vramTotalMb) * 100)) : 0, vram);" in html
         assert "'/ ' + totalRamVal" not in html
         assert "topbar-vram-val" not in html
         assert "topbar-ram-val" not in html
@@ -1687,15 +1689,28 @@ async def test_webui_stats_endpoint() -> None:
         snap_sysvram_over = webui._stats_snapshots[-1]
         assert snap_sysvram_over["system_vram"] == 100.0, "system_vram_pct must be capped at 100%"
 
+        # System GPU snapshot must never be lower than worker GPU.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(gpu_usage_percent=35.0, worker_gpu_percent=60.0)
+        snap_gpu_floor = webui._stats_snapshots[-1]
+        assert snap_gpu_floor["gpu"] == 60.0, "gpu snapshot must be floored to worker_gpu_percent"
+
+        # System VRAM snapshot must never be lower than worker VRAM percentage.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(vram_usage_mb=6144.0, system_vram_usage_mb=4096.0, total_vram_mb=8192.0)
+        snap_sysvram_floor = webui._stats_snapshots[-1]
+        assert snap_sysvram_floor["vram"] == 75.0
+        assert snap_sysvram_floor["system_vram"] == 75.0, "system_vram snapshot must be floored to worker VRAM percent"
+
         # Verify /api/stats returns all recorded snapshots.
         # Snapshots recorded so far: initial, force-second, vram-over-100, ram-over-100,
-        # system-ram-over-100, system-vram-over-100 = 6 total.
+        # system-ram-over-100, system-vram-over-100, gpu-floor, system-vram-floor = 8 total.
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
             assert response.status == 200
             data2 = await response.json()
-        assert len(data2["snapshots"]) == 6
+        assert len(data2["snapshots"]) == 8
 
         # images_per_model is reflected from update_status and can be set and cleared.
         webui.update_status(images_per_model={"ModelA": 5, "ModelB": 2})
