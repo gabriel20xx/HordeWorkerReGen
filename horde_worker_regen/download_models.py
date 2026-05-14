@@ -87,22 +87,23 @@ def download_all_models(
     # and fall back to a backup. Deleting the corrupted file here lets hordelib start clean
     # (it logs a WARNING instead of an ERROR when the file is simply absent).
     try:
-        import json as _json
+        import json
 
-        from horde_model_reference import LEGACY_REFERENCE_FOLDER as _LEGACY_REF_FOLDER
+        from horde_model_reference import LEGACY_REFERENCE_FOLDER
 
-        _lora_db_path = _LEGACY_REF_FOLDER / "lora.json"
-        if _lora_db_path.exists():
+        lora_db_path = LEGACY_REFERENCE_FOLDER / "lora.json"
+        if lora_db_path.exists():
             try:
-                _json.loads(_lora_db_path.read_text(encoding="utf-8", errors="ignore"))
-            except _json.JSONDecodeError:
+                # We only care whether the parse succeeds, not the parsed value.
+                json.loads(lora_db_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.warning(
-                    f"Corrupted lora reference cache detected at {_lora_db_path}. "
+                    f"Corrupted lora reference cache detected at {lora_db_path}. "
                     "Removing it so that it can be rebuilt cleanly on startup.",
                 )
-                _lora_db_path.unlink(missing_ok=True)
-    except Exception as _e:
-        logger.debug(f"Could not validate lora reference cache before startup: {_e}")
+                lora_db_path.unlink(missing_ok=True)
+    except Exception as e:
+        logger.debug(f"Could not validate lora reference cache before startup: {e}")
 
     SharedModelManager.load_model_managers()
 

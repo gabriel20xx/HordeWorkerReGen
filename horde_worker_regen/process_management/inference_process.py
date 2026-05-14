@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import gc
+import json
 import re
 import sys
 import threading
@@ -351,20 +352,19 @@ class HordeInferenceProcess(HordeProcess):
             # write in a previous session, remove it so hordelib logs a WARNING instead of
             # an ERROR and recreates the file from scratch.
             try:
-                import json as _json
-
                 _lora_db_path = lora_manager.models_db_path
                 if _lora_db_path.exists():
                     try:
-                        _json.loads(_lora_db_path.read_text(encoding="utf-8", errors="ignore"))
-                    except _json.JSONDecodeError:
+                        # We only care whether the parse succeeds, not the parsed value.
+                        json.loads(_lora_db_path.read_text(encoding="utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
                         logger.warning(
                             f"Corrupted lora reference cache detected at {_lora_db_path}. "
                             "Removing it so that it can be rebuilt cleanly.",
                         )
                         _lora_db_path.unlink(missing_ok=True)
-            except Exception as _e:
-                logger.debug(f"Could not validate lora reference cache: {_e}")
+            except Exception as e:
+                logger.debug(f"Could not validate lora reference cache: {e}")
 
             try:
                 lora_manager.load_model_database()
