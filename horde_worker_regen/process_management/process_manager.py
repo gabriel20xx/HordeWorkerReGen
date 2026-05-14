@@ -1845,6 +1845,12 @@ class HordeWorkerProcessManager:
         self._log_handler_id: int | None = None
         """ID of the logger handler for capturing console logs."""
 
+        # Persistent psutil.Process() handle for container CPU tracking.  cpu_percent(interval=None)
+        # computes a delta from the *previous* call on the same Process instance; creating a new
+        # instance on every update_webui_status() call would always return 0.  Storing it here ensures
+        # the delta is measured correctly across successive status updates.
+        self._main_process: psutil.Process = psutil.Process()
+
         if self.bridge_data.enable_webui:
             from horde_worker_regen.webui.server import WorkerWebUI
 
@@ -6951,7 +6957,7 @@ class HordeWorkerProcessManager:
         # a 0-100% scale representing the fraction of total CPU capacity consumed.
         container_cpu_percent = 0.0
         try:
-            main_proc = psutil.Process()
+            main_proc = self._main_process
             raw_cpu = main_proc.cpu_percent(interval=None)
             for child in main_proc.children(recursive=True):
                 with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):

@@ -251,7 +251,7 @@ class WorkerWebUI:
         .mobile-uptime { color: var(--text-muted); font-size: 0.7rem; font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0; }
 
         /* ---- Mobile resources sub-bar ---- */
-        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; min-height: 26px; background: #12162a; align-items: center; flex-wrap: wrap; padding: 2px 14px; gap: 10px 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); overflow-x: auto; }
         .mobile-res-chip { color: var(--text-muted); font-size: 0.7rem; font-weight: 600; font-family: 'Courier New', monospace; }
 
         /* ---- Main content ---- */
@@ -838,9 +838,9 @@ class WorkerWebUI:
                                 <div class="chart-container-sm"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">VRAM % <span style="font-weight:400;font-size:0.7rem;">(container)</span></div>
+                                <div class="chart-label">VRAM % <span style="font-weight:400;font-size:0.7rem;">(device)</span></div>
                                 <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
-                                <div class="chart-label" style="margin-top:10px;">RAM % <span style="font-weight:400;font-size:0.7rem;">(container)</span></div>
+                                <div class="chart-label" style="margin-top:10px;">RAM % <span style="font-weight:400;font-size:0.7rem;">(process / system)</span></div>
                                 <div class="chart-container-sm"><canvas id="chart-ram" aria-label="RAM usage over time"></canvas></div>
                             </div>
                         </div>
@@ -2638,14 +2638,30 @@ class WorkerWebUI:
         """Return historical statistics snapshots and per-model image counts.
 
         Returns all stored snapshots in chronological order (oldest first).
-        Each snapshot contains a Unix timestamp plus CPU/GPU/VRAM usage
-        percentages, images/hour, kudos/hour, and cumulative job/kudos counters
-        for the current session.
+        Each snapshot contains a Unix timestamp plus CPU/GPU/VRAM/RAM usage
+        percentages, container CPU percentage, images/hour, kudos/hour, and
+        cumulative job/kudos counters for the current session.
 
         Response shape::
 
             {
-                "snapshots": [...],
+                "snapshots": [
+                    {
+                        "t": <float>,            # Unix timestamp
+                        "cpu": <float>,          # system CPU %
+                        "gpu": <float>,          # GPU %
+                        "vram": <float>,         # device VRAM %
+                        "ram": <float>,          # process RAM as % of system total
+                        "container_cpu": <float>,# worker process + children CPU %
+                        "iph": <float>,          # images per hour
+                        "kph": <float>,          # kudos per hour
+                        "jc": <int>,             # jobs completed
+                        "jf": <int>,             # jobs faulted
+                        "jp": <int>,             # jobs popped
+                        "ks": <float>            # kudos earned this session
+                    },
+                    ...
+                ],
                 "images_per_model": {"model-name": <int count>, ...}
             }
         """

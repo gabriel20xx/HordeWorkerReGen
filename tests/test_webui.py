@@ -47,8 +47,8 @@ def test_webui_status_update() -> None:
     assert webui.status_data["images_per_hour"] == 12.5
 
 
-def test_webui_vram_resources() -> None:
-    """Test that WorkerWebUI correctly handles VRAM resource updates."""
+def test_webui_vram_and_ram_resources() -> None:
+    """Test that WorkerWebUI correctly handles VRAM and RAM resource updates."""
     webui = WorkerWebUI(port=0)
 
     # Test VRAM usage and total VRAM update
@@ -79,8 +79,8 @@ def test_webui_vram_resources() -> None:
     assert expected_ram_pct == 50
 
 
-def test_webui_cpu_gpu_usage() -> None:
-    """Test that WorkerWebUI correctly handles CPU and GPU usage updates."""
+def test_webui_cpu_gpu_and_container_cpu_usage() -> None:
+    """Test that WorkerWebUI correctly handles CPU, GPU, and container CPU usage updates."""
     webui = WorkerWebUI(port=0)
 
     # Test CPU and GPU usage update
