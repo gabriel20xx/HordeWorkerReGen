@@ -94,6 +94,7 @@ class WorkerWebUI:
             "processes": [],
             "models_loaded": [],
             "ram_usage_mb": 0,
+            "total_ram_mb": 0,
             "vram_usage_mb": 0,
             "total_vram_mb": 0,
             "cpu_usage_percent": 0,
@@ -610,6 +611,7 @@ class WorkerWebUI:
         <span class="mobile-res-chip" id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">CNTR 0%</span>
         <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
         <span class="mobile-res-chip" id="mobile-vram">VRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-ram">RAM 0%</span>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
     <aside class="sidebar" id="sidebar">
@@ -657,6 +659,11 @@ class WorkerWebUI:
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span id="topbar-vram-label">VRAM</span><span id="topbar-vram-pct">0%</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar vram" id="topbar-vram-bar" style="width:0%"></div></div>
+                </div>
+                <div class="topbar-res-pill">
+                    <div class="topbar-res-pill-label"><span>RAM</span><span id="topbar-ram-pct">0%</span></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%;background-color:#10b981;"></div></div>
+                    <div class="topbar-res-pill-sub"><span id="topbar-ram-val">0 MB</span></div>
                 </div>
             </div>
             <div class="topbar-meta">
@@ -833,6 +840,8 @@ class WorkerWebUI:
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-label">VRAM % <span style="font-weight:400;font-size:0.7rem;">(container)</span></div>
                                 <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
+                                <div class="chart-label" style="margin-top:10px;">RAM % <span style="font-weight:400;font-size:0.7rem;">(container)</span></div>
+                                <div class="chart-container-sm"><canvas id="chart-ram" aria-label="RAM usage over time"></canvas></div>
                             </div>
                         </div>
                     </div>
@@ -1991,6 +2000,9 @@ class WorkerWebUI:
                     const gpu = Math.min(100, Math.round(data.gpu_usage_percent));
                     const vram = data.total_vram_mb > 0 ? Math.min(100, Math.round((data.vram_usage_mb / data.total_vram_mb) * 100)) : 0;
                     const ctrCpu = Math.min(100, Math.round(data.container_cpu_percent || 0));
+                    const ram = data.total_ram_mb > 0 ? Math.min(100, Math.round((data.ram_usage_mb / data.total_ram_mb) * 100)) : 0;
+                    const ramMb = data.ram_usage_mb || 0;
+                    const ramVal = ramMb >= 1024 ? (ramMb / 1024).toFixed(1) + ' GB' : Math.round(ramMb) + ' MB';
                     document.getElementById('topbar-cpu-pct').textContent = cpu+'%';
                     const cpuBar = document.getElementById('topbar-cpu-bar');
                     cpuBar.style.width = cpu+'%';
@@ -2007,6 +2019,11 @@ class WorkerWebUI:
                     const vramBar = document.getElementById('topbar-vram-bar');
                     vramBar.style.width = vram+'%';
                     vramBar.style.backgroundColor = resBarColor(vram);
+                    document.getElementById('topbar-ram-pct').textContent = ram+'%';
+                    document.getElementById('topbar-ram-val').textContent = ramVal;
+                    const ramBar = document.getElementById('topbar-ram-bar');
+                    ramBar.style.width = ram+'%';
+                    ramBar.style.backgroundColor = resBarColor(ram);
 
                     document.getElementById('mobile-cpu').textContent = 'CPU '+cpu+'%';
                     document.getElementById('mobile-cpu').style.color = resBarColor(cpu);
@@ -2016,6 +2033,8 @@ class WorkerWebUI:
                     document.getElementById('mobile-gpu').style.color = resBarColor(gpu);
                     document.getElementById('mobile-vram').textContent = 'VRAM '+vram+'%';
                     document.getElementById('mobile-vram').style.color = resBarColor(vram);
+                    document.getElementById('mobile-ram').textContent = 'RAM '+ram+'%';
+                    document.getElementById('mobile-ram').style.color = resBarColor(ram);
                     const ojd = document.getElementById('overview-current-job');
                     if (data.current_job) {
                         const job = data.current_job;
@@ -2305,6 +2324,7 @@ class WorkerWebUI:
             drawLineChart('chart-cpu-ctr', snaps.map(function(s) { return { t: s.t, v: s.container_cpu || 0 }; }), { color: '#fb923c', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawLineChart('chart-gpu',     snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), { color: '#3b82f6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawLineChart('chart-vram',    snaps.map(function(s) { return { t: s.t, v: s.vram }; }), { color: '#8b5cf6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-ram',     snaps.map(function(s) { return { t: s.t, v: s.ram  || 0 }; }), { color: '#10b981', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
         }
 
         function drawLineChart(canvasId, points, opts) {
@@ -2640,11 +2660,14 @@ class WorkerWebUI:
         sd = self.status_data
         vram_total: float = float(sd.get("total_vram_mb") or 0)
         vram_pct = min(100.0, round((float(sd.get("vram_usage_mb", 0)) / vram_total) * 100, 1)) if vram_total > 0 else 0.0
+        ram_total: float = float(sd.get("total_ram_mb") or 0)
+        ram_pct = min(100.0, round((float(sd.get("ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
         snapshot: dict[str, float | int] = {
             "t": round(now, 1),
             "cpu": round(float(sd.get("cpu_usage_percent", 0)), 1),
             "gpu": round(float(sd.get("gpu_usage_percent", 0)), 1),
             "vram": vram_pct,
+            "ram": ram_pct,
             "container_cpu": round(float(sd.get("container_cpu_percent", 0)), 1),
             "iph": round(float(sd.get("images_per_hour", 0)), 2),
             "kph": round(float(sd.get("kudos_per_hour", 0)), 2),
@@ -2940,6 +2963,7 @@ class WorkerWebUI:
         processes: list[dict[str, Any]] | None = None,
         models_loaded: list[str] | None = None,
         ram_usage_mb: float | None = None,
+        total_ram_mb: float | None = None,
         vram_usage_mb: float | None = None,
         total_vram_mb: float | None = None,
         cpu_usage_percent: float | None = None,
@@ -2977,7 +3001,8 @@ class WorkerWebUI:
             max_queue_size: Maximum number of jobs that can be queued
             processes: List of process information
             models_loaded: List of currently loaded models
-            ram_usage_mb: RAM usage in MB
+            ram_usage_mb: Container RAM usage in MB (sum of all worker processes)
+            total_ram_mb: Total system RAM capacity in MB
             vram_usage_mb: VRAM usage in MB
             total_vram_mb: Total VRAM in MB
             cpu_usage_percent: CPU usage percentage
@@ -3032,6 +3057,8 @@ class WorkerWebUI:
             self.status_data["models_loaded"] = models_loaded
         if ram_usage_mb is not None:
             self.status_data["ram_usage_mb"] = ram_usage_mb
+        if total_ram_mb is not None:
+            self.status_data["total_ram_mb"] = total_ram_mb
         if vram_usage_mb is not None:
             self.status_data["vram_usage_mb"] = vram_usage_mb
         if total_vram_mb is not None:

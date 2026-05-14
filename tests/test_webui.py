@@ -55,21 +55,28 @@ def test_webui_vram_resources() -> None:
     test_vram_usage_mb = 8192.5  # 8GB used
     test_total_vram_mb = 24576.0  # 24GB total
     test_ram_usage_mb = 16384.0  # 16GB RAM
+    test_total_ram_mb = 32768.0  # 32GB total system RAM
 
     webui.update_status(
         vram_usage_mb=test_vram_usage_mb,
         total_vram_mb=test_total_vram_mb,
         ram_usage_mb=test_ram_usage_mb,
+        total_ram_mb=test_total_ram_mb,
     )
 
     # Verify the values were updated correctly
     assert webui.status_data["vram_usage_mb"] == test_vram_usage_mb
     assert webui.status_data["total_vram_mb"] == test_total_vram_mb
     assert webui.status_data["ram_usage_mb"] == test_ram_usage_mb
+    assert webui.status_data["total_ram_mb"] == test_total_ram_mb
 
     # Test that VRAM percentage would be calculated correctly (33% in this case)
     expected_percent = round((test_vram_usage_mb / test_total_vram_mb) * 100)
     assert expected_percent == 33
+
+    # Test that RAM percentage would be calculated correctly (50%)
+    expected_ram_pct = round((test_ram_usage_mb / test_total_ram_mb) * 100)
+    assert expected_ram_pct == 50
 
 
 def test_webui_cpu_gpu_usage() -> None:
@@ -1520,6 +1527,8 @@ async def test_webui_stats_endpoint() -> None:
             gpu_usage_percent=70.0,
             vram_usage_mb=4096.0,
             total_vram_mb=8192.0,
+            ram_usage_mb=8192.0,
+            total_ram_mb=32768.0,
             container_cpu_percent=20.0,
         )
         assert len(webui._stats_snapshots) == 1
@@ -1535,6 +1544,7 @@ async def test_webui_stats_endpoint() -> None:
         assert snap["cpu"] == 40.0
         assert snap["gpu"] == 70.0
         assert snap["vram"] == 50.0  # 4096/8192 = 50%
+        assert snap["ram"] == 25.0   # 8192/32768 = 25%
         assert snap["container_cpu"] == 20.0
 
         # A second call within the interval must NOT add another snapshot.
@@ -1552,13 +1562,19 @@ async def test_webui_stats_endpoint() -> None:
         snap_over = webui._stats_snapshots[-1]
         assert snap_over["vram"] == 100.0, "vram_pct must be capped at 100%"
 
+        # RAM percentage must be capped at 100 as well.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(ram_usage_mb=40000.0, total_ram_mb=32768.0)
+        snap_ram_over = webui._stats_snapshots[-1]
+        assert snap_ram_over["ram"] == 100.0, "ram_pct must be capped at 100%"
+
         # Verify /api/stats returns all recorded snapshots.
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
             assert response.status == 200
             data2 = await response.json()
-        assert len(data2["snapshots"]) == 3
+        assert len(data2["snapshots"]) == 4
 
         # images_per_model is reflected from update_status and can be set and cleared.
         webui.update_status(images_per_model={"ModelA": 5, "ModelB": 2})

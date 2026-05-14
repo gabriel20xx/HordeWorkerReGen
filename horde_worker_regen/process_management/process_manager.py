@@ -6931,6 +6931,9 @@ class HordeWorkerProcessManager:
         # Use max() for VRAM because each process reports the total GPU VRAM usage, not per-process usage
         total_vram_mb = max((p.vram_usage_bytes for p in self._process_map.values()), default=0) / BYTES_TO_MEGABYTES
 
+        # Total system RAM capacity
+        total_system_ram_mb = self.total_ram_bytes / BYTES_TO_MEGABYTES
+
         # Get total VRAM from all devices
         total_device_vram_mb = 0
         if len(self._device_map.root) > 0:
@@ -7054,6 +7057,7 @@ class HordeWorkerProcessManager:
             processes=processes,
             models_loaded=models_loaded,
             ram_usage_mb=total_ram_mb,
+            total_ram_mb=total_system_ram_mb,
             vram_usage_mb=total_vram_mb,
             total_vram_mb=total_device_vram_mb,
             cpu_usage_percent=cpu_usage_percent,
