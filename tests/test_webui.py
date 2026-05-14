@@ -549,13 +549,23 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
             html = await response.text()
 
         assert 'id="topbar-gpu-pct">0%</span>' in html
+        assert 'id="topbar-cpu-bar" style="width:0%" aria-label="System CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
+        assert 'id="topbar-cpu-ctr-bar" style="width:0%" aria-label="Worker CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-gpu-wrk-bar" style="width:0%" aria-label="Worker GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-gpu-wrk-pct">0%</span>' in html
+        assert 'id="topbar-vram-total">0 MB</span>' in html
         assert 'id="topbar-gpu-cores">0 cores</span>' in html
         assert 'id="topbar-vram-bar" style="width:0%" aria-label="System VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-vram-wrk-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-vram-wrk-pct">0%</span>' in html
+        assert 'id="topbar-total-ram-val">0 GB</span>' in html
+        assert 'id="topbar-sysram-bar" style="width:0%" aria-label="System RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
+        assert 'id="topbar-ram-bar" style="width:0%" aria-label="Worker RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
+        assert "document.getElementById('topbar-total-ram-val').textContent = totalRamVal;" in html
+        assert "'/ ' + totalRamVal" not in html
+        assert "topbar-vram-val" not in html
+        assert "topbar-ram-val" not in html
     finally:
         await webui.stop()
 
