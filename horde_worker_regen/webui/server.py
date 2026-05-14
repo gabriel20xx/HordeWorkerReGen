@@ -2137,13 +2137,14 @@ class WorkerWebUI:
                     document.getElementById('jobs-queued').textContent = data.jobs_queued;
                     document.getElementById('time-without-jobs').textContent = formatUptime(data.time_without_jobs || 0);
                     const cpu = Math.min(100, Math.round(data.cpu_usage_percent));
-                    const gpu = Math.min(100, Math.round(data.gpu_usage_percent || 0));
                     const workerGpu = Math.min(100, Math.round(data.worker_gpu_percent || 0));
+                    const sysGpuRaw = Math.min(100, Math.round(data.gpu_usage_percent || 0));
+                    const gpu = Math.max(sysGpuRaw, workerGpu);
                     const vramMb = data.vram_usage_mb || 0;
                     const sysVramMb = data.system_vram_usage_mb || 0;
                     const vramTotalMb = data.total_vram_mb || 0;
                     const vram = vramTotalMb > 0 ? Math.min(100, Math.round((vramMb / vramTotalMb) * 100)) : 0;
-                    const sysVram = vramTotalMb > 0 ? Math.min(100, Math.round((sysVramMb / vramTotalMb) * 100)) : 0;
+                    const sysVram = Math.max(vramTotalMb > 0 ? Math.min(100, Math.round((sysVramMb / vramTotalMb) * 100)) : 0, vram);
                     const ctrCpu = Math.min(100, Math.round(data.container_cpu_percent || 0));
                     const ramMb = data.ram_usage_mb || 0;
                     const totalRamMb = data.total_ram_mb || 0;
@@ -3241,19 +3242,21 @@ class WorkerWebUI:
         sd = self.status_data
         vram_total: float = float(sd.get("total_vram_mb") or 0)
         vram_pct = min(100.0, round((float(sd.get("vram_usage_mb", 0)) / vram_total) * 100, 1)) if vram_total > 0 else 0.0
-        system_vram_pct = (
+        system_vram_pct = max(
+            vram_pct,
             min(100.0, round((float(sd.get("system_vram_usage_mb", 0)) / vram_total) * 100, 1))
             if vram_total > 0
-            else 0.0
+            else 0.0,
         )
         ram_total: float = float(sd.get("total_ram_mb") or 0)
         ram_pct = min(100.0, round((float(sd.get("ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
         system_ram_pct = min(100.0, round((float(sd.get("system_ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
+        worker_gpu_pct = round(float(sd.get("worker_gpu_percent", 0)), 1)
         snapshot: dict[str, float | int] = {
             "t": round(now, 1),
             "cpu": round(float(sd.get("cpu_usage_percent", 0)), 1),
-            "gpu": round(float(sd.get("gpu_usage_percent", 0)), 1),
-            "worker_gpu": round(float(sd.get("worker_gpu_percent", 0)), 1),
+            "gpu": max(round(float(sd.get("gpu_usage_percent", 0)), 1), worker_gpu_pct),
+            "worker_gpu": worker_gpu_pct,
             "vram": vram_pct,
             "system_vram": system_vram_pct,
             "ram": ram_pct,
