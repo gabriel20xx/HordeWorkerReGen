@@ -7832,7 +7832,7 @@ class HordeWorkerProcessManager:
             for process_info in self._process_map.values()
         )
 
-        # If all processes are unresponsive o we should replace all processes
+        # If all processes are unresponsive or we should replace all processes
         # *except* if we've already done so recently or the last job pop was a "no jobs available" response
         if (all_processes_timed_out and not ((self._last_pop_no_jobs_available and no_local_work) or self._recently_recovered)) or (
             shutdown_timed_out
