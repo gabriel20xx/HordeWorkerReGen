@@ -839,27 +839,36 @@ class WorkerWebUI:
                     </div>
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
-                        <div class="grid-3">
+                        <div class="grid-4">
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-legend">
-                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#f59e0b;"></span>CPU % System</span>
-                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#fb923c;"></span>CPU % Worker</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#f59e0b;"></span>System</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#fb923c;"></span>Worker</span>
                                 </div>
+                                <div class="chart-label">CPU %</div>
                                 <div class="chart-container-md"><canvas id="chart-cpu" aria-label="CPU usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-legend">
-                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#3b82f6;"></span>GPU % System</span>
-                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#8b5cf6;"></span>VRAM % Worker</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#3b82f6;"></span>System</span>
                                 </div>
-                                <div class="chart-container-md"><canvas id="chart-gpu" aria-label="GPU and VRAM usage over time"></canvas></div>
+                                <div class="chart-label">GPU %</div>
+                                <div class="chart-container-md"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-legend">
-                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#10b981;"></span>RAM % Worker</span>
-                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#059669;"></span>RAM % System</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#10b981;"></span>Worker</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#059669;"></span>System</span>
                                 </div>
+                                <div class="chart-label">RAM %</div>
                                 <div class="chart-container-md"><canvas id="chart-ram" aria-label="RAM usage over time"></canvas></div>
+                            </div>
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-legend">
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#8b5cf6;"></span>Worker</span>
+                                </div>
+                                <div class="chart-label">VRAM %</div>
+                                <div class="chart-container-md"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
                             </div>
                         </div>
                     </div>
@@ -2412,11 +2421,13 @@ class WorkerWebUI:
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-gpu', [
                 { points: snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), color: '#3b82f6' },
-                { points: snaps.map(function(s) { return { t: s.t, v: s.vram }; }), color: '#8b5cf6' },
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-ram', [
                 { points: snaps.map(function(s) { return { t: s.t, v: s.ram  || 0 }; }), color: '#10b981' },
                 { points: snaps.map(function(s) { return { t: s.t, v: s.system_ram || 0 }; }), color: '#059669' },
+            ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawMultiLineChart('chart-vram', [
+                { points: snaps.map(function(s) { return { t: s.t, v: s.vram || 0 }; }), color: '#8b5cf6' },
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
         }
 
