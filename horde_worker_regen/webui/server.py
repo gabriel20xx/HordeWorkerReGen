@@ -808,10 +808,19 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#127760; Images by Model (Session)</span></div>
-                        <div class="card" style="padding:14px 16px;">
-                            <div id="stats-model-table-wrap">
-                                <div class="text-muted" style="font-size:0.85rem;">No images generated yet.</div>
+                        <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
+                        <div class="grid-3">
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">CPU %</div>
+                                <div class="chart-container-sm"><canvas id="chart-cpu" aria-label="CPU usage over time"></canvas></div>
+                            </div>
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">GPU %</div>
+                                <div class="chart-container-sm"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
+                            </div>
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">VRAM %</div>
+                                <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
                             </div>
                         </div>
                     </div>
@@ -828,19 +837,10 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
-                        <div class="grid-3">
-                            <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">CPU %</div>
-                                <div class="chart-container-sm"><canvas id="chart-cpu" aria-label="CPU usage over time"></canvas></div>
-                            </div>
-                            <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">GPU %</div>
-                                <div class="chart-container-sm"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
-                            </div>
-                            <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">VRAM %</div>
-                                <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
+                        <div class="section-header"><span class="section-title">&#127760; Images by Model (Session)</span></div>
+                        <div class="card" style="padding:14px 16px;">
+                            <div id="stats-model-table-wrap">
+                                <div class="text-muted" style="font-size:0.85rem;">No images generated yet.</div>
                             </div>
                         </div>
                     </div>
