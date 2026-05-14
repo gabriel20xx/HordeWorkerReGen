@@ -117,6 +117,8 @@ class WorkerWebUI:
             "images_count": 0,
             "user_details": {},
             "images_per_model": {},
+            "failed_jobs_per_model": {},
+            "faulted_jobs_per_phase": {},
         }
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
@@ -596,7 +598,7 @@ class WorkerWebUI:
         .chart-legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.73rem; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.6px; }
         [data-theme="dark"] .chart-legend-item { color: #94a3b8; }
         .chart-legend-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
-        #stats-model-table-wrap { max-height: 300px; overflow-y: auto; }
+        .stats-model-table-wrap { max-height: 300px; overflow-y: auto; }
         .model-images-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
         .model-images-table thead th { position: sticky; top: 0; background: var(--card-bg); z-index: 1; }
         .model-images-table th { text-align: left; font-weight: 700; color: var(--text-muted); padding: 5px 8px 7px 8px; border-bottom: 1px solid var(--border); }
@@ -607,6 +609,10 @@ class WorkerWebUI:
         .model-images-bar-cell { width: 40%; }
         .model-images-bar-wrap { background: var(--border); border-radius: 3px; height: 7px; overflow: hidden; }
         .model-images-bar { background: var(--accent); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
+        .model-failed-bar { background: var(--error); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
+        #stats-model-tables-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+        @media (max-width: 900px) { #stats-model-tables-grid { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 600px) { #stats-model-tables-grid { grid-template-columns: 1fr; } }
 
     </style>
 </head>
@@ -889,10 +895,30 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#127760; Images by Model (Session)</span></div>
-                        <div class="card" style="padding:14px 16px;">
-                            <div id="stats-model-table-wrap">
-                                <div class="text-muted" style="font-size:0.85rem;">No images generated yet.</div>
+                        <div id="stats-model-tables-grid">
+                            <div>
+                                <div class="section-header"><span class="section-title">&#127760; Images by Model (Session)</span></div>
+                                <div class="card" style="padding:14px 16px;">
+                                    <div id="stats-model-table-wrap" class="stats-model-table-wrap">
+                                        <div class="text-muted" style="font-size:0.85rem;">No images generated yet.</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="section-header"><span class="section-title">&#10060; Failed Jobs by Model (Session)</span></div>
+                                <div class="card" style="padding:14px 16px;">
+                                    <div id="stats-failed-model-table-wrap" class="stats-model-table-wrap">
+                                        <div class="text-muted" style="font-size:0.85rem;">No failed jobs yet.</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="section-header"><span class="section-title">&#9888; Faults by Phase (Session)</span></div>
+                                <div class="card" style="padding:14px 16px;">
+                                    <div id="stats-fault-phase-table-wrap" class="stats-model-table-wrap">
+                                        <div class="text-muted" style="font-size:0.85rem;">No job faults yet.</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2475,6 +2501,54 @@ class WorkerWebUI:
                 }
             }
 
+            // Per-model failed jobs count table (session totals, not windowed)
+            var failedModelWrap = document.getElementById('stats-failed-model-table-wrap');
+            if (failedModelWrap) {
+                var fjm = data.failed_jobs_per_model || {};
+                var failedEntries = Object.keys(fjm).map(function(k) { return { name: k, count: fjm[k] }; });
+                failedEntries.sort(function(a, b) { return b.count - a.count; });
+                if (failedEntries.length === 0) {
+                    failedModelWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No failed jobs yet.</div>';
+                } else {
+                    var maxFailed = failedEntries[0].count;
+                    var failedRows = failedEntries.map(function(e) {
+                        var pct = maxFailed > 0 ? Math.round((e.count / maxFailed) * 100) : 0;
+                        return '<tr>' +
+                            '<td>' + escapeHtml(e.name) + '</td>' +
+                            '<td class="model-images-bar-cell"><div class="model-images-bar-wrap"><div class="model-failed-bar" style="width:' + pct + '%"></div></div></td>' +
+                            '<td>' + e.count.toLocaleString() + '</td>' +
+                            '</tr>';
+                    }).join('');
+                    failedModelWrap.innerHTML = '<table class="model-images-table">' +
+                        '<thead><tr><th>Model</th><th class="model-images-bar-cell"></th><th>Failed</th></tr></thead>' +
+                        '<tbody>' + failedRows + '</tbody></table>';
+                }
+            }
+
+            // Per-phase fault count table (session totals, not windowed)
+            var faultPhaseWrap = document.getElementById('stats-fault-phase-table-wrap');
+            if (faultPhaseWrap) {
+                var fpp = data.faulted_jobs_per_phase || {};
+                var phaseEntries = Object.keys(fpp).map(function(k) { return { name: k, count: fpp[k] }; });
+                phaseEntries.sort(function(a, b) { return b.count - a.count; });
+                if (phaseEntries.length === 0) {
+                    faultPhaseWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No job faults yet.</div>';
+                } else {
+                    var maxPhase = phaseEntries[0].count;
+                    var phaseRows = phaseEntries.map(function(e) {
+                        var pct = maxPhase > 0 ? Math.round((e.count / maxPhase) * 100) : 0;
+                        return '<tr>' +
+                            '<td>' + escapeHtml(e.name) + '</td>' +
+                            '<td class="model-images-bar-cell"><div class="model-images-bar-wrap"><div class="model-failed-bar" style="width:' + pct + '%"></div></div></td>' +
+                            '<td>' + e.count.toLocaleString() + '</td>' +
+                            '</tr>';
+                    }).join('');
+                    faultPhaseWrap.innerHTML = '<table class="model-images-table">' +
+                        '<thead><tr><th>Phase</th><th class="model-images-bar-cell"></th><th>Faults</th></tr></thead>' +
+                        '<tbody>' + phaseRows + '</tbody></table>';
+                }
+            }
+
             // Charts
             drawDualAxisLineChart('chart-iph-kph',
                 { points: snaps.map(function(s) { return { t: s.t, v: s.iph }; }), color: '#10b981' },
@@ -3148,10 +3222,17 @@ class WorkerWebUI:
                     },
                     ...
                 ],
-                "images_per_model": {"model-name": <int count>, ...}
+                "images_per_model": {"model-name": <int count>, ...},
+                "failed_jobs_per_model": {"model-name": <int count>, ...},
+                "faulted_jobs_per_phase": {"phase-name": <int count>, ...}
             }
         """
-        return web.json_response({"snapshots": self._stats_snapshots, "images_per_model": self.status_data.get("images_per_model", {})})
+        return web.json_response({
+            "snapshots": self._stats_snapshots,
+            "images_per_model": self.status_data.get("images_per_model", {}),
+            "failed_jobs_per_model": self.status_data.get("failed_jobs_per_model", {}),
+            "faulted_jobs_per_phase": self.status_data.get("faulted_jobs_per_phase", {}),
+        })
 
     def _record_stats_snapshot(self) -> None:
         """Append a statistics snapshot to the ring buffer if enough time has elapsed."""
@@ -3496,6 +3577,8 @@ class WorkerWebUI:
         errors_history: list[str] | None = None,
         user_details: dict[str, Any] | None = None,
         images_per_model: dict[str, int] | None = None,
+        failed_jobs_per_model: dict[str, int] | None = None,
+        faulted_jobs_per_phase: dict[str, int] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -3539,6 +3622,8 @@ class WorkerWebUI:
             errors_history: List of recent error messages
             user_details: Extended user details from the Horde API (worker_count, trusted, moderator, etc.)
             images_per_model: Cumulative per-model image counts for the current session
+            failed_jobs_per_model: Cumulative per-model failed job counts for the current session
+            faulted_jobs_per_phase: Cumulative per-phase fault counts for the current session
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -3620,6 +3705,10 @@ class WorkerWebUI:
             self.status_data["user_details"] = user_details
         if images_per_model is not None:
             self.status_data["images_per_model"] = dict(images_per_model)
+        if failed_jobs_per_model is not None:
+            self.status_data["failed_jobs_per_model"] = dict(failed_jobs_per_model)
+        if faulted_jobs_per_phase is not None:
+            self.status_data["faulted_jobs_per_phase"] = dict(faulted_jobs_per_phase)
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]
