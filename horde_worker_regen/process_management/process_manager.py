@@ -1856,10 +1856,11 @@ class HordeWorkerProcessManager:
             self.webui.set_job_pops_paused_callback(self.set_job_pops_paused)
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
-            # Add a log handler to capture logs for webui with colored output
-            # Use the same format function as the normal console for consistent coloring
-            # but with a shorter timestamp format (HH:mm:ss instead of full date)
-            webui_format_record = create_level_format_function(time_format="HH:mm:ss")
+            # Add a log handler to capture logs for webui with colored output.
+            # Use the same format function and timestamp format as the standard
+            # stderr console sink so the webui log display exactly matches the
+            # standard console output (timestamp, level, message, coloring).
+            webui_format_record = create_level_format_function(time_format="YYYY-MM-DD HH:mm:ss.SSS")
 
             self._log_handler_id = logger.add(
                 self._capture_log_for_webui,

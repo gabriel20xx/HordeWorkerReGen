@@ -336,7 +336,7 @@ class WorkerWebUI:
         .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
 
-        .console-container { background: #0f172a; border-radius: 8px; padding: 12px 14px; max-height: 400px; overflow-y: auto; font-family: 'Courier New', Consolas, 'Lucida Console', monospace; font-size: 0.8rem; color: #e2e8f0; line-height: 1.55; }
+        .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; max-height: 400px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
         .console-pause-btn { margin-left: auto; background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; }
         .console-pause-btn:hover { background: #cbd5e1; }
         .console-pause-btn.paused { background: var(--accent); color: #fff; }
@@ -1749,19 +1749,69 @@ class WorkerWebUI:
         function isScrolledToBottom(el, tol) { return el.scrollHeight - el.clientHeight <= el.scrollTop + tol; }
         function ansiToHtml(text) {
             text = escapeHtml(text);
-            const colors = {'30':'#000000','31':'#cd3131','32':'#0dbc79','33':'#e5e510','34':'#2472c8','35':'#bc3fbc','36':'#11a8cd','37':'#e5e5e5','90':'#666666','91':'#f14c4c','92':'#23d18b','93':'#f5f543','94':'#3b8eea','95':'#d670d6','96':'#29b8db','97':'#ffffff','1;30':'#666666','1;31':'#f14c4c','1;32':'#23d18b','1;33':'#f5f543','1;34':'#3b8eea','1;35':'#d670d6','1;36':'#29b8db','1;37':'#ffffff'};
-            const bgColors = {'40':'#000000','41':'#cd3131','42':'#0dbc79','43':'#e5e510','44':'#2472c8','45':'#bc3fbc','46':'#11a8cd','47':'#e5e5e5','100':'#666666','101':'#f14c4c','102':'#23d18b','103':'#f5f543','104':'#3b8eea','105':'#d670d6','106':'#29b8db','107':'#ffffff'};
+            // VS Code / Windows Terminal "Campbell" palette - matches the default
+            // appearance most users will see in their standard console.
+            const colors = {'30':'#0c0c0c','31':'#cd3131','32':'#0dbc79','33':'#e5e510','34':'#2472c8','35':'#bc3fbc','36':'#11a8cd','37':'#cccccc','90':'#666666','91':'#f14c4c','92':'#23d18b','93':'#f5f543','94':'#3b8eea','95':'#d670d6','96':'#29b8db','97':'#ffffff'};
+            const bgColors = {'40':'#0c0c0c','41':'#cd3131','42':'#0dbc79','43':'#e5e510','44':'#2472c8','45':'#bc3fbc','46':'#11a8cd','47':'#cccccc','100':'#666666','101':'#f14c4c','102':'#23d18b','103':'#f5f543','104':'#3b8eea','105':'#d670d6','106':'#29b8db','107':'#ffffff'};
+            // Standard xterm 256-color palette (first 16 mirror the colors above; 16-231 form a
+            // 6x6x6 RGB cube; 232-255 are a grayscale ramp).
+            function ansi256ToHex(n) {
+                if (n < 16) {
+                    const base = ['30','31','32','33','34','35','36','37','90','91','92','93','94','95','96','97'];
+                    return colors[base[n]];
+                }
+                if (n >= 232) {
+                    const v = 8 + (n - 232) * 10;
+                    const h = v.toString(16).padStart(2, '0');
+                    return '#' + h + h + h;
+                }
+                const i = n - 16;
+                const r = Math.floor(i / 36), g = Math.floor((i % 36) / 6), b = i % 6;
+                const cube = [0, 95, 135, 175, 215, 255];
+                const toHex = v => v.toString(16).padStart(2, '0');
+                return '#' + toHex(cube[r]) + toHex(cube[g]) + toHex(cube[b]);
+            }
             let result = '', cs = [];
             const parts = text.split(/\x1b\[([0-9;]+)m/);
             for (let i = 0; i < parts.length; i++) {
                 if (i % 2 === 0) { result += cs.length > 0 ? '<span style="'+cs.join(';')+'">'+parts[i]+'</span>' : parts[i]; }
                 else {
-                    for (const c of parts[i].split(';')) {
+                    const tokens = parts[i].split(';');
+                    for (let j = 0; j < tokens.length; j++) {
+                        const c = tokens[j];
                         if (c === '0' || c === '') { cs = []; }
                         else if (c === '1') { if (!cs.some(s => s.startsWith('font-weight:'))) cs.push('font-weight:bold'); }
                         else if (c === '2') { if (!cs.some(s => s.startsWith('opacity:'))) cs.push('opacity:0.6'); }
                         else if (c === '3') { if (!cs.some(s => s.startsWith('font-style:'))) cs.push('font-style:italic'); }
                         else if (c === '4') { if (!cs.some(s => s.startsWith('text-decoration:'))) cs.push('text-decoration:underline'); }
+                        else if (c === '22') { cs = cs.filter(s => !s.startsWith('font-weight:') && !s.startsWith('opacity:')); }
+                        else if (c === '23') { cs = cs.filter(s => !s.startsWith('font-style:')); }
+                        else if (c === '24') { cs = cs.filter(s => !s.startsWith('text-decoration:')); }
+                        else if (c === '39') { cs = cs.filter(s => !s.startsWith('color:')); }
+                        else if (c === '49') { cs = cs.filter(s => !s.startsWith('background-color:')); }
+                        else if (c === '38' || c === '48') {
+                            // Extended color: 38;5;N (256) or 38;2;R;G;B (truecolor)
+                            const isFg = (c === '38');
+                            const mode = tokens[j + 1];
+                            let hex = null;
+                            if (mode === '5' && tokens[j + 2] !== undefined) {
+                                hex = ansi256ToHex(parseInt(tokens[j + 2], 10) || 0);
+                                j += 2;
+                            } else if (mode === '2' && tokens[j + 4] !== undefined) {
+                                const r = parseInt(tokens[j + 2], 10) || 0;
+                                const g = parseInt(tokens[j + 3], 10) || 0;
+                                const b = parseInt(tokens[j + 4], 10) || 0;
+                                hex = 'rgb('+r+','+g+','+b+')';
+                                j += 4;
+                            } else {
+                                // Unknown sub-mode; consume nothing further and skip
+                                continue;
+                            }
+                            if (hex) {
+                                if (isFg) { cs = cs.filter(s => !s.startsWith('color:')); cs.push('color:'+hex); }
+                                else { cs = cs.filter(s => !s.startsWith('background-color:')); cs.push('background-color:'+hex); }
+                            }
+                        }
                         else if (colors[c]) { cs = cs.filter(s => !s.startsWith('color:')); cs.push('color:'+colors[c]); }
                         else if (bgColors[c]) { cs = cs.filter(s => !s.startsWith('background-color:')); cs.push('background-color:'+bgColors[c]); }
                     }
@@ -2111,7 +2161,7 @@ class WorkerWebUI:
                     if (!consolePaused) {
                         if (data.console_logs && data.console_logs.length > 0) {
                             const atb = isScrolledToBottom(cl, SCROLL_TOLERANCE_PX);
-                            cl.innerHTML = data.console_logs.map(log => '<div style="margin: 2px 0; white-space: pre-wrap; word-break: break-word;">'+ansiToHtml(log)+'</div>').join('');
+                            cl.innerHTML = data.console_logs.map(log => '<div style="white-space: pre-wrap; word-break: break-word;">'+ansiToHtml(log)+'</div>').join('');
                             if (atb) cl.scrollTop = cl.scrollHeight;
                         } else { cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>'; }
                     }
