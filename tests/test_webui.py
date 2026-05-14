@@ -79,31 +79,38 @@ def test_webui_cpu_gpu_usage() -> None:
     # Test CPU and GPU usage update
     test_cpu_usage_percent = 45.5
     test_gpu_usage_percent = 78.2
+    test_container_cpu_percent = 23.1
 
     webui.update_status(
         cpu_usage_percent=test_cpu_usage_percent,
         gpu_usage_percent=test_gpu_usage_percent,
+        container_cpu_percent=test_container_cpu_percent,
     )
 
     # Verify the values were updated correctly
     assert webui.status_data["cpu_usage_percent"] == test_cpu_usage_percent
     assert webui.status_data["gpu_usage_percent"] == test_gpu_usage_percent
+    assert webui.status_data["container_cpu_percent"] == test_container_cpu_percent
 
     # Test edge case: 0% usage
     webui.update_status(
         cpu_usage_percent=0.0,
         gpu_usage_percent=0.0,
+        container_cpu_percent=0.0,
     )
     assert webui.status_data["cpu_usage_percent"] == 0.0
     assert webui.status_data["gpu_usage_percent"] == 0.0
+    assert webui.status_data["container_cpu_percent"] == 0.0
 
     # Test edge case: 100% usage
     webui.update_status(
         cpu_usage_percent=100.0,
         gpu_usage_percent=100.0,
+        container_cpu_percent=100.0,
     )
     assert webui.status_data["cpu_usage_percent"] == 100.0
     assert webui.status_data["gpu_usage_percent"] == 100.0
+    assert webui.status_data["container_cpu_percent"] == 100.0
 
 
 def test_webui_cpu_cores_count() -> None:
@@ -1513,6 +1520,7 @@ async def test_webui_stats_endpoint() -> None:
             gpu_usage_percent=70.0,
             vram_usage_mb=4096.0,
             total_vram_mb=8192.0,
+            container_cpu_percent=20.0,
         )
         assert len(webui._stats_snapshots) == 1
 
@@ -1527,6 +1535,7 @@ async def test_webui_stats_endpoint() -> None:
         assert snap["cpu"] == 40.0
         assert snap["gpu"] == 70.0
         assert snap["vram"] == 50.0  # 4096/8192 = 50%
+        assert snap["container_cpu"] == 20.0
 
         # A second call within the interval must NOT add another snapshot.
         webui.update_status(jobs_completed=6)

@@ -6944,6 +6944,22 @@ class HordeWorkerProcessManager:
         # Get CPU cores count (logical cores/threads)
         cpu_cores_count = psutil.cpu_count(logical=True) or 0
 
+        # Get container CPU usage (this process + all spawned subprocesses), normalised to
+        # a 0-100% scale representing the fraction of total CPU capacity consumed.
+        container_cpu_percent = 0.0
+        try:
+            main_proc = psutil.Process()
+            raw_cpu = main_proc.cpu_percent(interval=None)
+            for child in main_proc.children(recursive=True):
+                with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                    raw_cpu += child.cpu_percent(interval=None)
+            # Normalise: psutil per-process cpu_percent can exceed 100 on multi-core
+            # machines (it returns usage as a percentage of a single core).
+            # Divide by logical core count to express as % of total system CPU capacity.
+            container_cpu_percent = min(100.0, round(raw_cpu / (cpu_cores_count or 1), 1))
+        except Exception:
+            pass
+
         # Get GPU utilization percentage
         gpu_usage_percent = 0.0
         try:
@@ -7042,6 +7058,7 @@ class HordeWorkerProcessManager:
             cpu_usage_percent=cpu_usage_percent,
             cpu_cores_count=cpu_cores_count,
             gpu_usage_percent=gpu_usage_percent,
+            container_cpu_percent=container_cpu_percent,
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
