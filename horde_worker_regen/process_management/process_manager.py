@@ -7687,9 +7687,11 @@ class HordeWorkerProcessManager:
                     any_replaced = True
 
                 # Skip other state checks if no jobs are available since those states are job-related.
+                # "No jobs available" means either the API reported none, or pops are currently
+                # paused (so no new jobs can arrive from the API).
                 # But if there are already jobs pending in our local queue or in-progress,
                 # always run these checks so that stuck processes don't block local work.
-                if self._last_pop_no_jobs_available and no_local_work:
+                if (self._last_pop_no_jobs_available or self._job_pops_paused) and no_local_work:
                     continue
 
                 # Check for WAITING_FOR_JOB inference processes with stale heartbeats when
@@ -7759,7 +7761,7 @@ class HordeWorkerProcessManager:
         #   3. MODEL_PRELOADING           — actively loading a model
         #   4. DOWNLOADING_AUX_MODEL      — actively downloading a file
         #   5. MODEL_PRELOADED            — idle, waiting for a job to be dispatched
-        if not (self._last_pop_no_jobs_available and no_local_work):
+        if not ((self._last_pop_no_jobs_available or self._job_pops_paused) and no_local_work):
             conditions: list[tuple[float, HordeProcessState, str]] = [
                 # --- actively in progress ---
                 (
@@ -7815,7 +7817,10 @@ class HordeWorkerProcessManager:
             self._recently_recovered = True
             threading.Thread(target=timed_unset_recently_recovered, daemon=True).start()
 
-        if self._last_pop_no_jobs_available:
+        if self._last_pop_no_jobs_available or (self._job_pops_paused and no_local_work):
+            # Either the API told us there are no jobs, or pops are paused and there is
+            # nothing in our local queue — skip the "all processes timed out" bulk-replacement
+            # check because idle processes timing out in this state is expected and normal.
             return any_replaced
 
         # If all processes haven't done sent a message for a while

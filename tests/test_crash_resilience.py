@@ -74,6 +74,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = False
         mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 60
         mock_manager.bridge_data.process_timeout = 600
@@ -117,6 +118,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = True  # guard is active
         mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 60
         mock_manager.bridge_data.process_timeout = 30
@@ -3350,6 +3352,7 @@ class TestReplaceHungInferenceStarting:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = False
         mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 600
         mock_manager.bridge_data.preload_timeout = 80
@@ -4318,6 +4321,7 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = recently_recovered
         mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 600
         mock_manager.bridge_data.preload_timeout = 80
@@ -4441,6 +4445,7 @@ class TestReplaceHungWaitingForJob:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = recently_recovered
         mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
@@ -4709,6 +4714,7 @@ class TestResultSubmittingStuckRecovery:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = False
         mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
@@ -4862,6 +4868,7 @@ class TestReplaceHungModelPreloaded:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = recently_recovered
         mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
@@ -5007,6 +5014,7 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = recently_recovered
         mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
@@ -5616,6 +5624,7 @@ class TestReplaceHungProcessesLocalJobsPending:
         *,
         recently_recovered: bool = False,
         last_pop_no_jobs: bool = False,
+        job_pops_paused: bool = False,
         jobs_pending_inference: list | None = None,
         jobs_in_progress: list | None = None,
     ) -> MagicMock:
@@ -5625,6 +5634,7 @@ class TestReplaceHungProcessesLocalJobsPending:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = recently_recovered
         mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
+        mock_manager._job_pops_paused = job_pops_paused
         mock_manager._shutting_down = False
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
@@ -5795,6 +5805,201 @@ class TestReplaceHungProcessesLocalJobsPending:
             result = mock_manager._bound_replace_hung()
 
         assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+
+class TestReplaceHungProcessesPausedPops:
+    """Tests that replace_hung_processes() respects the job-pops-paused flag.
+
+    When ``_job_pops_paused`` is True no new jobs can arrive from the API, so idle
+    processes timing out is expected and normal.  The manager must NOT replace those
+    processes unnecessarily (which would cause pointless process churn and a delay when
+    pops are resumed).  However, if there are already jobs sitting in the local queue
+    the full stuck-process detection must still run, because those jobs need a process
+    to make progress.
+    """
+
+    def _make_manager(
+        self,
+        processes: list[MagicMock],
+        *,
+        last_pop_no_jobs: bool = False,
+        job_pops_paused: bool = False,
+        jobs_pending_inference: list | None = None,
+        jobs_in_progress: list | None = None,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import (
+            HordeWorkerProcessManager,
+        )
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = last_pop_no_jobs
+        mock_manager._job_pops_paused = job_pops_paused
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 100
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._check_and_replace_process.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+        mock_manager.jobs_pending_inference = (
+            jobs_pending_inference if jobs_pending_inference is not None else []
+        )
+        mock_manager.jobs_in_progress = jobs_in_progress if jobs_in_progress is not None else []
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        return mock_manager
+
+    def _make_waiting_for_job_process(self, process_id: int, *, time_elapsed: float) -> MagicMock:
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_stale_waiting_for_job_not_replaced_when_paused_and_no_local_work(self) -> None:
+        """A stale WAITING_FOR_JOB process must NOT be replaced when pops are paused and
+        there is no local work pending.
+
+        When job pops are paused no new jobs can arrive; a process that has been idle for
+        a long time is in the expected state and must not be replaced needlessly.
+        """
+        proc = self._make_waiting_for_job_process(0, time_elapsed=9999.0)
+        mock_manager = self._make_manager(
+            [proc],
+            job_pops_paused=True,
+            last_pop_no_jobs=False,  # stale: last pop was successful, but pops are now paused
+            jobs_pending_inference=[],
+            jobs_in_progress=[],
+        )
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        assert result is False, (
+            "Idle processes must not be replaced when job pops are paused and there is no local work"
+        )
+
+    def test_all_processes_timed_out_not_triggered_when_paused_and_no_local_work(self) -> None:
+        """The bulk 'all processes timed out' replacement must be skipped when pops are paused
+        and there is no local work.
+
+        When all inference processes have stale timestamps but pops are paused (so no new jobs
+        are expected), the worker must not purge jobs and replace all processes.
+        """
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        # Build a process that has been silent well past process_timeout
+        proc = MagicMock()
+        proc.process_id = 0
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.last_received_timestamp = _time.time() - 9999
+        proc.last_heartbeat_timestamp = _time.time() - 9999
+        proc.last_progress_timestamp = _time.time() - 9999
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+
+        mock_manager = self._make_manager(
+            [proc],
+            job_pops_paused=True,
+            last_pop_no_jobs=False,  # stale: last pop returned a job, but pops are now paused
+            jobs_pending_inference=[],
+            jobs_in_progress=[],
+        )
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        mock_manager._replace_inference_process.assert_not_called()
+        mock_manager._purge_jobs.assert_not_called()
+        assert result is False, (
+            "All-processes-timed-out bulk replacement must be skipped when pops are paused "
+            "and there is no local work"
+        )
+
+    def test_stale_waiting_for_job_replaced_when_paused_but_local_jobs_pending(self) -> None:
+        """A stale WAITING_FOR_JOB process MUST be replaced when pops are paused but local
+        jobs are still waiting to be processed.
+
+        Pausing only stops new pops from the API; it must not prevent recovery of processes
+        that are blocking already-queued local jobs.
+        """
+        proc = self._make_waiting_for_job_process(0, time_elapsed=9999.0)
+        job = MagicMock()
+        mock_manager = self._make_manager(
+            [proc],
+            job_pops_paused=True,
+            last_pop_no_jobs=False,
+            jobs_pending_inference=[job],
+            jobs_in_progress=[],
+        )
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True, (
+            "Stale WAITING_FOR_JOB process must still be replaced when local jobs are pending, "
+            "even when job pops are paused"
+        )
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
+
+    def test_paused_does_not_suppress_stuck_inference_processing(self) -> None:
+        """INFERENCE_PROCESSING stuck detection must fire even when job pops are paused.
+
+        A process that holds the inference semaphore and stops responding blocks all other
+        processes.  The paused flag must never suppress this critical recovery path.
+        """
+        import time as _time
+
+        from horde_worker_regen.process_management.process_manager import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = 0
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        proc.last_received_timestamp = _time.time() - 9999
+        proc.last_heartbeat_timestamp = _time.time() - 9999
+        proc.last_progress_timestamp = _time.time() - 9999
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+
+        mock_manager = self._make_manager(
+            [proc],
+            job_pops_paused=True,
+            last_pop_no_jobs=False,
+            jobs_pending_inference=[],
+            jobs_in_progress=[],
+        )
+        mock_manager._process_map.is_stuck_on_inference.return_value = True
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True, (
+            "INFERENCE_PROCESSING stuck detection must fire even when job pops are paused"
+        )
         mock_manager._replace_inference_process.assert_called_once_with(proc)
 
 
@@ -6581,6 +6786,7 @@ class TestRecoveryTimerThreadIsDaemon:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = False
         mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
@@ -7110,6 +7316,7 @@ class TestPreloadStuckCooldown:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = False
         mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
@@ -7918,6 +8125,7 @@ class TestReplaceHungProcessesProcessStartingTimeout:
         mock_manager = MagicMock()
         mock_manager._recently_recovered = False
         mock_manager._last_pop_no_jobs_available = True
+        mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 600
         mock_manager.bridge_data.preload_timeout = 80
