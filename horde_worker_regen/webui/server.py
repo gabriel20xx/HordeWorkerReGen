@@ -2424,7 +2424,7 @@ class WorkerWebUI:
                 { points: snaps.map(function(s) { return { t: s.t, v: s.container_cpu || 0 }; }), color: '#fb923c' },
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-gpu', [
-                { points: snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), color: '#3b82f6' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.gpu  || 0 }; }), color: '#3b82f6' },
                 { points: snaps.map(function(s) { return { t: s.t, v: s.worker_gpu || 0 }; }), color: '#60a5fa' },
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-ram', [
@@ -3291,7 +3291,7 @@ class WorkerWebUI:
             ram_usage_mb: Worker processes RAM usage in MB (sum of all worker processes)
             system_ram_usage_mb: System-wide RAM currently in use in MB (all processes on the host)
             total_ram_mb: Total system RAM capacity in MB
-            vram_usage_mb: VRAM usage in MB (worker processes — torch reserved memory)
+            vram_usage_mb: VRAM usage in MB (worker processes - torch reserved memory)
             system_vram_usage_mb: System-wide VRAM currently in use in MB (all processes on the host)
             total_vram_mb: Total VRAM in MB
             cpu_usage_percent: CPU usage percentage

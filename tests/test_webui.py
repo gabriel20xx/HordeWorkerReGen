@@ -1630,6 +1630,8 @@ async def test_webui_stats_endpoint() -> None:
         assert snap_sysvram_over["system_vram"] == 100.0, "system_vram_pct must be capped at 100%"
 
         # Verify /api/stats returns all recorded snapshots.
+        # Snapshots recorded so far: initial, force-second, vram-over-100, ram-over-100,
+        # system-ram-over-100, system-vram-over-100 = 6 total.
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
