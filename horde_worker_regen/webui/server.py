@@ -607,7 +607,7 @@ class WorkerWebUI:
         .model-images-bar-cell { width: 40%; }
         .model-images-bar-wrap { background: var(--border); border-radius: 3px; height: 7px; overflow: hidden; }
         .model-images-bar { background: var(--accent); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
-        .model-failed-bar { background: #ef4444; height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
+        .model-failed-bar { background: var(--error); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
         #stats-model-tables-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
         @media (max-width: 700px) { #stats-model-tables-grid { grid-template-columns: 1fr; } }
 
