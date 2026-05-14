@@ -341,7 +341,7 @@ class WorkerWebUI:
         .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
 
-        .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; max-height: 400px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
+        .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; aspect-ratio: 16/9; max-height: min(400px, 60vh); overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
         .console-pause-btn { margin-left: auto; background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; }
         .console-pause-btn:hover { background: #cbd5e1; }
         .console-pause-btn.paused { background: var(--accent); color: #fff; }
@@ -419,7 +419,7 @@ class WorkerWebUI:
         @media (prefers-reduced-motion: reduce) { .image-overlay-loading .loading-spinner { animation: none; } }
 
         /* ---- Errors ---- */
-        .errors-list { display: flex; flex-direction: column; max-height: 400px; overflow-y: auto; }
+        .errors-list { display: flex; flex-direction: column; aspect-ratio: 16/9; max-height: min(400px, 60vh); overflow-y: auto; }
         .error-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; padding: 9px 13px; font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; margin-bottom: 5px; flex-shrink: 0; }
         .error-item:last-child { margin-bottom: 0; }
         .error-group { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; margin-bottom: 5px; overflow: hidden; flex-shrink: 0; }
