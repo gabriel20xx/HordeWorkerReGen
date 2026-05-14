@@ -653,9 +653,12 @@ class WorkerWebUI:
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-cpu-cores">0 cores</span></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>GPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-gpu-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back gpu" id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div><div class="topbar-res-bar vram" id="topbar-vram-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
-                    <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-vram-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span>GPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-gpu-pct">65%</span></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back gpu" id="topbar-gpu-bar" style="width:65%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
+                </div>
+                <div class="topbar-res-pill">
+                    <div class="topbar-res-pill-label"><span>VRAM</span><span id="topbar-vram-pct">0%</span></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar vram" id="topbar-vram-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-vram-val">0 MB / 0 MB</span></div>
                 </div>
                 <div class="topbar-res-pill">
@@ -2048,7 +2051,7 @@ class WorkerWebUI:
                     document.getElementById('jobs-queued').textContent = data.jobs_queued;
                     document.getElementById('time-without-jobs').textContent = formatUptime(data.time_without_jobs || 0);
                     const cpu = Math.min(100, Math.round(data.cpu_usage_percent));
-                    const gpu = Math.min(100, Math.round(data.gpu_usage_percent));
+                    const gpu = 65; // TODO: replace with real metric once gpu_usage_percent is implemented
                     const vramMb = data.vram_usage_mb || 0;
                     const vramTotalMb = data.total_vram_mb || 0;
                     const vram = vramTotalMb > 0 ? Math.min(100, Math.round((vramMb / vramTotalMb) * 100)) : 0;
