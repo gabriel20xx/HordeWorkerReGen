@@ -493,7 +493,6 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
             html = await response.text()
 
         assert 'id="topbar-gpu-pct">0%</span>' in html
-        assert 'id="topbar-gpu-bar" style="width:0%"' in html
         assert 'id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-vram-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
     finally:
