@@ -325,6 +325,7 @@ class WorkerWebUI:
         .progress-bar { height: 100%; background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%); border-radius: 4px; transition: width 0.4s ease; min-width: 0; }
 
         .job-state-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; background: #e0e7ff; color: #4338ca; }
+        .job-state-timer { font-size: 0.72rem; opacity: 0.75; margin-left: 4px; }
 
         .process-item { background: #f8fafc; border: 1px solid #e8eef4; border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
         .process-item:last-child { margin-bottom: 0; }
@@ -2193,7 +2194,7 @@ class WorkerWebUI:
                             (job.width!=null&&job.width!==undefined&&job.height!=null&&job.height!==undefined?'<div class="stat-row"><span class="stat-label">Image Size:</span><span class="stat-value">'+escapeHtml(job.width)+'x'+escapeHtml(job.height)+'</span></div>':'')+
                             (job.sampler!=null&&job.sampler!==undefined?'<div class="stat-row"><span class="stat-label">Sampler:</span><span class="stat-value">'+escapeHtml(job.sampler)+'</span></div>':'')+
                             '<div class="stat-row"><span class="stat-label">LoRAs:</span><span class="stat-value">'+(job.loras!=null&&job.loras!==undefined&&job.loras.length>0?job.loras.map(l=>escapeHtml(l.name||'Unknown')).join(', '):'None')+'</span></div>'+
-                            '<div class="stat-row"><span class="stat-label">State:</span><span class="stat-value"><span class="job-state-badge">'+sd+' <span id="job-state-timer" style="font-size:0.72rem;opacity:0.75;margin-left:4px;">'+(_currentJobStateStartTime?'('+formatElapsed(_currentJobStateStartTime)+')':'')+'</span></span></span></div>'+
+                            '<div class="stat-row"><span class="stat-label">State:</span><span class="stat-value"><span class="job-state-badge">'+sd+' <span id="job-state-timer" class="job-state-timer">'+(_currentJobStateStartTime?'('+formatElapsed(_currentJobStateStartTime)+')':'')+'</span></span></span></div>'+
                             '<div style="margin-top:14px;"><div class="progress-header"><span class="progress-label">Progress</span><span class="progress-value">'+escapeHtml(pv)+'%</span></div><div class="progress-bar-container" style="height:12px;"><div class="progress-bar" style="width:'+escapeHtml(pv)+'%;height:100%;border-radius:6px;"></div></div></div>';
                     } else {
                         _currentJobState = null;
