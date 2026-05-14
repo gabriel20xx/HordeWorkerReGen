@@ -648,7 +648,7 @@ class WorkerWebUI:
             <div class="topbar-resources">
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span>CPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-cpu-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-cpu-bar" style="width:0%"></div><div class="topbar-res-bar cpu" id="topbar-cpu-ctr-bar" style="width:0%"></div></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-cpu-bar" style="width:0%" aria-label="System CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div><div class="topbar-res-bar cpu" id="topbar-cpu-ctr-bar" style="width:0%" aria-label="Worker CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-cpu-ctr-pct">0%</span></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-cpu-cores">0 cores</span></div>
                 </div>
@@ -663,7 +663,7 @@ class WorkerWebUI:
                 </div>
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span>RAM <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-sysram-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-sysram-bar" style="width:0%"></div><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%"></div></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-sysram-bar" style="width:0%" aria-label="System RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%" aria-label="Worker RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-ram-pct">0%</span></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-ram-val">0 MB</span><span id="topbar-total-ram-val">/ 0 GB</span></div>
                 </div>
@@ -2068,10 +2068,12 @@ class WorkerWebUI:
                     const cpuBar = document.getElementById('topbar-cpu-bar');
                     cpuBar.style.width = cpu+'%';
                     cpuBar.style.backgroundColor = resBarColor(cpu);
+                    cpuBar.setAttribute('aria-valuenow', cpu);
                     document.getElementById('topbar-cpu-ctr-pct').textContent = ctrCpu+'%';
                     const cpuCtrBar = document.getElementById('topbar-cpu-ctr-bar');
                     cpuCtrBar.style.width = ctrCpu+'%';
                     cpuCtrBar.style.backgroundColor = resBarColor(ctrCpu);
+                    cpuCtrBar.setAttribute('aria-valuenow', ctrCpu);
                     document.getElementById('topbar-cpu-cores').textContent = cores + ' cores';
                     document.getElementById('topbar-gpu-pct').textContent = gpu+'%';
                     const gpuBar = document.getElementById('topbar-gpu-bar');
@@ -2090,10 +2092,12 @@ class WorkerWebUI:
                     const ramBar = document.getElementById('topbar-ram-bar');
                     ramBar.style.width = ram+'%';
                     ramBar.style.backgroundColor = resBarColor(ram);
+                    ramBar.setAttribute('aria-valuenow', ram);
                     document.getElementById('topbar-sysram-pct').textContent = sysRam+'%';
                     const sysRamBar = document.getElementById('topbar-sysram-bar');
                     sysRamBar.style.width = sysRam+'%';
                     sysRamBar.style.backgroundColor = resBarColor(sysRam);
+                    sysRamBar.setAttribute('aria-valuenow', sysRam);
 
                     document.getElementById('mobile-cpu').textContent = 'CPU '+cpu+'%';
                     document.getElementById('mobile-cpu').style.color = resBarColor(cpu);
