@@ -1853,7 +1853,7 @@ class HordeWorkerProcessManager:
 
         # Per-state job timing accumulators.
         # Maps state name → {"sum": float, "count": int, "max": float}
-        self._job_time_stats: dict[str, dict[str, float]] = {}
+        self._job_time_stats: dict[str, dict[str, float | int]] = {}
 
         # Track per-model preload-stuck failure timestamps for cooldown logic.
         # Maps model name → deque of epoch timestamps when that model caused a MODEL_PRELOADING timeout.
@@ -4354,9 +4354,9 @@ class HordeWorkerProcessManager:
         """
         if elapsed <= 0:
             return
-        entry = self._job_time_stats.setdefault(state, {"sum": 0.0, "count": 0.0, "max": 0.0})
+        entry = self._job_time_stats.setdefault(state, {"sum": 0.0, "count": 0, "max": 0.0})
         entry["sum"] += elapsed
-        entry["count"] += 1.0
+        entry["count"] += 1
         if elapsed > entry["max"]:
             entry["max"] = elapsed
 
