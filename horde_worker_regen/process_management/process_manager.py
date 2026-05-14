@@ -113,6 +113,32 @@ MAX_WEBUI_QUEUE_ITEMS = 10
 METRICS_CALCULATION_WINDOW_SECONDS = 3600
 """Rolling time window, in seconds, for calculating rate-based metrics such as kudos per hour and images per hour."""
 
+# CUDA cores per streaming multiprocessor (SM) keyed by (major, minor) compute capability.
+# Sourced from the NVIDIA CUDA Programming Guide and GPU specifications.
+# Unknown compute capabilities default to 0 (no cores reported) to avoid mixing units.
+_CUDA_CORES_PER_SM: dict[tuple[int, int], int] = {
+    (2, 0): 32,
+    (2, 1): 48,
+    (3, 0): 192,
+    (3, 2): 192,
+    (3, 5): 192,
+    (3, 7): 192,
+    (5, 0): 128,
+    (5, 2): 128,
+    (5, 3): 128,
+    (6, 0): 64,
+    (6, 1): 128,
+    (6, 2): 128,
+    (7, 0): 64,
+    (7, 2): 64,
+    (7, 5): 64,
+    (8, 0): 64,
+    (8, 6): 128,
+    (8, 7): 128,
+    (8, 9): 128,
+    (9, 0): 128,
+}
+
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
 try:
@@ -7040,47 +7066,19 @@ class HordeWorkerProcessManager:
 
         # Get total GPU cores count across all devices.
         # For NVIDIA GPUs the CUDA core count is derived from the SM count and the
-        # compute-capability-specific cores-per-SM table.  For other vendors the
-        # multi_processor_count (compute units / CUs) is used directly.
+        # compute-capability-specific cores-per-SM lookup table (_CUDA_CORES_PER_SM).
+        # If the compute capability is not in the table (unknown architecture), 0 is
+        # contributed for that device to avoid mixing CUDA-core and SM-count units.
         gpu_cores_count = 0
         try:
             import torch
 
             if torch.cuda.is_available():
-                # CUDA cores per SM for each (major, minor) compute capability.
-                # Sources: NVIDIA CUDA Programming Guide and GPU specifications.
-                _cuda_cores_per_sm: dict[tuple[int, int], int] = {
-                    (2, 0): 32,
-                    (2, 1): 48,
-                    (3, 0): 192,
-                    (3, 2): 192,
-                    (3, 5): 192,
-                    (3, 7): 192,
-                    (5, 0): 128,
-                    (5, 2): 128,
-                    (5, 3): 128,
-                    (6, 0): 64,
-                    (6, 1): 128,
-                    (6, 2): 128,
-                    (7, 0): 64,
-                    (7, 2): 64,
-                    (7, 5): 64,
-                    (8, 0): 64,
-                    (8, 6): 128,
-                    (8, 7): 128,
-                    (8, 9): 128,
-                    (9, 0): 128,
-                }
                 for i in range(torch.cuda.device_count()):
                     with contextlib.suppress(Exception):
                         props = torch.cuda.get_device_properties(i)
-                        sm_count = props.multi_processor_count
-                        cores_per_sm = _cuda_cores_per_sm.get((props.major, props.minor), 0)
-                        if cores_per_sm > 0:
-                            gpu_cores_count += sm_count * cores_per_sm
-                        else:
-                            # Unknown architecture – fall back to reporting SM count
-                            gpu_cores_count += sm_count
+                        cores_per_sm = _CUDA_CORES_PER_SM.get((props.major, props.minor), 0)
+                        gpu_cores_count += props.multi_processor_count * cores_per_sm
         except Exception:
             pass
 
