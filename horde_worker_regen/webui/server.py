@@ -2821,11 +2821,10 @@ class WorkerWebUI:
                 return;
             }
 
-            // Shared X range (use whichever series has data; prefer left)
-            var refPts = lpts.length ? lpts : rpts;
-            var tMin = refPts[0].t;
-            var tMax = refPts[refPts.length - 1].t;
-            if (rpts.length) { tMin = Math.min(tMin, rpts[0].t); tMax = Math.max(tMax, rpts[rpts.length - 1].t); }
+            // Shared X range: span covering all data points from both series.
+            var tMin = Infinity, tMax = -Infinity;
+            for (var ti = 0; ti < lpts.length; ti++) { tMin = Math.min(tMin, lpts[ti].t); tMax = Math.max(tMax, lpts[ti].t); }
+            for (var ti2 = 0; ti2 < rpts.length; ti2++) { tMin = Math.min(tMin, rpts[ti2].t); tMax = Math.max(tMax, rpts[ti2].t); }
             var tRange = tMax - tMin || 1;
 
             function cxf(t) { return pad.left + ((t - tMin) / tRange) * chartW; }
@@ -2877,7 +2876,8 @@ class WorkerWebUI:
             ctx.fillStyle = textColor;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            var numXLabels = Math.min(4, refPts.length - 1);
+            var totalPts = lpts.length + rpts.length;
+            var numXLabels = Math.min(4, totalPts - 1);
             if (numXLabels < 1) numXLabels = 1;
             for (var j = 0; j <= numXLabels; j++) {
                 var tVal = tMin + (j / numXLabels) * tRange;
@@ -2903,7 +2903,7 @@ class WorkerWebUI:
                 var sd = seriesDefs[fi];
                 if (!sd.pts.length) continue;
                 var cm = sd.color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-                var r = 99, g = 102, b = 241;
+                var r = 99, g = 102, b = 241; // fallback: #6366f1 (indigo)
                 if (cm) { r = parseInt(cm[1], 16); g = parseInt(cm[2], 16); b = parseInt(cm[3], 16); }
                 var baseY = sd.cyFn(0);
                 ctx.beginPath();
