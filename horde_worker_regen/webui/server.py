@@ -877,15 +877,13 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#128202; Images / Hour</span></div>
+                        <div class="section-header"><span class="section-title">&#128202; Images &amp; &#128142; Kudos / Hour</span></div>
                         <div class="card" style="padding:14px 16px;">
-                            <div class="chart-container"><canvas id="chart-iph" aria-label="Images per hour over time"></canvas></div>
-                        </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header"><span class="section-title">&#128142; Kudos / Hour</span></div>
-                        <div class="card" style="padding:14px 16px;">
-                            <div class="chart-container"><canvas id="chart-kph" aria-label="Kudos per hour over time"></canvas></div>
+                            <div class="chart-legend">
+                                <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#10b981;"></span>Images / hr</span>
+                                <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#6366f1;"></span>Kudos / hr</span>
+                            </div>
+                            <div class="chart-container"><canvas id="chart-iph-kph" aria-label="Images and kudos per hour over time"></canvas></div>
                         </div>
                     </div>
                     <div class="section">
@@ -2474,8 +2472,9 @@ class WorkerWebUI:
             }
 
             // Charts
-            drawLineChart('chart-iph',     snaps.map(function(s) { return { t: s.t, v: s.iph  }; }), { color: '#10b981' });
-            drawLineChart('chart-kph',     snaps.map(function(s) { return { t: s.t, v: s.kph  }; }), { color: '#6366f1' });
+            drawDualAxisLineChart('chart-iph-kph',
+                { points: snaps.map(function(s) { return { t: s.t, v: s.iph }; }), color: '#10b981' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.kph }; }), color: '#6366f1' });
             drawMultiLineChart('chart-cpu', [
                 { points: snaps.map(function(s) { return { t: s.t, v: s.cpu  }; }), color: '#f59e0b' },
                 { points: snaps.map(function(s) { return { t: s.t, v: s.container_cpu || 0 }; }), color: '#fb923c' },
@@ -2757,6 +2756,173 @@ class WorkerWebUI:
                     if (n === 0) ctx.moveTo(xc, yc); else ctx.lineTo(xc, yc);
                 }
                 ctx.strokeStyle = lseries.color || '#6366f1';
+                ctx.lineWidth = 2;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.stroke();
+            }
+
+            ctx.restore(); // end clip
+
+            // Chart border
+            ctx.strokeStyle = gridColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(pad.left, pad.top, chartW, chartH);
+
+            ctx.restore(); // end dpr scale
+        }
+
+        function drawDualAxisLineChart(canvasId, leftSeries, rightSeries, opts) {
+            // leftSeries:  { points: [{t, v}], color }  — left Y axis
+            // rightSeries: { points: [{t, v}], color }  — right Y axis
+            var canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            opts = opts || {};
+            var parent = canvas.parentElement;
+            var cssW = (parent ? parent.offsetWidth : 0) || 400;
+            var cssH = (parent ? parent.offsetHeight : 0) || 150;
+            var dpr = window.devicePixelRatio || 1;
+            var pxW = Math.round(cssW * dpr);
+            var pxH = Math.round(cssH * dpr);
+            if (canvas.width !== pxW || canvas.height !== pxH) {
+                canvas.width  = pxW;
+                canvas.height = pxH;
+                canvas.style.width  = cssW + 'px';
+                canvas.style.height = cssH + 'px';
+            }
+            var ctx = canvas.getContext('2d');
+            ctx.save();
+            ctx.scale(dpr, dpr);
+            var w = cssW, h = cssH;
+            // Extra right padding to accommodate the right-axis labels.
+            var pad = { top: 12, right: 46, bottom: 32, left: 46 };
+            var chartW = w - pad.left - pad.right;
+            var chartH = h - pad.top - pad.bottom;
+            var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            var gridColor = isDark ? '#2d3f55' : '#e2e8f0';
+            var textColor = isDark ? '#94a3b8' : '#64748b';
+            var bgColor   = isDark ? '#1e293b' : '#ffffff';
+
+            // Background
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, w, h);
+
+            var lpts = (leftSeries  && leftSeries.points)  || [];
+            var rpts = (rightSeries && rightSeries.points) || [];
+            var allEmpty = lpts.length === 0 && rpts.length === 0;
+
+            if (allEmpty) {
+                ctx.fillStyle = textColor;
+                ctx.font = '12px -apple-system, system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('No data yet \u2014 data is collected every few seconds', w / 2, h / 2);
+                ctx.restore();
+                return;
+            }
+
+            // Shared X range (use whichever series has data; prefer left)
+            var refPts = lpts.length ? lpts : rpts;
+            var tMin = refPts[0].t;
+            var tMax = refPts[refPts.length - 1].t;
+            if (rpts.length) { tMin = Math.min(tMin, rpts[0].t); tMax = Math.max(tMax, rpts[rpts.length - 1].t); }
+            var tRange = tMax - tMin || 1;
+
+            function cxf(t) { return pad.left + ((t - tMin) / tRange) * chartW; }
+
+            // Left Y range
+            var lRawMax = lpts.reduce(function(m, p) { return Math.max(m, p.v); }, 0);
+            var lYMin = 0, lYMax = Math.max(lRawMax * 1.15, 1);
+            if (lRawMax === 0) lYMax = 10;
+            var lYRange = lYMax - lYMin || 1;
+            function cyLeft(v) { return pad.top + (1 - (v - lYMin) / lYRange) * chartH; }
+
+            // Right Y range
+            var rRawMax = rpts.reduce(function(m, p) { return Math.max(m, p.v); }, 0);
+            var rYMin = 0, rYMax = Math.max(rRawMax * 1.15, 1);
+            if (rRawMax === 0) rYMax = 10;
+            var rYRange = rYMax - rYMin || 1;
+            function cyRight(v) { return pad.top + (1 - (v - rYMin) / rYRange) * chartH; }
+
+            // Horizontal grid lines (shared, based on left axis fractions)
+            var levels = 4;
+            ctx.strokeStyle = gridColor;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.font = '10px -apple-system, system-ui, sans-serif';
+            ctx.textBaseline = 'middle';
+
+            for (var i = 0; i <= levels; i++) {
+                var frac = i / levels;
+                var yPx = pad.top + frac * chartH;
+                ctx.beginPath(); ctx.moveTo(pad.left, yPx); ctx.lineTo(pad.left + chartW, yPx); ctx.stroke();
+
+                // Left axis label (images)
+                var lVal = lYMin + (1 - frac) * lYRange;
+                var lLbl = lVal >= 1000 ? (lVal / 1000).toFixed(1) + 'k' : lVal % 1 === 0 ? Math.round(lVal) : lVal.toFixed(1);
+                ctx.fillStyle = leftSeries.color || '#10b981';
+                ctx.textAlign = 'right';
+                ctx.fillText(lLbl, pad.left - 5, yPx);
+
+                // Right axis label (kudos)
+                var rVal = rYMin + (1 - frac) * rYRange;
+                var rLbl = rVal >= 1000 ? (rVal / 1000).toFixed(1) + 'k' : rVal % 1 === 0 ? Math.round(rVal) : rVal.toFixed(1);
+                ctx.fillStyle = (rightSeries && rightSeries.color) || '#6366f1';
+                ctx.textAlign = 'left';
+                ctx.fillText(rLbl, pad.left + chartW + 5, yPx);
+            }
+            ctx.setLineDash([]);
+
+            // X axis time labels
+            ctx.fillStyle = textColor;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            var numXLabels = Math.min(4, refPts.length - 1);
+            if (numXLabels < 1) numXLabels = 1;
+            for (var j = 0; j <= numXLabels; j++) {
+                var tVal = tMin + (j / numXLabels) * tRange;
+                var xPx = cxf(tVal);
+                var d = new Date(tVal * 1000);
+                var hh = ('0' + d.getHours()).slice(-2), mm = ('0' + d.getMinutes()).slice(-2);
+                ctx.fillText(hh + ':' + mm, xPx, pad.top + chartH + 5);
+            }
+
+            // Clip to chart area
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(pad.left, pad.top, chartW, chartH);
+            ctx.clip();
+
+            // Draw fills then lines for each series
+            var seriesDefs = [
+                { pts: lpts, color: leftSeries.color || '#10b981', cyFn: cyLeft },
+                { pts: rpts, color: (rightSeries && rightSeries.color) || '#6366f1', cyFn: cyRight },
+            ];
+            var fillAlpha = isDark ? '0.10' : '0.06';
+            for (var fi = 0; fi < seriesDefs.length; fi++) {
+                var sd = seriesDefs[fi];
+                if (!sd.pts.length) continue;
+                var cm = sd.color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+                var r = 99, g = 102, b = 241;
+                if (cm) { r = parseInt(cm[1], 16); g = parseInt(cm[2], 16); b = parseInt(cm[3], 16); }
+                var baseY = sd.cyFn(0);
+                ctx.beginPath();
+                ctx.moveTo(cxf(sd.pts[0].t), baseY);
+                for (var k = 0; k < sd.pts.length; k++) ctx.lineTo(cxf(sd.pts[k].t), sd.cyFn(sd.pts[k].v));
+                ctx.lineTo(cxf(sd.pts[sd.pts.length - 1].t), baseY);
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + fillAlpha + ')';
+                ctx.fill();
+            }
+            for (var li = 0; li < seriesDefs.length; li++) {
+                var ls = seriesDefs[li];
+                if (!ls.pts.length) continue;
+                ctx.beginPath();
+                for (var n = 0; n < ls.pts.length; n++) {
+                    var xc = cxf(ls.pts[n].t), yc = ls.cyFn(ls.pts[n].v);
+                    if (n === 0) ctx.moveTo(xc, yc); else ctx.lineTo(xc, yc);
+                }
+                ctx.strokeStyle = ls.color;
                 ctx.lineWidth = 2;
                 ctx.lineJoin = 'round';
                 ctx.lineCap = 'round';
