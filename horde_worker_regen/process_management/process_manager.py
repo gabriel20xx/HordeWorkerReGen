@@ -7029,10 +7029,14 @@ class HordeWorkerProcessManager:
         # Aggregate per-process GPU utilisation reported by inference workers.
         # Uses max() so that the highest-utilised device is represented when multiple
         # processes are running on different GPUs.
-        worker_gpu_percent = max(
-            (p.gpu_usage_percent for p in self._process_map.values()),
-            default=0.0,
-        )
+        worker_gpu_percent = 0.0
+        try:
+            worker_gpu_percent = max(
+                (float(p.gpu_usage_percent) for p in self._process_map.values()),
+                default=0.0,
+            )
+        except Exception:
+            pass
 
         # Calculate kudos per hour and images per hour over the rolling window
         now = time.time()

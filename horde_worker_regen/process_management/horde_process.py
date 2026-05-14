@@ -97,8 +97,15 @@ class HordeProcess(abc.ABC):
         return int(total_vram_mb * 1024 * 1024)  # Convert MB to bytes
 
     def get_gpu_usage_percent(self) -> float:
-        """Return the GPU SM utilisation percentage for this process's device (0–100)."""
-        import torch
+        """Return the GPU SM utilisation percentage for this process's device (0–100).
+
+        ``torch`` is imported lazily here (consistent with the ``hordelib`` lazy imports in
+        ``get_vram_usage_bytes`` / ``get_vram_total_bytes``) so that the subprocess module can
+        be loaded in environments where CUDA is not present without raising an ``ImportError``
+        at class-definition time.  Python caches modules in ``sys.modules``, so repeated calls
+        incur only a single dict lookup after the first import.
+        """
+        import torch  # noqa: PLC0415 – intentional lazy import; see docstring
 
         if not torch.cuda.is_available():
             return 0.0

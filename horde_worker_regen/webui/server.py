@@ -2935,7 +2935,11 @@ class WorkerWebUI:
         sd = self.status_data
         vram_total: float = float(sd.get("total_vram_mb") or 0)
         vram_pct = min(100.0, round((float(sd.get("vram_usage_mb", 0)) / vram_total) * 100, 1)) if vram_total > 0 else 0.0
-        system_vram_pct = min(100.0, round((float(sd.get("system_vram_usage_mb", 0)) / vram_total) * 100, 1)) if vram_total > 0 else 0.0
+        system_vram_pct = (
+            min(100.0, round((float(sd.get("system_vram_usage_mb", 0)) / vram_total) * 100, 1))
+            if vram_total > 0
+            else 0.0
+        )
         ram_total: float = float(sd.get("total_ram_mb") or 0)
         ram_pct = min(100.0, round((float(sd.get("ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
         system_ram_pct = min(100.0, round((float(sd.get("system_ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
