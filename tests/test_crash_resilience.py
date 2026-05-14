@@ -5175,8 +5175,8 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         """A process stuck in POST_PROCESSING_STARTING must be replaced before MODEL_PRELOADED.
 
         POST_PROCESSING_STARTING is the state the child emits just before acquiring the VAE
-        decode semaphore.  A process stuck here for longer than post_process_timeout is a
-        resource-holder (or potential holder) and must be cleared before idle states.
+        decode semaphore.  A process stuck here for longer than post_process_timeout + (3 * max_batch)
+        is a resource-holder (or potential holder) and must be cleared before idle states.
         """
         replace_order: list[int] = []
 

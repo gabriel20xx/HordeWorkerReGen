@@ -7748,7 +7748,7 @@ class HordeWorkerProcessManager:
         # priority order, every process is scanned before moving to the next condition.
         # This guarantees true cross-process prioritization — a stuck INFERENCE_POST_PROCESSING
         # or POST_PROCESSING_STARTING process (which may hold the VAE decode semaphore and
-        # actively block other workers) is cleared across the entire worker before any
+        # block other inference processes on this worker) is cleared across the entire worker before any
         # idle/finished state (e.g. MODEL_PRELOADED, which is merely waiting for a job
         # dispatch) is reclaimed, regardless of the order in which subprocesses appear in
         # the process map.
