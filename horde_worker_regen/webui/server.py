@@ -380,6 +380,7 @@ class WorkerWebUI:
         .gallery-filter-bar select { font-size: 0.82rem; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; color: #1e293b; cursor: pointer; max-width: 320px; }
         [data-theme="dark"] .gallery-filter-bar label { color: #94a3b8; }
         [data-theme="dark"] .gallery-filter-bar select { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        @media (max-width: 768px) { .gallery-filter-bar { flex-direction: column; align-items: stretch; } .gallery-filter-bar select { max-width: 100%; width: 100%; } }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 320px; overflow: hidden; }
         .last-image-container.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
@@ -1728,15 +1729,17 @@ class WorkerWebUI:
                     const sel = document.getElementById('gallery-model-filter');
                     if (!sel) return;
                     const prev = sel.value;
-                    sel.innerHTML = '<option value="">All models</option>';
-                    (data.models || []).forEach(function(m) {
+                    const models = data.models || [];
+                    const total = typeof data.total === 'number' ? data.total : models.reduce(function(s, m) { return s + m.count; }, 0);
+                    sel.innerHTML = '<option value="">All models' + (total ? ' (' + total + ')' : '') + '</option>';
+                    models.forEach(function(m) {
                         const opt = document.createElement('option');
-                        opt.value = m; opt.textContent = m;
-                        if (m === prev) opt.selected = true;
+                        opt.value = m.name; opt.textContent = m.name + ' (' + m.count + ')';
+                        if (m.name === prev) opt.selected = true;
                         sel.appendChild(opt);
                     });
                     // If the previously selected model is no longer in the list, reset to "all".
-                    if (prev && !data.models.includes(prev)) {
+                    if (prev && !models.some(function(m) { return m.name === prev; })) {
                         sel.value = '';
                         if (galleryModelFilter !== '') { galleryModelFilter = ''; fetchGalleryPage(1); }
                     }
@@ -2820,21 +2823,27 @@ class WorkerWebUI:
         )
 
     async def _handle_gallery_models(self, request: web.Request) -> web.Response:
-        """Return the sorted list of unique model names present in the gallery.
+        """Return sorted model names with image counts and the overall gallery total.
 
-        The list is alphabetically sorted and excludes entries where ``model``
-        is ``None`` or an empty string.
+        The model list is alphabetically sorted and excludes entries where ``model``
+        is ``None`` or an empty string. ``total`` includes all gallery entries,
+        including those without a model value.
 
         Returns:
-            JSON object with a single key ``models``: a sorted list of unique
-            non-empty model name strings.
+            JSON object with:
+            - ``total`` (int): total number of gallery entries
+            - ``models``: a sorted list of objects with ``name`` (str) and
+              ``count`` (int) keys.
         """
-        seen: set[str] = set()
+        counts: dict[str, int] = {}
         for entry in self._gallery_dict.values():
             model = entry.get("model")
             if model:
-                seen.add(model)
-        return web.json_response({"models": sorted(seen)})
+                counts[model] = counts.get(model, 0) + 1
+        return web.json_response({
+            "total": len(self._gallery_dict),
+            "models": [{"name": m, "count": c} for m, c in sorted(counts.items())],
+        })
 
     async def _handle_gallery_image(self, request: web.Request) -> web.Response:
         """Return a single gallery image by its stable ``gallery_id``.
