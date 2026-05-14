@@ -117,6 +117,7 @@ class WorkerWebUI:
             "user_details": {},
             "images_per_model": {},
             "failed_jobs_per_model": {},
+            "faulted_jobs_per_state": {},
         }
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
@@ -608,8 +609,9 @@ class WorkerWebUI:
         .model-images-bar-wrap { background: var(--border); border-radius: 3px; height: 7px; overflow: hidden; }
         .model-images-bar { background: var(--accent); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
         .model-failed-bar { background: var(--error); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
-        #stats-model-tables-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        @media (max-width: 700px) { #stats-model-tables-grid { grid-template-columns: 1fr; } }
+        #stats-model-tables-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+        @media (max-width: 900px) { #stats-model-tables-grid { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 600px) { #stats-model-tables-grid { grid-template-columns: 1fr; } }
 
     </style>
 </head>
@@ -907,6 +909,14 @@ class WorkerWebUI:
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-failed-model-table-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No failed jobs yet.</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="section-header"><span class="section-title">&#9888; Faults by Job State (Session)</span></div>
+                                <div class="card" style="padding:14px 16px;">
+                                    <div id="stats-fault-state-table-wrap">
+                                        <div class="text-muted" style="font-size:0.85rem;">No job faults yet.</div>
                                     </div>
                                 </div>
                             </div>
@@ -2513,6 +2523,30 @@ class WorkerWebUI:
                 }
             }
 
+            // Per-job-state fault count table (session totals, not windowed)
+            var faultStateWrap = document.getElementById('stats-fault-state-table-wrap');
+            if (faultStateWrap) {
+                var fps = data.faulted_jobs_per_state || {};
+                var stateEntries = Object.keys(fps).map(function(k) { return { name: k, count: fps[k] }; });
+                stateEntries.sort(function(a, b) { return b.count - a.count; });
+                if (stateEntries.length === 0) {
+                    faultStateWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No job faults yet.</div>';
+                } else {
+                    var maxState = stateEntries[0].count;
+                    var stateRows = stateEntries.map(function(e) {
+                        var pct = maxState > 0 ? Math.round((e.count / maxState) * 100) : 0;
+                        return '<tr>' +
+                            '<td>' + escapeHtml(e.name) + '</td>' +
+                            '<td class="model-images-bar-cell"><div class="model-images-bar-wrap"><div class="model-failed-bar" style="width:' + pct + '%"></div></div></td>' +
+                            '<td>' + e.count.toLocaleString() + '</td>' +
+                            '</tr>';
+                    }).join('');
+                    faultStateWrap.innerHTML = '<table class="model-images-table">' +
+                        '<thead><tr><th>State</th><th class="model-images-bar-cell"></th><th>Faults</th></tr></thead>' +
+                        '<tbody>' + stateRows + '</tbody></table>';
+                }
+            }
+
             // Charts
             drawLineChart('chart-iph',     snaps.map(function(s) { return { t: s.t, v: s.iph  }; }), { color: '#10b981' });
             drawLineChart('chart-kph',     snaps.map(function(s) { return { t: s.t, v: s.kph  }; }), { color: '#6366f1' });
@@ -3019,13 +3053,15 @@ class WorkerWebUI:
                     ...
                 ],
                 "images_per_model": {"model-name": <int count>, ...},
-                "failed_jobs_per_model": {"model-name": <int count>, ...}
+                "failed_jobs_per_model": {"model-name": <int count>, ...},
+                "faulted_jobs_per_state": {"state-name": <int count>, ...}
             }
         """
         return web.json_response({
             "snapshots": self._stats_snapshots,
             "images_per_model": self.status_data.get("images_per_model", {}),
             "failed_jobs_per_model": self.status_data.get("failed_jobs_per_model", {}),
+            "faulted_jobs_per_state": self.status_data.get("faulted_jobs_per_state", {}),
         })
 
     def _record_stats_snapshot(self) -> None:
@@ -3371,6 +3407,7 @@ class WorkerWebUI:
         user_details: dict[str, Any] | None = None,
         images_per_model: dict[str, int] | None = None,
         failed_jobs_per_model: dict[str, int] | None = None,
+        faulted_jobs_per_state: dict[str, int] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -3414,6 +3451,7 @@ class WorkerWebUI:
             user_details: Extended user details from the Horde API (worker_count, trusted, moderator, etc.)
             images_per_model: Cumulative per-model image counts for the current session
             failed_jobs_per_model: Cumulative per-model failed job counts for the current session
+            faulted_jobs_per_state: Cumulative per-job-state fault counts for the current session
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -3495,6 +3533,8 @@ class WorkerWebUI:
             self.status_data["images_per_model"] = dict(images_per_model)
         if failed_jobs_per_model is not None:
             self.status_data["failed_jobs_per_model"] = dict(failed_jobs_per_model)
+        if faulted_jobs_per_state is not None:
+            self.status_data["faulted_jobs_per_state"] = dict(faulted_jobs_per_state)
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]
