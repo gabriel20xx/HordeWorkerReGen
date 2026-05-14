@@ -113,6 +113,53 @@ MAX_WEBUI_QUEUE_ITEMS = 10
 METRICS_CALCULATION_WINDOW_SECONDS = 3600
 """Rolling time window, in seconds, for calculating rate-based metrics such as kudos per hour and images per hour."""
 
+# CUDA cores per streaming multiprocessor (SM) keyed by (major, minor) compute capability.
+# Sourced from the NVIDIA CUDA Programming Guide and GPU specifications.
+# Unknown compute capabilities default to 0 (no cores reported) to avoid mixing units.
+_CUDA_CORES_PER_SM: dict[tuple[int, int], int] = {
+    (2, 0): 32,
+    (2, 1): 48,
+    (3, 0): 192,
+    (3, 2): 192,
+    (3, 5): 192,
+    (3, 7): 192,
+    (5, 0): 128,
+    (5, 2): 128,
+    (5, 3): 128,
+    (6, 0): 64,
+    (6, 1): 128,
+    (6, 2): 128,
+    (7, 0): 64,
+    (7, 2): 64,
+    (7, 5): 64,
+    (8, 0): 64,
+    (8, 6): 128,
+    (8, 7): 128,
+    (8, 9): 128,
+    (9, 0): 128,
+}
+
+
+def _get_cuda_cores_per_sm(major: int, minor: int) -> int | None:
+    """Return CUDA cores per SM for a compute capability.
+
+    Falls back to the latest known minor version for the same major version so
+    newer minor revisions do not immediately report as unknown.
+    """
+    exact = _CUDA_CORES_PER_SM.get((major, minor))
+    if exact is not None:
+        return exact
+
+    minors_for_major = [mapped_minor for mapped_major, mapped_minor in _CUDA_CORES_PER_SM if mapped_major == major]
+    if not minors_for_major:
+        return None
+
+    minors_at_or_below_requested = [mapped_minor for mapped_minor in minors_for_major if mapped_minor <= minor]
+    if minors_at_or_below_requested:
+        return _CUDA_CORES_PER_SM[(major, max(minors_at_or_below_requested))]
+
+    return _CUDA_CORES_PER_SM[(major, min(minors_for_major))]
+
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
 try:
@@ -7038,6 +7085,32 @@ class HordeWorkerProcessManager:
         except Exception:
             pass
 
+        # Get total GPU cores count across all devices.
+        # For NVIDIA GPUs the CUDA core count is derived from the SM count and the
+        # compute-capability-specific cores-per-SM lookup table (_CUDA_CORES_PER_SM).
+        # Devices with unknown compute capability are skipped to avoid mixing CUDA-core
+        # and SM-count units; if all devices are unknown, we leave the webui value
+        # unchanged by passing None.
+        gpu_cores_count: int | None = None
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                computed_gpu_cores_count = 0
+                has_known_cuda_core_count = False
+                for i in range(torch.cuda.device_count()):
+                    with contextlib.suppress(Exception):
+                        props = torch.cuda.get_device_properties(i)
+                        cores_per_sm = _get_cuda_cores_per_sm(props.major, props.minor)
+                        if cores_per_sm is None:
+                            continue
+                        computed_gpu_cores_count += props.multi_processor_count * cores_per_sm
+                        has_known_cuda_core_count = True
+                if has_known_cuda_core_count:
+                    gpu_cores_count = computed_gpu_cores_count
+        except Exception:
+            pass
+
         # Calculate kudos per hour and images per hour over the rolling window
         now = time.time()
         cutoff = now - METRICS_CALCULATION_WINDOW_SECONDS
@@ -7119,6 +7192,7 @@ class HordeWorkerProcessManager:
             cpu_cores_count=cpu_cores_count,
             gpu_usage_percent=gpu_usage_percent,
             worker_gpu_percent=worker_gpu_percent,
+            gpu_cores_count=gpu_cores_count,
             system_vram_usage_mb=system_vram_usage_mb,
             container_cpu_percent=container_cpu_percent,
             maintenance_mode=self._last_pop_maintenance_mode,

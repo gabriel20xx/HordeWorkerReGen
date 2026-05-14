@@ -103,6 +103,7 @@ class WorkerWebUI:
             "cpu_cores_count": 0,
             "gpu_usage_percent": 0,
             "worker_gpu_percent": 0,
+            "gpu_cores_count": 0,
             "container_cpu_percent": 0,
             "maintenance_mode": False,
             "job_pops_paused": False,
@@ -667,6 +668,7 @@ class WorkerWebUI:
                     <div class="topbar-res-pill-label"><span>GPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-gpu-pct">0%</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back gpu" id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div><div class="topbar-res-bar gpu" id="topbar-gpu-wrk-bar" style="width:0%" aria-label="Worker GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-gpu-wrk-pct">0%</span></div>
+                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-gpu-cores">0 cores</span></div>
                 </div>
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span>VRAM <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-vram-pct">0%</span></div>
@@ -2123,6 +2125,7 @@ class WorkerWebUI:
                     const ram = totalRamMb > 0 ? Math.min(100, Math.round((ramMb / totalRamMb) * 100)) : 0;
                     const sysRam = totalRamMb > 0 ? Math.min(100, Math.round((sysRamMb / totalRamMb) * 100)) : 0;
                     const cores = data.cpu_cores_count || 0;
+                    const gpuCores = data.gpu_cores_count || 0;
                     // Format a MB value to "X.X GB" or "X MB"
                     function formatMb(mb) { return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB'; }
                     document.getElementById('topbar-cpu-pct').textContent = cpu+'%';
@@ -2146,6 +2149,7 @@ class WorkerWebUI:
                     gpuWrkBar.style.width = workerGpu+'%';
                     gpuWrkBar.style.backgroundColor = resBarColor(workerGpu);
                     gpuWrkBar.setAttribute('aria-valuenow', workerGpu);
+                    document.getElementById('topbar-gpu-cores').textContent = gpuCores + ' cores';
                     document.getElementById('topbar-vram-pct').textContent = sysVram+'%';
                     const vramBar = document.getElementById('topbar-vram-bar');
                     vramBar.style.width = sysVram+'%';
@@ -3479,6 +3483,7 @@ class WorkerWebUI:
         cpu_cores_count: int | None = None,
         gpu_usage_percent: float | None = None,
         worker_gpu_percent: float | None = None,
+        gpu_cores_count: int | None = None,
         container_cpu_percent: float | None = None,
         maintenance_mode: bool | None = None,
         job_pops_paused: bool | None = None,
@@ -3521,6 +3526,7 @@ class WorkerWebUI:
             cpu_cores_count: Number of CPU cores
             gpu_usage_percent: System-wide GPU SM utilisation percentage
             worker_gpu_percent: GPU SM utilisation percentage reported by the worker inference processes
+            gpu_cores_count: Total detected NVIDIA CUDA cores across CUDA devices
             container_cpu_percent: CPU usage percentage of the worker process tree (container-level)
             maintenance_mode: Whether worker is in maintenance mode
             job_pops_paused: Whether new job pops are currently paused by the user
@@ -3588,6 +3594,8 @@ class WorkerWebUI:
             self.status_data["gpu_usage_percent"] = gpu_usage_percent
         if worker_gpu_percent is not None:
             self.status_data["worker_gpu_percent"] = worker_gpu_percent
+        if gpu_cores_count is not None:
+            self.status_data["gpu_cores_count"] = gpu_cores_count
         if container_cpu_percent is not None:
             self.status_data["container_cpu_percent"] = container_cpu_percent
         if maintenance_mode is not None:
