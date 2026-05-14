@@ -1260,6 +1260,7 @@ async def test_webui_errors_grouped_normalises_short_ids() -> None:
             "Inference slot 11 became unresponsive",
             "Inference slot 12 became unresponsive",
         ]
+
         webui.update_status(errors_history=errors)
 
         async with aiohttp.ClientSession() as session, session.get(
@@ -1270,6 +1271,43 @@ async def test_webui_errors_grouped_normalises_short_ids() -> None:
 
         # The two "Failed to kill process" messages share the same normalised key;
         # the three "Inference slot" messages also share a key → 2 groups total.
+        assert data["total_errors"] == 5
+        assert data["total_groups"] == 2
+
+        counts = sorted(g["count"] for g in data["groups"])
+        assert counts == [2, 3]
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_errors_grouped_normalises_single_digit_process_numbers() -> None:
+    """Test /api/errors/grouped groups errors that differ only by single-digit process numbers."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Single-digit process/slot numbers that should be normalised to the same key.
+        errors = [
+            "Inference slot 1 became unresponsive",
+            "Inference slot 2 became unresponsive",
+            "Inference slot 3 became unresponsive",
+            "Process 1 crashed unexpectedly",
+            "Process 2 crashed unexpectedly",
+        ]
+        webui.update_status(errors_history=errors)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/errors/grouped",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        # The three "Inference slot" messages share a key; the two "Process" messages
+        # share another key → 2 groups total.
         assert data["total_errors"] == 5
         assert data["total_groups"] == 2
 
