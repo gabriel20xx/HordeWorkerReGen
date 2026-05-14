@@ -1718,7 +1718,7 @@ async def test_webui_gallery_model_filter() -> None:
 
 @pytest.mark.asyncio
 async def test_webui_gallery_models_endpoint() -> None:
-    """Test that /api/gallery/models returns sorted unique non-empty model names."""
+    """Test that /api/gallery/models returns sorted unique non-empty model names with counts."""
     webui = WorkerWebUI(port=0)
 
     try:
@@ -1750,9 +1750,13 @@ async def test_webui_gallery_models_endpoint() -> None:
             assert response.status == 200
             data = await response.json()
 
-        # Should be sorted, unique, and exclude None/empty entries.
-        assert data["models"] == sorted({"sdxl", "stable_diffusion", "animefull"})
+        # Should be sorted by name, unique, exclude None/empty entries, and include counts.
         assert len(data["models"]) == 3
+        assert data["models"] == [
+            {"name": "animefull", "count": 1},
+            {"name": "sdxl", "count": 2},
+            {"name": "stable_diffusion", "count": 1},
+        ]
     finally:
         await webui.stop()
 
