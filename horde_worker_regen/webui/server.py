@@ -1854,6 +1854,24 @@ class WorkerWebUI:
         // backwards for the same job.  Reset whenever the displayed job id changes.
         let _currentJobId = null;
         let _currentJobProgress = 0;
+        // Track how long the current job has been in its current state.
+        let _currentJobState = null;
+        let _currentJobStateStartTime = null;
+        function formatElapsed(startMs) {
+            if (!startMs) return '';
+            const s = Math.floor((Date.now() - startMs) / 1000);
+            if (s < 60) return s + 's';
+            const m = Math.floor(s / 60), rs = s % 60;
+            if (s < 3600) return m + 'm ' + rs + 's';
+            const h = Math.floor(s / 3600), rm = Math.floor((s % 3600) / 60), rrs = s % 3600 % 60;
+            return h + 'h ' + rm + 'm ' + rrs + 's';
+        }
+        setInterval(function() {
+            const timerEl = document.getElementById('job-state-timer');
+            if (timerEl && _currentJobStateStartTime) {
+                timerEl.textContent = '(' + formatElapsed(_currentJobStateStartTime) + ')';
+            }
+        }, 1000);
         function _getImageKey(rawB64, timestamp) {
             if (!rawB64 || rawB64.length === 0) return 'empty';
             // Use count + submission timestamp as the change-detection key.
@@ -2130,6 +2148,12 @@ class WorkerWebUI:
                             pv = rawPv;
                         }
                         _currentJobProgress = pv;
+                        // Track when the state last changed so we can show elapsed time.
+                        const newState = job.state || null;
+                        if (newState !== _currentJobState) {
+                            _currentJobState = newState;
+                            _currentJobStateStartTime = Date.now();
+                        }
                         ojd.classList.remove('centered-empty-container');
                         ojd.innerHTML =
                             '<div class="stat-row"><span class="stat-label">Job ID:</span><span class="stat-value" style="font-family:monospace;font-size:0.8rem;">'+escapeHtml(job.id||'N/A')+'</span></div>'+
@@ -2139,9 +2163,11 @@ class WorkerWebUI:
                             (job.width!=null&&job.width!==undefined&&job.height!=null&&job.height!==undefined?'<div class="stat-row"><span class="stat-label">Image Size:</span><span class="stat-value">'+escapeHtml(job.width)+'x'+escapeHtml(job.height)+'</span></div>':'')+
                             (job.sampler!=null&&job.sampler!==undefined?'<div class="stat-row"><span class="stat-label">Sampler:</span><span class="stat-value">'+escapeHtml(job.sampler)+'</span></div>':'')+
                             '<div class="stat-row"><span class="stat-label">LoRAs:</span><span class="stat-value">'+(job.loras!=null&&job.loras!==undefined&&job.loras.length>0?job.loras.map(l=>escapeHtml(l.name||'Unknown')).join(', '):'None')+'</span></div>'+
-                            '<div class="stat-row"><span class="stat-label">State:</span><span class="job-state-badge">'+sd+'</span></div>'+
+                            '<div class="stat-row"><span class="stat-label">State:</span><span class="job-state-badge">'+sd+'</span> <span id="job-state-timer" style="font-size:0.72rem;color:#94a3b8;margin-left:4px;">'+(_currentJobStateStartTime?'('+formatElapsed(_currentJobStateStartTime)+')':'')+'</span></div>'+
                             '<div style="margin-top:14px;"><div class="progress-header"><span class="progress-label">Progress</span><span class="progress-value">'+escapeHtml(pv)+'%</span></div><div class="progress-bar-container" style="height:12px;"><div class="progress-bar" style="width:'+escapeHtml(pv)+'%;height:100%;border-radius:6px;"></div></div></div>';
                     } else {
+                        _currentJobState = null;
+                        _currentJobStateStartTime = null;
                         ojd.classList.add('centered-empty-container');
                         ojd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
                     }
