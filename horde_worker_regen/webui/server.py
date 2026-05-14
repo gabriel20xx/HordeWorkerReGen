@@ -1046,6 +1046,16 @@ class WorkerWebUI:
             var hash = location.hash.replace('#', '');
             showPage(VALID_PAGES.includes(hash) ? hash : 'overview', null, false);
         });
+        // ========================================================
+        // STATISTICS PAGE - state variables (must be declared before the
+        // IIFE below, which may call showPage('stats') → fetchStats())
+        // ========================================================
+        let _statsData = null;
+        let _statsWindowSecs = 900; // default 15 minutes
+        let _statsFetchInProgress = false;
+        let _statsAbortController = null;
+        let _statsLastFetchTime = 0;
+        const _STATS_FETCH_THROTTLE_MS = 9000; // just under the 10-second server snapshot interval
         (function() {
             var hash = location.hash.replace('#', '');
             if (hash && VALID_PAGES.includes(hash)) {
@@ -2345,13 +2355,6 @@ class WorkerWebUI:
         // ========================================================
         // STATISTICS PAGE
         // ========================================================
-        let _statsData = null;
-        let _statsWindowSecs = 900; // default 15 minutes
-        let _statsFetchInProgress = false;
-        let _statsAbortController = null;
-        let _statsLastFetchTime = 0;
-        const _STATS_FETCH_THROTTLE_MS = 9000; // just under the 10-second server snapshot interval
-
         function setStatsWindow(windowSecs, btn) {
             _statsWindowSecs = windowSecs;
             document.querySelectorAll('.stats-window-btn').forEach(function(b) { b.classList.remove('active'); });
