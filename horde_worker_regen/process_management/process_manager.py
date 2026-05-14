@@ -6965,8 +6965,16 @@ class HordeWorkerProcessManager:
 
             for child in main_proc.children(recursive=True):
                 child_pid = child.pid
-                cached_child = self._container_cpu_processes.get(child_pid, child)
-                tracked_processes[child_pid] = cached_child
+                tracked_child = self._container_cpu_processes.get(child_pid)
+                if tracked_child is None:
+                    # Prime first-sample state for newly discovered children. Per psutil docs,
+                    # cpu_percent(interval=None) returns 0.0 on first call because there is no
+                    # previous measurement for comparison; this warm-up enables meaningful deltas
+                    # from the next update onward while keeping status updates non-blocking.
+                    with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                        child.cpu_percent(interval=None)
+                    tracked_child = child
+                tracked_processes[child_pid] = tracked_child
 
             self._container_cpu_processes = tracked_processes
 
