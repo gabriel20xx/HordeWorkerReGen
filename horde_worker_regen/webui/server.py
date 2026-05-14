@@ -1729,7 +1729,7 @@ class WorkerWebUI:
                     if (!sel) return;
                     const prev = sel.value;
                     const models = data.models || [];
-                    const total = models.reduce(function(s, m) { return s + m.count; }, 0);
+                    const total = typeof data.total === 'number' ? data.total : models.reduce(function(s, m) { return s + m.count; }, 0);
                     sel.innerHTML = '<option value="">All models' + (total ? ' (' + total + ')' : '') + '</option>';
                     models.forEach(function(m) {
                         const opt = document.createElement('option');
@@ -2822,21 +2822,27 @@ class WorkerWebUI:
         )
 
     async def _handle_gallery_models(self, request: web.Request) -> web.Response:
-        """Return the sorted list of unique model names with image counts from the gallery.
+        """Return sorted model names with image counts and the overall gallery total.
 
-        The list is alphabetically sorted and excludes entries where ``model``
-        is ``None`` or an empty string.
+        The model list is alphabetically sorted and excludes entries where ``model``
+        is ``None`` or an empty string. ``total`` includes all gallery entries,
+        including those without a model value.
 
         Returns:
-            JSON object with a single key ``models``: a sorted list of objects,
-            each with ``name`` (str) and ``count`` (int) keys.
+            JSON object with:
+            - ``total`` (int): total number of gallery entries
+            - ``models``: a sorted list of objects with ``name`` (str) and
+              ``count`` (int) keys.
         """
         counts: dict[str, int] = {}
         for entry in self._gallery_dict.values():
             model = entry.get("model")
             if model:
                 counts[model] = counts.get(model, 0) + 1
-        return web.json_response({"models": [{"name": m, "count": c} for m, c in sorted(counts.items())]})
+        return web.json_response({
+            "total": len(self._gallery_dict),
+            "models": [{"name": m, "count": c} for m, c in sorted(counts.items())],
+        })
 
     async def _handle_gallery_image(self, request: web.Request) -> web.Response:
         """Return a single gallery image by its stable ``gallery_id``.

@@ -1736,6 +1736,7 @@ async def test_webui_gallery_models_endpoint() -> None:
         ) as response:
             assert response.status == 200
             data = await response.json()
+        assert data["total"] == 0
         assert data["models"] == []
 
         webui.add_gallery_image({"base64": test_b64, "timestamp": 1.0, "model": "sdxl"})
@@ -1750,7 +1751,9 @@ async def test_webui_gallery_models_endpoint() -> None:
             assert response.status == 200
             data = await response.json()
 
-        # Should be sorted by name, unique, exclude None/empty entries, and include counts.
+        # total includes all gallery entries; models excludes None/empty entries.
+        assert data["total"] == 5
+        # Should be sorted by name, unique, and include counts.
         assert len(data["models"]) == 3
         assert data["models"] == [
             {"name": "animefull", "count": 1},
