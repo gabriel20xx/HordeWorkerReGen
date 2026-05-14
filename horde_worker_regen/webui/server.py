@@ -94,11 +94,14 @@ class WorkerWebUI:
             "processes": [],
             "models_loaded": [],
             "ram_usage_mb": 0,
+            "system_ram_usage_mb": 0,
+            "total_ram_mb": 0,
             "vram_usage_mb": 0,
             "total_vram_mb": 0,
             "cpu_usage_percent": 0,
             "cpu_cores_count": 0,
             "gpu_usage_percent": 0,
+            "container_cpu_percent": 0,
             "maintenance_mode": False,
             "job_pops_paused": False,
             "job_pops_pause_until": None,
@@ -249,7 +252,7 @@ class WorkerWebUI:
         .mobile-uptime { color: var(--text-muted); font-size: 0.7rem; font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0; }
 
         /* ---- Mobile resources sub-bar ---- */
-        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; flex-wrap: nowrap; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); overflow-x: auto; overflow-y: hidden; }
         .mobile-res-chip { color: var(--text-muted); font-size: 0.7rem; font-weight: 600; font-family: 'Courier New', monospace; }
 
         /* ---- Main content ---- */
@@ -474,8 +477,10 @@ class WorkerWebUI:
         .topbar-resources { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .topbar-res-pill { background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569; font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 8px; white-space: nowrap; display: flex; flex-direction: column; gap: 3px; min-width: 80px; }
         .topbar-res-pill-label { display: flex; justify-content: space-between; align-items: center; font-family: 'Courier New', monospace; }
+        .topbar-res-pill-sub { display: flex; justify-content: space-between; align-items: center; font-family: 'Courier New', monospace; font-size: 0.67rem; opacity: 0.75; margin-top: 1px; }
         .topbar-res-bar-track { width: 100%; height: 4px; background: #cbd5e1; border-radius: 2px; overflow: hidden; }
         .topbar-res-bar { height: 100%; border-radius: 2px; transition: width 0.4s ease, background-color 0.4s ease; }
+        .topbar-res-divider { border: none; border-top: 1px solid #e2e8f0; margin: 1px 0; }
         /* ---- Dark mode ---- */
         [data-theme="dark"] { --main-bg: #0f172a; --card-bg: #1e293b; --border: #2d3f55; --sidebar-bg: #0d1117; --sidebar-hover: #161e2e; }
         [data-theme="dark"] body { color: #cbd5e1; }
@@ -486,6 +491,7 @@ class WorkerWebUI:
         [data-theme="dark"] .topbar .theme-toggle:hover { background: #2d3f55; }
         [data-theme="dark"] .topbar-res-pill { background: #151e2e; border-color: #2d3f55; color: #94a3b8; }
         [data-theme="dark"] .topbar-res-bar-track { background: #2d3f55; }
+        [data-theme="dark"] .topbar-res-divider { border-top-color: #2d3f55; }
         [data-theme="dark"] .stat-card-value:not(.success):not(.accent):not(.warning):not(.error) { color: #f1f5f9; }
         [data-theme="dark"] .stat-card-value.success { color: #34d399; }
         [data-theme="dark"] .stat-card-value.accent  { color: #818cf8; }
@@ -603,8 +609,11 @@ class WorkerWebUI:
     </nav>
     <div class="mobile-resources" aria-label="Resource usage">
         <span class="mobile-res-chip" id="mobile-cpu">CPU 0%</span>
+        <span class="mobile-res-chip" id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">WRK 0%</span>
         <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
-        <span class="mobile-res-chip" id="mobile-vram">VRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-vram">wVRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-ram">wrkRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-sysram" style="font-size:0.65rem;opacity:0.75;">sysRAM 0%</span>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
     <aside class="sidebar" id="sidebar">
@@ -639,16 +648,29 @@ class WorkerWebUI:
             </div>
             <div class="topbar-resources">
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>CPU</span><span id="topbar-cpu-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span>CPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-cpu-pct">0%</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar cpu" id="topbar-cpu-bar" style="width:0%"></div></div>
+                    <hr class="topbar-res-divider">
+                    <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-cpu-ctr-pct">0%</span></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar cpu" id="topbar-cpu-ctr-bar" style="width:0%"></div></div>
+                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-cpu-cores">0 cores</span></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>GPU</span><span id="topbar-gpu-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span>GPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-gpu-pct">0%</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar gpu" id="topbar-gpu-bar" style="width:0%"></div></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span id="topbar-vram-label">VRAM</span><span id="topbar-vram-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span id="topbar-vram-label">VRAM <span style="font-weight:400;font-size:0.67rem;">worker</span></span><span id="topbar-vram-pct">0%</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar vram" id="topbar-vram-bar" style="width:0%"></div></div>
+                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-vram-val">0 MB / 0 MB</span></div>
+                </div>
+                <div class="topbar-res-pill">
+                    <div class="topbar-res-pill-label"><span>RAM <span style="font-weight:400;font-size:0.67rem;">worker</span></span><span id="topbar-ram-pct">0%</span></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%;background-color:#10b981;"></div></div>
+                    <hr class="topbar-res-divider">
+                    <div class="topbar-res-pill-sub"><span>System</span><span id="topbar-sysram-pct">0%</span></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar" id="topbar-sysram-bar" style="width:0%;background-color:#10b981;"></div></div>
+                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-ram-val">0 MB</span><span id="topbar-total-ram-val">/ 0 GB</span></div>
                 </div>
             </div>
             <div class="topbar-meta">
@@ -813,16 +835,22 @@ class WorkerWebUI:
                         <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
                         <div class="grid-3">
                             <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">CPU %</div>
+                                <div class="chart-label">CPU % <span style="font-weight:400;font-size:0.7rem;">(system)</span></div>
                                 <div class="chart-container-sm"><canvas id="chart-cpu" aria-label="CPU usage over time"></canvas></div>
+                                <div class="chart-label" style="margin-top:10px;">CPU % <span style="font-weight:400;font-size:0.7rem;">(worker)</span></div>
+                                <div class="chart-container-sm"><canvas id="chart-cpu-ctr" aria-label="Worker CPU usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">GPU %</div>
+                                <div class="chart-label">GPU % <span style="font-weight:400;font-size:0.7rem;">(system)</span></div>
                                 <div class="chart-container-sm"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
+                                <div class="chart-label" style="margin-top:10px;">VRAM % <span style="font-weight:400;font-size:0.7rem;">(worker)</span></div>
+                                <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">VRAM %</div>
-                                <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
+                                <div class="chart-label">RAM % <span style="font-weight:400;font-size:0.7rem;">(worker / total)</span></div>
+                                <div class="chart-container-sm"><canvas id="chart-ram" aria-label="Worker RAM usage over time"></canvas></div>
+                                <div class="chart-label" style="margin-top:10px;">RAM % <span style="font-weight:400;font-size:0.7rem;">(system / total)</span></div>
+                                <div class="chart-container-sm"><canvas id="chart-sysram" aria-label="System RAM usage over time"></canvas></div>
                             </div>
                         </div>
                     </div>
@@ -2029,11 +2057,27 @@ class WorkerWebUI:
                     document.getElementById('time-without-jobs').textContent = formatUptime(data.time_without_jobs || 0);
                     const cpu = Math.min(100, Math.round(data.cpu_usage_percent));
                     const gpu = Math.min(100, Math.round(data.gpu_usage_percent));
-                    const vram = data.total_vram_mb > 0 ? Math.min(100, Math.round((data.vram_usage_mb / data.total_vram_mb) * 100)) : 0;
+                    const vramMb = data.vram_usage_mb || 0;
+                    const vramTotalMb = data.total_vram_mb || 0;
+                    const vram = vramTotalMb > 0 ? Math.min(100, Math.round((vramMb / vramTotalMb) * 100)) : 0;
+                    const ctrCpu = Math.min(100, Math.round(data.container_cpu_percent || 0));
+                    const ramMb = data.ram_usage_mb || 0;
+                    const totalRamMb = data.total_ram_mb || 0;
+                    const sysRamMb = data.system_ram_usage_mb || 0;
+                    const ram = totalRamMb > 0 ? Math.min(100, Math.round((ramMb / totalRamMb) * 100)) : 0;
+                    const sysRam = totalRamMb > 0 ? Math.min(100, Math.round((sysRamMb / totalRamMb) * 100)) : 0;
+                    const cores = data.cpu_cores_count || 0;
+                    // Format a MB value to "X.X GB" or "X MB"
+                    function formatMb(mb) { return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB'; }
                     document.getElementById('topbar-cpu-pct').textContent = cpu+'%';
                     const cpuBar = document.getElementById('topbar-cpu-bar');
                     cpuBar.style.width = cpu+'%';
                     cpuBar.style.backgroundColor = resBarColor(cpu);
+                    document.getElementById('topbar-cpu-ctr-pct').textContent = ctrCpu+'%';
+                    const cpuCtrBar = document.getElementById('topbar-cpu-ctr-bar');
+                    cpuCtrBar.style.width = ctrCpu+'%';
+                    cpuCtrBar.style.backgroundColor = resBarColor(ctrCpu);
+                    document.getElementById('topbar-cpu-cores').textContent = cores + ' cores';
                     document.getElementById('topbar-gpu-pct').textContent = gpu+'%';
                     const gpuBar = document.getElementById('topbar-gpu-bar');
                     gpuBar.style.width = gpu+'%';
@@ -2042,13 +2086,32 @@ class WorkerWebUI:
                     const vramBar = document.getElementById('topbar-vram-bar');
                     vramBar.style.width = vram+'%';
                     vramBar.style.backgroundColor = resBarColor(vram);
+                    document.getElementById('topbar-vram-val').textContent = formatMb(vramMb) + ' / ' + formatMb(vramTotalMb);
+                    document.getElementById('topbar-ram-pct').textContent = ram+'%';
+                    const ramVal = formatMb(ramMb);
+                    const totalRamVal = totalRamMb >= 1024 ? (totalRamMb / 1024).toFixed(1) + ' GB' : Math.round(totalRamMb) + ' MB';
+                    document.getElementById('topbar-ram-val').textContent = ramVal;
+                    document.getElementById('topbar-total-ram-val').textContent = '/ ' + totalRamVal;
+                    const ramBar = document.getElementById('topbar-ram-bar');
+                    ramBar.style.width = ram+'%';
+                    ramBar.style.backgroundColor = resBarColor(ram);
+                    document.getElementById('topbar-sysram-pct').textContent = sysRam+'%';
+                    const sysRamBar = document.getElementById('topbar-sysram-bar');
+                    sysRamBar.style.width = sysRam+'%';
+                    sysRamBar.style.backgroundColor = resBarColor(sysRam);
 
                     document.getElementById('mobile-cpu').textContent = 'CPU '+cpu+'%';
                     document.getElementById('mobile-cpu').style.color = resBarColor(cpu);
+                    document.getElementById('mobile-cpu-ctr').textContent = 'WRK '+ctrCpu+'%';
+                    document.getElementById('mobile-cpu-ctr').style.color = resBarColor(ctrCpu);
                     document.getElementById('mobile-gpu').textContent = 'GPU '+gpu+'%';
                     document.getElementById('mobile-gpu').style.color = resBarColor(gpu);
-                    document.getElementById('mobile-vram').textContent = 'VRAM '+vram+'%';
+                    document.getElementById('mobile-vram').textContent = 'wVRAM '+vram+'%';
                     document.getElementById('mobile-vram').style.color = resBarColor(vram);
+                    document.getElementById('mobile-ram').textContent = 'wrkRAM '+ram+'%';
+                    document.getElementById('mobile-ram').style.color = resBarColor(ram);
+                    document.getElementById('mobile-sysram').textContent = 'sysRAM '+sysRam+'%';
+                    document.getElementById('mobile-sysram').style.color = resBarColor(sysRam);
                     const ojd = document.getElementById('overview-current-job');
                     if (data.current_job) {
                         const job = data.current_job;
@@ -2332,11 +2395,14 @@ class WorkerWebUI:
             }
 
             // Charts
-            drawLineChart('chart-iph',  snaps.map(function(s) { return { t: s.t, v: s.iph  }; }), { color: '#10b981' });
-            drawLineChart('chart-kph',  snaps.map(function(s) { return { t: s.t, v: s.kph  }; }), { color: '#6366f1' });
-            drawLineChart('chart-cpu',  snaps.map(function(s) { return { t: s.t, v: s.cpu  }; }), { color: '#f59e0b', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
-            drawLineChart('chart-gpu',  snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), { color: '#3b82f6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
-            drawLineChart('chart-vram', snaps.map(function(s) { return { t: s.t, v: s.vram }; }), { color: '#8b5cf6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-iph',     snaps.map(function(s) { return { t: s.t, v: s.iph  }; }), { color: '#10b981' });
+            drawLineChart('chart-kph',     snaps.map(function(s) { return { t: s.t, v: s.kph  }; }), { color: '#6366f1' });
+            drawLineChart('chart-cpu',     snaps.map(function(s) { return { t: s.t, v: s.cpu  }; }), { color: '#f59e0b', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-cpu-ctr', snaps.map(function(s) { return { t: s.t, v: s.container_cpu || 0 }; }), { color: '#fb923c', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-gpu',     snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), { color: '#3b82f6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-vram',    snaps.map(function(s) { return { t: s.t, v: s.vram }; }), { color: '#8b5cf6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-ram',     snaps.map(function(s) { return { t: s.t, v: s.ram  || 0 }; }), { color: '#10b981', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawLineChart('chart-sysram',  snaps.map(function(s) { return { t: s.t, v: s.system_ram || 0 }; }), { color: '#059669', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
         }
 
         function drawLineChart(canvasId, points, opts) {
@@ -2650,14 +2716,31 @@ class WorkerWebUI:
         """Return historical statistics snapshots and per-model image counts.
 
         Returns all stored snapshots in chronological order (oldest first).
-        Each snapshot contains a Unix timestamp plus CPU/GPU/VRAM usage
-        percentages, images/hour, kudos/hour, and cumulative job/kudos counters
-        for the current session.
+        Each snapshot contains a Unix timestamp plus CPU/GPU/VRAM/RAM usage
+        percentages, container CPU percentage, images/hour, kudos/hour, and
+        cumulative job/kudos counters for the current session.
 
         Response shape::
 
             {
-                "snapshots": [...],
+                "snapshots": [
+                    {
+                        "t": <float>,            # Unix timestamp
+                        "cpu": <float>,          # system CPU %
+                        "gpu": <float>,          # GPU %
+                        "vram": <float>,         # worker VRAM as % of total device VRAM
+                        "ram": <float>,          # worker RAM as % of system total
+                        "system_ram": <float>,   # system-wide RAM as % of total
+                        "container_cpu": <float>,# worker process + children CPU %
+                        "iph": <float>,          # images per hour
+                        "kph": <float>,          # kudos per hour
+                        "jc": <int>,             # jobs completed
+                        "jf": <int>,             # jobs faulted
+                        "jp": <int>,             # jobs popped
+                        "ks": <float>            # kudos earned this session
+                    },
+                    ...
+                ],
                 "images_per_model": {"model-name": <int count>, ...}
             }
         """
@@ -2672,11 +2755,17 @@ class WorkerWebUI:
         sd = self.status_data
         vram_total: float = float(sd.get("total_vram_mb") or 0)
         vram_pct = min(100.0, round((float(sd.get("vram_usage_mb", 0)) / vram_total) * 100, 1)) if vram_total > 0 else 0.0
+        ram_total: float = float(sd.get("total_ram_mb") or 0)
+        ram_pct = min(100.0, round((float(sd.get("ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
+        system_ram_pct = min(100.0, round((float(sd.get("system_ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
         snapshot: dict[str, float | int] = {
             "t": round(now, 1),
             "cpu": round(float(sd.get("cpu_usage_percent", 0)), 1),
             "gpu": round(float(sd.get("gpu_usage_percent", 0)), 1),
             "vram": vram_pct,
+            "ram": ram_pct,
+            "system_ram": system_ram_pct,
+            "container_cpu": round(float(sd.get("container_cpu_percent", 0)), 1),
             "iph": round(float(sd.get("images_per_hour", 0)), 2),
             "kph": round(float(sd.get("kudos_per_hour", 0)), 2),
             "jc": int(sd.get("jobs_completed", 0)),
@@ -2971,11 +3060,14 @@ class WorkerWebUI:
         processes: list[dict[str, Any]] | None = None,
         models_loaded: list[str] | None = None,
         ram_usage_mb: float | None = None,
+        system_ram_usage_mb: float | None = None,
+        total_ram_mb: float | None = None,
         vram_usage_mb: float | None = None,
         total_vram_mb: float | None = None,
         cpu_usage_percent: float | None = None,
         cpu_cores_count: int | None = None,
         gpu_usage_percent: float | None = None,
+        container_cpu_percent: float | None = None,
         maintenance_mode: bool | None = None,
         job_pops_paused: bool | None = None,
         job_pops_pause_until: float | None | object = _UNSET,
@@ -3007,12 +3099,15 @@ class WorkerWebUI:
             max_queue_size: Maximum number of jobs that can be queued
             processes: List of process information
             models_loaded: List of currently loaded models
-            ram_usage_mb: RAM usage in MB
+            ram_usage_mb: Worker processes RAM usage in MB (sum of all worker processes)
+            system_ram_usage_mb: System-wide RAM currently in use in MB (all processes on the host)
+            total_ram_mb: Total system RAM capacity in MB
             vram_usage_mb: VRAM usage in MB
             total_vram_mb: Total VRAM in MB
             cpu_usage_percent: CPU usage percentage
             cpu_cores_count: Number of CPU cores
             gpu_usage_percent: GPU usage percentage
+            container_cpu_percent: CPU usage percentage of the worker process tree (container-level)
             maintenance_mode: Whether worker is in maintenance mode
             job_pops_paused: Whether new job pops are currently paused by the user
             job_pops_pause_until: Unix timestamp at which a timed pause will auto-expire (None = indefinite)
@@ -3061,6 +3156,10 @@ class WorkerWebUI:
             self.status_data["models_loaded"] = models_loaded
         if ram_usage_mb is not None:
             self.status_data["ram_usage_mb"] = ram_usage_mb
+        if system_ram_usage_mb is not None:
+            self.status_data["system_ram_usage_mb"] = system_ram_usage_mb
+        if total_ram_mb is not None:
+            self.status_data["total_ram_mb"] = total_ram_mb
         if vram_usage_mb is not None:
             self.status_data["vram_usage_mb"] = vram_usage_mb
         if total_vram_mb is not None:
@@ -3071,6 +3170,8 @@ class WorkerWebUI:
             self.status_data["cpu_cores_count"] = cpu_cores_count
         if gpu_usage_percent is not None:
             self.status_data["gpu_usage_percent"] = gpu_usage_percent
+        if container_cpu_percent is not None:
+            self.status_data["container_cpu_percent"] = container_cpu_percent
         if maintenance_mode is not None:
             self.status_data["maintenance_mode"] = maintenance_mode
         if job_pops_paused is not None:

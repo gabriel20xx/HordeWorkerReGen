@@ -47,63 +47,84 @@ def test_webui_status_update() -> None:
     assert webui.status_data["images_per_hour"] == 12.5
 
 
-def test_webui_vram_resources() -> None:
-    """Test that WorkerWebUI correctly handles VRAM resource updates."""
+def test_webui_vram_and_ram_resources() -> None:
+    """Test that WorkerWebUI correctly handles VRAM, RAM, and system RAM resource updates."""
     webui = WorkerWebUI(port=0)
 
     # Test VRAM usage and total VRAM update
     test_vram_usage_mb = 8192.5  # 8GB used
     test_total_vram_mb = 24576.0  # 24GB total
-    test_ram_usage_mb = 16384.0  # 16GB RAM
+    test_ram_usage_mb = 16384.0  # 16GB worker RAM
+    test_system_ram_usage_mb = 24576.0  # 24GB system RAM in use
+    test_total_ram_mb = 32768.0  # 32GB total system RAM
 
     webui.update_status(
         vram_usage_mb=test_vram_usage_mb,
         total_vram_mb=test_total_vram_mb,
         ram_usage_mb=test_ram_usage_mb,
+        system_ram_usage_mb=test_system_ram_usage_mb,
+        total_ram_mb=test_total_ram_mb,
     )
 
     # Verify the values were updated correctly
     assert webui.status_data["vram_usage_mb"] == test_vram_usage_mb
     assert webui.status_data["total_vram_mb"] == test_total_vram_mb
     assert webui.status_data["ram_usage_mb"] == test_ram_usage_mb
+    assert webui.status_data["system_ram_usage_mb"] == test_system_ram_usage_mb
+    assert webui.status_data["total_ram_mb"] == test_total_ram_mb
 
     # Test that VRAM percentage would be calculated correctly (33% in this case)
     expected_percent = round((test_vram_usage_mb / test_total_vram_mb) * 100)
     assert expected_percent == 33
 
+    # Test that worker RAM percentage would be calculated correctly (50%)
+    expected_ram_pct = round((test_ram_usage_mb / test_total_ram_mb) * 100)
+    assert expected_ram_pct == 50
 
-def test_webui_cpu_gpu_usage() -> None:
-    """Test that WorkerWebUI correctly handles CPU and GPU usage updates."""
+    # Test that system RAM percentage would be calculated correctly (75%)
+    expected_sys_ram_pct = round((test_system_ram_usage_mb / test_total_ram_mb) * 100)
+    assert expected_sys_ram_pct == 75
+
+
+def test_webui_cpu_gpu_and_container_cpu_usage() -> None:
+    """Test that WorkerWebUI correctly handles CPU, GPU, and container CPU usage updates."""
     webui = WorkerWebUI(port=0)
 
     # Test CPU and GPU usage update
     test_cpu_usage_percent = 45.5
     test_gpu_usage_percent = 78.2
+    test_container_cpu_percent = 23.1
 
     webui.update_status(
         cpu_usage_percent=test_cpu_usage_percent,
         gpu_usage_percent=test_gpu_usage_percent,
+        container_cpu_percent=test_container_cpu_percent,
     )
 
     # Verify the values were updated correctly
     assert webui.status_data["cpu_usage_percent"] == test_cpu_usage_percent
     assert webui.status_data["gpu_usage_percent"] == test_gpu_usage_percent
+    assert webui.status_data["container_cpu_percent"] == test_container_cpu_percent
 
     # Test edge case: 0% usage
     webui.update_status(
         cpu_usage_percent=0.0,
         gpu_usage_percent=0.0,
+        container_cpu_percent=0.0,
     )
     assert webui.status_data["cpu_usage_percent"] == 0.0
     assert webui.status_data["gpu_usage_percent"] == 0.0
+    assert webui.status_data["container_cpu_percent"] == 0.0
 
     # Test edge case: 100% usage
     webui.update_status(
         cpu_usage_percent=100.0,
         gpu_usage_percent=100.0,
+        container_cpu_percent=100.0,
     )
     assert webui.status_data["cpu_usage_percent"] == 100.0
     assert webui.status_data["gpu_usage_percent"] == 100.0
+    assert webui.status_data["container_cpu_percent"] == 100.0
 
 
 def test_webui_cpu_cores_count() -> None:
@@ -1513,6 +1534,10 @@ async def test_webui_stats_endpoint() -> None:
             gpu_usage_percent=70.0,
             vram_usage_mb=4096.0,
             total_vram_mb=8192.0,
+            ram_usage_mb=8192.0,
+            system_ram_usage_mb=16384.0,
+            total_ram_mb=32768.0,
+            container_cpu_percent=20.0,
         )
         assert len(webui._stats_snapshots) == 1
 
@@ -1527,6 +1552,9 @@ async def test_webui_stats_endpoint() -> None:
         assert snap["cpu"] == 40.0
         assert snap["gpu"] == 70.0
         assert snap["vram"] == 50.0  # 4096/8192 = 50%
+        assert snap["ram"] == 25.0   # 8192/32768 = 25%
+        assert snap["system_ram"] == 50.0  # 16384/32768 = 50%
+        assert snap["container_cpu"] == 20.0
 
         # A second call within the interval must NOT add another snapshot.
         webui.update_status(jobs_completed=6)
@@ -1543,13 +1571,25 @@ async def test_webui_stats_endpoint() -> None:
         snap_over = webui._stats_snapshots[-1]
         assert snap_over["vram"] == 100.0, "vram_pct must be capped at 100%"
 
+        # RAM percentage must be capped at 100 as well.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(ram_usage_mb=40000.0, total_ram_mb=32768.0)
+        snap_ram_over = webui._stats_snapshots[-1]
+        assert snap_ram_over["ram"] == 100.0, "ram_pct must be capped at 100%"
+
+        # System RAM percentage must also be capped at 100.
+        webui._last_stats_snapshot_time = 0.0
+        webui.update_status(system_ram_usage_mb=40000.0, total_ram_mb=32768.0)
+        snap_sysram_over = webui._stats_snapshots[-1]
+        assert snap_sysram_over["system_ram"] == 100.0, "system_ram_pct must be capped at 100%"
+
         # Verify /api/stats returns all recorded snapshots.
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
             assert response.status == 200
             data2 = await response.json()
-        assert len(data2["snapshots"]) == 3
+        assert len(data2["snapshots"]) == 5
 
         # images_per_model is reflected from update_status and can be set and cleared.
         webui.update_status(images_per_model={"ModelA": 5, "ModelB": 2})

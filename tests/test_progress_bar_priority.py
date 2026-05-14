@@ -1372,3 +1372,92 @@ class TestApiJobPopPerModelFilterRemoved:
         pop_request = mock_manager.horde_client_session.submit_request.call_args[0][0]
         assert "stable_diffusion" in pop_request.models
 
+
+def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> None:
+    """update_webui_status must pass total_ram_mb, system_ram_usage_mb, and container_cpu_percent.
+
+    Regression guard: ensures the process manager correctly computes all RAM metrics and
+    container CPU from the cached psutil.Process instance, and passes them through to
+    the WebUI layer.
+    """
+    from horde_worker_regen.process_management.process_manager import BYTES_TO_MEGABYTES, HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+
+    # Minimal attributes required by update_webui_status
+    mock_manager.jobs_pending_submit = []
+    mock_manager.jobs_being_safety_checked = []
+    mock_manager.jobs_pending_safety_check = []
+    mock_manager.jobs_in_progress = []
+    mock_manager.jobs_lookup = {}
+    mock_manager.jobs_pending_inference = []
+    mock_manager._WEBUI_POST_INFERENCE_STATES = HordeWorkerProcessManager._WEBUI_POST_INFERENCE_STATES
+    mock_manager._calculate_granular_progress = (
+        HordeWorkerProcessManager._calculate_granular_progress.__get__(mock_manager, HordeWorkerProcessManager)
+    )
+    mock_manager._build_current_job_dict = (
+        HordeWorkerProcessManager._build_current_job_dict.__get__(mock_manager, HordeWorkerProcessManager)
+    )
+    mock_manager._serialize_loras_for_webui.return_value = None
+    mock_manager._process_map.values.return_value = []
+    mock_manager._device_map.root = {}
+    mock_manager.kudos_events = []
+    mock_manager.user_info = None
+    mock_manager._time_spent_no_jobs_available = 0.0
+    mock_manager._last_pop_no_jobs_available_time = 0.0
+    mock_manager.webui = MagicMock()
+
+    # Set up known RAM and container CPU values to verify they are passed through.
+    total_ram_bytes = 32 * 1024 * 1024 * 1024  # 32 GB
+    mock_manager.total_ram_bytes = total_ram_bytes
+    expected_total_ram_mb = total_ram_bytes / BYTES_TO_MEGABYTES  # 32768.0
+
+    # Simulate the cached process tree returning 70% raw CPU on a 4-core machine.
+    # 40% from the main process + 20% + 10% from two child processes.
+    mock_proc = MagicMock()
+    mock_proc.cpu_percent.return_value = 40.0
+    child_proc_1 = MagicMock()
+    child_proc_1.pid = 1001
+    child_proc_1.cpu_percent.return_value = 20.0
+    child_proc_2 = MagicMock()
+    child_proc_2.pid = 1002
+    child_proc_2.cpu_percent.return_value = 10.0
+    mock_proc.children.return_value = [child_proc_1, child_proc_2]
+    mock_proc.pid = 1000
+    mock_manager._main_process = mock_proc
+    mock_manager._container_cpu_processes = {mock_proc.pid: mock_proc}
+
+    stub_psutil = MagicMock()
+    stub_psutil.cpu_percent.return_value = 0.0
+    stub_psutil.cpu_count.return_value = 4  # 4 logical cores
+    # Simulate virtual_memory().used: 24 GB in use system-wide
+    system_used_bytes = 24 * 1024 * 1024 * 1024
+    stub_psutil.virtual_memory.return_value.used = system_used_bytes
+    expected_system_ram_mb = system_used_bytes / BYTES_TO_MEGABYTES  # 24576.0
+
+    with (
+        patch("horde_worker_regen.process_management.process_manager.psutil", stub_psutil),
+        patch.dict("sys.modules", {"torch": MagicMock()}),
+    ):
+        method = HordeWorkerProcessManager.update_webui_status.__get__(mock_manager, HordeWorkerProcessManager)
+        method()
+
+    assert mock_manager.webui.update_status.called, "webui.update_status was not called"
+    kwargs = mock_manager.webui.update_status.call_args.kwargs
+    mock_proc.children.assert_called_once_with(recursive=True)
+
+    # total_ram_mb must equal total_ram_bytes converted to MB.
+    assert kwargs["total_ram_mb"] == expected_total_ram_mb, (
+        f"Expected total_ram_mb={expected_total_ram_mb}, got {kwargs['total_ram_mb']}"
+    )
+
+    # system_ram_usage_mb must equal virtual_memory().used converted to MB.
+    assert kwargs["system_ram_usage_mb"] == expected_system_ram_mb, (
+        f"Expected system_ram_usage_mb={expected_system_ram_mb}, got {kwargs['system_ram_usage_mb']}"
+    )
+
+    # container_cpu_percent must equal raw_cpu / cpu_cores = (40 + 20 + 10) / 4 = 17.5.
+    expected_container_cpu = round((40.0 + 20.0 + 10.0) / 4, 1)
+    assert kwargs["container_cpu_percent"] == expected_container_cpu, (
+        f"Expected container_cpu_percent={expected_container_cpu}, got {kwargs['container_cpu_percent']}"
+    )

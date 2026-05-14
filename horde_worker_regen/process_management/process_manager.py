@@ -1845,6 +1845,12 @@ class HordeWorkerProcessManager:
         self._log_handler_id: int | None = None
         """ID of the logger handler for capturing console logs."""
 
+        # Persistent psutil.Process() handles for container CPU tracking. cpu_percent(interval=None)
+        # computes a delta from the *previous* call on the same Process instance, so we keep the main
+        # process plus child handles cached by PID across update_webui_status() calls.
+        self._main_process: psutil.Process = psutil.Process()
+        self._container_cpu_processes: dict[int, psutil.Process] = {self._main_process.pid: self._main_process}
+
         if self.bridge_data.enable_webui:
             from horde_worker_regen.webui.server import WorkerWebUI
 
@@ -6932,6 +6938,12 @@ class HordeWorkerProcessManager:
         # Use max() for VRAM because each process reports the total GPU VRAM usage, not per-process usage
         total_vram_mb = max((p.vram_usage_bytes for p in self._process_map.values()), default=0) / BYTES_TO_MEGABYTES
 
+        # Total system RAM capacity
+        total_system_ram_mb = self.total_ram_bytes / BYTES_TO_MEGABYTES
+
+        # System-wide RAM currently in use (all processes on the host, not just the worker)
+        system_ram_usage_mb = psutil.virtual_memory().used / BYTES_TO_MEGABYTES
+
         # Get total VRAM from all devices
         total_device_vram_mb = 0
         if len(self._device_map.root) > 0:
@@ -6944,6 +6956,40 @@ class HordeWorkerProcessManager:
 
         # Get CPU cores count (logical cores/threads)
         cpu_cores_count = psutil.cpu_count(logical=True) or 0
+
+        # Get container CPU usage (this process + all spawned subprocesses), normalised to
+        # a 0-100% scale representing the fraction of total CPU capacity consumed.
+        container_cpu_percent = 0.0
+        try:
+            main_proc = self._main_process
+            tracked_processes: dict[int, psutil.Process] = {main_proc.pid: main_proc}
+
+            for child in main_proc.children(recursive=True):
+                child_pid = child.pid
+                tracked_child = self._container_cpu_processes.get(child_pid)
+                if tracked_child is None:
+                    # Prime first-sample state for newly discovered children. Per psutil docs,
+                    # cpu_percent(interval=None) returns 0.0 on first call because there is no
+                    # previous measurement for comparison; this warm-up enables meaningful deltas
+                    # from the next update onward while keeping status updates non-blocking.
+                    with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                        child.cpu_percent(interval=None)
+                    tracked_child = child
+                tracked_processes[child_pid] = tracked_child
+
+            self._container_cpu_processes = tracked_processes
+
+            raw_cpu = 0.0
+            for process in tracked_processes.values():
+                with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                    raw_cpu += process.cpu_percent(interval=None)
+            # psutil process cpu_percent can exceed 100% on multi-core machines because it
+            # accumulates usage across each logical core independently.  Dividing by the
+            # logical core count converts that sum to a percentage of total system CPU
+            # capacity (e.g. 200% on a 4-core machine → 50% of total capacity).
+            container_cpu_percent = min(100.0, round(raw_cpu / (cpu_cores_count or 1), 1))
+        except Exception:
+            pass
 
         # Get GPU utilization percentage
         gpu_usage_percent = 0.0
@@ -7038,11 +7084,14 @@ class HordeWorkerProcessManager:
             processes=processes,
             models_loaded=models_loaded,
             ram_usage_mb=total_ram_mb,
+            total_ram_mb=total_system_ram_mb,
+            system_ram_usage_mb=system_ram_usage_mb,
             vram_usage_mb=total_vram_mb,
             total_vram_mb=total_device_vram_mb,
             cpu_usage_percent=cpu_usage_percent,
             cpu_cores_count=cpu_cores_count,
             gpu_usage_percent=gpu_usage_percent,
+            container_cpu_percent=container_cpu_percent,
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
