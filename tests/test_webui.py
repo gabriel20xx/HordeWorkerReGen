@@ -556,7 +556,6 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
         assert 'id="topbar-gpu-wrk-pct">0%</span>' in html
         assert 'id="topbar-vram-total">0 MB</span>' in html
         assert 'id="topbar-gpu-cores">0 cores</span>' in html
-        assert 'id="topbar-vram-total">0 MB</span>' in html
         assert 'id="topbar-vram-bar" style="width:0%" aria-label="System VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-vram-wrk-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-vram-wrk-pct">0%</span>' in html
