@@ -150,15 +150,15 @@ def _get_cuda_cores_per_sm(major: int, minor: int) -> int | None:
     if exact is not None:
         return exact
 
-    same_major_minors = [mapped_minor for mapped_major, mapped_minor in _CUDA_CORES_PER_SM if mapped_major == major]
-    if not same_major_minors:
+    minors_for_major = [mapped_minor for mapped_major, mapped_minor in _CUDA_CORES_PER_SM if mapped_major == major]
+    if not minors_for_major:
         return None
 
-    eligible_minors = [mapped_minor for mapped_minor in same_major_minors if mapped_minor <= minor]
-    if eligible_minors:
-        return _CUDA_CORES_PER_SM[(major, max(eligible_minors))]
+    minors_at_or_below_requested = [mapped_minor for mapped_minor in minors_for_major if mapped_minor <= minor]
+    if minors_at_or_below_requested:
+        return _CUDA_CORES_PER_SM[(major, max(minors_at_or_below_requested))]
 
-    return _CUDA_CORES_PER_SM[(major, min(same_major_minors))]
+    return _CUDA_CORES_PER_SM[(major, min(minors_for_major))]
 
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code

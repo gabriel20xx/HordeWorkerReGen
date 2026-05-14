@@ -1516,8 +1516,8 @@ def test_update_webui_status_gpu_cores_count_sums_known_cuda_devices() -> None:
     stub_torch.cuda.is_available.return_value = True
     stub_torch.cuda.device_count.return_value = 3
     stub_torch.cuda.get_device_properties.side_effect = [
-        SimpleNamespace(major=8, minor=6, multi_processor_count=30),   # 30 * 128 = 3840
-        SimpleNamespace(major=8, minor=9, multi_processor_count=80),   # 80 * 128 = 10240
+        SimpleNamespace(major=8, minor=6, multi_processor_count=30),
+        SimpleNamespace(major=8, minor=9, multi_processor_count=80),
         SimpleNamespace(major=10, minor=0, multi_processor_count=100),  # unknown -> skipped
     ]
 
