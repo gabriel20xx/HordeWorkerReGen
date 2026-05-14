@@ -583,8 +583,14 @@ class WorkerWebUI:
         .chart-container canvas { display: block; }
         .chart-container-sm { position: relative; width: 100%; height: 110px; }
         .chart-container-sm canvas { display: block; }
+        .chart-container-md { position: relative; width: 100%; height: 160px; }
+        .chart-container-md canvas { display: block; }
         .chart-label { font-size: 0.75rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
         [data-theme="dark"] .chart-label { color: #94a3b8; }
+        .chart-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
+        .chart-legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.73rem; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.6px; }
+        [data-theme="dark"] .chart-legend-item { color: #94a3b8; }
+        .chart-legend-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
         #stats-model-table-wrap { max-height: 300px; overflow-y: auto; }
         .model-images-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
         .model-images-table thead th { position: sticky; top: 0; background: var(--card-bg); z-index: 1; }
@@ -835,22 +841,25 @@ class WorkerWebUI:
                         <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
                         <div class="grid-3">
                             <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">CPU % <span style="font-weight:400;font-size:0.7rem;">(system)</span></div>
-                                <div class="chart-container-sm"><canvas id="chart-cpu" aria-label="CPU usage over time"></canvas></div>
-                                <div class="chart-label" style="margin-top:10px;">CPU % <span style="font-weight:400;font-size:0.7rem;">(worker)</span></div>
-                                <div class="chart-container-sm"><canvas id="chart-cpu-ctr" aria-label="Worker CPU usage over time"></canvas></div>
+                                <div class="chart-legend">
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#f59e0b;"></span>CPU % System</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#fb923c;"></span>CPU % Worker</span>
+                                </div>
+                                <div class="chart-container-md"><canvas id="chart-cpu" aria-label="CPU usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">GPU % <span style="font-weight:400;font-size:0.7rem;">(system)</span></div>
-                                <div class="chart-container-sm"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
-                                <div class="chart-label" style="margin-top:10px;">VRAM % <span style="font-weight:400;font-size:0.7rem;">(worker)</span></div>
-                                <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
+                                <div class="chart-legend">
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#3b82f6;"></span>GPU % System</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#8b5cf6;"></span>VRAM % Worker</span>
+                                </div>
+                                <div class="chart-container-md"><canvas id="chart-gpu" aria-label="GPU and VRAM usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
-                                <div class="chart-label">RAM % <span style="font-weight:400;font-size:0.7rem;">(worker / total)</span></div>
-                                <div class="chart-container-sm"><canvas id="chart-ram" aria-label="Worker RAM usage over time"></canvas></div>
-                                <div class="chart-label" style="margin-top:10px;">RAM % <span style="font-weight:400;font-size:0.7rem;">(system / total)</span></div>
-                                <div class="chart-container-sm"><canvas id="chart-sysram" aria-label="System RAM usage over time"></canvas></div>
+                                <div class="chart-legend">
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#10b981;"></span>RAM % Worker</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#059669;"></span>RAM % System</span>
+                                </div>
+                                <div class="chart-container-md"><canvas id="chart-ram" aria-label="RAM usage over time"></canvas></div>
                             </div>
                         </div>
                     </div>
@@ -2397,12 +2406,18 @@ class WorkerWebUI:
             // Charts
             drawLineChart('chart-iph',     snaps.map(function(s) { return { t: s.t, v: s.iph  }; }), { color: '#10b981' });
             drawLineChart('chart-kph',     snaps.map(function(s) { return { t: s.t, v: s.kph  }; }), { color: '#6366f1' });
-            drawLineChart('chart-cpu',     snaps.map(function(s) { return { t: s.t, v: s.cpu  }; }), { color: '#f59e0b', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
-            drawLineChart('chart-cpu-ctr', snaps.map(function(s) { return { t: s.t, v: s.container_cpu || 0 }; }), { color: '#fb923c', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
-            drawLineChart('chart-gpu',     snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), { color: '#3b82f6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
-            drawLineChart('chart-vram',    snaps.map(function(s) { return { t: s.t, v: s.vram }; }), { color: '#8b5cf6', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
-            drawLineChart('chart-ram',     snaps.map(function(s) { return { t: s.t, v: s.ram  || 0 }; }), { color: '#10b981', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
-            drawLineChart('chart-sysram',  snaps.map(function(s) { return { t: s.t, v: s.system_ram || 0 }; }), { color: '#059669', yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawMultiLineChart('chart-cpu', [
+                { points: snaps.map(function(s) { return { t: s.t, v: s.cpu  }; }), color: '#f59e0b' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.container_cpu || 0 }; }), color: '#fb923c' },
+            ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawMultiLineChart('chart-gpu', [
+                { points: snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), color: '#3b82f6' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.vram }; }), color: '#8b5cf6' },
+            ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
+            drawMultiLineChart('chart-ram', [
+                { points: snaps.map(function(s) { return { t: s.t, v: s.ram  || 0 }; }), color: '#10b981' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.system_ram || 0 }; }), color: '#059669' },
+            ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
         }
 
         function drawLineChart(canvasId, points, opts) {
@@ -2525,6 +2540,154 @@ class WorkerWebUI:
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
             ctx.stroke();
+
+            ctx.restore(); // end clip
+
+            // Chart border
+            ctx.strokeStyle = gridColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(pad.left, pad.top, chartW, chartH);
+
+            ctx.restore(); // end dpr scale
+        }
+
+        function drawMultiLineChart(canvasId, seriesArray, opts) {
+            var canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            if (!seriesArray || seriesArray.length === 0) return;
+            var parent = canvas.parentElement;
+            var cssW = (parent ? parent.offsetWidth : 0) || 400;
+            var cssH = (parent ? parent.offsetHeight : 0) || 160;
+            var dpr = window.devicePixelRatio || 1;
+            var pxW = Math.round(cssW * dpr);
+            var pxH = Math.round(cssH * dpr);
+            if (canvas.width !== pxW || canvas.height !== pxH) {
+                canvas.width  = pxW;
+                canvas.height = pxH;
+                canvas.style.width  = cssW + 'px';
+                canvas.style.height = cssH + 'px';
+            }
+            var ctx = canvas.getContext('2d');
+            ctx.save();
+            ctx.scale(dpr, dpr);
+            var w = cssW, h = cssH;
+            var pad = { top: 12, right: 14, bottom: 32, left: 46 };
+            var chartW = w - pad.left - pad.right;
+            var chartH = h - pad.top - pad.bottom;
+            var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            var gridColor = isDark ? '#2d3f55' : '#e2e8f0';
+            var textColor = isDark ? '#94a3b8' : '#64748b';
+            var bgColor   = isDark ? '#1e293b' : '#ffffff';
+
+            // Background
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, w, h);
+
+            // Gather all points for x/y range
+            var allPoints = [];
+            for (var si = 0; si < seriesArray.length; si++) {
+                var pts = seriesArray[si].points || [];
+                for (var pi = 0; pi < pts.length; pi++) allPoints.push(pts[pi]);
+            }
+
+            if (allPoints.length === 0) {
+                ctx.fillStyle = textColor;
+                ctx.font = '12px -apple-system, system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('No data yet \u2014 data is collected every few seconds', w / 2, h / 2);
+                ctx.restore();
+                return;
+            }
+
+            // Y range
+            var yMin = opts.yMin !== undefined ? opts.yMin : 0;
+            var rawMax = allPoints.reduce(function(m, p) { return Math.max(m, p.v); }, 0);
+            var yMax = opts.yMax !== undefined ? opts.yMax : Math.max(rawMax * 1.15, yMin + 1);
+            if (rawMax === 0 && opts.yMax === undefined) yMax = Math.max(yMax, 10);
+            var yRange = yMax - yMin || 1;
+
+            // X range (use the first series' time axis as the reference)
+            var refPts = seriesArray[0].points || [];
+            var tMin = refPts.length ? refPts[0].t : allPoints[0].t;
+            var tMax = refPts.length ? refPts[refPts.length - 1].t : allPoints[allPoints.length - 1].t;
+            var tRange = tMax - tMin || 1;
+
+            function cxf(t) { return pad.left + ((t - tMin) / tRange) * chartW; }
+            function cyf(v) { return pad.top + (1 - (v - yMin) / yRange) * chartH; }
+
+            // Horizontal grid lines + Y labels
+            var levels = 4;
+            ctx.strokeStyle = gridColor;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.font = '10px -apple-system, system-ui, sans-serif';
+            ctx.fillStyle = textColor;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            for (var i = 0; i <= levels; i++) {
+                var frac = i / levels;
+                var yPx = pad.top + frac * chartH;
+                ctx.beginPath(); ctx.moveTo(pad.left, yPx); ctx.lineTo(pad.left + chartW, yPx); ctx.stroke();
+                var val = yMin + (1 - frac) * yRange;
+                var lbl = opts.yFmt ? opts.yFmt(val) : (val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val % 1 === 0 ? Math.round(val) : val.toFixed(1));
+                ctx.fillText(lbl, pad.left - 5, yPx);
+            }
+            ctx.setLineDash([]);
+
+            // X axis time labels
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            var numXLabels = Math.min(4, refPts.length - 1);
+            if (numXLabels < 1) numXLabels = 1;
+            for (var j = 0; j <= numXLabels; j++) {
+                var tVal = tMin + (j / numXLabels) * tRange;
+                var xPx = cxf(tVal);
+                var d = new Date(tVal * 1000);
+                var hh = ('0' + d.getHours()).slice(-2), mm = ('0' + d.getMinutes()).slice(-2);
+                ctx.fillText(hh + ':' + mm, xPx, pad.top + chartH + 5);
+            }
+
+            // Clip to chart area
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(pad.left, pad.top, chartW, chartH);
+            ctx.clip();
+
+            // Draw each series (fills first, then lines on top)
+            for (var fi = 0; fi < seriesArray.length; fi++) {
+                var series = seriesArray[fi];
+                var spts = series.points || [];
+                if (spts.length === 0) continue;
+                var lineColor = series.color || '#6366f1';
+                var cm = lineColor.match(/^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+                var r = 99, g = 102, b = 241;
+                if (cm) { r = parseInt(cm[1], 16); g = parseInt(cm[2], 16); b = parseInt(cm[3], 16); }
+                var fillAlpha = isDark ? '0.10' : '0.06';
+                // Fill area
+                ctx.beginPath();
+                ctx.moveTo(cxf(spts[0].t), cyf(yMin));
+                for (var k = 0; k < spts.length; k++) ctx.lineTo(cxf(spts[k].t), cyf(spts[k].v));
+                ctx.lineTo(cxf(spts[spts.length - 1].t), cyf(yMin));
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + fillAlpha + ')';
+                ctx.fill();
+            }
+            for (var li = 0; li < seriesArray.length; li++) {
+                var lseries = seriesArray[li];
+                var lpts = lseries.points || [];
+                if (lpts.length === 0) continue;
+                ctx.beginPath();
+                for (var n = 0; n < lpts.length; n++) {
+                    var xc = cxf(lpts[n].t), yc = cyf(lpts[n].v);
+                    if (n === 0) ctx.moveTo(xc, yc); else ctx.lineTo(xc, yc);
+                }
+                ctx.strokeStyle = lseries.color || '#6366f1';
+                ctx.lineWidth = 2;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.stroke();
+            }
 
             ctx.restore(); // end clip
 
