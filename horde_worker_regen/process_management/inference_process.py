@@ -347,6 +347,25 @@ class HordeInferenceProcess(HordeProcess):
                 logger.info("No auxiliary models to download")
                 return None
 
+            # Validate lora.json before reloading. If it was corrupted by an interrupted
+            # write in a previous session, remove it so hordelib logs a WARNING instead of
+            # an ERROR and recreates the file from scratch.
+            try:
+                import json as _json
+
+                _lora_db_path = lora_manager.models_db_path
+                if _lora_db_path.exists():
+                    try:
+                        _json.loads(_lora_db_path.read_text(encoding="utf-8", errors="ignore"))
+                    except _json.JSONDecodeError:
+                        logger.warning(
+                            f"Corrupted lora reference cache detected at {_lora_db_path}. "
+                            "Removing it so that it can be rebuilt cleanly.",
+                        )
+                        _lora_db_path.unlink(missing_ok=True)
+            except Exception as _e:
+                logger.debug(f"Could not validate lora reference cache: {_e}")
+
             try:
                 lora_manager.load_model_database()
                 lora_manager.reset_adhoc_loras()
