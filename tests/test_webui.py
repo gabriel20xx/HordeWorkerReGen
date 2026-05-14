@@ -134,6 +134,26 @@ def test_webui_cpu_gpu_and_container_cpu_usage() -> None:
     assert webui.status_data["container_cpu_percent"] == 100.0
 
 
+def test_webui_gpu_cores_count() -> None:
+    """Test that WorkerWebUI correctly handles GPU cores count updates."""
+    webui = WorkerWebUI(port=0)
+
+    # Default value should be 0
+    assert webui.status_data["gpu_cores_count"] == 0
+
+    # Test setting a typical GPU cores count (e.g. RTX 3080 has 8704 CUDA cores)
+    webui.update_status(gpu_cores_count=8704)
+    assert webui.status_data["gpu_cores_count"] == 8704
+
+    # Test update with a different value
+    webui.update_status(gpu_cores_count=10496)
+    assert webui.status_data["gpu_cores_count"] == 10496
+
+    # Test that passing None does not overwrite the existing value
+    webui.update_status(gpu_cores_count=None)
+    assert webui.status_data["gpu_cores_count"] == 10496
+
+
 def test_webui_system_vram_usage() -> None:
     """Test that WorkerWebUI correctly handles system-wide VRAM usage updates."""
     webui = WorkerWebUI(port=0)
@@ -534,6 +554,8 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
         assert 'id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-gpu-wrk-bar" style="width:0%" aria-label="Worker GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-gpu-wrk-pct">0%</span>' in html
+        assert 'id="topbar-vram-total">0 MB</span>' in html
+        assert 'id="topbar-gpu-cores">0 cores</span>' in html
         assert 'id="topbar-vram-total">0 MB</span>' in html
         assert 'id="topbar-vram-bar" style="width:0%" aria-label="System VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
         assert 'id="topbar-vram-wrk-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html

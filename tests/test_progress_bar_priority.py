@@ -11,6 +11,7 @@ accumulated total.
 """
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from horde_worker_regen.process_management.messages import HordeProcessState
@@ -1467,3 +1468,92 @@ def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> 
 
     # system_vram_usage_mb must be present (computed from torch.cuda.mem_get_info across devices).
     assert "system_vram_usage_mb" in kwargs, "system_vram_usage_mb was not passed to webui.update_status"
+
+
+def _make_minimal_manager_for_update_webui_status_metrics() -> MagicMock:
+    """Create a minimal manager mock suitable for update_webui_status metric assertions."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+    mock_manager.jobs_pending_submit = []
+    mock_manager.jobs_being_safety_checked = []
+    mock_manager.jobs_pending_safety_check = []
+    mock_manager.jobs_in_progress = []
+    mock_manager.jobs_lookup = {}
+    mock_manager.jobs_pending_inference = []
+    mock_manager._WEBUI_POST_INFERENCE_STATES = HordeWorkerProcessManager._WEBUI_POST_INFERENCE_STATES
+    mock_manager._calculate_granular_progress = (
+        HordeWorkerProcessManager._calculate_granular_progress.__get__(mock_manager, HordeWorkerProcessManager)
+    )
+    mock_manager._build_current_job_dict = (
+        HordeWorkerProcessManager._build_current_job_dict.__get__(mock_manager, HordeWorkerProcessManager)
+    )
+    mock_manager._serialize_loras_for_webui.return_value = None
+    mock_manager._process_map.values.return_value = []
+    mock_manager._device_map.root = {}
+    mock_manager.kudos_events = []
+    mock_manager.user_info = None
+    mock_manager._time_spent_no_jobs_available = 0.0
+    mock_manager._last_pop_no_jobs_available_time = 0.0
+    mock_manager.total_ram_bytes = 0
+    mock_manager.webui = MagicMock()
+
+    return mock_manager
+
+
+def test_update_webui_status_gpu_cores_count_sums_known_cuda_devices() -> None:
+    """Known CUDA architectures should be summed, while unknown ones are skipped."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = _make_minimal_manager_for_update_webui_status_metrics()
+
+    stub_psutil = MagicMock()
+    stub_psutil.cpu_percent.return_value = 0.0
+    stub_psutil.cpu_count.return_value = 1
+    stub_psutil.virtual_memory.return_value.used = 0
+
+    stub_torch = MagicMock()
+    stub_torch.cuda.is_available.return_value = True
+    stub_torch.cuda.device_count.return_value = 3
+    stub_torch.cuda.get_device_properties.side_effect = [
+        SimpleNamespace(major=8, minor=6, multi_processor_count=30),
+        SimpleNamespace(major=8, minor=9, multi_processor_count=80),
+        SimpleNamespace(major=10, minor=0, multi_processor_count=100),  # unknown -> skipped
+    ]
+
+    with (
+        patch("horde_worker_regen.process_management.process_manager.psutil", stub_psutil),
+        patch.dict("sys.modules", {"torch": stub_torch}),
+    ):
+        method = HordeWorkerProcessManager.update_webui_status.__get__(mock_manager, HordeWorkerProcessManager)
+        method()
+
+    kwargs = mock_manager.webui.update_status.call_args.kwargs
+    assert kwargs["gpu_cores_count"] == 14080
+
+
+def test_update_webui_status_gpu_cores_count_unknown_arch_keeps_previous_value() -> None:
+    """If all CUDA architectures are unknown, gpu_cores_count should be left unchanged."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = _make_minimal_manager_for_update_webui_status_metrics()
+
+    stub_psutil = MagicMock()
+    stub_psutil.cpu_percent.return_value = 0.0
+    stub_psutil.cpu_count.return_value = 1
+    stub_psutil.virtual_memory.return_value.used = 0
+
+    stub_torch = MagicMock()
+    stub_torch.cuda.is_available.return_value = True
+    stub_torch.cuda.device_count.return_value = 1
+    stub_torch.cuda.get_device_properties.return_value = SimpleNamespace(major=10, minor=0, multi_processor_count=100)
+
+    with (
+        patch("horde_worker_regen.process_management.process_manager.psutil", stub_psutil),
+        patch.dict("sys.modules", {"torch": stub_torch}),
+    ):
+        method = HordeWorkerProcessManager.update_webui_status.__get__(mock_manager, HordeWorkerProcessManager)
+        method()
+
+    kwargs = mock_manager.webui.update_status.call_args.kwargs
+    assert kwargs["gpu_cores_count"] is None
