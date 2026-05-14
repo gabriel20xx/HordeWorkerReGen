@@ -6953,9 +6953,10 @@ class HordeWorkerProcessManager:
             for child in main_proc.children(recursive=True):
                 with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                     raw_cpu += child.cpu_percent(interval=None)
-            # Normalise: psutil per-process cpu_percent can exceed 100 on multi-core
-            # machines (it returns usage as a percentage of a single core).
-            # Divide by logical core count to express as % of total system CPU capacity.
+            # psutil process cpu_percent can exceed 100% on multi-core machines because it
+            # accumulates usage across each logical core independently.  Dividing by the
+            # logical core count converts that sum to a percentage of total system CPU
+            # capacity (e.g. 200% on a 4-core machine → 50% of total capacity).
             container_cpu_percent = min(100.0, round(raw_cpu / (cpu_cores_count or 1), 1))
         except Exception:
             pass

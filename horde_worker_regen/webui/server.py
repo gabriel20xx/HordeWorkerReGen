@@ -607,7 +607,7 @@ class WorkerWebUI:
     </nav>
     <div class="mobile-resources" aria-label="Resource usage">
         <span class="mobile-res-chip" id="mobile-cpu">CPU 0%</span>
-        <span class="mobile-res-chip" id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">CTR 0%</span>
+        <span class="mobile-res-chip" id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">CNTR 0%</span>
         <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
         <span class="mobile-res-chip" id="mobile-vram">VRAM 0%</span>
     </div>
@@ -2010,7 +2010,7 @@ class WorkerWebUI:
 
                     document.getElementById('mobile-cpu').textContent = 'CPU '+cpu+'%';
                     document.getElementById('mobile-cpu').style.color = resBarColor(cpu);
-                    document.getElementById('mobile-cpu-ctr').textContent = 'CTR '+ctrCpu+'%';
+                    document.getElementById('mobile-cpu-ctr').textContent = 'CNTR '+ctrCpu+'%';
                     document.getElementById('mobile-cpu-ctr').style.color = resBarColor(ctrCpu);
                     document.getElementById('mobile-gpu').textContent = 'GPU '+gpu+'%';
                     document.getElementById('mobile-gpu').style.color = resBarColor(gpu);
