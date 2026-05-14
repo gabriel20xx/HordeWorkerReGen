@@ -850,14 +850,6 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job State (Session)</span></div>
-                        <div class="card" style="padding:14px 16px;">
-                            <div id="stats-job-state-time-wrap">
-                                <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="section">
                         <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
                         <div class="grid-4">
                             <div class="card" style="padding:14px 16px;">
@@ -902,6 +894,14 @@ class WorkerWebUI:
                                 <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#6366f1;"></span>Kudos / hr</span>
                             </div>
                             <div class="chart-container"><canvas id="chart-iph-kph" aria-label="Images and kudos per hour over time"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job State (Session)</span></div>
+                        <div class="card" style="padding:14px 16px;">
+                            <div id="stats-job-state-time-wrap">
+                                <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
+                            </div>
                         </div>
                     </div>
                     <div class="section">
