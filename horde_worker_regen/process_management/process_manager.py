@@ -139,6 +139,27 @@ _CUDA_CORES_PER_SM: dict[tuple[int, int], int] = {
     (9, 0): 128,
 }
 
+
+def _get_cuda_cores_per_sm(major: int, minor: int) -> int | None:
+    """Return CUDA cores per SM for a compute capability.
+
+    Falls back to the latest known minor version for the same major version so
+    newer minor revisions do not immediately report as unknown.
+    """
+    exact = _CUDA_CORES_PER_SM.get((major, minor))
+    if exact is not None:
+        return exact
+
+    same_major_minors = [mapped_minor for mapped_major, mapped_minor in _CUDA_CORES_PER_SM if mapped_major == major]
+    if not same_major_minors:
+        return None
+
+    eligible_minors = [mapped_minor for mapped_minor in same_major_minors if mapped_minor <= minor]
+    if eligible_minors:
+        return _CUDA_CORES_PER_SM[(major, max(eligible_minors))]
+
+    return _CUDA_CORES_PER_SM[(major, min(same_major_minors))]
+
 # This is due to Linux/Windows differences in the multiprocessing module
 # ! IMPORTANT: Start of own code
 try:
@@ -7067,18 +7088,26 @@ class HordeWorkerProcessManager:
         # Get total GPU cores count across all devices.
         # For NVIDIA GPUs the CUDA core count is derived from the SM count and the
         # compute-capability-specific cores-per-SM lookup table (_CUDA_CORES_PER_SM).
-        # If the compute capability is not in the table (unknown architecture), 0 is
-        # contributed for that device to avoid mixing CUDA-core and SM-count units.
-        gpu_cores_count = 0
+        # Devices with unknown compute capability are skipped to avoid mixing CUDA-core
+        # and SM-count units; if all devices are unknown, we leave the webui value
+        # unchanged by passing None.
+        gpu_cores_count: int | None = None
         try:
             import torch
 
             if torch.cuda.is_available():
+                computed_gpu_cores_count = 0
+                has_known_cuda_core_count = False
                 for i in range(torch.cuda.device_count()):
                     with contextlib.suppress(Exception):
                         props = torch.cuda.get_device_properties(i)
-                        cores_per_sm = _CUDA_CORES_PER_SM.get((props.major, props.minor), 0)
-                        gpu_cores_count += props.multi_processor_count * cores_per_sm
+                        cores_per_sm = _get_cuda_cores_per_sm(props.major, props.minor)
+                        if cores_per_sm is None:
+                            continue
+                        computed_gpu_cores_count += props.multi_processor_count * cores_per_sm
+                        has_known_cuda_core_count = True
+                if has_known_cuda_core_count:
+                    gpu_cores_count = computed_gpu_cores_count
         except Exception:
             pass
 

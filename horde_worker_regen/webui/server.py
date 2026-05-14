@@ -3360,7 +3360,7 @@ class WorkerWebUI:
             cpu_cores_count: Number of CPU cores
             gpu_usage_percent: System-wide GPU SM utilisation percentage
             worker_gpu_percent: GPU SM utilisation percentage reported by the worker inference processes
-            gpu_cores_count: Total number of GPU cores (CUDA cores for NVIDIA, compute units for AMD)
+            gpu_cores_count: Total detected NVIDIA CUDA cores across CUDA devices
             container_cpu_percent: CPU usage percentage of the worker process tree (container-level)
             maintenance_mode: Whether worker is in maintenance mode
             job_pops_paused: Whether new job pops are currently paused by the user
