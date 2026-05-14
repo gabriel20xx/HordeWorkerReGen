@@ -1716,7 +1716,7 @@ class HordeWorkerProcessManager:
         self.jobs_being_safety_checked = []
         self.job_faults = {}
         self._faulted_jobs_history = []
-        self._faulted_jobs_per_state: dict[str, int] = {}
+        self._faulted_jobs_per_phase: dict[str, int] = {}
         self._errors_history: list[str] = []
         # Tracks the length of _errors_history at the last webui update so the list
         # is only copied and sent when new errors have been added.
@@ -4736,7 +4736,7 @@ class HordeWorkerProcessManager:
 
         # Track cumulative fault count per phase for the stats graph.
         phase_key = fault_phase if fault_phase is not None else "Unknown Phase"
-        self._faulted_jobs_per_state[phase_key] = self._faulted_jobs_per_state.get(phase_key, 0) + 1
+        self._faulted_jobs_per_phase[phase_key] = self._faulted_jobs_per_phase.get(phase_key, 0) + 1
 
     def handle_job_fault(
         self,
@@ -7142,7 +7142,7 @@ class HordeWorkerProcessManager:
             job_pops_pause_until=self._job_pops_pause_until,
             images_per_model=self._images_per_model,
             failed_jobs_per_model=self._failed_models,
-            faulted_jobs_per_state=self._faulted_jobs_per_state,
+            faulted_jobs_per_phase=self._faulted_jobs_per_phase,
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 

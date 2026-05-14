@@ -1702,25 +1702,25 @@ async def test_webui_stats_endpoint() -> None:
             data6 = await response.json()
         assert data6["failed_jobs_per_model"] == {}
 
-        # faulted_jobs_per_state field must be present and empty initially.
-        assert "faulted_jobs_per_state" in data6
-        assert data6["faulted_jobs_per_state"] == {}
+        # faulted_jobs_per_phase field must be present and empty initially.
+        assert "faulted_jobs_per_phase" in data6
+        assert data6["faulted_jobs_per_phase"] == {}
 
-        # faulted_jobs_per_state is reflected from update_status and can be set and cleared.
-        webui.update_status(faulted_jobs_per_state={"During Inference": 4, "Safety Check": 1})
+        # faulted_jobs_per_phase is reflected from update_status and can be set and cleared.
+        webui.update_status(faulted_jobs_per_phase={"During Inference": 4, "Safety Check": 1})
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
             data7 = await response.json()
-        assert data7["faulted_jobs_per_state"] == {"During Inference": 4, "Safety Check": 1}
+        assert data7["faulted_jobs_per_phase"] == {"During Inference": 4, "Safety Check": 1}
 
-        # Passing an empty dict clears the faulted_jobs_per_state field correctly.
-        webui.update_status(faulted_jobs_per_state={})
+        # Passing an empty dict clears the faulted_jobs_per_phase field correctly.
+        webui.update_status(faulted_jobs_per_phase={})
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
             data8 = await response.json()
-        assert data8["faulted_jobs_per_state"] == {}
+        assert data8["faulted_jobs_per_phase"] == {}
 
     finally:
         await webui.stop()
