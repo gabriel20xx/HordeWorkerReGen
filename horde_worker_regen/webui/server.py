@@ -665,11 +665,13 @@ class WorkerWebUI:
                 </div>
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span>GPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-gpu-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back gpu" id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back gpu" id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div><div class="topbar-res-bar gpu" id="topbar-gpu-wrk-bar" style="width:0%" aria-label="Worker GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+                    <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-gpu-wrk-pct">0%</span></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>VRAM</span><span id="topbar-vram-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar vram" id="topbar-vram-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+                    <div class="topbar-res-pill-label"><span>VRAM <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-vram-pct">0%</span></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back vram" id="topbar-vram-bar" style="width:0%" aria-label="System VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div><div class="topbar-res-bar vram" id="topbar-vram-wrk-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+                    <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-vram-wrk-pct">0%</span></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-vram-val">0 MB / 0 MB</span></div>
                 </div>
                 <div class="topbar-res-pill">
@@ -2110,9 +2112,12 @@ class WorkerWebUI:
                     document.getElementById('time-without-jobs').textContent = formatUptime(data.time_without_jobs || 0);
                     const cpu = Math.min(100, Math.round(data.cpu_usage_percent));
                     const gpu = Math.min(100, Math.round(data.gpu_usage_percent || 0));
+                    const workerGpu = Math.min(100, Math.round(data.worker_gpu_percent || 0));
                     const vramMb = data.vram_usage_mb || 0;
+                    const sysVramMb = data.system_vram_usage_mb || 0;
                     const vramTotalMb = data.total_vram_mb || 0;
                     const vram = vramTotalMb > 0 ? Math.min(100, Math.round((vramMb / vramTotalMb) * 100)) : 0;
+                    const sysVram = vramTotalMb > 0 ? Math.min(100, Math.round((sysVramMb / vramTotalMb) * 100)) : 0;
                     const ctrCpu = Math.min(100, Math.round(data.container_cpu_percent || 0));
                     const ramMb = data.ram_usage_mb || 0;
                     const totalRamMb = data.total_ram_mb || 0;
@@ -2138,11 +2143,21 @@ class WorkerWebUI:
                     gpuBar.style.width = gpu+'%';
                     gpuBar.style.backgroundColor = resBarColor(gpu);
                     gpuBar.setAttribute('aria-valuenow', gpu);
-                    document.getElementById('topbar-vram-pct').textContent = vram+'%';
+                    document.getElementById('topbar-gpu-wrk-pct').textContent = workerGpu+'%';
+                    const gpuWrkBar = document.getElementById('topbar-gpu-wrk-bar');
+                    gpuWrkBar.style.width = workerGpu+'%';
+                    gpuWrkBar.style.backgroundColor = resBarColor(workerGpu);
+                    gpuWrkBar.setAttribute('aria-valuenow', workerGpu);
+                    document.getElementById('topbar-vram-pct').textContent = sysVram+'%';
                     const vramBar = document.getElementById('topbar-vram-bar');
-                    vramBar.style.width = vram+'%';
-                    vramBar.style.backgroundColor = resBarColor(vram);
-                    vramBar.setAttribute('aria-valuenow', vram);
+                    vramBar.style.width = sysVram+'%';
+                    vramBar.style.backgroundColor = resBarColor(sysVram);
+                    vramBar.setAttribute('aria-valuenow', sysVram);
+                    document.getElementById('topbar-vram-wrk-pct').textContent = vram+'%';
+                    const vramWrkBar = document.getElementById('topbar-vram-wrk-bar');
+                    vramWrkBar.style.width = vram+'%';
+                    vramWrkBar.style.backgroundColor = resBarColor(vram);
+                    vramWrkBar.setAttribute('aria-valuenow', vram);
                     document.getElementById('topbar-vram-val').textContent = formatMb(vramMb) + ' / ' + formatMb(vramTotalMb);
                     document.getElementById('topbar-ram-pct').textContent = ram+'%';
                     const ramVal = formatMb(ramMb);
