@@ -7511,17 +7511,18 @@ class HordeWorkerProcessManager:
           **always** evaluated when no other process is in INFERENCE_PROCESSING; in that case the
           semaphore is available and any process stuck in INFERENCE_STARTING for longer than
           ``preload_timeout`` is genuinely hung regardless of how recently a recovery was performed.
-        - ``INFERENCE_POST_PROCESSING``, ``MODEL_PRELOADING``, ``MODEL_PRELOADED``,
-          ``DOWNLOADING_AUX_MODEL``, and ``PROCESS_STARTING`` are **always** evaluated, so a
-          process that is genuinely stuck in one of those states is recovered even when a different
-          process was recently replaced.
+        - ``INFERENCE_POST_PROCESSING``, ``POST_PROCESSING_STARTING``, ``MODEL_PRELOADING``,
+          ``MODEL_PRELOADED``, ``DOWNLOADING_AUX_MODEL``, and ``PROCESS_STARTING`` are **always**
+          evaluated, so a process that is genuinely stuck in one of those states is recovered even
+          when a different process was recently replaced.
 
         Job-related stuck states are checked in a multi-pass scan (condition-first, then
         processes) so that every process is examined for the highest-priority state before any
         process is examined for the next state.  This gives true cross-process prioritization:
-        actively-in-progress states (``INFERENCE_POST_PROCESSING``, ``MODEL_PRELOADING``,
-        ``DOWNLOADING_AUX_MODEL``) are cleared across the entire worker before idle/finished
-        states (``MODEL_PRELOADED``) are reclaimed, regardless of subprocess map ordering.
+        actively-in-progress states (``INFERENCE_POST_PROCESSING``, ``POST_PROCESSING_STARTING``,
+        ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``) are cleared across the entire worker
+        before idle/finished states (``MODEL_PRELOADED``) are reclaimed, regardless of subprocess
+        map ordering.
         """
         import threading
 
@@ -7746,16 +7747,18 @@ class HordeWorkerProcessManager:
         # Job-related stuck states are checked in a multi-pass scan: for each condition in
         # priority order, every process is scanned before moving to the next condition.
         # This guarantees true cross-process prioritization — a stuck INFERENCE_POST_PROCESSING
-        # process (which holds the VAE decode semaphore and actively blocks other workers) is
-        # cleared across the entire worker before any idle/finished state (e.g. MODEL_PRELOADED,
-        # which is merely waiting for a job dispatch) is reclaimed, regardless of the order in
-        # which subprocesses appear in the process map.
+        # or POST_PROCESSING_STARTING process (which may hold the VAE decode semaphore and
+        # block other inference processes on this worker) is cleared across the entire worker before any
+        # idle/finished state (e.g. MODEL_PRELOADED, which is merely waiting for a job
+        # dispatch) is reclaimed, regardless of the order in which subprocesses appear in
+        # the process map.
         #
         # The conditions are ordered: actively-in-progress states first, idle/finished last:
         #   1. INFERENCE_POST_PROCESSING  — holds VAE decode semaphore
-        #   2. MODEL_PRELOADING           — actively loading a model
-        #   3. DOWNLOADING_AUX_MODEL      — actively downloading a file
-        #   4. MODEL_PRELOADED            — idle, waiting for a job to be dispatched
+        #   2. POST_PROCESSING_STARTING   — transitioning into VAE decode (may hold semaphore)
+        #   3. MODEL_PRELOADING           — actively loading a model
+        #   4. DOWNLOADING_AUX_MODEL      — actively downloading a file
+        #   5. MODEL_PRELOADED            — idle, waiting for a job to be dispatched
         if not (self._last_pop_no_jobs_available and no_local_work):
             conditions: list[tuple[float, HordeProcessState, str]] = [
                 # --- actively in progress ---
@@ -7763,6 +7766,11 @@ class HordeWorkerProcessManager:
                     self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
                     HordeProcessState.INFERENCE_POST_PROCESSING,
                     "seems to be stuck post processing",
+                ),
+                (
+                    self.bridge_data.post_process_timeout + (3 * self.bridge_data.max_batch),
+                    HordeProcessState.POST_PROCESSING_STARTING,
+                    "seems to be stuck starting post processing",
                 ),
                 (
                     self.bridge_data.preload_timeout,
