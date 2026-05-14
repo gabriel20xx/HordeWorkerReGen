@@ -702,7 +702,7 @@ class WorkerWebUI:
                     </div>
                     <div class="grid-2" style="margin-bottom: 14px;">
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#9889; Current Job</span></div>
+                            <div class="card-header"><span class="card-title">&#9889; Current Job</span><span id="job-total-timer" style="margin-left:auto;font-size:0.75rem;color:#94a3b8;"></span></div>
                             <div id="overview-current-job" class="centered-empty-container"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
                         </div>
                         <div class="card">
@@ -1854,22 +1854,27 @@ class WorkerWebUI:
         // backwards for the same job.  Reset whenever the displayed job id changes.
         let _currentJobId = null;
         let _currentJobProgress = 0;
-        // Track how long the current job has been in its current state.
+        // Track how long the current job has been in its current state, and total job run time.
         let _currentJobState = null;
         let _currentJobStateStartTime = null;
+        let _currentJobStartTime = null;
         function formatElapsed(startMs) {
             if (!startMs) return '';
             const s = Math.floor((Date.now() - startMs) / 1000);
             if (s < 60) return s + 's';
             const m = Math.floor(s / 60), rs = s % 60;
             if (s < 3600) return m + 'm ' + rs + 's';
-            const h = Math.floor(s / 3600), rm = Math.floor((s % 3600) / 60), rrs = s % 3600 % 60;
+            const h = Math.floor(s / 3600), rm = Math.floor((s % 3600) / 60), rrs = s % 60;
             return h + 'h ' + rm + 'm ' + rrs + 's';
         }
         setInterval(function() {
             const timerEl = document.getElementById('job-state-timer');
             if (timerEl && _currentJobStateStartTime) {
                 timerEl.textContent = '(' + formatElapsed(_currentJobStateStartTime) + ')';
+            }
+            const totalEl = document.getElementById('job-total-timer');
+            if (totalEl) {
+                totalEl.textContent = _currentJobStartTime ? '\u23F1 ' + formatElapsed(_currentJobStartTime) : '';
             }
         }, 1000);
         function _getImageKey(rawB64, timestamp) {
@@ -2145,6 +2150,7 @@ class WorkerWebUI:
                             pv = Math.max(_currentJobProgress, rawPv);
                         } else {
                             _currentJobId = jobId;
+                            _currentJobStartTime = Date.now();
                             pv = rawPv;
                         }
                         _currentJobProgress = pv;
@@ -2168,6 +2174,9 @@ class WorkerWebUI:
                     } else {
                         _currentJobState = null;
                         _currentJobStateStartTime = null;
+                        _currentJobStartTime = null;
+                        const totalEl = document.getElementById('job-total-timer');
+                        if (totalEl) totalEl.textContent = '';
                         ojd.classList.add('centered-empty-container');
                         ojd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
                     }
