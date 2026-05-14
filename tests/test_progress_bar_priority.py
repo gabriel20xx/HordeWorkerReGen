@@ -1412,11 +1412,20 @@ def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> 
     mock_manager.total_ram_bytes = total_ram_bytes
     expected_total_ram_mb = total_ram_bytes / BYTES_TO_MEGABYTES  # 32768.0
 
-    # Simulate the cached psutil.Process instance returning 40% raw CPU on a 4-core machine.
+    # Simulate the cached process tree returning 70% raw CPU on a 4-core machine.
+    # 40% from the main process + 20% + 10% from two child processes.
     mock_proc = MagicMock()
     mock_proc.cpu_percent.return_value = 40.0
-    mock_proc.children.return_value = []
+    child_proc_1 = MagicMock()
+    child_proc_1.pid = 1001
+    child_proc_1.cpu_percent.return_value = 20.0
+    child_proc_2 = MagicMock()
+    child_proc_2.pid = 1002
+    child_proc_2.cpu_percent.return_value = 10.0
+    mock_proc.children.return_value = [child_proc_1, child_proc_2]
+    mock_proc.pid = 1000
     mock_manager._main_process = mock_proc
+    mock_manager._container_cpu_processes = {mock_proc.pid: mock_proc}
 
     stub_psutil = MagicMock()
     stub_psutil.cpu_percent.return_value = 0.0
@@ -1435,6 +1444,7 @@ def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> 
 
     assert mock_manager.webui.update_status.called, "webui.update_status was not called"
     kwargs = mock_manager.webui.update_status.call_args.kwargs
+    mock_proc.children.assert_called_once_with(recursive=True)
 
     # total_ram_mb must equal total_ram_bytes converted to MB.
     assert kwargs["total_ram_mb"] == expected_total_ram_mb, (
@@ -1446,8 +1456,8 @@ def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> 
         f"Expected system_ram_usage_mb={expected_system_ram_mb}, got {kwargs['system_ram_usage_mb']}"
     )
 
-    # container_cpu_percent must equal raw_cpu / cpu_cores = 40.0 / 4 = 10.0.
-    expected_container_cpu = round(40.0 / 4, 1)
+    # container_cpu_percent must equal raw_cpu / cpu_cores = (40 + 20 + 10) / 4 = 17.5.
+    expected_container_cpu = round((40.0 + 20.0 + 10.0) / 4, 1)
     assert kwargs["container_cpu_percent"] == expected_container_cpu, (
         f"Expected container_cpu_percent={expected_container_cpu}, got {kwargs['container_cpu_percent']}"
     )

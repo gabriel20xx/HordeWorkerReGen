@@ -252,7 +252,7 @@ class WorkerWebUI:
         .mobile-uptime { color: var(--text-muted); font-size: 0.7rem; font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0; }
 
         /* ---- Mobile resources sub-bar ---- */
-        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; min-height: 26px; background: #12162a; align-items: center; flex-wrap: wrap; padding: 2px 14px; gap: 10px 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); overflow-x: auto; }
+        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; flex-wrap: nowrap; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); overflow-x: auto; overflow-y: hidden; }
         .mobile-res-chip { color: var(--text-muted); font-size: 0.7rem; font-weight: 600; font-family: 'Courier New', monospace; }
 
         /* ---- Main content ---- */
@@ -2678,7 +2678,7 @@ class WorkerWebUI:
                         "t": <float>,            # Unix timestamp
                         "cpu": <float>,          # system CPU %
                         "gpu": <float>,          # GPU %
-                        "vram": <float>,         # device VRAM %
+                        "vram": <float>,         # worker VRAM as % of total device VRAM
                         "ram": <float>,          # worker RAM as % of system total
                         "system_ram": <float>,   # system-wide RAM as % of total
                         "container_cpu": <float>,# worker process + children CPU %

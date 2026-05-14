@@ -1845,11 +1845,11 @@ class HordeWorkerProcessManager:
         self._log_handler_id: int | None = None
         """ID of the logger handler for capturing console logs."""
 
-        # Persistent psutil.Process() handle for container CPU tracking.  cpu_percent(interval=None)
-        # computes a delta from the *previous* call on the same Process instance; creating a new
-        # instance on every update_webui_status() call would always return 0.  Storing it here ensures
-        # the delta is measured correctly across successive status updates.
+        # Persistent psutil.Process() handles for container CPU tracking. cpu_percent(interval=None)
+        # computes a delta from the *previous* call on the same Process instance, so we keep the main
+        # process plus child handles cached by PID across update_webui_status() calls.
         self._main_process: psutil.Process = psutil.Process()
+        self._container_cpu_processes: dict[int, psutil.Process] = {self._main_process.pid: self._main_process}
 
         if self.bridge_data.enable_webui:
             from horde_worker_regen.webui.server import WorkerWebUI
@@ -6961,10 +6961,19 @@ class HordeWorkerProcessManager:
         container_cpu_percent = 0.0
         try:
             main_proc = self._main_process
-            raw_cpu = main_proc.cpu_percent(interval=None)
+            tracked_processes: dict[int, psutil.Process] = {main_proc.pid: main_proc}
+
             for child in main_proc.children(recursive=True):
+                child_pid = child.pid
+                cached_child = self._container_cpu_processes.get(child_pid, child)
+                tracked_processes[child_pid] = cached_child
+
+            self._container_cpu_processes = tracked_processes
+
+            raw_cpu = 0.0
+            for process in tracked_processes.values():
                 with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-                    raw_cpu += child.cpu_percent(interval=None)
+                    raw_cpu += process.cpu_percent(interval=None)
             # psutil process cpu_percent can exceed 100% on multi-core machines because it
             # accumulates usage across each logical core independently.  Dividing by the
             # logical core count converts that sum to a percentage of total system CPU
