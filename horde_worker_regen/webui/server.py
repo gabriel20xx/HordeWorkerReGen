@@ -478,9 +478,9 @@ class WorkerWebUI:
         .topbar-res-pill { background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569; font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 8px; white-space: nowrap; display: flex; flex-direction: column; gap: 3px; min-width: 80px; }
         .topbar-res-pill-label { display: flex; justify-content: space-between; align-items: center; font-family: 'Courier New', monospace; }
         .topbar-res-pill-sub { display: flex; justify-content: space-between; align-items: center; font-family: 'Courier New', monospace; font-size: 0.67rem; opacity: 0.75; margin-top: 1px; }
-        .topbar-res-bar-track { width: 100%; height: 4px; background: #cbd5e1; border-radius: 2px; overflow: hidden; }
-        .topbar-res-bar { height: 100%; border-radius: 2px; transition: width 0.4s ease, background-color 0.4s ease; }
-        .topbar-res-divider { border: none; border-top: 1px solid #e2e8f0; margin: 1px 0; }
+        .topbar-res-bar-track { width: 100%; height: 4px; background: #cbd5e1; border-radius: 2px; overflow: hidden; position: relative; }
+        .topbar-res-bar { height: 100%; border-radius: 2px; transition: width 0.4s ease, background-color 0.4s ease; position: absolute; left: 0; top: 0; }
+        .topbar-res-bar-back { opacity: 0.4; }
         /* ---- Dark mode ---- */
         [data-theme="dark"] { --main-bg: #0f172a; --card-bg: #1e293b; --border: #2d3f55; --sidebar-bg: #0d1117; --sidebar-hover: #161e2e; }
         [data-theme="dark"] body { color: #cbd5e1; }
@@ -491,7 +491,6 @@ class WorkerWebUI:
         [data-theme="dark"] .topbar .theme-toggle:hover { background: #2d3f55; }
         [data-theme="dark"] .topbar-res-pill { background: #151e2e; border-color: #2d3f55; color: #94a3b8; }
         [data-theme="dark"] .topbar-res-bar-track { background: #2d3f55; }
-        [data-theme="dark"] .topbar-res-divider { border-top-color: #2d3f55; }
         [data-theme="dark"] .stat-card-value:not(.success):not(.accent):not(.warning):not(.error) { color: #f1f5f9; }
         [data-theme="dark"] .stat-card-value.success { color: #34d399; }
         [data-theme="dark"] .stat-card-value.accent  { color: #818cf8; }
@@ -649,10 +648,8 @@ class WorkerWebUI:
             <div class="topbar-resources">
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span>CPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-cpu-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar cpu" id="topbar-cpu-bar" style="width:0%"></div></div>
-                    <hr class="topbar-res-divider">
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-cpu-bar" style="width:0%"></div><div class="topbar-res-bar cpu" id="topbar-cpu-ctr-bar" style="width:0%"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-cpu-ctr-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar cpu" id="topbar-cpu-ctr-bar" style="width:0%"></div></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-cpu-cores">0 cores</span></div>
                 </div>
                 <div class="topbar-res-pill">
@@ -665,11 +662,9 @@ class WorkerWebUI:
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-vram-val">0 MB / 0 MB</span></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>RAM <span style="font-weight:400;font-size:0.67rem;">worker</span></span><span id="topbar-ram-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%;background-color:#10b981;"></div></div>
-                    <hr class="topbar-res-divider">
-                    <div class="topbar-res-pill-sub"><span>System</span><span id="topbar-sysram-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar" id="topbar-sysram-bar" style="width:0%;background-color:#10b981;"></div></div>
+                    <div class="topbar-res-pill-label"><span>RAM <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-sysram-pct">0%</span></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-sysram-bar" style="width:0%"></div><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%"></div></div>
+                    <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-ram-pct">0%</span></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-ram-val">0 MB</span><span id="topbar-total-ram-val">/ 0 GB</span></div>
                 </div>
             </div>
