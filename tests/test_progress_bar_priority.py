@@ -1461,3 +1461,9 @@ def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> 
     assert kwargs["container_cpu_percent"] == expected_container_cpu, (
         f"Expected container_cpu_percent={expected_container_cpu}, got {kwargs['container_cpu_percent']}"
     )
+
+    # worker_gpu_percent must be present (derived from process map gpu_usage_percent fields).
+    assert "worker_gpu_percent" in kwargs, "worker_gpu_percent was not passed to webui.update_status"
+
+    # system_vram_usage_mb must be present (computed from torch.cuda.mem_get_info across devices).
+    assert "system_vram_usage_mb" in kwargs, "system_vram_usage_mb was not passed to webui.update_status"

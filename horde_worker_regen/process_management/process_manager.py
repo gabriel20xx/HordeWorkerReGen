@@ -195,6 +195,8 @@ class HordeProcessInfo:
     """The amount of VRAM used by this process."""
     total_vram_bytes: int
     """The total amount of VRAM available to this process."""
+    gpu_usage_percent: float
+    """The GPU SM utilisation percentage reported by this process (0–100)."""
     batch_amount: int
     """The total amount of batching being run by this process."""
 
@@ -259,6 +261,7 @@ class HordeProcessInfo:
         self.ram_usage_bytes = 0
         self.vram_usage_bytes = 0
         self.total_vram_bytes = 0
+        self.gpu_usage_percent = 0.0
         self.batch_amount = 1
 
         self.recently_unloaded_from_ram = False
@@ -495,6 +498,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         ram_usage_bytes: int,
         vram_usage_bytes: int | None = 0,
         total_vram_bytes: int | None = 0,
+        gpu_usage_percent: float | None = None,
     ) -> None:
         """Update the memory usage for the given process ID.
 
@@ -503,10 +507,13 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             ram_usage_bytes (int): The amount of RAM used by this process.
             vram_usage_bytes (int): The amount of VRAM used by this process.
             total_vram_bytes (int): The total amount of VRAM available to this process.
+            gpu_usage_percent (float | None): GPU SM utilisation percentage (0–100), or None if unknown.
         """
         self[process_id].ram_usage_bytes = ram_usage_bytes
         self[process_id].vram_usage_bytes = vram_usage_bytes or 0
         self[process_id].total_vram_bytes = total_vram_bytes or 0
+        if gpu_usage_percent is not None:
+            self[process_id].gpu_usage_percent = gpu_usage_percent
 
         self[process_id].last_received_timestamp = time.time()
 
@@ -2573,6 +2580,7 @@ class HordeWorkerProcessManager:
                     ram_usage_bytes=message.ram_usage_bytes,
                     vram_usage_bytes=message.vram_usage_bytes,
                     total_vram_bytes=message.vram_total_bytes,
+                    gpu_usage_percent=message.gpu_usage_percent,
                 )
                 continue
 
@@ -6993,6 +7001,7 @@ class HordeWorkerProcessManager:
 
         # Get GPU utilization percentage
         gpu_usage_percent = 0.0
+        system_vram_usage_mb = 0.0
         try:
             import torch
 
@@ -7000,15 +7009,33 @@ class HordeWorkerProcessManager:
                 # Average utilization across all GPUs
                 total_util = 0.0
                 device_count = torch.cuda.device_count()
+                total_system_vram_used = 0.0
                 for i in range(device_count):
                     # Get GPU utilization using nvidia-smi via torch
                     # Note: torch.cuda.utilization() returns GPU utilization percentage
                     with contextlib.suppress(Exception):
                         total_util += torch.cuda.utilization(i)
+                    # system-wide VRAM in use for each device (total capacity minus free)
+                    with contextlib.suppress(Exception):
+                        free_bytes, total_bytes = torch.cuda.mem_get_info(i)
+                        total_system_vram_used += (total_bytes - free_bytes) / BYTES_TO_MEGABYTES
                 if device_count > 0 and total_util > 0:
                     gpu_usage_percent = total_util / device_count
+                system_vram_usage_mb = total_system_vram_used
         except Exception:
             # If torch is not available or CUDA is not available, GPU usage will be 0
+            pass
+
+        # Aggregate per-process GPU utilisation reported by inference workers.
+        # Uses max() so that the highest-utilised device is represented when multiple
+        # processes are running on different GPUs.
+        worker_gpu_percent = 0.0
+        try:
+            worker_gpu_percent = max(
+                (float(p.gpu_usage_percent) for p in self._process_map.values()),
+                default=0.0,
+            )
+        except Exception:
             pass
 
         # Calculate kudos per hour and images per hour over the rolling window
@@ -7091,6 +7118,8 @@ class HordeWorkerProcessManager:
             cpu_usage_percent=cpu_usage_percent,
             cpu_cores_count=cpu_cores_count,
             gpu_usage_percent=gpu_usage_percent,
+            worker_gpu_percent=worker_gpu_percent,
+            system_vram_usage_mb=system_vram_usage_mb,
             container_cpu_percent=container_cpu_percent,
             maintenance_mode=self._last_pop_maintenance_mode,
             user_kudos_total=user_kudos_total,
