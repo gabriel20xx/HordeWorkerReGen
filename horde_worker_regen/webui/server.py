@@ -611,7 +611,7 @@ class WorkerWebUI:
         <span class="mobile-res-chip" id="mobile-cpu">CPU 0%</span>
         <span class="mobile-res-chip" id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">WRK 0%</span>
         <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
-        <span class="mobile-res-chip" id="mobile-vram">VRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-vram">wVRAM 0%</span>
         <span class="mobile-res-chip" id="mobile-ram">wrkRAM 0%</span>
         <span class="mobile-res-chip" id="mobile-sysram" style="font-size:0.65rem;opacity:0.75;">sysRAM 0%</span>
     </div>
@@ -660,7 +660,7 @@ class WorkerWebUI:
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar gpu" id="topbar-gpu-bar" style="width:0%"></div></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span id="topbar-vram-label">VRAM <span style="font-weight:400;font-size:0.67rem;">device</span></span><span id="topbar-vram-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span id="topbar-vram-label">VRAM <span style="font-weight:400;font-size:0.67rem;">worker</span></span><span id="topbar-vram-pct">0%</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar vram" id="topbar-vram-bar" style="width:0%"></div></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-vram-val">0 MB / 0 MB</span></div>
                 </div>
@@ -843,7 +843,7 @@ class WorkerWebUI:
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-label">GPU % <span style="font-weight:400;font-size:0.7rem;">(system)</span></div>
                                 <div class="chart-container-sm"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
-                                <div class="chart-label" style="margin-top:10px;">VRAM % <span style="font-weight:400;font-size:0.7rem;">(device)</span></div>
+                                <div class="chart-label" style="margin-top:10px;">VRAM % <span style="font-weight:400;font-size:0.7rem;">(worker)</span></div>
                                 <div class="chart-container-sm"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
@@ -2056,7 +2056,7 @@ class WorkerWebUI:
                     document.getElementById('mobile-cpu-ctr').style.color = resBarColor(ctrCpu);
                     document.getElementById('mobile-gpu').textContent = 'GPU '+gpu+'%';
                     document.getElementById('mobile-gpu').style.color = resBarColor(gpu);
-                    document.getElementById('mobile-vram').textContent = 'VRAM '+vram+'%';
+                    document.getElementById('mobile-vram').textContent = 'wVRAM '+vram+'%';
                     document.getElementById('mobile-vram').style.color = resBarColor(vram);
                     document.getElementById('mobile-ram').textContent = 'wrkRAM '+ram+'%';
                     document.getElementById('mobile-ram').style.color = resBarColor(ram);
