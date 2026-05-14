@@ -7136,6 +7136,7 @@ class HordeWorkerProcessManager:
             job_pops_paused=self._job_pops_paused,
             job_pops_pause_until=self._job_pops_pause_until,
             images_per_model=self._images_per_model,
+            failed_jobs_per_model=self._failed_models,
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 

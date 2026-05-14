@@ -1682,6 +1682,26 @@ async def test_webui_stats_endpoint() -> None:
             data4 = await response.json()
         assert data4["images_per_model"] == {}
 
+        # failed_jobs_per_model field must be present and empty initially.
+        assert "failed_jobs_per_model" in data4
+        assert data4["failed_jobs_per_model"] == {}
+
+        # failed_jobs_per_model is reflected from update_status and can be set and cleared.
+        webui.update_status(failed_jobs_per_model={"ModelA": 3, "ModelB": 1})
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            data5 = await response.json()
+        assert data5["failed_jobs_per_model"] == {"ModelA": 3, "ModelB": 1}
+
+        # Passing an empty dict clears the failed jobs field correctly.
+        webui.update_status(failed_jobs_per_model={})
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            data6 = await response.json()
+        assert data6["failed_jobs_per_model"] == {}
+
     finally:
         await webui.stop()
 
