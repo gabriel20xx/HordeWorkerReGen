@@ -1851,6 +1851,10 @@ class HordeWorkerProcessManager:
         self._failed_models: dict[str, int] = {}
         self._last_failed_models_print_time: float = 0.0
 
+        # Per-state job timing accumulators.
+        # Maps state name → {"sum": float, "count": int, "max": float}
+        self._job_time_stats: dict[str, dict[str, float]] = {}
+
         # Track per-model preload-stuck failure timestamps for cooldown logic.
         # Maps model name → deque of epoch timestamps when that model caused a MODEL_PRELOADING timeout.
         self._preload_stuck_failures: dict[str, deque[float]] = {}
@@ -4341,6 +4345,21 @@ class HordeWorkerProcessManager:
                         new_state=HordeProcessState.WAITING_FOR_JOB,
                     )
 
+    def _record_job_timing(self, state: str, elapsed: float) -> None:
+        """Accumulate timing data for a job state.
+
+        Args:
+            state: Human-readable name of the job state/phase (e.g. "Inference", "Total").
+            elapsed: Time elapsed in seconds for that state.
+        """
+        if elapsed <= 0:
+            return
+        entry = self._job_time_stats.setdefault(state, {"sum": 0.0, "count": 0.0, "max": 0.0})
+        entry["sum"] += elapsed
+        entry["count"] += 1.0
+        if elapsed > entry["max"]:
+            entry["max"] = elapsed
+
     def _discard_broken_job(self, completed_job_info: HordeJobInfo) -> None:
         """Remove a job that cannot be submitted from all tracking structures to prevent queue blocking.
 
@@ -4509,6 +4528,13 @@ class HordeWorkerProcessManager:
                 f"Job popped {time_taken} seconds ago and took "
                 f"{time_to_generate:.2f} to generate.",
             )
+
+        # Accumulate per-state timing for successfully submitted jobs.
+        if successful_submits:
+            self._record_job_timing("Inference", time_to_generate)
+            self._record_job_timing("Total", time_taken)
+            if completed_job_info.time_to_download_aux_models:
+                self._record_job_timing("Download", completed_job_info.time_to_download_aux_models)
 
         # If the job took a long time to generate, log a warning (unless speed warnings are suppressed)
         if not self.bridge_data.suppress_speed_warnings:
@@ -7217,6 +7243,10 @@ class HordeWorkerProcessManager:
             images_per_model=self._images_per_model,
             failed_jobs_per_model=self._failed_models,
             faulted_jobs_per_phase=self._faulted_jobs_per_phase,
+            avg_time_per_job_state={
+                k: round(v["sum"] / v["count"], 2) for k, v in self._job_time_stats.items() if v["count"] > 0
+            },
+            max_time_per_job_state={k: round(v["max"], 2) for k, v in self._job_time_stats.items()},
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 

@@ -119,6 +119,8 @@ class WorkerWebUI:
             "images_per_model": {},
             "failed_jobs_per_model": {},
             "faulted_jobs_per_phase": {},
+            "avg_time_per_job_state": {},
+            "max_time_per_job_state": {},
         }
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
@@ -845,6 +847,14 @@ class WorkerWebUI:
                         <div class="grid-2" style="margin-bottom:14px;">
                             <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value" id="stats-jobs-popped">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="stats-jobs-faulted">-</div></div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job State (Session)</span></div>
+                        <div class="card" style="padding:14px 16px;">
+                            <div id="stats-job-state-time-wrap">
+                                <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
+                            </div>
                         </div>
                     </div>
                     <div class="section">
@@ -2547,6 +2557,30 @@ class WorkerWebUI:
                 }
             }
 
+            // Avg & Max time per job state table (session totals, not windowed)
+            var jobStateTimeWrap = document.getElementById('stats-job-state-time-wrap');
+            if (jobStateTimeWrap) {
+                var avgTimes = data.avg_time_per_job_state || {};
+                var maxTimes = data.max_time_per_job_state || {};
+                var stateNames = Object.keys(avgTimes);
+                if (stateNames.length === 0) {
+                    jobStateTimeWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>';
+                } else {
+                    var stateRows = stateNames.map(function(s) {
+                        var avg = avgTimes[s] !== undefined ? avgTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
+                        var max = maxTimes[s] !== undefined ? maxTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
+                        return '<tr>' +
+                            '<td>' + escapeHtml(s) + '</td>' +
+                            '<td style="text-align:right;">' + avg + '</td>' +
+                            '<td style="text-align:right;">' + max + '</td>' +
+                            '</tr>';
+                    }).join('');
+                    jobStateTimeWrap.innerHTML = '<table class="model-images-table">' +
+                        '<thead><tr><th>State</th><th style="text-align:right;">Avg</th><th style="text-align:right;">Max</th></tr></thead>' +
+                        '<tbody>' + stateRows + '</tbody></table>';
+                }
+            }
+
             // Charts
             drawDualAxisLineChart('chart-iph-kph',
                 { points: snaps.map(function(s) { return { t: s.t, v: s.iph }; }), color: '#10b981' },
@@ -3222,7 +3256,9 @@ class WorkerWebUI:
                 ],
                 "images_per_model": {"model-name": <int count>, ...},
                 "failed_jobs_per_model": {"model-name": <int count>, ...},
-                "faulted_jobs_per_phase": {"phase-name": <int count>, ...}
+                "faulted_jobs_per_phase": {"phase-name": <int count>, ...},
+                "avg_time_per_job_state": {"state-name": <float seconds>, ...},
+                "max_time_per_job_state": {"state-name": <float seconds>, ...}
             }
         """
         return web.json_response({
@@ -3230,6 +3266,8 @@ class WorkerWebUI:
             "images_per_model": self.status_data.get("images_per_model", {}),
             "failed_jobs_per_model": self.status_data.get("failed_jobs_per_model", {}),
             "faulted_jobs_per_phase": self.status_data.get("faulted_jobs_per_phase", {}),
+            "avg_time_per_job_state": self.status_data.get("avg_time_per_job_state", {}),
+            "max_time_per_job_state": self.status_data.get("max_time_per_job_state", {}),
         })
 
     def _record_stats_snapshot(self) -> None:
@@ -3577,6 +3615,8 @@ class WorkerWebUI:
         images_per_model: dict[str, int] | None = None,
         failed_jobs_per_model: dict[str, int] | None = None,
         faulted_jobs_per_phase: dict[str, int] | None = None,
+        avg_time_per_job_state: dict[str, float] | None = None,
+        max_time_per_job_state: dict[str, float] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -3622,6 +3662,8 @@ class WorkerWebUI:
             images_per_model: Cumulative per-model image counts for the current session
             failed_jobs_per_model: Cumulative per-model failed job counts for the current session
             faulted_jobs_per_phase: Cumulative per-phase fault counts for the current session
+            avg_time_per_job_state: Average time in seconds per job state for completed jobs this session
+            max_time_per_job_state: Maximum time in seconds per job state for completed jobs this session
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -3707,6 +3749,10 @@ class WorkerWebUI:
             self.status_data["failed_jobs_per_model"] = dict(failed_jobs_per_model)
         if faulted_jobs_per_phase is not None:
             self.status_data["faulted_jobs_per_phase"] = dict(faulted_jobs_per_phase)
+        if avg_time_per_job_state is not None:
+            self.status_data["avg_time_per_job_state"] = dict(avg_time_per_job_state)
+        if max_time_per_job_state is not None:
+            self.status_data["max_time_per_job_state"] = dict(max_time_per_job_state)
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]

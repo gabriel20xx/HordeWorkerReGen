@@ -1753,6 +1753,33 @@ async def test_webui_stats_endpoint() -> None:
             data8 = await response.json()
         assert data8["faulted_jobs_per_phase"] == {}
 
+        # avg_time_per_job_state and max_time_per_job_state must be present and empty initially.
+        assert "avg_time_per_job_state" in data8
+        assert "max_time_per_job_state" in data8
+        assert data8["avg_time_per_job_state"] == {}
+        assert data8["max_time_per_job_state"] == {}
+
+        # avg_time_per_job_state and max_time_per_job_state are reflected from update_status.
+        webui.update_status(
+            avg_time_per_job_state={"Inference": 12.34, "Total": 15.00},
+            max_time_per_job_state={"Inference": 20.10, "Total": 25.50},
+        )
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            data9 = await response.json()
+        assert data9["avg_time_per_job_state"] == {"Inference": 12.34, "Total": 15.00}
+        assert data9["max_time_per_job_state"] == {"Inference": 20.10, "Total": 25.50}
+
+        # Passing an empty dict clears the fields correctly.
+        webui.update_status(avg_time_per_job_state={}, max_time_per_job_state={})
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            data10 = await response.json()
+        assert data10["avg_time_per_job_state"] == {}
+        assert data10["max_time_per_job_state"] == {}
+
     finally:
         await webui.stop()
 
@@ -1984,6 +2011,31 @@ async def test_webui_gallery_models_endpoint() -> None:
             {"name": "sdxl", "count": 2},
             {"name": "stable_diffusion", "count": 1},
         ]
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_stats_job_state_time_container() -> None:
+    """Test that the statistics page HTML contains the avg & max time per job state container."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        # The new container must be present in the HTML.
+        assert 'id="stats-job-state-time-wrap"' in html
+        # The section title for the new container must also be present.
+        assert "Avg &amp; Max Time per Job State" in html
+
     finally:
         await webui.stop()
 
