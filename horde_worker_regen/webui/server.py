@@ -659,7 +659,7 @@ class WorkerWebUI:
             <div class="topbar-resources">
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span>CPU</span><span id="topbar-cpu-cores">0 cores</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-cpu-bar" style="width:0%" aria-label="System CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div><div class="topbar-res-bar cpu" id="topbar-cpu-ctr-bar" style="width:0%" aria-label="Worker CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-cpu-bar" style="width:0%" aria-label="System CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div><div class="topbar-res-bar cpu" id="topbar-cpu-ctr-bar" style="width:0%" aria-label="Worker CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-cpu-ctr-pct">0%</span></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span>System</span><span id="topbar-cpu-pct">0%</span></div>
                 </div>
@@ -677,7 +677,7 @@ class WorkerWebUI:
                 </div>
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span>RAM</span><span id="topbar-total-ram-val">0 GB</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-sysram-bar" style="width:0%" aria-label="System RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%" aria-label="Worker RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-sysram-bar" style="width:0%" aria-label="System RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%" aria-label="Worker RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-ram-pct">0%</span></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span>System</span><span id="topbar-sysram-pct">0%</span></div>
                 </div>
