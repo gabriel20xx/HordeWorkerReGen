@@ -477,6 +477,30 @@ async def test_webui_gallery_thumbnail_only() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_index_initial_gpu_and_vram_markup() -> None:
+    """Test that the initial GPU/VRAM topbar pills render neutral values with aria state."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        assert 'id="topbar-gpu-pct">0%</span>' in html
+        assert 'id="topbar-gpu-bar" style="width:0%"' in html
+        assert 'id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
+        assert 'id="topbar-vram-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"' in html
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_gallery_image_endpoint() -> None:
     """Test that /api/gallery/image returns the full-resolution image by stable gallery_id."""
     webui = WorkerWebUI(port=0)
