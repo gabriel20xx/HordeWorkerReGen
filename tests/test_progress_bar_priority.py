@@ -1374,10 +1374,10 @@ class TestApiJobPopPerModelFilterRemoved:
 
 
 def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> None:
-    """update_webui_status must pass total_ram_mb and container_cpu_percent to webui.update_status.
+    """update_webui_status must pass total_ram_mb, system_ram_usage_mb, and container_cpu_percent.
 
-    Regression guard: ensures the process manager correctly computes both metrics from
-    the cached psutil.Process instance and total_ram_bytes, and passes them through to
+    Regression guard: ensures the process manager correctly computes all RAM metrics and
+    container CPU from the cached psutil.Process instance, and passes them through to
     the WebUI layer.
     """
     from horde_worker_regen.process_management.process_manager import BYTES_TO_MEGABYTES, HordeWorkerProcessManager
@@ -1421,6 +1421,10 @@ def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> 
     stub_psutil = MagicMock()
     stub_psutil.cpu_percent.return_value = 0.0
     stub_psutil.cpu_count.return_value = 4  # 4 logical cores
+    # Simulate virtual_memory().used: 24 GB in use system-wide
+    system_used_bytes = 24 * 1024 * 1024 * 1024
+    stub_psutil.virtual_memory.return_value.used = system_used_bytes
+    expected_system_ram_mb = system_used_bytes / BYTES_TO_MEGABYTES  # 24576.0
 
     with (
         patch("horde_worker_regen.process_management.process_manager.psutil", stub_psutil),
@@ -1437,9 +1441,13 @@ def test_update_webui_status_passes_total_ram_mb_and_container_cpu_percent() -> 
         f"Expected total_ram_mb={expected_total_ram_mb}, got {kwargs['total_ram_mb']}"
     )
 
+    # system_ram_usage_mb must equal virtual_memory().used converted to MB.
+    assert kwargs["system_ram_usage_mb"] == expected_system_ram_mb, (
+        f"Expected system_ram_usage_mb={expected_system_ram_mb}, got {kwargs['system_ram_usage_mb']}"
+    )
+
     # container_cpu_percent must equal raw_cpu / cpu_cores = 40.0 / 4 = 10.0.
     expected_container_cpu = round(40.0 / 4, 1)
     assert kwargs["container_cpu_percent"] == expected_container_cpu, (
         f"Expected container_cpu_percent={expected_container_cpu}, got {kwargs['container_cpu_percent']}"
     )
-
