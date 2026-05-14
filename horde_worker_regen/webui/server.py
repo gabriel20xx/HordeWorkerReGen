@@ -33,10 +33,11 @@ _ERROR_UUID_RE = re.compile(
     re.IGNORECASE,
 )
 _ERROR_HEX_ID_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
-# Matches any numeric token with 2 or more digits so that short IDs such as
-# process-slot numbers, short PIDs, or job counters are normalised alongside
-# the longer job/process IDs they accompany.
-_ERROR_NUM_TOKEN_RE = re.compile(r"\b\d{2,}\b")
+# Matches any numeric token (including single-digit values) so that process-slot
+# numbers, short PIDs, or job counters are normalised alongside the longer IDs
+# they accompany.  Single-digit process numbers (e.g. slot 0, slot 1) are the
+# primary motivation for matching \d+ rather than \d{2,}.
+_ERROR_NUM_TOKEN_RE = re.compile(r"\b\d+\b")
 # Timestamps in log lines: full ISO-style (YYYY-MM-DD HH:mm:ss[.SSS]) and
 # the short HH:mm:ss[.SSS] format used by the webui log sink.
 _ERROR_TIMESTAMP_RE = re.compile(
