@@ -7688,8 +7688,9 @@ class HordeWorkerProcessManager:
 
                 # Skip other state checks if no jobs are available since those states are job-related.
                 # "No jobs available" means either the API reported none, or pops are currently
-                # paused (so no new jobs can arrive from the API).
-                # But if there are already jobs pending in our local queue or in-progress,
+                # paused (so no new jobs can arrive from the API) — but only when there is also
+                # no local work already in the queue.
+                # If there are already jobs pending in our local queue or in-progress,
                 # always run these checks so that stuck processes don't block local work.
                 if (self._last_pop_no_jobs_available or self._job_pops_paused) and no_local_work:
                     continue

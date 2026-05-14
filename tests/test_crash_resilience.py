@@ -5886,7 +5886,7 @@ class TestReplaceHungProcessesPausedPops:
         mock_manager = self._make_manager(
             [proc],
             job_pops_paused=True,
-            last_pop_no_jobs=False,  # stale: last pop was successful, but pops are now paused
+            last_pop_no_jobs=False,  # last pop returned a job before the pause; pops are now paused
             jobs_pending_inference=[],
             jobs_in_progress=[],
         )
@@ -5924,7 +5924,7 @@ class TestReplaceHungProcessesPausedPops:
         mock_manager = self._make_manager(
             [proc],
             job_pops_paused=True,
-            last_pop_no_jobs=False,  # stale: last pop returned a job, but pops are now paused
+            last_pop_no_jobs=False,  # last pop returned a job before the pause; pops are now paused
             jobs_pending_inference=[],
             jobs_in_progress=[],
         )
