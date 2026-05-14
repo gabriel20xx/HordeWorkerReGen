@@ -654,11 +654,8 @@ class WorkerWebUI:
                 </div>
                 <div class="topbar-res-pill">
                     <div class="topbar-res-pill-label"><span>GPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-gpu-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar gpu" id="topbar-gpu-bar" style="width:0%"></div></div>
-                </div>
-                <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span id="topbar-vram-label">VRAM <span style="font-weight:400;font-size:0.67rem;">worker</span></span><span id="topbar-vram-pct">0%</span></div>
-                    <div class="topbar-res-bar-track"><div class="topbar-res-bar vram" id="topbar-vram-bar" style="width:0%"></div></div>
+                    <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back gpu" id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div><div class="topbar-res-bar vram" id="topbar-vram-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
+                    <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-vram-pct">0%</span></div>
                     <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-vram-val">0 MB / 0 MB</span></div>
                 </div>
                 <div class="topbar-res-pill">
@@ -2079,10 +2076,12 @@ class WorkerWebUI:
                     const gpuBar = document.getElementById('topbar-gpu-bar');
                     gpuBar.style.width = gpu+'%';
                     gpuBar.style.backgroundColor = resBarColor(gpu);
+                    gpuBar.setAttribute('aria-valuenow', gpu);
                     document.getElementById('topbar-vram-pct').textContent = vram+'%';
                     const vramBar = document.getElementById('topbar-vram-bar');
                     vramBar.style.width = vram+'%';
                     vramBar.style.backgroundColor = resBarColor(vram);
+                    vramBar.setAttribute('aria-valuenow', vram);
                     document.getElementById('topbar-vram-val').textContent = formatMb(vramMb) + ' / ' + formatMb(vramTotalMb);
                     document.getElementById('topbar-ram-pct').textContent = ram+'%';
                     const ramVal = formatMb(ramMb);
