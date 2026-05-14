@@ -2660,7 +2660,7 @@ class WorkerWebUI:
                 var spts = series.points || [];
                 if (spts.length === 0) continue;
                 var lineColor = series.color || '#6366f1';
-                var cm = lineColor.match(/^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+                var cm = lineColor.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
                 var r = 99, g = 102, b = 241;
                 if (cm) { r = parseInt(cm[1], 16); g = parseInt(cm[2], 16); b = parseInt(cm[3], 16); }
                 var fillAlpha = isDark ? '0.10' : '0.06';
