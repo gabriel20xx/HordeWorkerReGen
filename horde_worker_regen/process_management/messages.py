@@ -165,6 +165,8 @@ class HordeProcessMemoryMessage(HordeProcessMessage):
     """The number of bytes of VRAM used by the GPU."""
     vram_total_bytes: int | None = None
     """The total number of bytes of VRAM available on the GPU."""
+    gpu_usage_percent: float | None = None
+    """The GPU SM utilisation percentage as seen by this process (0–100)."""
 
 
 class HordeHeartbeatType(enum.Enum):

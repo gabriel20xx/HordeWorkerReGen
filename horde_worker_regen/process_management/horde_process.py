@@ -96,6 +96,18 @@ class HordeProcess(abc.ABC):
         total_vram_mb = get_torch_total_vram_mb()
         return int(total_vram_mb * 1024 * 1024)  # Convert MB to bytes
 
+    def get_gpu_usage_percent(self) -> float:
+        """Return the GPU SM utilisation percentage for this process's device (0–100)."""
+        import torch
+
+        if not torch.cuda.is_available():
+            return 0.0
+        try:
+            device = torch.cuda.current_device()
+            return float(torch.cuda.utilization(device))
+        except Exception:
+            return 0.0
+
     def __init__(
         self,
         process_id: int,
@@ -239,6 +251,11 @@ class HordeProcess(abc.ABC):
                     logger.debug(
                         f"Failed to get VRAM usage (report will be sent without VRAM info): {e}",
                     )
+
+            try:
+                message.gpu_usage_percent = self.get_gpu_usage_percent()
+            except Exception:
+                pass
 
         self.process_message_queue.put(message)
         return True

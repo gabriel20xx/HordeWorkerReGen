@@ -97,10 +97,12 @@ class WorkerWebUI:
             "system_ram_usage_mb": 0,
             "total_ram_mb": 0,
             "vram_usage_mb": 0,
+            "system_vram_usage_mb": 0,
             "total_vram_mb": 0,
             "cpu_usage_percent": 0,
             "cpu_cores_count": 0,
             "gpu_usage_percent": 0,
+            "worker_gpu_percent": 0,
             "container_cpu_percent": 0,
             "maintenance_mode": False,
             "job_pops_paused": False,
@@ -851,6 +853,7 @@ class WorkerWebUI:
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-legend">
                                     <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#3b82f6;"></span>System</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#60a5fa;"></span>Worker</span>
                                 </div>
                                 <div class="chart-label">GPU %</div>
                                 <div class="chart-container-md"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
@@ -866,6 +869,7 @@ class WorkerWebUI:
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-legend">
                                     <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#8b5cf6;"></span>Worker</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#a78bfa;"></span>System</span>
                                 </div>
                                 <div class="chart-label">VRAM %</div>
                                 <div class="chart-container-md"><canvas id="chart-vram" aria-label="VRAM usage over time"></canvas></div>
@@ -2421,6 +2425,7 @@ class WorkerWebUI:
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-gpu', [
                 { points: snaps.map(function(s) { return { t: s.t, v: s.gpu  }; }), color: '#3b82f6' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.worker_gpu || 0 }; }), color: '#60a5fa' },
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-ram', [
                 { points: snaps.map(function(s) { return { t: s.t, v: s.ram  || 0 }; }), color: '#10b981' },
@@ -2428,6 +2433,7 @@ class WorkerWebUI:
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-vram', [
                 { points: snaps.map(function(s) { return { t: s.t, v: s.vram || 0 }; }), color: '#8b5cf6' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.system_vram || 0 }; }), color: '#a78bfa' },
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
         }
 
@@ -2929,6 +2935,7 @@ class WorkerWebUI:
         sd = self.status_data
         vram_total: float = float(sd.get("total_vram_mb") or 0)
         vram_pct = min(100.0, round((float(sd.get("vram_usage_mb", 0)) / vram_total) * 100, 1)) if vram_total > 0 else 0.0
+        system_vram_pct = min(100.0, round((float(sd.get("system_vram_usage_mb", 0)) / vram_total) * 100, 1)) if vram_total > 0 else 0.0
         ram_total: float = float(sd.get("total_ram_mb") or 0)
         ram_pct = min(100.0, round((float(sd.get("ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
         system_ram_pct = min(100.0, round((float(sd.get("system_ram_usage_mb", 0)) / ram_total) * 100, 1)) if ram_total > 0 else 0.0
@@ -2936,7 +2943,9 @@ class WorkerWebUI:
             "t": round(now, 1),
             "cpu": round(float(sd.get("cpu_usage_percent", 0)), 1),
             "gpu": round(float(sd.get("gpu_usage_percent", 0)), 1),
+            "worker_gpu": round(float(sd.get("worker_gpu_percent", 0)), 1),
             "vram": vram_pct,
+            "system_vram": system_vram_pct,
             "ram": ram_pct,
             "system_ram": system_ram_pct,
             "container_cpu": round(float(sd.get("container_cpu_percent", 0)), 1),
@@ -3237,10 +3246,12 @@ class WorkerWebUI:
         system_ram_usage_mb: float | None = None,
         total_ram_mb: float | None = None,
         vram_usage_mb: float | None = None,
+        system_vram_usage_mb: float | None = None,
         total_vram_mb: float | None = None,
         cpu_usage_percent: float | None = None,
         cpu_cores_count: int | None = None,
         gpu_usage_percent: float | None = None,
+        worker_gpu_percent: float | None = None,
         container_cpu_percent: float | None = None,
         maintenance_mode: bool | None = None,
         job_pops_paused: bool | None = None,
@@ -3276,11 +3287,13 @@ class WorkerWebUI:
             ram_usage_mb: Worker processes RAM usage in MB (sum of all worker processes)
             system_ram_usage_mb: System-wide RAM currently in use in MB (all processes on the host)
             total_ram_mb: Total system RAM capacity in MB
-            vram_usage_mb: VRAM usage in MB
+            vram_usage_mb: VRAM usage in MB (worker processes — torch reserved memory)
+            system_vram_usage_mb: System-wide VRAM currently in use in MB (all processes on the host)
             total_vram_mb: Total VRAM in MB
             cpu_usage_percent: CPU usage percentage
             cpu_cores_count: Number of CPU cores
-            gpu_usage_percent: GPU usage percentage
+            gpu_usage_percent: System-wide GPU SM utilisation percentage
+            worker_gpu_percent: GPU SM utilisation percentage reported by the worker inference processes
             container_cpu_percent: CPU usage percentage of the worker process tree (container-level)
             maintenance_mode: Whether worker is in maintenance mode
             job_pops_paused: Whether new job pops are currently paused by the user
@@ -3336,6 +3349,8 @@ class WorkerWebUI:
             self.status_data["total_ram_mb"] = total_ram_mb
         if vram_usage_mb is not None:
             self.status_data["vram_usage_mb"] = vram_usage_mb
+        if system_vram_usage_mb is not None:
+            self.status_data["system_vram_usage_mb"] = system_vram_usage_mb
         if total_vram_mb is not None:
             self.status_data["total_vram_mb"] = total_vram_mb
         if cpu_usage_percent is not None:
@@ -3344,6 +3359,8 @@ class WorkerWebUI:
             self.status_data["cpu_cores_count"] = cpu_cores_count
         if gpu_usage_percent is not None:
             self.status_data["gpu_usage_percent"] = gpu_usage_percent
+        if worker_gpu_percent is not None:
+            self.status_data["worker_gpu_percent"] = worker_gpu_percent
         if container_cpu_percent is not None:
             self.status_data["container_cpu_percent"] = container_cpu_percent
         if maintenance_mode is not None:
