@@ -342,7 +342,8 @@ class WorkerWebUI:
         .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
 
-        .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; aspect-ratio: 16/9; max-height: min(400px, 60vh); overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
+        .log-panel { aspect-ratio: 16/9; max-height: min(400px, 60vh); overflow: hidden; }
+        .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; height: 100%; box-sizing: border-box; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
         .console-pause-btn { margin-left: auto; background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; }
         .console-pause-btn:hover { background: #cbd5e1; }
         .console-pause-btn.paused { background: var(--accent); color: #fff; }
@@ -420,7 +421,8 @@ class WorkerWebUI:
         @media (prefers-reduced-motion: reduce) { .image-overlay-loading .loading-spinner { animation: none; } }
 
         /* ---- Errors ---- */
-        .errors-list { display: flex; flex-direction: column; aspect-ratio: 16/9; max-height: min(400px, 60vh); overflow-y: auto; }
+        .errors-outer { display: flex; flex-direction: column; }
+        .errors-list { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
         .error-item { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; padding: 9px 13px; font-family: 'Courier New', monospace; font-size: 0.78rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; margin-bottom: 5px; flex-shrink: 0; }
         .error-item:last-child { margin-bottom: 0; }
         .error-group { background: #fff5f5; border: 1px solid #fecaca; border-left: 3px solid var(--error); border-radius: 6px; margin-bottom: 5px; overflow: hidden; flex-shrink: 0; }
@@ -795,13 +797,13 @@ class WorkerWebUI:
                 <div class="page" id="page-logs">
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button><button id="console-copy-btn" class="console-copy-btn" onclick="copyConsoleLogs()" title="Copy all console logs to clipboard">&#128203; Copy</button></div>
-                        <div class="card" style="padding:0;overflow:hidden;">
+                        <div class="card log-panel" style="padding:0;">
                             <div id="console-logs" class="console-container" style="border-radius:12px;"><div style="text-align:center;color:#475569;padding:18px;">No logs available</div></div>
                         </div>
                     </div>
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#10060; Errors</span><span class="section-count" id="errors-count">0</span><div class="errors-view-toggle" style="margin-left:auto;"><button class="errors-view-btn active" id="errors-btn-grouped" onclick="setErrorsView('grouped')">Grouped</button><button class="errors-view-btn" id="errors-btn-all" onclick="setErrorsView('all')">All</button></div></div>
-                        <div class="card">
+                        <div class="card log-panel errors-outer">
                             <div id="errors-history" class="errors-list"><div class="empty-state"><span class="empty-state-icon">&#10003;</span>No errors</div></div>
                             <div class="pagination-controls" id="errors-pagination" style="display:none;">
                                 <button id="errors-prev" onclick="errorsChangePage(-1)" disabled>&#8249; Prev</button>
