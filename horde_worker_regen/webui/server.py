@@ -612,8 +612,8 @@ class WorkerWebUI:
         <span class="mobile-res-chip" id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">WRK 0%</span>
         <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
         <span class="mobile-res-chip" id="mobile-vram">VRAM 0%</span>
-        <span class="mobile-res-chip" id="mobile-ram">wRAM 0%</span>
-        <span class="mobile-res-chip" id="mobile-sysram" style="font-size:0.65rem;opacity:0.75;">sRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-ram">wrkRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-sysram" style="font-size:0.65rem;opacity:0.75;">sysRAM 0%</span>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
     <aside class="sidebar" id="sidebar">
@@ -2018,7 +2018,7 @@ class WorkerWebUI:
                     const sysRam = totalRamMb > 0 ? Math.min(100, Math.round((sysRamMb / totalRamMb) * 100)) : 0;
                     const cores = data.cpu_cores_count || 0;
                     // Format a MB value to "X.X GB" or "X MB"
-                    function fmtMb(mb) { return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB'; }
+                    function formatMb(mb) { return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB'; }
                     document.getElementById('topbar-cpu-pct').textContent = cpu+'%';
                     const cpuBar = document.getElementById('topbar-cpu-bar');
                     cpuBar.style.width = cpu+'%';
@@ -2036,9 +2036,9 @@ class WorkerWebUI:
                     const vramBar = document.getElementById('topbar-vram-bar');
                     vramBar.style.width = vram+'%';
                     vramBar.style.backgroundColor = resBarColor(vram);
-                    document.getElementById('topbar-vram-val').textContent = fmtMb(vramMb) + ' / ' + fmtMb(vramTotalMb);
+                    document.getElementById('topbar-vram-val').textContent = formatMb(vramMb) + ' / ' + formatMb(vramTotalMb);
                     document.getElementById('topbar-ram-pct').textContent = ram+'%';
-                    const ramVal = fmtMb(ramMb);
+                    const ramVal = formatMb(ramMb);
                     const totalRamVal = totalRamMb >= 1024 ? (totalRamMb / 1024).toFixed(1) + ' GB' : Math.round(totalRamMb) + ' MB';
                     document.getElementById('topbar-ram-val').textContent = ramVal;
                     document.getElementById('topbar-total-ram-val').textContent = '/ ' + totalRamVal;
@@ -2058,9 +2058,9 @@ class WorkerWebUI:
                     document.getElementById('mobile-gpu').style.color = resBarColor(gpu);
                     document.getElementById('mobile-vram').textContent = 'VRAM '+vram+'%';
                     document.getElementById('mobile-vram').style.color = resBarColor(vram);
-                    document.getElementById('mobile-ram').textContent = 'wRAM '+ram+'%';
+                    document.getElementById('mobile-ram').textContent = 'wrkRAM '+ram+'%';
                     document.getElementById('mobile-ram').style.color = resBarColor(ram);
-                    document.getElementById('mobile-sysram').textContent = 'sRAM '+sysRam+'%';
+                    document.getElementById('mobile-sysram').textContent = 'sysRAM '+sysRam+'%';
                     document.getElementById('mobile-sysram').style.color = resBarColor(sysRam);
                     const ojd = document.getElementById('overview-current-job');
                     if (data.current_job) {
