@@ -4735,7 +4735,7 @@ class HordeWorkerProcessManager:
             self._faulted_jobs_history = self._faulted_jobs_history[: self._max_faulted_jobs_history]
 
         # Track cumulative fault count per phase for the stats graph.
-        phase_key = fault_phase if fault_phase is not None else "Unknown"
+        phase_key = fault_phase if fault_phase is not None else "Unknown Phase"
         self._faulted_jobs_per_state[phase_key] = self._faulted_jobs_per_state.get(phase_key, 0) + 1
 
     def handle_job_fault(
