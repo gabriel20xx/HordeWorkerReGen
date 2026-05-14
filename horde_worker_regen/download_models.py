@@ -82,6 +82,29 @@ def download_all_models(
     hordelib.initialise(extra_comfyui_args=extra_comfyui_args)
     from hordelib.shared_model_manager import SharedModelManager
 
+    # Validate lora.json before loading model managers. If a previous run was interrupted
+    # mid-write the file may contain truncated JSON, which causes hordelib to log an ERROR
+    # and fall back to a backup. Deleting the corrupted file here lets hordelib start clean
+    # (it logs a WARNING instead of an ERROR when the file is simply absent).
+    try:
+        import json
+
+        from horde_model_reference import LEGACY_REFERENCE_FOLDER
+
+        lora_db_path = LEGACY_REFERENCE_FOLDER / "lora.json"
+        if lora_db_path.exists():
+            try:
+                # We only care whether the parse succeeds, not the parsed value.
+                json.loads(lora_db_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning(
+                    f"Corrupted lora reference cache detected at {lora_db_path}. "
+                    "Removing it so that it can be rebuilt cleanly on startup.",
+                )
+                lora_db_path.unlink(missing_ok=True)
+    except Exception as e:
+        logger.debug(f"Could not validate lora reference cache before startup: {e}")
+
     SharedModelManager.load_model_managers()
 
     if bridge_data.allow_lora:

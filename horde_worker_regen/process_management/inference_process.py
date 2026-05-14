@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import gc
+import json
 import re
 import sys
 import threading
@@ -346,6 +347,24 @@ class HordeInferenceProcess(HordeProcess):
             if not loras:
                 logger.info("No auxiliary models to download")
                 return None
+
+            # Validate lora.json before reloading. If it was corrupted by an interrupted
+            # write in a previous session, remove it so hordelib logs a WARNING instead of
+            # an ERROR and recreates the file from scratch.
+            try:
+                _lora_db_path = lora_manager.models_db_path
+                if _lora_db_path.exists():
+                    try:
+                        # We only care whether the parse succeeds, not the parsed value.
+                        json.loads(_lora_db_path.read_text(encoding="utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        logger.warning(
+                            f"Corrupted lora reference cache detected at {_lora_db_path}. "
+                            "Removing it so that it can be rebuilt cleanly.",
+                        )
+                        _lora_db_path.unlink(missing_ok=True)
+            except Exception as e:
+                logger.debug(f"Could not validate lora reference cache: {e}")
 
             try:
                 lora_manager.load_model_database()
