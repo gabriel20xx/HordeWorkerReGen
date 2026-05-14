@@ -658,27 +658,28 @@ class WorkerWebUI:
             </div>
             <div class="topbar-resources">
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>CPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-cpu-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span>CPU</span><span id="topbar-cpu-cores">0 cores</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-cpu-bar" style="width:0%" aria-label="System CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div><div class="topbar-res-bar cpu" id="topbar-cpu-ctr-bar" style="width:0%" aria-label="Worker CPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-cpu-ctr-pct">0%</span></div>
-                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-cpu-cores">0 cores</span></div>
+                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span>System</span><span id="topbar-cpu-pct">0%</span></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>GPU <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-gpu-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span>GPU</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back gpu" id="topbar-gpu-bar" style="width:0%" aria-label="System GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div><div class="topbar-res-bar gpu" id="topbar-gpu-wrk-bar" style="width:0%" aria-label="Worker GPU usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-gpu-wrk-pct">0%</span></div>
+                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span>System</span><span id="topbar-gpu-pct">0%</span></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>VRAM <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-vram-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span>VRAM</span><span id="topbar-vram-total">0 MB</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back vram" id="topbar-vram-bar" style="width:0%" aria-label="System VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div><div class="topbar-res-bar vram" id="topbar-vram-wrk-bar" style="width:0%" aria-label="Worker VRAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-vram-wrk-pct">0%</span></div>
-                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-vram-val">0 MB / 0 MB</span></div>
+                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span>System</span><span id="topbar-vram-pct">0%</span></div>
                 </div>
                 <div class="topbar-res-pill">
-                    <div class="topbar-res-pill-label"><span>RAM <span style="font-weight:400;font-size:0.67rem;">sys</span></span><span id="topbar-sysram-pct">0%</span></div>
+                    <div class="topbar-res-pill-label"><span>RAM</span><span id="topbar-total-ram-val">0 GB</span></div>
                     <div class="topbar-res-bar-track"><div class="topbar-res-bar topbar-res-bar-back" id="topbar-sysram-bar" style="width:0%" aria-label="System RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div><div class="topbar-res-bar" id="topbar-ram-bar" style="width:0%" aria-label="Worker RAM usage" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div></div>
                     <div class="topbar-res-pill-sub"><span>Worker</span><span id="topbar-ram-pct">0%</span></div>
-                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span id="topbar-ram-val">0 MB</span><span id="topbar-total-ram-val">/ 0 GB</span></div>
+                    <div class="topbar-res-pill-sub" style="margin-top:2px;"><span>System</span><span id="topbar-sysram-pct">0%</span></div>
                 </div>
             </div>
             <div class="topbar-meta">
@@ -2158,12 +2159,10 @@ class WorkerWebUI:
                     vramWrkBar.style.width = vram+'%';
                     vramWrkBar.style.backgroundColor = resBarColor(vram);
                     vramWrkBar.setAttribute('aria-valuenow', vram);
-                    document.getElementById('topbar-vram-val').textContent = formatMb(vramMb) + ' / ' + formatMb(vramTotalMb);
+                    document.getElementById('topbar-vram-total').textContent = formatMb(vramTotalMb);
                     document.getElementById('topbar-ram-pct').textContent = ram+'%';
-                    const ramVal = formatMb(ramMb);
                     const totalRamVal = totalRamMb >= 1024 ? (totalRamMb / 1024).toFixed(1) + ' GB' : Math.round(totalRamMb) + ' MB';
-                    document.getElementById('topbar-ram-val').textContent = ramVal;
-                    document.getElementById('topbar-total-ram-val').textContent = '/ ' + totalRamVal;
+                    document.getElementById('topbar-total-ram-val').textContent = totalRamVal;
                     const ramBar = document.getElementById('topbar-ram-bar');
                     ramBar.style.width = ram+'%';
                     ramBar.style.backgroundColor = resBarColor(ram);
