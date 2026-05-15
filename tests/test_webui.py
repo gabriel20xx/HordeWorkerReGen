@@ -1632,6 +1632,9 @@ async def test_webui_stats_endpoint() -> None:
             data = await response.json()
         assert "snapshots" in data
         assert data["snapshots"] == []
+        # jobs_faulted session total must be present and zero initially.
+        assert "jobs_faulted" in data
+        assert data["jobs_faulted"] == 0
         # images_per_model field must be present and empty initially.
         assert "images_per_model" in data
         assert data["images_per_model"] == {}
@@ -1786,6 +1789,14 @@ async def test_webui_stats_endpoint() -> None:
         ) as response:
             data8 = await response.json()
         assert data8["faulted_jobs_per_phase"] == {}
+
+        # jobs_faulted session total is reflected from update_status.
+        webui.update_status(jobs_faulted=3)
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/stats",
+        ) as response:
+            data8b = await response.json()
+        assert data8b["jobs_faulted"] == 3
 
         # avg_time_per_job_state and max_time_per_job_state must be present and empty initially.
         assert "avg_time_per_job_state" in data8
