@@ -274,7 +274,7 @@ class WorkerWebUI:
         .topbar-worker-name { font-size: 1.15rem; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .topbar-worker-sub { font-size: 0.82rem; color: #64748b; margin-top: 2px; }
         .topbar-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; align-items: center; align-content: center; justify-items: stretch; }
-        .topbar-uptime { font-size: 0.82rem; color: #64748b; }
+        .topbar-uptime { font-size: 0.82rem; color: #64748b; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px; padding: 4px 10px; text-align: center; display: flex; align-items: center; justify-content: center; }
 
         /* ---- Status badges ---- */
         #worker-status-badge { display: flex; }
@@ -501,7 +501,8 @@ class WorkerWebUI:
         [data-theme="dark"] body { color: #cbd5e1; }
         [data-theme="dark"] .topbar { background: #1e293b; border-bottom-color: #2d3f55; }
         [data-theme="dark"] .topbar-worker-name { color: #f1f5f9; }
-        [data-theme="dark"] .topbar-worker-sub, [data-theme="dark"] .topbar-uptime { color: #94a3b8; }
+        [data-theme="dark"] .topbar-worker-sub { color: #94a3b8; }
+        [data-theme="dark"] .topbar-uptime { color: #94a3b8; background: #151e2e; border-color: #2d3f55; }
         [data-theme="dark"] .topbar .theme-toggle { border-color: #2d3f55; color: #94a3b8; }
         [data-theme="dark"] .topbar .theme-toggle:hover { background: #2d3f55; }
         [data-theme="dark"] .topbar-res-pill { background: #151e2e; border-color: #2d3f55; color: #94a3b8; }
