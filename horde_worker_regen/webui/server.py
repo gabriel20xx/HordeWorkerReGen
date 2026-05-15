@@ -2557,16 +2557,43 @@ class WorkerWebUI:
                 }
             }
 
+            // Sort states by their order in the job process; TOTAL is always last.
+            // Shared by both the Avg & Max Time and Faults by Phase tables.
+            var stateOrder = [
+                'WAITING_FOR_JOB',
+                'MODEL_PRELOADING',
+                'MODEL_LOADING',
+                'DOWNLOADING_AUX_MODEL',
+                'INFERENCE_STARTING',
+                'INFERENCE_PROCESSING',
+                'POST_PROCESSING_STARTING',
+                'INFERENCE_POST_PROCESSING',
+                'SAFETY_STARTING',
+                'SAFETY_EVALUATING',
+                'RESULT_SAVING',
+                'RESULT_SUBMITTING',
+            ];
+            function sortByStateOrder(a, b) {
+                if (a === 'TOTAL') return 1;
+                if (b === 'TOTAL') return -1;
+                var ia = stateOrder.indexOf(a);
+                var ib = stateOrder.indexOf(b);
+                if (ia === -1 && ib === -1) return a.localeCompare(b);
+                if (ia === -1) return 1;
+                if (ib === -1) return -1;
+                return ia - ib;
+            }
+
             // Per-phase fault count table (session totals, not windowed)
             var faultPhaseWrap = document.getElementById('stats-fault-phase-table-wrap');
             if (faultPhaseWrap) {
                 var fpp = data.faulted_jobs_per_phase || {};
                 var phaseEntries = Object.keys(fpp).map(function(k) { return { name: k, count: fpp[k] }; });
-                phaseEntries.sort(function(a, b) { return b.count - a.count; });
+                phaseEntries.sort(function(a, b) { return sortByStateOrder(a.name, b.name); });
                 if (phaseEntries.length === 0) {
                     faultPhaseWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No job faults yet.</div>';
                 } else {
-                    var maxPhase = phaseEntries[0].count;
+                    var maxPhase = Math.max.apply(null, phaseEntries.map(function(e) { return e.count; }));
                     var phaseRows = phaseEntries.map(function(e) {
                         var pct = maxPhase > 0 ? Math.round((e.count / maxPhase) * 100) : 0;
                         return '<tr>' +
@@ -2590,31 +2617,7 @@ class WorkerWebUI:
                 if (stateNames.length === 0) {
                     jobStateTimeWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>';
                 } else {
-                    // Sort states by their order in the job process; TOTAL is always last.
-                    var stateOrder = [
-                        'WAITING_FOR_JOB',
-                        'MODEL_PRELOADING',
-                        'MODEL_LOADING',
-                        'DOWNLOADING_AUX_MODEL',
-                        'INFERENCE_STARTING',
-                        'INFERENCE_PROCESSING',
-                        'POST_PROCESSING_STARTING',
-                        'INFERENCE_POST_PROCESSING',
-                        'SAFETY_STARTING',
-                        'SAFETY_EVALUATING',
-                        'RESULT_SAVING',
-                        'RESULT_SUBMITTING',
-                    ];
-                    var sortedNames = stateNames.slice().sort(function(a, b) {
-                        if (a === 'TOTAL') return 1;
-                        if (b === 'TOTAL') return -1;
-                        var ia = stateOrder.indexOf(a);
-                        var ib = stateOrder.indexOf(b);
-                        if (ia === -1 && ib === -1) return a.localeCompare(b);
-                        if (ia === -1) return 1;
-                        if (ib === -1) return -1;
-                        return ia - ib;
-                    });
+                    var sortedNames = stateNames.slice().sort(sortByStateOrder);
                     var stateRows = sortedNames.map(function(s) {
                         var avg = avgTimes[s] !== undefined ? avgTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
                         var max = maxTimes[s] !== undefined ? maxTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';

@@ -6725,7 +6725,7 @@ class TestHandleJobFaultRecordsHistory:
 
         mock_manager.handle_job_fault(faulted_job=job, process_info=process_info)
 
-        assert mock_manager._faulted_jobs_history[0]["fault_phase"] == "During Inference"
+        assert mock_manager._faulted_jobs_history[0]["fault_phase"] == "INFERENCE_PROCESSING"
 
 
 class TestReplaceInferenceProcessBroadExceptionHandling:
