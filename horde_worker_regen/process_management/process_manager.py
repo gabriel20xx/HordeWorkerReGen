@@ -260,6 +260,12 @@ class HordeProcessInfo:
     after safe_send_message() returns False. It is reset to None on each successful send, so
     consumers should read it before the next send call."""
 
+    state_entered_timestamp: float
+    """Timestamp (epoch seconds) when the process entered its current state.
+
+    Updated on every call to :meth:`ProcessMap.on_process_state_change` so that
+    per-state elapsed time can be computed from the manager's message loop."""
+
     # TODO: VRAM usage
 
     def __init__(
@@ -316,6 +322,8 @@ class HordeProcessInfo:
         self.process_launch_identifier = process_launch_identifier
 
         self.last_send_error = None
+
+        self.state_entered_timestamp = time.time()
 
     def is_process_busy(self) -> bool:
         """Return true if the process is actively engaged in a task.
@@ -578,6 +586,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """
         self[process_id].last_process_state = new_state
         self[process_id].last_received_timestamp = time.time()
+        self[process_id].state_entered_timestamp = time.time()
 
         if (
             new_state == HordeProcessState.INFERENCE_COMPLETE
@@ -1447,6 +1456,25 @@ class HordeWorkerProcessManager:
             HordeProcessState.RESULT_SAVED,
             HordeProcessState.RESULT_SUBMITTING,
             HordeProcessState.RESULT_SUBMITTED,
+        },
+    )
+
+    # Process states for which elapsed time is tracked via state-transition timing.
+    # When a process leaves one of these states, the elapsed duration is accumulated
+    # into ``_job_time_stats`` under the state's ``.name`` string so the WebUI statistics
+    # page can display avg / max time per job state beyond just Inference / Total / Download.
+    _STATE_TRANSITION_TIMING_STATES: frozenset[HordeProcessState] = frozenset(
+        {
+            HordeProcessState.WAITING_FOR_JOB,
+            HordeProcessState.MODEL_PRELOADING,
+            HordeProcessState.MODEL_LOADING,
+            HordeProcessState.INFERENCE_STARTING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.SAFETY_STARTING,
+            HordeProcessState.SAFETY_EVALUATING,
+            HordeProcessState.RESULT_SAVING,
+            HordeProcessState.RESULT_SUBMITTING,
         },
     )
 
@@ -2651,11 +2679,20 @@ class HordeWorkerProcessManager:
                 # PROCESS_ENDING transition — it only resets on INFERENCE_STARTING.
                 # Snapshotting here is safe because this code runs before any replacement.
                 prior_process_progress_value = self._process_map[message.process_id].last_progress_value
+                # Snapshot when the process entered its prior state so elapsed time can be recorded.
+                prior_state_entered_timestamp = self._process_map[message.process_id].state_entered_timestamp
 
                 self._process_map.on_process_state_change(
                     process_id=message.process_id,
                     new_state=message.process_state,
                 )
+
+                # Record per-state elapsed time for job-lifecycle states.
+                if prior_process_state in self._STATE_TRANSITION_TIMING_STATES:
+                    self._record_job_timing(
+                        prior_process_state.name,
+                        time.time() - prior_state_entered_timestamp,
+                    )
 
                 if message.process_state == HordeProcessState.PROCESS_ENDING:
                     logger.info(f"Process {message.process_id} is ending")
