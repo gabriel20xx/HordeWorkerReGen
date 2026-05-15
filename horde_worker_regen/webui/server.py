@@ -259,9 +259,11 @@ class WorkerWebUI:
         .mobile-uptime { color: var(--text-muted); font-size: 0.7rem; font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0; }
 
         /* ---- Mobile resources sub-bar ---- */
-        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; flex-wrap: nowrap; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); overflow-x: auto; overflow-y: hidden; }
-        .mobile-res-chip { color: var(--text-muted); font-size: 0.7rem; font-weight: 600; font-family: 'Courier New', monospace; }
-        .mobile-res-chip-secondary { font-size: 0.65rem; opacity: 0.75; }
+        .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; background: #12162a; grid-template-columns: repeat(4, 1fr); padding: 3px 6px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .mobile-res-col { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px 0; }
+        .mobile-res-head { color: #94a3b8; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+        .mobile-res-chip { color: var(--text-muted); font-size: 0.65rem; font-weight: 600; font-family: 'Courier New', monospace; display: block; text-align: center; }
+        .mobile-res-chip-secondary { font-size: 0.6rem; opacity: 0.75; }
 
         /* ---- Main content ---- */
         .main-content { margin-left: var(--sidebar-width); flex: 1; min-height: 100vh; display: flex; flex-direction: column; min-width: 0; }
@@ -475,7 +477,7 @@ class WorkerWebUI:
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
         @media (max-width: 1200px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 768px) { .sidebar { transform: translateX(-100%); top: 80px; height: calc(100vh - 80px); } .sidebar.open { transform: translateX(0); } .mobile-navbar { display: flex; } .mobile-resources { display: flex; } .main-content { margin-left: 0; padding-top: 80px; } .topbar { display: none; } .content-area { padding: 14px 12px; } .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr; } .grid-2 { grid-template-columns: 1fr; } .grid-3-popped { grid-template-columns: repeat(2, 1fr); } .overview-bottom-grid-left { grid-row: span 1; } }
+        @media (max-width: 768px) { .sidebar { transform: translateX(-100%); top: 90px; height: calc(100vh - 90px); } .sidebar.open { transform: translateX(0); } .mobile-navbar { display: flex; } .mobile-resources { display: grid; grid-template-columns: repeat(4, 1fr); } .main-content { margin-left: 0; padding-top: 90px; } .topbar { display: none; } .content-area { padding: 14px 12px; } .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr; } .grid-2 { grid-template-columns: 1fr; } .grid-3-popped { grid-template-columns: repeat(2, 1fr); } .overview-bottom-grid-left { grid-row: span 1; } }
         @media (max-width: 480px) { .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; } .stat-card-value { font-size: 1.4rem; } }
 
         /* ---- Theme toggle (square) ---- */
@@ -629,14 +631,26 @@ class WorkerWebUI:
         <button class="theme-toggle" onclick="toggleTheme()" id="mobile-theme-toggle" aria-label="Toggle theme">&#127769;</button>
     </nav>
     <div class="mobile-resources" aria-label="Resource usage">
-        <span class="mobile-res-chip" id="mobile-cpu">CPU 0%</span>
-        <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-cpu-ctr">WRK CPU 0%</span>
-        <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
-        <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-gpu-wrk">WRK GPU 0%</span>
-        <span class="mobile-res-chip" id="mobile-vram">WRK VRAM 0%</span>
-        <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-sysvram">SYS VRAM 0%</span>
-        <span class="mobile-res-chip" id="mobile-ram">WRK RAM 0%</span>
-        <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-sysram">SYS RAM 0%</span>
+        <div class="mobile-res-col">
+            <span class="mobile-res-head">CPU</span>
+            <span class="mobile-res-chip" id="mobile-cpu-ctr">WRK 0%</span>
+            <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-cpu">SYS 0%</span>
+        </div>
+        <div class="mobile-res-col">
+            <span class="mobile-res-head">GPU</span>
+            <span class="mobile-res-chip" id="mobile-gpu-wrk">WRK 0%</span>
+            <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-gpu">SYS 0%</span>
+        </div>
+        <div class="mobile-res-col">
+            <span class="mobile-res-head">VRAM</span>
+            <span class="mobile-res-chip" id="mobile-vram">WRK 0%</span>
+            <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-sysvram">SYS 0%</span>
+        </div>
+        <div class="mobile-res-col">
+            <span class="mobile-res-head">RAM</span>
+            <span class="mobile-res-chip" id="mobile-ram">WRK 0%</span>
+            <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-sysram">SYS 0%</span>
+        </div>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
     <aside class="sidebar" id="sidebar">
@@ -2224,14 +2238,14 @@ class WorkerWebUI:
                         chip.textContent = chipLabel + ' ' + chipValue + '%';
                         chip.style.color = resBarColor(chipValue);
                     }
-                    setMobileResChip('mobile-cpu', 'CPU', cpu);
-                    setMobileResChip('mobile-cpu-ctr', 'WRK CPU', ctrCpu);
-                    setMobileResChip('mobile-gpu', 'GPU', gpu);
-                    setMobileResChip('mobile-gpu-wrk', 'WRK GPU', workerGpu);
-                    setMobileResChip('mobile-vram', 'WRK VRAM', vram);
-                    setMobileResChip('mobile-sysvram', 'SYS VRAM', sysVram);
-                    setMobileResChip('mobile-ram', 'WRK RAM', ram);
-                    setMobileResChip('mobile-sysram', 'SYS RAM', sysRam);
+                    setMobileResChip('mobile-cpu', 'SYS', cpu);
+                    setMobileResChip('mobile-cpu-ctr', 'WRK', ctrCpu);
+                    setMobileResChip('mobile-gpu', 'SYS', gpu);
+                    setMobileResChip('mobile-gpu-wrk', 'WRK', workerGpu);
+                    setMobileResChip('mobile-vram', 'WRK', vram);
+                    setMobileResChip('mobile-sysvram', 'SYS', sysVram);
+                    setMobileResChip('mobile-ram', 'WRK', ram);
+                    setMobileResChip('mobile-sysram', 'SYS', sysRam);
                     const ojd = document.getElementById('overview-current-job');
                     if (data.current_job) {
                         const job = data.current_job;
