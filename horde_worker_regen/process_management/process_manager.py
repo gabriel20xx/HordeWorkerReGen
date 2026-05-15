@@ -3200,7 +3200,7 @@ class HordeWorkerProcessManager:
                 if completed_job_info.state == GENERATION_STATE.faulted:
                     self._record_faulted_job_history(
                         completed_job_info.sdk_api_job_info,
-                        fault_phase="Safety Check",
+                        fault_phase=HordeProcessState.SAFETY_EVALUATING.name,
                     )
 
                 # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
@@ -5023,26 +5023,9 @@ class HordeWorkerProcessManager:
             # Determine the phase during which the job faulted
             fault_phase = None
             if process_info is not None:
-                # Get a human-readable description of the process state
-                state = process_info.last_process_state
-                if state == HordeProcessState.DOWNLOADING_MODEL:
-                    fault_phase = "Downloading Model"
-                elif state == HordeProcessState.MODEL_PRELOADING:
-                    fault_phase = "Preloading Model"
-                elif state == HordeProcessState.MODEL_LOADING:
-                    fault_phase = "Loading Model"
-                elif state == HordeProcessState.DOWNLOADING_AUX_MODEL:
-                    fault_phase = "Downloading LoRAs/Aux Models"
-                elif state in (HordeProcessState.INFERENCE_STARTING, HordeProcessState.INFERENCE_PROCESSING):
-                    fault_phase = "During Inference"
-                elif state == HordeProcessState.INFERENCE_POST_PROCESSING:
-                    fault_phase = "Post Processing"
-                elif state in (HordeProcessState.SAFETY_EVALUATING, HordeProcessState.SAFETY_STARTING):
-                    fault_phase = "Safety Check"
-                elif state == HordeProcessState.PROCESS_STARTING:
-                    fault_phase = "Process Starting"
-                else:
-                    fault_phase = state.name.replace("_", " ").title()
+                # Use the process state name directly so it matches the job state values
+                # used in the Avg & Max Time per Job State table.
+                fault_phase = process_info.last_process_state.name
 
             self._record_faulted_job_history(faulted_job, fault_phase)
 
