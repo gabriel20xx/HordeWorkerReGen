@@ -278,7 +278,7 @@ class WorkerWebUI:
 
         /* ---- Status badges ---- */
         #worker-status-badge { display: flex; }
-        #worker-status-badge .status-badge { width: 100%; justify-content: center; box-sizing: border-box; }
+        #worker-status-badge .status-badge { width: 100%; justify-content: center; }
         .status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
         .status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
         .status-active { background: #d1fae5; color: #065f46; }
