@@ -261,6 +261,7 @@ class WorkerWebUI:
         /* ---- Mobile resources sub-bar ---- */
         .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; height: 26px; background: #12162a; align-items: center; flex-wrap: nowrap; padding: 0 14px; gap: 14px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); overflow-x: auto; overflow-y: hidden; }
         .mobile-res-chip { color: var(--text-muted); font-size: 0.7rem; font-weight: 600; font-family: 'Courier New', monospace; }
+        .mobile-res-chip-secondary { font-size: 0.65rem; opacity: 0.75; }
 
         /* ---- Main content ---- */
         .main-content { margin-left: var(--sidebar-width); flex: 1; min-height: 100vh; display: flex; flex-direction: column; min-width: 0; }
@@ -629,11 +630,13 @@ class WorkerWebUI:
     </nav>
     <div class="mobile-resources" aria-label="Resource usage">
         <span class="mobile-res-chip" id="mobile-cpu">CPU 0%</span>
-        <span class="mobile-res-chip" id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">WRK 0%</span>
+        <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-cpu-ctr">WRK CPU 0%</span>
         <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
-        <span class="mobile-res-chip" id="mobile-vram">wVRAM 0%</span>
-        <span class="mobile-res-chip" id="mobile-ram">wrkRAM 0%</span>
-        <span class="mobile-res-chip" id="mobile-sysram" style="font-size:0.65rem;opacity:0.75;">sysRAM 0%</span>
+        <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-gpu-wrk">WRK GPU 0%</span>
+        <span class="mobile-res-chip" id="mobile-vram">WRK VRAM 0%</span>
+        <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-sysvram">SYS VRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-ram">WRK RAM 0%</span>
+        <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-sysram">SYS RAM 0%</span>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
     <aside class="sidebar" id="sidebar">
@@ -2216,18 +2219,19 @@ class WorkerWebUI:
                     sysRamBar.style.backgroundColor = resBarColor(sysRam);
                     sysRamBar.setAttribute('aria-valuenow', sysRam);
 
-                    document.getElementById('mobile-cpu').textContent = 'CPU '+cpu+'%';
-                    document.getElementById('mobile-cpu').style.color = resBarColor(cpu);
-                    document.getElementById('mobile-cpu-ctr').textContent = 'WRK '+ctrCpu+'%';
-                    document.getElementById('mobile-cpu-ctr').style.color = resBarColor(ctrCpu);
-                    document.getElementById('mobile-gpu').textContent = 'GPU '+gpu+'%';
-                    document.getElementById('mobile-gpu').style.color = resBarColor(gpu);
-                    document.getElementById('mobile-vram').textContent = 'wVRAM '+vram+'%';
-                    document.getElementById('mobile-vram').style.color = resBarColor(vram);
-                    document.getElementById('mobile-ram').textContent = 'wrkRAM '+ram+'%';
-                    document.getElementById('mobile-ram').style.color = resBarColor(ram);
-                    document.getElementById('mobile-sysram').textContent = 'sysRAM '+sysRam+'%';
-                    document.getElementById('mobile-sysram').style.color = resBarColor(sysRam);
+                    function setMobileResChip(chipId, chipLabel, chipValue) {
+                        const chip = document.getElementById(chipId);
+                        chip.textContent = chipLabel + ' ' + chipValue + '%';
+                        chip.style.color = resBarColor(chipValue);
+                    }
+                    setMobileResChip('mobile-cpu', 'CPU', cpu);
+                    setMobileResChip('mobile-cpu-ctr', 'WRK CPU', ctrCpu);
+                    setMobileResChip('mobile-gpu', 'GPU', gpu);
+                    setMobileResChip('mobile-gpu-wrk', 'WRK GPU', workerGpu);
+                    setMobileResChip('mobile-vram', 'WRK VRAM', vram);
+                    setMobileResChip('mobile-sysvram', 'SYS VRAM', sysVram);
+                    setMobileResChip('mobile-ram', 'WRK RAM', ram);
+                    setMobileResChip('mobile-sysram', 'SYS RAM', sysRam);
                     const ojd = document.getElementById('overview-current-job');
                     if (data.current_job) {
                         const job = data.current_job;
