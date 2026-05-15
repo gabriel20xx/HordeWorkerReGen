@@ -6673,7 +6673,7 @@ class TestHandleJobFaultRecordsHistory:
         assert len(mock_manager._inference_failures.get("TestModel", [])) == 1
         assert mock_manager._faulted_jobs_per_phase == {"Unknown Phase": 1}
 
-    def test_job_not_in_lookup_duplicate_does_not_double_count_model_or_cooldown(self) -> None:
+    def test_duplicate_metadata_missing_faults_not_double_counted(self) -> None:
         """Duplicate metadata-missing faults for the same job must not double-count model stats/cooldown."""
         import types
 
