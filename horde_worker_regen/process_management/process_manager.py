@@ -4387,7 +4387,7 @@ class HordeWorkerProcessManager:
         """Accumulate timing data for a job state.
 
         Args:
-            state: Human-readable name of the job state/phase (e.g. "Inference", "Total").
+            state: Name of the job state/phase (e.g. "INFERENCE_PROCESSING", "Total").
             elapsed: Time elapsed in seconds for that state.
         """
         if elapsed < 0:
@@ -4644,10 +4644,13 @@ class HordeWorkerProcessManager:
         # Accumulate per-state timing for successfully submitted jobs.
         if successful_submits:
             self._commit_completed_job_timings(completed_job_info.sdk_api_job_info)
-            self._record_job_timing("Inference", time_to_generate)
+            self._record_job_timing(HordeProcessState.INFERENCE_PROCESSING.name, time_to_generate)
             self._record_job_timing("Total", time_taken)
             if completed_job_info.time_to_download_aux_models:
-                self._record_job_timing("Download", completed_job_info.time_to_download_aux_models)
+                self._record_job_timing(
+                    HordeProcessState.DOWNLOADING_AUX_MODEL.name,
+                    completed_job_info.time_to_download_aux_models,
+                )
         else:
             self._discard_completed_job_timings(completed_job_info.sdk_api_job_info)
 
