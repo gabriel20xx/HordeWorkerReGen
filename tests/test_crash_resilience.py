@@ -4684,10 +4684,10 @@ class TestResultSubmittingStuckRecovery:
         new_submit = self._make_new_submit(proc_info)
 
         # Simulate an asyncio.TimeoutError coming from the API call
-        async def _timeout(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        async def _simulate_timeout_error(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
             raise asyncio.TimeoutError
 
-        manager.horde_client_session.submit_request.side_effect = _timeout
+        manager.horde_client_session.submit_request.side_effect = _simulate_timeout_error
 
         bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
         asyncio.run(bound(new_submit))
@@ -4706,10 +4706,10 @@ class TestResultSubmittingStuckRecovery:
             "WAITING_FOR_JOB": 3.5,
         }
 
-        async def _timeout(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        async def _simulate_timeout_error(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
             raise asyncio.TimeoutError
 
-        manager.horde_client_session.submit_request.side_effect = _timeout
+        manager.horde_client_session.submit_request.side_effect = _simulate_timeout_error
 
         bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
         asyncio.run(bound(new_submit))

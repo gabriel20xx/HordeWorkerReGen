@@ -4390,7 +4390,8 @@ class HordeWorkerProcessManager:
             state: Human-readable name of the job state/phase (e.g. "Inference", "Total").
             elapsed: Time elapsed in seconds for that state.
         """
-        if elapsed <= 0:
+        if elapsed < 0:
+            logger.warning(f"Ignoring negative elapsed job timing for state {state}: {elapsed}")
             return
         entry = self._job_time_stats.setdefault(state, {"sum": 0.0, "count": 0, "max": 0.0})
         entry["sum"] += elapsed
@@ -4398,18 +4399,12 @@ class HordeWorkerProcessManager:
         if elapsed > entry["max"]:
             entry["max"] = elapsed
 
-    def _record_pending_job_timing(
-        self,
-        pending_timings: dict[int | ImageGenerateJobPopResponse, dict[str, float]],
-        owner: int | ImageGenerateJobPopResponse,
-        state: str,
-        elapsed: float,
-    ) -> None:
+    def _record_pending_job_timing(self, owner_timings: dict[str, float], state: str, elapsed: float) -> None:
         """Buffer timing data until the associated job is successfully submitted."""
-        if elapsed <= 0:
+        if elapsed < 0:
+            logger.warning(f"Ignoring negative elapsed job timing for state {state}: {elapsed}")
             return
 
-        owner_timings = pending_timings.setdefault(owner, {})
         owner_timings[state] = owner_timings.get(state, 0.0) + elapsed
 
     def _on_process_state_change(
@@ -4432,20 +4427,21 @@ class HordeWorkerProcessManager:
         if prior_process_state in self._STATE_TRANSITION_TIMING_STATES:
             if timing_sdk_api_job_info is None:
                 self._record_pending_job_timing(
-                    self._pending_process_job_timings,
-                    process_id,
+                    self._pending_process_job_timings.setdefault(process_id, {}),
                     prior_process_state.name,
                     time.time() - prior_state_entered_timestamp,
                 )
             else:
                 self._record_pending_job_timing(
-                    self._pending_completed_job_timings,
-                    timing_sdk_api_job_info,
+                    self._pending_completed_job_timings.setdefault(timing_sdk_api_job_info, {}),
                     prior_process_state.name,
                     time.time() - prior_state_entered_timestamp,
                 )
 
         if new_state == HordeProcessState.WAITING_FOR_JOB and timing_sdk_api_job_info is None:
+            # Returning to the idle WAITING_FOR_JOB state without a completed-job timing owner
+            # means the process-specific buffered timings are no longer associated with a job
+            # that can contribute to completed-job statistics, so discard them here.
             self._pending_process_job_timings.pop(process_id, None)
 
     def _move_pending_process_timings_to_completed_job(
