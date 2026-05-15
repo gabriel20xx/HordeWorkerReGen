@@ -1790,15 +1790,15 @@ async def test_webui_stats_endpoint() -> None:
 
         # avg_time_per_job_state and max_time_per_job_state are reflected from update_status.
         webui.update_status(
-            avg_time_per_job_state={"INFERENCE_PROCESSING": 12.34, "Total": 15.00},
-            max_time_per_job_state={"INFERENCE_PROCESSING": 20.10, "Total": 25.50},
+            avg_time_per_job_state={"INFERENCE_PROCESSING": 12.34, "TOTAL": 15.00},
+            max_time_per_job_state={"INFERENCE_PROCESSING": 20.10, "TOTAL": 25.50},
         )
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
             data9 = await response.json()
-        assert data9["avg_time_per_job_state"] == {"INFERENCE_PROCESSING": 12.34, "Total": 15.00}
-        assert data9["max_time_per_job_state"] == {"INFERENCE_PROCESSING": 20.10, "Total": 25.50}
+        assert data9["avg_time_per_job_state"] == {"INFERENCE_PROCESSING": 12.34, "TOTAL": 15.00}
+        assert data9["max_time_per_job_state"] == {"INFERENCE_PROCESSING": 20.10, "TOTAL": 25.50}
 
         # Passing an empty dict clears the fields correctly.
         webui.update_status(avg_time_per_job_state={}, max_time_per_job_state={})

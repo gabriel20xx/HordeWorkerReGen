@@ -1462,7 +1462,7 @@ class HordeWorkerProcessManager:
     # Process states for which elapsed time is tracked via state-transition timing.
     # When a process leaves one of these states, the elapsed duration is accumulated
     # into ``_job_time_stats`` under the state's ``.name`` string so the WebUI statistics
-    # page can display avg / max time per job state beyond just Inference / Total / Download.
+    # page can display avg / max time per job state beyond just Inference / TOTAL / Download.
     _STATE_TRANSITION_TIMING_STATES: frozenset[HordeProcessState] = frozenset(
         {
             HordeProcessState.WAITING_FOR_JOB,
@@ -4387,7 +4387,7 @@ class HordeWorkerProcessManager:
         """Accumulate timing data for a job state.
 
         Args:
-            state: Name of the job state/phase (e.g. "INFERENCE_PROCESSING", "Total").
+            state: Name of the job state/phase (e.g. "INFERENCE_PROCESSING", "TOTAL").
             elapsed: Time elapsed in seconds for that state.
         """
         if elapsed < 0:
@@ -4645,7 +4645,7 @@ class HordeWorkerProcessManager:
         if successful_submits:
             self._commit_completed_job_timings(completed_job_info.sdk_api_job_info)
             self._record_job_timing(HordeProcessState.INFERENCE_PROCESSING.name, time_to_generate)
-            self._record_job_timing("Total", time_taken)
+            self._record_job_timing("TOTAL", time_taken)
             if completed_job_info.time_to_download_aux_models:
                 self._record_job_timing(
                     HordeProcessState.DOWNLOADING_AUX_MODEL.name,

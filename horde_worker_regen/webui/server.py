@@ -2576,7 +2576,32 @@ class WorkerWebUI:
                 if (stateNames.length === 0) {
                     jobStateTimeWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>';
                 } else {
-                    var stateRows = stateNames.map(function(s) {
+                    // Sort states by their order in the job process; TOTAL is always last.
+                    var stateOrder = [
+                        'WAITING_FOR_JOB',
+                        'MODEL_PRELOADING',
+                        'MODEL_LOADING',
+                        'DOWNLOADING_AUX_MODEL',
+                        'INFERENCE_STARTING',
+                        'INFERENCE_PROCESSING',
+                        'INFERENCE_POST_PROCESSING',
+                        'POST_PROCESSING_STARTING',
+                        'SAFETY_STARTING',
+                        'SAFETY_EVALUATING',
+                        'RESULT_SAVING',
+                        'RESULT_SUBMITTING',
+                    ];
+                    var sortedNames = stateNames.slice().sort(function(a, b) {
+                        if (a === 'TOTAL') return 1;
+                        if (b === 'TOTAL') return -1;
+                        var ia = stateOrder.indexOf(a);
+                        var ib = stateOrder.indexOf(b);
+                        if (ia === -1 && ib === -1) return a < b ? -1 : a > b ? 1 : 0;
+                        if (ia === -1) return 1;
+                        if (ib === -1) return -1;
+                        return ia - ib;
+                    });
+                    var stateRows = sortedNames.map(function(s) {
                         var avg = avgTimes[s] !== undefined ? avgTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
                         var max = maxTimes[s] !== undefined ? maxTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
                         return '<tr>' +
