@@ -2064,6 +2064,12 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert 'id="stats-job-state-time-wrap"' in html
         # The section title for the new container must also be present.
         assert "Avg &amp; Max Time per Job State" in html
+        # State ordering regression: post-processing start comes before in-progress, and TOTAL is pinned last.
+        assert "'POST_PROCESSING_STARTING'," in html
+        assert "'INFERENCE_POST_PROCESSING'," in html
+        assert html.index("'POST_PROCESSING_STARTING',") < html.index("'INFERENCE_POST_PROCESSING',")
+        assert "if (a === 'TOTAL') return 1;" in html
+        assert "if (b === 'TOTAL') return -1;" in html
 
     finally:
         await webui.stop()
