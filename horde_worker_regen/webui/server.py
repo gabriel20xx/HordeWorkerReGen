@@ -633,13 +633,13 @@ class WorkerWebUI:
     <div class="mobile-resources" aria-label="Resource usage">
         <div class="mobile-res-col">
             <span class="mobile-res-head">CPU</span>
-            <span class="mobile-res-chip" id="mobile-cpu">SYS 0%</span>
-            <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-cpu-ctr">WRK 0%</span>
+            <span class="mobile-res-chip" id="mobile-cpu-ctr">WRK 0%</span>
+            <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-cpu">SYS 0%</span>
         </div>
         <div class="mobile-res-col">
             <span class="mobile-res-head">GPU</span>
-            <span class="mobile-res-chip" id="mobile-gpu">SYS 0%</span>
-            <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-gpu-wrk">WRK 0%</span>
+            <span class="mobile-res-chip" id="mobile-gpu-wrk">WRK 0%</span>
+            <span class="mobile-res-chip mobile-res-chip-secondary" id="mobile-gpu">SYS 0%</span>
         </div>
         <div class="mobile-res-col">
             <span class="mobile-res-head">VRAM</span>
