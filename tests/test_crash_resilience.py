@@ -664,6 +664,15 @@ class _ReceiveLoopHarnessMixin:
         process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
         process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
 
+        if not isinstance(getattr(process_info, "state_entered_timestamp", None), (int, float)):
+            process_info.state_entered_timestamp = 0.0
+
+        def on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
+            process_info.last_process_state = new_state
+            process_info.state_entered_timestamp = 0.0
+
+        process_map.on_process_state_change.side_effect = on_state_change
+
         q = queue_mod.Queue()
         q.put(msg)
 
@@ -672,6 +681,15 @@ class _ReceiveLoopHarnessMixin:
         mock_manager._process_map = process_map
         mock_manager._in_deadlock = False
         mock_manager._in_queue_deadlock = False
+        mock_manager._STATE_TRANSITION_TIMING_STATES = HordeWorkerProcessManager._STATE_TRANSITION_TIMING_STATES
+        mock_manager._pending_process_job_timings = {}
+        mock_manager._pending_completed_job_timings = {}
+        mock_manager._record_pending_job_timing = HordeWorkerProcessManager._record_pending_job_timing.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        mock_manager._on_process_state_change = HordeWorkerProcessManager._on_process_state_change.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
         mock_manager.jobs_in_progress = jobs_in_progress if jobs_in_progress is not None else []
 
         bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
@@ -4580,11 +4598,14 @@ class TestResultSubmittingStuckRecovery:
         """Return a (ProcessMap-like mock, process_info mock) pair that tracks state changes."""
         process_info = MagicMock()
         process_info.last_process_state = initial_state
+        process_info.state_entered_timestamp = 0.0
 
         def on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
             process_info.last_process_state = new_state
+            process_info.state_entered_timestamp = 0.0
 
         process_map = MagicMock()
+        process_map.__getitem__.return_value = process_info
         process_map.items.return_value = [(process_id, process_info)]
         process_map.get.return_value = process_info
         process_map.on_process_state_change.side_effect = on_state_change
@@ -4598,9 +4619,30 @@ class TestResultSubmittingStuckRecovery:
         initial_state: HordeProcessState = HordeProcessState.RESULT_SAVED,
     ) -> tuple[MagicMock, MagicMock]:
         """Build a minimal mock manager suitable for calling submit_single_generation."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
         process_map, process_info = self._make_process_map(process_id, initial_state)
         mock_manager = MagicMock()
         mock_manager._process_map = process_map
+        mock_manager._STATE_TRANSITION_TIMING_STATES = HordeWorkerProcessManager._STATE_TRANSITION_TIMING_STATES
+        mock_manager._pending_process_job_timings = {}
+        mock_manager._pending_completed_job_timings = {}
+        mock_manager._job_time_stats = {}
+        mock_manager._record_job_timing = HordeWorkerProcessManager._record_job_timing.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        mock_manager._record_pending_job_timing = HordeWorkerProcessManager._record_pending_job_timing.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        mock_manager._on_process_state_change = HordeWorkerProcessManager._on_process_state_change.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        mock_manager._commit_completed_job_timings = HordeWorkerProcessManager._commit_completed_job_timings.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        mock_manager._discard_completed_job_timings = HordeWorkerProcessManager._discard_completed_job_timings.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
         return mock_manager, process_info
 
     def _make_new_submit(self, process_info: MagicMock) -> MagicMock:
@@ -4642,15 +4684,40 @@ class TestResultSubmittingStuckRecovery:
         new_submit = self._make_new_submit(proc_info)
 
         # Simulate an asyncio.TimeoutError coming from the API call
-        async def _timeout(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        async def _simulate_timeout_error(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
             raise asyncio.TimeoutError
 
-        manager.horde_client_session.submit_request.side_effect = _timeout
+        manager.horde_client_session.submit_request.side_effect = _simulate_timeout_error
 
         bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
         asyncio.run(bound(new_submit))
 
         assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
+
+    def test_failed_submit_keeps_state_timings_buffered(self) -> None:
+        """Failed submit attempts must not update completed-job timing stats."""
+        import asyncio
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        manager, proc_info = self._make_submit_manager(0)
+        new_submit = self._make_new_submit(proc_info)
+        manager._pending_completed_job_timings[new_submit.completed_job_info.sdk_api_job_info] = {
+            "WAITING_FOR_JOB": 3.5,
+        }
+
+        async def _simulate_timeout_error(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise asyncio.TimeoutError
+
+        manager.horde_client_session.submit_request.side_effect = _simulate_timeout_error
+
+        bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
+        asyncio.run(bound(new_submit))
+
+        assert manager._job_time_stats == {}
+        assert manager._pending_completed_job_timings[new_submit.completed_job_info.sdk_api_job_info][
+            "WAITING_FOR_JOB"
+        ] == 3.5
 
     def test_state_reset_to_waiting_on_unexpected_exception(self) -> None:
         """Process state must be reset to WAITING_FOR_JOB when submit_request raises unexpectedly."""
@@ -4699,6 +4766,21 @@ class TestResultSubmittingStuckRecovery:
 
         assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
 
+    def test_manager_state_change_buffers_waiting_timing(self) -> None:
+        """Manager-initiated WAITING_FOR_JOB transitions must buffer elapsed time."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        manager, proc_info = self._make_submit_manager(0, initial_state=HordeProcessState.WAITING_FOR_JOB)
+        proc_info.state_entered_timestamp = 90.0
+
+        with patch("time.time", return_value=100.0):
+            manager._on_process_state_change(
+                process_id=0,
+                new_state=HordeProcessState.INFERENCE_STARTING,
+            )
+
+        assert manager._pending_process_job_timings[0]["WAITING_FOR_JOB"] == 10.0
+
     # -------------------------------------------------------------------------
     # replace_hung_processes safety-net tests
     # -------------------------------------------------------------------------
@@ -4728,6 +4810,18 @@ class TestResultSubmittingStuckRecovery:
         mock_manager._process_map.is_stuck_on_inference.return_value = False
         mock_manager._check_and_replace_process.return_value = False
         mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__getitem__.side_effect = lambda process_id: next(
+            process for process in processes if process.process_id == process_id
+        )
+        mock_manager._STATE_TRANSITION_TIMING_STATES = HordeWorkerProcessManager._STATE_TRANSITION_TIMING_STATES
+        mock_manager._pending_process_job_timings = {}
+        mock_manager._pending_completed_job_timings = {}
+        mock_manager._record_pending_job_timing = HordeWorkerProcessManager._record_pending_job_timing.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        mock_manager._on_process_state_change = HordeWorkerProcessManager._on_process_state_change.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
 
         mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
             mock_manager, HordeWorkerProcessManager
@@ -4751,6 +4845,7 @@ class TestResultSubmittingStuckRecovery:
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.state_entered_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_percent_complete = None
         proc.last_job_referenced = None
         return proc

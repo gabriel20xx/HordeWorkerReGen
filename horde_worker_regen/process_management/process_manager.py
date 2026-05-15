@@ -260,6 +260,12 @@ class HordeProcessInfo:
     after safe_send_message() returns False. It is reset to None on each successful send, so
     consumers should read it before the next send call."""
 
+    state_entered_timestamp: float
+    """Timestamp (epoch seconds) when the process entered its current state.
+
+    Updated on every call to :meth:`ProcessMap.on_process_state_change` so that
+    per-state elapsed time can be computed from the manager's message loop."""
+
     # TODO: VRAM usage
 
     def __init__(
@@ -316,6 +322,8 @@ class HordeProcessInfo:
         self.process_launch_identifier = process_launch_identifier
 
         self.last_send_error = None
+
+        self.state_entered_timestamp = time.time()
 
     def is_process_busy(self) -> bool:
         """Return true if the process is actively engaged in a task.
@@ -578,6 +586,7 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """
         self[process_id].last_process_state = new_state
         self[process_id].last_received_timestamp = time.time()
+        self[process_id].state_entered_timestamp = time.time()
 
         if (
             new_state == HordeProcessState.INFERENCE_COMPLETE
@@ -1450,6 +1459,25 @@ class HordeWorkerProcessManager:
         },
     )
 
+    # Process states for which elapsed time is tracked via state-transition timing.
+    # When a process leaves one of these states, the elapsed duration is accumulated
+    # into ``_job_time_stats`` under the state's ``.name`` string so the WebUI statistics
+    # page can display avg / max time per job state beyond just Inference / Total / Download.
+    _STATE_TRANSITION_TIMING_STATES: frozenset[HordeProcessState] = frozenset(
+        {
+            HordeProcessState.WAITING_FOR_JOB,
+            HordeProcessState.MODEL_PRELOADING,
+            HordeProcessState.MODEL_LOADING,
+            HordeProcessState.INFERENCE_STARTING,
+            HordeProcessState.POST_PROCESSING_STARTING,
+            HordeProcessState.INFERENCE_POST_PROCESSING,
+            HordeProcessState.SAFETY_STARTING,
+            HordeProcessState.SAFETY_EVALUATING,
+            HordeProcessState.RESULT_SAVING,
+            HordeProcessState.RESULT_SUBMITTING,
+        },
+    )
+
     bridge_data: reGenBridgeData
     """The bridge data for this worker."""
 
@@ -1854,6 +1882,10 @@ class HordeWorkerProcessManager:
         # Per-state job timing accumulators.
         # Maps state name → {"sum": float, "count": int, "max": float}
         self._job_time_stats: dict[str, dict[str, float | int]] = {}
+        # Buffered per-state timings for the in-flight work currently associated with each process.
+        self._pending_process_job_timings: dict[int, dict[str, float]] = {}
+        # Buffered per-state timings for completed jobs awaiting final successful submission.
+        self._pending_completed_job_timings: dict[ImageGenerateJobPopResponse, dict[str, float]] = {}
 
         # Track per-model preload-stuck failure timestamps for cooldown logic.
         # Maps model name → deque of epoch timestamps when that model caused a MODEL_PRELOADING timeout.
@@ -2651,8 +2683,7 @@ class HordeWorkerProcessManager:
                 # PROCESS_ENDING transition — it only resets on INFERENCE_STARTING.
                 # Snapshotting here is safe because this code runs before any replacement.
                 prior_process_progress_value = self._process_map[message.process_id].last_progress_value
-
-                self._process_map.on_process_state_change(
+                self._on_process_state_change(
                     process_id=message.process_id,
                     new_state=message.process_state,
                 )
@@ -3173,6 +3204,10 @@ class HordeWorkerProcessManager:
                     )
 
                 # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
+                self._move_pending_process_timings_to_completed_job(
+                    process_id=message.process_id,
+                    sdk_api_job_info=completed_job_info.sdk_api_job_info,
+                )
                 self.jobs_pending_submit.append(completed_job_info)
 
     def get_processes_with_model_for_queued_job(self) -> list[int]:
@@ -3216,7 +3251,7 @@ class HordeWorkerProcessManager:
                     f"Clearing preloaded model {process.loaded_horde_model_name} "
                     f"from process {process.process_id} as it is no longer needed",
                 )
-                self._process_map.on_process_state_change(
+                self._on_process_state_change(
                     process_id=process.process_id,
                     new_state=HordeProcessState.WAITING_FOR_JOB,
                 )
@@ -3353,7 +3388,7 @@ class HordeWorkerProcessManager:
                 # correct state without waiting for the child process to report back.
                 # Use on_process_state_change to also refresh last_received_timestamp so that
                 # hung-process detection does not trigger prematurely.
-                self._process_map.on_process_state_change(
+                self._on_process_state_change(
                     process_id=available_process.process_id,
                     new_state=HordeProcessState.MODEL_PRELOADING,
                 )
@@ -3686,7 +3721,7 @@ class HordeWorkerProcessManager:
             # correct state without waiting for the child process to report back.
             # Use on_process_state_change to also refresh last_received_timestamp so that
             # hung-process detection does not trigger prematurely.
-            self._process_map.on_process_state_change(
+            self._on_process_state_change(
                 process_id=process_with_model.process_id,
                 new_state=HordeProcessState.INFERENCE_STARTING,
             )
@@ -4211,9 +4246,10 @@ class HordeWorkerProcessManager:
         for process_id, process_info in self._process_map.items():
             if process_info.last_job_referenced == new_submit.completed_job_info.sdk_api_job_info:
                 handling_process_id = process_id
-                self._process_map.on_process_state_change(
+                self._on_process_state_change(
                     process_id=process_id,
                     new_state=HordeProcessState.RESULT_SUBMITTING,
+                    timing_sdk_api_job_info=new_submit.completed_job_info.sdk_api_job_info,
                 )
                 break
 
@@ -4321,9 +4357,10 @@ class HordeWorkerProcessManager:
 
             # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
             if handling_process_id is not None:
-                self._process_map.on_process_state_change(
+                self._on_process_state_change(
                     process_id=handling_process_id,
                     new_state=HordeProcessState.WAITING_FOR_JOB,
+                    timing_sdk_api_job_info=new_submit.completed_job_info.sdk_api_job_info,
                 )
 
             return new_submit
@@ -4340,9 +4377,10 @@ class HordeWorkerProcessManager:
                         f"submission for job {new_submit.job_id}; "
                         "resetting to WAITING_FOR_JOB to unblock job scheduling",
                     )
-                    self._process_map.on_process_state_change(
+                    self._on_process_state_change(
                         process_id=handling_process_id,
                         new_state=HordeProcessState.WAITING_FOR_JOB,
+                        timing_sdk_api_job_info=new_submit.completed_job_info.sdk_api_job_info,
                     )
 
     def _record_job_timing(self, state: str, elapsed: float) -> None:
@@ -4352,7 +4390,8 @@ class HordeWorkerProcessManager:
             state: Human-readable name of the job state/phase (e.g. "Inference", "Total").
             elapsed: Time elapsed in seconds for that state.
         """
-        if elapsed <= 0:
+        if elapsed < 0:
+            logger.warning(f"Ignoring negative elapsed job timing for state {state}: {elapsed}")
             return
         entry = self._job_time_stats.setdefault(state, {"sum": 0.0, "count": 0, "max": 0.0})
         entry["sum"] += elapsed
@@ -4360,12 +4399,85 @@ class HordeWorkerProcessManager:
         if elapsed > entry["max"]:
             entry["max"] = elapsed
 
+    def _record_pending_job_timing(self, owner_timings: dict[str, float], state: str, elapsed: float) -> None:
+        """Buffer timing data until the associated job is successfully submitted."""
+        if elapsed < 0:
+            logger.warning(f"Ignoring negative elapsed job timing for state {state}: {elapsed}")
+            return
+
+        owner_timings[state] = owner_timings.get(state, 0.0) + elapsed
+
+    def _on_process_state_change(
+        self,
+        process_id: int,
+        new_state: HordeProcessState,
+        *,
+        timing_sdk_api_job_info: ImageGenerateJobPopResponse | None = None,
+    ) -> None:
+        """Update process state and buffer any tracked elapsed time for the state being left."""
+        process_info = self._process_map[process_id]
+        prior_process_state = process_info.last_process_state
+        prior_state_entered_timestamp = process_info.state_entered_timestamp
+
+        self._process_map.on_process_state_change(
+            process_id=process_id,
+            new_state=new_state,
+        )
+
+        if prior_process_state in self._STATE_TRANSITION_TIMING_STATES:
+            if timing_sdk_api_job_info is None:
+                self._record_pending_job_timing(
+                    self._pending_process_job_timings.setdefault(process_id, {}),
+                    prior_process_state.name,
+                    time.time() - prior_state_entered_timestamp,
+                )
+            else:
+                self._record_pending_job_timing(
+                    self._pending_completed_job_timings.setdefault(timing_sdk_api_job_info, {}),
+                    prior_process_state.name,
+                    time.time() - prior_state_entered_timestamp,
+                )
+
+        if new_state == HordeProcessState.WAITING_FOR_JOB and timing_sdk_api_job_info is None:
+            # Returning to the idle WAITING_FOR_JOB state without a completed-job timing owner
+            # means the process-specific buffered timings are no longer associated with a job
+            # that can contribute to completed-job statistics, so discard them here.
+            self._pending_process_job_timings.pop(process_id, None)
+
+    def _move_pending_process_timings_to_completed_job(
+        self,
+        process_id: int,
+        sdk_api_job_info: ImageGenerateJobPopResponse,
+    ) -> None:
+        """Re-associate buffered process timings with a completed job awaiting submission."""
+        pending_process_timings = self._pending_process_job_timings.pop(process_id, None)
+        if not pending_process_timings:
+            return
+
+        completed_job_timings = self._pending_completed_job_timings.setdefault(sdk_api_job_info, {})
+        for state, elapsed in pending_process_timings.items():
+            completed_job_timings[state] = completed_job_timings.get(state, 0.0) + elapsed
+
+    def _commit_completed_job_timings(self, sdk_api_job_info: ImageGenerateJobPopResponse) -> None:
+        """Commit buffered per-state timings for a successfully submitted job."""
+        pending_job_timings = self._pending_completed_job_timings.pop(sdk_api_job_info, None)
+        if not pending_job_timings:
+            return
+
+        for state, elapsed in pending_job_timings.items():
+            self._record_job_timing(state, elapsed)
+
+    def _discard_completed_job_timings(self, sdk_api_job_info: ImageGenerateJobPopResponse) -> None:
+        """Discard buffered per-state timings for a job that did not complete successfully."""
+        self._pending_completed_job_timings.pop(sdk_api_job_info, None)
+
     def _discard_broken_job(self, completed_job_info: HordeJobInfo) -> None:
         """Remove a job that cannot be submitted from all tracking structures to prevent queue blocking.
 
         This mirrors the cleanup done at the end of the normal submission path.
         """
         job_info = completed_job_info.sdk_api_job_info
+        self._discard_completed_job_timings(job_info)
 
         if completed_job_info in self.jobs_pending_submit:
             self.jobs_pending_submit.remove(completed_job_info)
@@ -4531,10 +4643,13 @@ class HordeWorkerProcessManager:
 
         # Accumulate per-state timing for successfully submitted jobs.
         if successful_submits:
+            self._commit_completed_job_timings(completed_job_info.sdk_api_job_info)
             self._record_job_timing("Inference", time_to_generate)
             self._record_job_timing("Total", time_taken)
             if completed_job_info.time_to_download_aux_models:
                 self._record_job_timing("Download", completed_job_info.time_to_download_aux_models)
+        else:
+            self._discard_completed_job_timings(completed_job_info.sdk_api_job_info)
 
         # If the job took a long time to generate, log a warning (unless speed warnings are suppressed)
         if not self.bridge_data.suppress_speed_warnings:
@@ -7840,7 +7955,7 @@ class HordeWorkerProcessManager:
                         f"{now - process_info.last_received_timestamp:.0f}s; "
                         "resetting to WAITING_FOR_JOB to unblock job scheduling",
                     )
-                    self._process_map.on_process_state_change(
+                    self._on_process_state_change(
                         process_id=process_info.process_id,
                         new_state=HordeProcessState.WAITING_FOR_JOB,
                     )
