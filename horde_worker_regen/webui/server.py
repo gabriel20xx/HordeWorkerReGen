@@ -266,11 +266,11 @@ class WorkerWebUI:
         .main-content { margin-left: var(--sidebar-width); flex: 1; min-height: 100vh; display: flex; flex-direction: column; min-width: 0; }
 
         /* ---- Top bar ---- */
-        .topbar { background: white; border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; flex-shrink: 0; }
-        .topbar-worker { flex: 1; min-width: 0; }
+        .topbar { background: white; border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: stretch; gap: 16px; flex-wrap: wrap; flex-shrink: 0; }
+        .topbar-worker { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
         .topbar-worker-name { font-size: 1.15rem; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .topbar-worker-sub { font-size: 0.82rem; color: #64748b; margin-top: 2px; }
-        .topbar-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .topbar-meta { display: grid; grid-template-columns: auto auto; gap: 6px 10px; align-items: center; align-content: center; }
         .topbar-uptime { font-size: 0.82rem; color: #64748b; }
 
         /* ---- Status badges ---- */
@@ -484,7 +484,7 @@ class WorkerWebUI:
         .topbar .theme-toggle:hover { background: #f1f5f9; }
 
         /* ---- Topbar resource pills with bars ---- */
-        .topbar-resources { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .topbar-resources { display: flex; align-items: center; align-self: center; gap: 8px; flex-wrap: wrap; }
         .topbar-res-pill { background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569; font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 8px; white-space: nowrap; display: flex; flex-direction: column; gap: 3px; width: 130px; flex-shrink: 0; }
         .topbar-res-pill-label { display: flex; justify-content: space-between; align-items: center; font-family: 'Courier New', monospace; }
         .topbar-res-pill-sub { display: flex; justify-content: space-between; align-items: center; font-family: 'Courier New', monospace; font-size: 0.67rem; opacity: 0.75; margin-top: 1px; }
