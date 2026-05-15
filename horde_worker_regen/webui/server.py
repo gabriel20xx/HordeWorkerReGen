@@ -872,16 +872,16 @@ class WorkerWebUI:
                         <div class="grid-4">
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-legend">
-                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#f59e0b;"></span>System</span>
                                     <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#fb923c;"></span>Worker</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#f59e0b;"></span>System</span>
                                 </div>
                                 <div class="chart-label">CPU %</div>
                                 <div class="chart-container-md"><canvas id="chart-cpu" aria-label="CPU usage over time"></canvas></div>
                             </div>
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-legend">
-                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#3b82f6;"></span>System</span>
                                     <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#60a5fa;"></span>Worker</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#3b82f6;"></span>System</span>
                                 </div>
                                 <div class="chart-label">GPU %</div>
                                 <div class="chart-container-md"><canvas id="chart-gpu" aria-label="GPU usage over time"></canvas></div>
@@ -2635,12 +2635,12 @@ class WorkerWebUI:
                 { points: snaps.map(function(s) { return { t: s.t, v: s.iph }; }), color: '#10b981' },
                 { points: snaps.map(function(s) { return { t: s.t, v: s.kph }; }), color: '#6366f1' });
             drawMultiLineChart('chart-cpu', [
-                { points: snaps.map(function(s) { return { t: s.t, v: s.cpu  }; }), color: '#f59e0b' },
                 { points: snaps.map(function(s) { return { t: s.t, v: s.container_cpu || 0 }; }), color: '#fb923c' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.cpu  }; }), color: '#f59e0b' },
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-gpu', [
-                { points: snaps.map(function(s) { return { t: s.t, v: s.gpu  || 0 }; }), color: '#3b82f6' },
                 { points: snaps.map(function(s) { return { t: s.t, v: s.worker_gpu || 0 }; }), color: '#60a5fa' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.gpu  || 0 }; }), color: '#3b82f6' },
             ], { yMax: 100, yFmt: function(v) { return Math.round(v) + '%'; } });
             drawMultiLineChart('chart-ram', [
                 { points: snaps.map(function(s) { return { t: s.t, v: s.ram  || 0 }; }), color: '#10b981' },
