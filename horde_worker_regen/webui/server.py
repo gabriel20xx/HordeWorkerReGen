@@ -630,7 +630,9 @@ class WorkerWebUI:
         <span class="mobile-res-chip" id="mobile-cpu">CPU 0%</span>
         <span class="mobile-res-chip" id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">WRK 0%</span>
         <span class="mobile-res-chip" id="mobile-gpu">GPU 0%</span>
+        <span class="mobile-res-chip" id="mobile-gpu-wrk" style="font-size:0.65rem;opacity:0.75;">wGPU 0%</span>
         <span class="mobile-res-chip" id="mobile-vram">wVRAM 0%</span>
+        <span class="mobile-res-chip" id="mobile-sysvram" style="font-size:0.65rem;opacity:0.75;">sysVRAM 0%</span>
         <span class="mobile-res-chip" id="mobile-ram">wrkRAM 0%</span>
         <span class="mobile-res-chip" id="mobile-sysram" style="font-size:0.65rem;opacity:0.75;">sysRAM 0%</span>
     </div>
@@ -2217,8 +2219,12 @@ class WorkerWebUI:
                     document.getElementById('mobile-cpu-ctr').style.color = resBarColor(ctrCpu);
                     document.getElementById('mobile-gpu').textContent = 'GPU '+gpu+'%';
                     document.getElementById('mobile-gpu').style.color = resBarColor(gpu);
+                    document.getElementById('mobile-gpu-wrk').textContent = 'wGPU '+workerGpu+'%';
+                    document.getElementById('mobile-gpu-wrk').style.color = resBarColor(workerGpu);
                     document.getElementById('mobile-vram').textContent = 'wVRAM '+vram+'%';
                     document.getElementById('mobile-vram').style.color = resBarColor(vram);
+                    document.getElementById('mobile-sysvram').textContent = 'sysVRAM '+sysVram+'%';
+                    document.getElementById('mobile-sysvram').style.color = resBarColor(sysVram);
                     document.getElementById('mobile-ram').textContent = 'wrkRAM '+ram+'%';
                     document.getElementById('mobile-ram').style.color = resBarColor(ram);
                     document.getElementById('mobile-sysram').textContent = 'sysRAM '+sysRam+'%';
