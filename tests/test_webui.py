@@ -570,16 +570,18 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
         assert "topbar-ram-val" not in html
         # Mobile resource chips – all 8 values must be present (CPU sys+worker, GPU sys+worker, VRAM worker+sys, RAM worker+sys)
         assert 'id="mobile-cpu">CPU 0%</span>' in html
-        assert 'id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">WRK 0%</span>' in html
+        assert 'id="mobile-cpu-ctr">WRK CPU 0%</span>' in html
         assert 'id="mobile-gpu">GPU 0%</span>' in html
-        assert 'id="mobile-gpu-wrk" style="font-size:0.65rem;opacity:0.75;">wrkGPU 0%</span>' in html
-        assert 'id="mobile-vram">wVRAM 0%</span>' in html
-        assert 'id="mobile-sysvram" style="font-size:0.65rem;opacity:0.75;">sysVRAM 0%</span>' in html
-        assert 'id="mobile-ram">wrkRAM 0%</span>' in html
-        assert 'id="mobile-sysram" style="font-size:0.65rem;opacity:0.75;">sysRAM 0%</span>' in html
+        assert 'id="mobile-gpu-wrk">WRK GPU 0%</span>' in html
+        assert 'id="mobile-vram">WRK VRAM 0%</span>' in html
+        assert 'id="mobile-sysvram">SYS VRAM 0%</span>' in html
+        assert 'id="mobile-ram">WRK RAM 0%</span>' in html
+        assert 'id="mobile-sysram">SYS RAM 0%</span>' in html
+        assert html.count("mobile-res-chip-secondary") == 5
         # JS must update all 8 mobile chips
-        assert "document.getElementById('mobile-gpu-wrk').textContent" in html
-        assert "document.getElementById('mobile-sysvram').textContent" in html
+        assert "function setMobileResChip(chipId, chipLabel, chipValue)" in html
+        assert "setMobileResChip('mobile-gpu-wrk', 'WRK GPU', workerGpu);" in html
+        assert "setMobileResChip('mobile-sysvram', 'SYS VRAM', sysVram);" in html
     finally:
         await webui.stop()
 
