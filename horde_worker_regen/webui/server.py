@@ -271,7 +271,7 @@ class WorkerWebUI:
         .topbar-worker { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
         .topbar-worker-name { font-size: 1.15rem; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .topbar-worker-sub { font-size: 0.82rem; color: #64748b; margin-top: 2px; }
-        .topbar-meta { display: grid; grid-template-columns: auto auto; gap: 6px 10px; align-items: center; align-content: center; }
+        .topbar-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; align-items: center; align-content: center; justify-items: stretch; }
         .topbar-uptime { font-size: 0.82rem; color: #64748b; }
 
         /* ---- Status badges ---- */
@@ -362,8 +362,8 @@ class WorkerWebUI:
         .console-copy-btn.error:hover { background: #dc2626; }
 
         /* ---- Job pops pause button ---- */
-        .job-pops-pause-wrap { position: relative; display: inline-flex; }
-        .job-pops-pause-btn { background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; white-space: nowrap; }
+        .job-pops-pause-wrap { position: relative; display: flex; width: 100%; }
+        .job-pops-pause-btn { background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; white-space: nowrap; width: 100%; }
         .job-pops-pause-btn:hover { background: #cbd5e1; }
         .job-pops-pause-btn.paused { background: #e0e7ff; color: #3730a3; border-color: #a5b4fc; }
         .job-pops-pause-btn.paused:hover { background: #c7d2fe; }
@@ -481,7 +481,7 @@ class WorkerWebUI:
         /* ---- Theme toggle (square) ---- */
         .theme-toggle { background: none; border: 1px solid rgba(255,255,255,0.18); color: var(--text-light); font-size: 1rem; cursor: pointer; padding: 5px 9px; border-radius: 4px; line-height: 1; transition: background 0.15s; flex-shrink: 0; }
         .theme-toggle:hover { background: rgba(255,255,255,0.08); }
-        .topbar .theme-toggle { background: none; border: 1px solid #e2e8f0; color: #475569; }
+        .topbar .theme-toggle { background: none; border: 1px solid #e2e8f0; color: #475569; width: 100%; }
         .topbar .theme-toggle:hover { background: #f1f5f9; }
 
         /* ---- Topbar resource pills with bars ---- */
@@ -699,7 +699,7 @@ class WorkerWebUI:
                 <span id="worker-status-badge"></span>
                 <span class="topbar-uptime">&#9201; <span id="uptime">--</span></span>
                 <div class="job-pops-pause-wrap">
-                <button class="job-pops-pause-btn" id="job-pops-pause-btn" onclick="handleJobPopsPauseBtn(event)" title="Pause or resume accepting new jobs from the Horde" aria-pressed="false">&#9646;&#9646; Pause Jobs</button>
+                <button class="job-pops-pause-btn" id="job-pops-pause-btn" onclick="handleJobPopsPauseBtn(event)" title="Pause or resume accepting new jobs from the Horde" aria-pressed="false">Pause Jobs</button>
                 <div class="job-pops-pause-menu" id="job-pops-pause-menu" style="display:none;" role="menu">
                     <button onclick="setJobPopsPause(900)">15 minutes</button>
                     <button onclick="setJobPopsPause(3600)">1 hour</button>
@@ -1297,7 +1297,7 @@ class WorkerWebUI:
                 btn.title = 'Resume accepting new jobs from the Horde';
                 btn.setAttribute('aria-pressed', 'true');
             } else {
-                btn.textContent = '\u25AE\u25AE Pause Jobs';
+                btn.textContent = 'Pause Jobs';
                 btn.classList.remove('paused');
                 btn.title = 'Pause or resume accepting new jobs from the Horde';
                 btn.setAttribute('aria-pressed', 'false');
