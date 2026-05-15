@@ -612,9 +612,10 @@ class WorkerWebUI:
         .model-images-bar-wrap { background: var(--border); border-radius: 3px; height: 7px; overflow: hidden; }
         .model-images-bar { background: var(--accent); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
         .model-failed-bar { background: var(--error); height: 7px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
-        #stats-model-tables-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-        @media (max-width: 900px) { #stats-model-tables-grid { grid-template-columns: 1fr 1fr; } }
+        #stats-model-tables-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
         @media (max-width: 600px) { #stats-model-tables-grid { grid-template-columns: 1fr; } }
+        #stats-job-state-model-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 600px) { #stats-job-state-model-row { grid-template-columns: 1fr; } }
 
     </style>
 </head>
@@ -897,15 +898,15 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job State (Session)</span></div>
-                        <div class="card" style="padding:14px 16px;">
-                            <div id="stats-job-state-time-wrap">
-                                <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
+                        <div id="stats-job-state-model-row">
+                            <div>
+                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job State (Session)</span></div>
+                                <div class="card" style="padding:14px 16px;">
+                                    <div id="stats-job-state-time-wrap">
+                                        <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    </div>
-                    <div class="section">
-                        <div id="stats-model-tables-grid">
                             <div>
                                 <div class="section-header"><span class="section-title">&#127760; Images by Model (Session)</span></div>
                                 <div class="card" style="padding:14px 16px;">
@@ -914,6 +915,10 @@ class WorkerWebUI:
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div id="stats-model-tables-grid">
                             <div>
                                 <div class="section-header"><span class="section-title">&#10060; Failed Jobs by Model (Session)</span></div>
                                 <div class="card" style="padding:14px 16px;">
