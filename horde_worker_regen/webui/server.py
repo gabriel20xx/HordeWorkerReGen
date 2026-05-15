@@ -2596,7 +2596,7 @@ class WorkerWebUI:
                         if (b === 'TOTAL') return -1;
                         var ia = stateOrder.indexOf(a);
                         var ib = stateOrder.indexOf(b);
-                        if (ia === -1 && ib === -1) return a < b ? -1 : a > b ? 1 : 0;
+                        if (ia === -1 && ib === -1) return a.localeCompare(b);
                         if (ia === -1) return 1;
                         if (ib === -1) return -1;
                         return ia - ib;
