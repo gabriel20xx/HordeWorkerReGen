@@ -283,7 +283,7 @@ def test_webui_faulted_jobs_history() -> None:
             "controlnet": "canny",
             "workflow": "qr_code",
             "batch_size": 4,
-            "fault_phase": "During Inference",
+            "fault_phase": "INFERENCE_PROCESSING",
         },
         {
             "job_id": "job456",
@@ -297,7 +297,7 @@ def test_webui_faulted_jobs_history() -> None:
             "controlnet": None,
             "workflow": None,
             "batch_size": 1,
-            "fault_phase": "Post Processing",
+            "fault_phase": "INFERENCE_POST_PROCESSING",
         },
     ]
     webui.update_status(faulted_jobs_history=test_faulted_jobs)
@@ -306,9 +306,9 @@ def test_webui_faulted_jobs_history() -> None:
     assert webui.status_data["faulted_jobs_history"][0]["job_id"] == "job123"
     assert webui.status_data["faulted_jobs_history"][0]["model"] == "TestModel1"
     assert webui.status_data["faulted_jobs_history"][0]["batch_size"] == 4
-    assert webui.status_data["faulted_jobs_history"][0]["fault_phase"] == "During Inference"
+    assert webui.status_data["faulted_jobs_history"][0]["fault_phase"] == "INFERENCE_PROCESSING"
     assert webui.status_data["faulted_jobs_history"][1]["model"] == "TestModel2"
-    assert webui.status_data["faulted_jobs_history"][1]["fault_phase"] == "Post Processing"
+    assert webui.status_data["faulted_jobs_history"][1]["fault_phase"] == "INFERENCE_POST_PROCESSING"
 
 
 def test_webui_batch_size_display() -> None:
@@ -1772,12 +1772,12 @@ async def test_webui_stats_endpoint() -> None:
         assert data6["faulted_jobs_per_phase"] == {}
 
         # faulted_jobs_per_phase is reflected from update_status and can be set and cleared.
-        webui.update_status(faulted_jobs_per_phase={"During Inference": 4, "Safety Check": 1})
+        webui.update_status(faulted_jobs_per_phase={"INFERENCE_PROCESSING": 4, "SAFETY_EVALUATING": 1})
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/stats",
         ) as response:
             data7 = await response.json()
-        assert data7["faulted_jobs_per_phase"] == {"During Inference": 4, "Safety Check": 1}
+        assert data7["faulted_jobs_per_phase"] == {"INFERENCE_PROCESSING": 4, "SAFETY_EVALUATING": 1}
 
         # Passing an empty dict clears the faulted_jobs_per_phase field correctly.
         webui.update_status(faulted_jobs_per_phase={})

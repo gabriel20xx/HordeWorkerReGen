@@ -1575,8 +1575,8 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
     def test_process_ending_with_job_in_progress_uses_prior_state_for_fault(self) -> None:
         """handle_job_fault must see the prior process state (e.g. INFERENCE_PROCESSING), not PROCESS_ENDING.
 
-        This ensures _faulted_jobs_history correctly classifies the fault phase as 'During Inference'
-        rather than the misleading 'Process Ending'.
+        This ensures _faulted_jobs_history correctly classifies the fault phase as 'INFERENCE_PROCESSING'
+        rather than the misleading 'PROCESS_ENDING'.
         """
 
         job = MagicMock()
@@ -6491,13 +6491,13 @@ class TestRecordFaultedJobHistory:
         mock_manager = self._make_manager()
         job = self._make_faulted_job("job-abc")
 
-        mock_manager._bound_record(job, fault_phase="During Inference")
+        mock_manager._bound_record(job, fault_phase="INFERENCE_PROCESSING")
 
         assert len(mock_manager._faulted_jobs_history) == 1
         entry = mock_manager._faulted_jobs_history[0]
         assert entry["job_id"] == "job-abc"
         assert entry["model"] == "TestModel"
-        assert entry["fault_phase"] == "During Inference"
+        assert entry["fault_phase"] == "INFERENCE_PROCESSING"
         assert entry["width"] == 512
         assert entry["height"] == 512
         assert entry["steps"] == 30
@@ -6520,8 +6520,8 @@ class TestRecordFaultedJobHistory:
         mock_manager = self._make_manager()
         job = self._make_faulted_job("job-dup")
 
-        mock_manager._bound_record(job, fault_phase="During Inference")
-        mock_manager._bound_record(job, fault_phase="During Inference")
+        mock_manager._bound_record(job, fault_phase="INFERENCE_PROCESSING")
+        mock_manager._bound_record(job, fault_phase="INFERENCE_PROCESSING")
 
         assert len(mock_manager._faulted_jobs_history) == 1
 

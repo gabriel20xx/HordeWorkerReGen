@@ -81,37 +81,29 @@ class TestHandleJobFaultStatePhase:
         return recorded_phase[0] if recorded_phase else None
 
     def test_fault_phase_inference_processing(self) -> None:
-        """INFERENCE_PROCESSING maps to 'During Inference'."""
+        """INFERENCE_PROCESSING maps to 'INFERENCE_PROCESSING'."""
         phase = self._invoke_handle_job_fault(HordeProcessState.INFERENCE_PROCESSING)
-        assert phase == "During Inference"
+        assert phase == "INFERENCE_PROCESSING"
 
     def test_fault_phase_inference_starting(self) -> None:
-        """INFERENCE_STARTING maps to 'During Inference'."""
+        """INFERENCE_STARTING maps to 'INFERENCE_STARTING'."""
         phase = self._invoke_handle_job_fault(HordeProcessState.INFERENCE_STARTING)
-        assert phase == "During Inference"
+        assert phase == "INFERENCE_STARTING"
 
     def test_fault_phase_inference_post_processing(self) -> None:
-        """INFERENCE_POST_PROCESSING maps to 'Post Processing'."""
+        """INFERENCE_POST_PROCESSING maps to 'INFERENCE_POST_PROCESSING'."""
         phase = self._invoke_handle_job_fault(HordeProcessState.INFERENCE_POST_PROCESSING)
-        assert phase == "Post Processing"
+        assert phase == "INFERENCE_POST_PROCESSING"
 
     def test_fault_phase_safety_evaluating(self) -> None:
-        """SAFETY_EVALUATING maps to 'Safety Check'."""
+        """SAFETY_EVALUATING maps to 'SAFETY_EVALUATING'."""
         phase = self._invoke_handle_job_fault(HordeProcessState.SAFETY_EVALUATING)
-        assert phase == "Safety Check"
+        assert phase == "SAFETY_EVALUATING"
 
     def test_fault_phase_safety_starting(self) -> None:
-        """SAFETY_STARTING must also map to 'Safety Check' (not fall through to default).
-
-        This was previously broken: the condition checked SAFETY_EVALUATING twice instead
-        of checking SAFETY_EVALUATING and SAFETY_STARTING.
-        """
+        """SAFETY_STARTING maps to 'SAFETY_STARTING'."""
         phase = self._invoke_handle_job_fault(HordeProcessState.SAFETY_STARTING)
-        assert phase == "Safety Check", (
-            f"Expected 'Safety Check' for SAFETY_STARTING, got {phase!r}. "
-            "The duplicate SAFETY_EVALUATING condition was not replaced with "
-            "the SAFETY_EVALUATING | SAFETY_STARTING pair."
-        )
+        assert phase == "SAFETY_STARTING"
 
 
 class TestHandleJobFaultSafetyListCleanup:

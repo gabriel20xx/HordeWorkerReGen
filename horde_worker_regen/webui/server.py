@@ -2559,19 +2559,41 @@ class WorkerWebUI:
 
             // Sort states by their order in the job process; TOTAL is always last.
             // Shared by both the Avg & Max Time and Faults by Phase tables.
+            // Mirrors the full HordeProcessState enum in pipeline execution order.
             var stateOrder = [
+                'PROCESS_STARTING',
                 'WAITING_FOR_JOB',
-                'MODEL_PRELOADING',
-                'MODEL_LOADING',
+                'JOB_RECEIVED',
+                'DOWNLOADING_MODEL',
+                'DOWNLOAD_COMPLETE',
                 'DOWNLOADING_AUX_MODEL',
+                'DOWNLOAD_AUX_COMPLETE',
+                'MODEL_PRELOADING',
+                'MODEL_PRELOADED',
+                'MODEL_LOADING',
+                'MODEL_LOADED',
+                'UNLOADED_MODEL_FROM_VRAM',
+                'UNLOADED_MODEL_FROM_RAM',
                 'INFERENCE_STARTING',
                 'INFERENCE_PROCESSING',
+                'INFERENCE_FAILED',
                 'POST_PROCESSING_STARTING',
+                'POST_PROCESSING_COMPLETE',
                 'INFERENCE_POST_PROCESSING',
+                'INFERENCE_COMPLETE',
+                'ALCHEMY_STARTING',
+                'ALCHEMY_COMPLETE',
+                'ALCHEMY_FAILED',
                 'SAFETY_STARTING',
                 'SAFETY_EVALUATING',
+                'SAFETY_COMPLETE',
+                'SAFETY_FAILED',
                 'RESULT_SAVING',
+                'RESULT_SAVED',
                 'RESULT_SUBMITTING',
+                'RESULT_SUBMITTED',
+                'PROCESS_ENDING',
+                'PROCESS_ENDED',
             ];
             function sortByStateOrder(a, b) {
                 if (a === 'TOTAL') return 1;
