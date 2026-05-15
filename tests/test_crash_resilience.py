@@ -6643,8 +6643,19 @@ class TestHandleJobFaultRecordsHistory:
         job = self._make_faulted_job("missing-lookup-job")
         mock_manager = MagicMock()
         mock_manager.jobs_lookup = {}  # job not in lookup
+        mock_manager._failed_models = {}
+        mock_manager._inference_failures = {}
         mock_manager._faulted_jobs_history = []
+        mock_manager._faulted_jobs_per_phase = {}
         mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager._prune_preload_stuck_failures = types.MethodType(
+            HordeWorkerProcessManager._prune_preload_stuck_failures,
+            mock_manager,
+        )
+        mock_manager._record_inference_failure = types.MethodType(
+            HordeWorkerProcessManager._record_inference_failure,
+            mock_manager,
+        )
         mock_manager._record_faulted_job_history = types.MethodType(
             HordeWorkerProcessManager._record_faulted_job_history,
             mock_manager,
@@ -6658,6 +6669,48 @@ class TestHandleJobFaultRecordsHistory:
 
         assert len(mock_manager._faulted_jobs_history) == 1
         assert mock_manager._faulted_jobs_history[0]["job_id"] == "missing-lookup-job"
+        assert mock_manager._failed_models == {"TestModel": 1}
+        assert len(mock_manager._inference_failures.get("TestModel", [])) == 1
+        assert mock_manager._faulted_jobs_per_phase == {"Unknown Phase": 1}
+
+    def test_job_not_in_lookup_duplicate_does_not_double_count_model_or_cooldown(self) -> None:
+        """Duplicate metadata-missing faults for the same job must not double-count model stats/cooldown."""
+        import types
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = self._make_faulted_job("missing-lookup-dupe")
+        mock_manager = MagicMock()
+        mock_manager.jobs_lookup = {}
+        mock_manager._failed_models = {}
+        mock_manager._inference_failures = {}
+        mock_manager._faulted_jobs_history = []
+        mock_manager._faulted_jobs_per_phase = {}
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager._prune_preload_stuck_failures = types.MethodType(
+            HordeWorkerProcessManager._prune_preload_stuck_failures,
+            mock_manager,
+        )
+        mock_manager._record_inference_failure = types.MethodType(
+            HordeWorkerProcessManager._record_inference_failure,
+            mock_manager,
+        )
+        mock_manager._record_faulted_job_history = types.MethodType(
+            HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager.handle_job_fault = types.MethodType(
+            HordeWorkerProcessManager.handle_job_fault,
+            mock_manager,
+        )
+
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+        mock_manager.handle_job_fault(faulted_job=job, process_info=None)
+
+        assert len(mock_manager._faulted_jobs_history) == 1
+        assert mock_manager._failed_models == {"TestModel": 1}
+        assert len(mock_manager._inference_failures.get("TestModel", [])) == 1
+        assert mock_manager._faulted_jobs_per_phase == {"Unknown Phase": 1}
 
     def test_fault_phase_from_process_state_recorded(self) -> None:
         """The fault_phase must reflect the process state at the time of the fault."""

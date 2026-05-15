@@ -4948,14 +4948,17 @@ class HordeWorkerProcessManager:
 
         if job_info is None:
             logger.error(f"Job {faulted_job.id_} not found in jobs_lookup")
-            # Track the failing model so the stats page reflects this fault even when
-            # the job_info cannot be found.
-            if faulted_job.model is not None:
-                model_name = faulted_job.model
-                self._failed_models[model_name] = self._failed_models.get(model_name, 0) + 1
             # Record in history even when the job_info cannot be found so the fault is
             # still visible in the webui (fault_phase is unknown in this edge case).
+            job_id_str = str(faulted_job.id_)
+            already_recorded = any(entry["job_id"] == job_id_str for entry in self._faulted_jobs_history)
             self._record_faulted_job_history(faulted_job)
+            # Keep failed-model and inference-cooldown tracking aligned with history
+            # deduplication: only count each permanently-faulted job ID once.
+            if not already_recorded and faulted_job.model is not None:
+                model_name = faulted_job.model
+                self._failed_models[model_name] = self._failed_models.get(model_name, 0) + 1
+                self._record_inference_failure(model_name, time.time())
             # The job may have been removed from jobs_pending_inference before this call
             # (e.g. _fault_cooldown_model_jobs strips it when metadata is missing).
             # Restart the idle timer if that emptied the queue.
