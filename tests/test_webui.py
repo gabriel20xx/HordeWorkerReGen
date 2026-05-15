@@ -570,13 +570,13 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
         assert "topbar-ram-val" not in html
         # Mobile resource chips – all 8 values must be present (CPU sys+worker, GPU sys+worker, VRAM worker+sys, RAM worker+sys)
         assert 'id="mobile-cpu">CPU 0%</span>' in html
-        assert 'id="mobile-cpu-ctr"' in html
+        assert 'id="mobile-cpu-ctr" style="font-size:0.65rem;opacity:0.75;">WRK 0%</span>' in html
         assert 'id="mobile-gpu">GPU 0%</span>' in html
-        assert 'id="mobile-gpu-wrk"' in html
+        assert 'id="mobile-gpu-wrk" style="font-size:0.65rem;opacity:0.75;">wrkGPU 0%</span>' in html
         assert 'id="mobile-vram">wVRAM 0%</span>' in html
-        assert 'id="mobile-sysvram"' in html
+        assert 'id="mobile-sysvram" style="font-size:0.65rem;opacity:0.75;">sysVRAM 0%</span>' in html
         assert 'id="mobile-ram">wrkRAM 0%</span>' in html
-        assert 'id="mobile-sysram"' in html
+        assert 'id="mobile-sysram" style="font-size:0.65rem;opacity:0.75;">sysRAM 0%</span>' in html
         # JS must update all 8 mobile chips
         assert "document.getElementById('mobile-gpu-wrk').textContent" in html
         assert "document.getElementById('mobile-sysvram').textContent" in html
