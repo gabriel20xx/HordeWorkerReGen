@@ -4948,6 +4948,11 @@ class HordeWorkerProcessManager:
 
         if job_info is None:
             logger.error(f"Job {faulted_job.id_} not found in jobs_lookup")
+            # Track the failing model so the stats page reflects this fault even when
+            # the job_info cannot be found.
+            if faulted_job.model is not None:
+                model_name = faulted_job.model
+                self._failed_models[model_name] = self._failed_models.get(model_name, 0) + 1
             # Record in history even when the job_info cannot be found so the fault is
             # still visible in the webui (fault_phase is unknown in this edge case).
             self._record_faulted_job_history(faulted_job)

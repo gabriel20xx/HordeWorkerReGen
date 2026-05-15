@@ -1087,7 +1087,7 @@ class WorkerWebUI:
                 renderWorkersList();
             }
             if (pageId === 'stats') {
-                fetchStats();
+                fetchStats(true);
             }
         }
         window.addEventListener('popstate', function() {
