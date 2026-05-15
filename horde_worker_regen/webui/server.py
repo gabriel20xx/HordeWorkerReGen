@@ -2039,23 +2039,33 @@ class WorkerWebUI:
                     }
                     items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                 } else if (count === 3) {
-                    // 1×3 row:    2 horizontal gaps; each cell AR = (W−2×gap)/3 / H.
-                    // 2+1 layout: 1 vertical gap between rows; each row height = (H−gap)/2.
-                    //   Top cell spans full width: AR = W / rowH.
-                    //   Two bottom cells share a horizontal gap: AR = (W−gap)/2 / rowH.
-                    //   Area-weighted efficiency ≈ 0.5×cellEff(top) + 0.5×cellEff(bottom).
-                    var rowH = (containerHeight - gap) / 2;
-                    var ar1x3 = (containerWidth - 2 * gap) / 3 / containerHeight;
-                    var ar2p1top = containerWidth / rowH;
-                    var ar2p1bot = (containerWidth - gap) / 2 / rowH;
-                    var eff1x3 = cellEff(ar1x3, avgImgAR);
-                    var eff2p1 = 0.5 * cellEff(ar2p1top, avgImgAR) + 0.5 * cellEff(ar2p1bot, avgImgAR);
-                    if (eff1x3 >= eff2p1) {
+                    // Portrait images (height > width) always look better side-by-side in a 1×3 row
+                    // because the 2+1 alternative puts a portrait image into a wide landscape cell,
+                    // wasting a lot of space.  For landscape/square images use the area-efficiency
+                    // calculation to pick the best layout.
+                    if (avgImgAR < 1) {
+                        // Portrait: always 1×3 side-by-side
                         gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
                         items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
                     } else {
-                        gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
-                        items = srcs.map(function(s, i) { return makeItem(s, i, i === 0); }).join('');
+                        // 1×3 row:    2 horizontal gaps; each cell AR = (W−2×gap)/3 / H.
+                        // 2+1 layout: 1 vertical gap between rows; each row height = (H−gap)/2.
+                        //   Top cell spans full width: AR = W / rowH.
+                        //   Two bottom cells share a horizontal gap: AR = (W−gap)/2 / rowH.
+                        //   Area-weighted efficiency ≈ 0.5×cellEff(top) + 0.5×cellEff(bottom).
+                        var rowH = (containerHeight - gap) / 2;
+                        var ar1x3 = (containerWidth - 2 * gap) / 3 / containerHeight;
+                        var ar2p1top = containerWidth / rowH;
+                        var ar2p1bot = (containerWidth - gap) / 2 / rowH;
+                        var eff1x3 = cellEff(ar1x3, avgImgAR);
+                        var eff2p1 = 0.5 * cellEff(ar2p1top, avgImgAR) + 0.5 * cellEff(ar2p1bot, avgImgAR);
+                        if (eff1x3 >= eff2p1) {
+                            gridStyle = 'grid-template-columns:repeat(3,1fr);grid-template-rows:1fr;';
+                            items = srcs.map(function(s, i) { return makeItem(s, i, false); }).join('');
+                        } else {
+                            gridStyle = 'grid-template-columns:repeat(2,1fr);grid-template-rows:1fr 1fr;';
+                            items = srcs.map(function(s, i) { return makeItem(s, i, i === 0); }).join('');
+                        }
                     }
                 } else {
                     // count === 4
