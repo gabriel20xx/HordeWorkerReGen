@@ -643,7 +643,7 @@ class WorkerWebUI:
         <nav class="sidebar-nav" aria-label="Page navigation">
             <div class="nav-section-label">Navigation</div>
             <button class="nav-item active" onclick="showPage('overview', this)" id="nav-overview">
-                <span class="nav-icon">&#128202;</span> Overview
+                <span class="nav-icon">&#127968;</span> Overview
             </button>
             <button class="nav-item" onclick="showPage('gallery', this)" id="nav-gallery">
                 <span class="nav-icon">&#128444;</span> Gallery
