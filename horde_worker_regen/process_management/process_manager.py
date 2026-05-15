@@ -4644,10 +4644,13 @@ class HordeWorkerProcessManager:
         # Accumulate per-state timing for successfully submitted jobs.
         if successful_submits:
             self._commit_completed_job_timings(completed_job_info.sdk_api_job_info)
-            self._record_job_timing("INFERENCE_PROCESSING", time_to_generate)
+            self._record_job_timing(HordeProcessState.INFERENCE_PROCESSING.name, time_to_generate)
             self._record_job_timing("Total", time_taken)
             if completed_job_info.time_to_download_aux_models:
-                self._record_job_timing("DOWNLOADING_AUX_MODEL", completed_job_info.time_to_download_aux_models)
+                self._record_job_timing(
+                    HordeProcessState.DOWNLOADING_AUX_MODEL.name,
+                    completed_job_info.time_to_download_aux_models,
+                )
         else:
             self._discard_completed_job_timings(completed_job_info.sdk_api_job_info)
 
