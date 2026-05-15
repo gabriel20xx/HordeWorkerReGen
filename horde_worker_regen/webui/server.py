@@ -2491,12 +2491,16 @@ class WorkerWebUI:
             // These are only meaningful when the selected window contains at least
             // two snapshots; with a single snapshot, the counters are cumulative and
             // would overstate activity within the window.
-            var imagesGenerated = 0, kudosEarned = 0, jobsPopped = 0, jobsFaulted = 0;
+            // Jobs Faulted uses the session-total from the API rather than a windowed
+            // delta so that faults which occurred before the selected window are never
+            // silently hidden (e.g. a fault that happened 20 minutes ago would show 0
+            // under the default 15-minute window if a delta-only approach were used).
+            var imagesGenerated = 0, kudosEarned = 0, jobsPopped = 0;
+            var jobsFaulted = data.jobs_faulted !== undefined ? data.jobs_faulted : 0;
             if (snaps.length >= 2) {
                 imagesGenerated = Math.max(0, snaps[snaps.length - 1].jc - snaps[0].jc);
                 kudosEarned     = Math.max(0, snaps[snaps.length - 1].ks - snaps[0].ks);
                 jobsPopped      = Math.max(0, snaps[snaps.length - 1].jp - snaps[0].jp);
-                jobsFaulted     = Math.max(0, snaps[snaps.length - 1].jf - snaps[0].jf);
             }
             var avgIph = _avgField(snaps, 'iph');
             var avgKph = _avgField(snaps, 'kph');
@@ -2507,7 +2511,7 @@ class WorkerWebUI:
             el('stats-avg-iph').textContent          = fmtVal(avgIph, 2);
             el('stats-avg-kph').textContent          = fmtVal(avgKph, 2);
             el('stats-jobs-popped').textContent      = noData ? '-' : jobsPopped.toLocaleString();
-            el('stats-jobs-faulted').textContent     = noData ? '-' : jobsFaulted.toLocaleString();
+            el('stats-jobs-faulted').textContent     = jobsFaulted.toLocaleString();
 
             // Per-model image count table (session totals, not windowed)
             var modelWrap = document.getElementById('stats-model-table-wrap');
@@ -3307,7 +3311,8 @@ class WorkerWebUI:
                 "failed_jobs_per_model": {"model-name": <int count>, ...},
                 "faulted_jobs_per_phase": {"phase-name": <int count>, ...},
                 "avg_time_per_job_state": {"state-name": <float seconds>, ...},
-                "max_time_per_job_state": {"state-name": <float seconds>, ...}
+                "max_time_per_job_state": {"state-name": <float seconds>, ...},
+                "jobs_faulted": <int>  # session-total jobs faulted
             }
         """
         return web.json_response({
@@ -3317,6 +3322,7 @@ class WorkerWebUI:
             "faulted_jobs_per_phase": self.status_data.get("faulted_jobs_per_phase", {}),
             "avg_time_per_job_state": self.status_data.get("avg_time_per_job_state", {}),
             "max_time_per_job_state": self.status_data.get("max_time_per_job_state", {}),
+            "jobs_faulted": int(self.status_data.get("jobs_faulted", 0)),
         })
 
     def _record_stats_snapshot(self) -> None:
