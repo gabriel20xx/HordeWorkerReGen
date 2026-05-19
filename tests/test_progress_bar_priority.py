@@ -761,6 +761,8 @@ def test_api_job_pop_flushes_idle_time_before_reset() -> None:
 
     # Guard conditions that must NOT cause an early return
     mock_manager._shutting_down = False
+    mock_manager._job_pops_paused = False
+    mock_manager._job_pops_pause_until = None
     mock_manager.horde_client_session = MagicMock()
     mock_manager._too_many_consecutive_failed_jobs = False
     mock_manager._consecutive_failed_jobs = 0
@@ -888,6 +890,9 @@ def test_idle_timer_restarts_immediately_when_last_job_leaves_queue() -> None:
     mock_manager._last_pop_no_jobs_available_time = 0.0
     mock_manager._time_spent_no_jobs_available = 19.0
 
+    # Must be explicitly False so _restart_idle_timer_if_queue_empty doesn't return early
+    mock_manager._job_pops_paused = False
+
     # The job is the only one in the queue
     mock_manager.jobs_pending_inference = deque([fake_job])
     mock_manager.jobs_in_progress = []
@@ -950,6 +955,9 @@ def test_idle_timer_restarts_when_last_job_removed_before_handle_job_fault() -> 
     fake_now = 3000.0
     mock_manager._last_pop_no_jobs_available_time = 0.0
     mock_manager._time_spent_no_jobs_available = 7.0
+
+    # Must be explicitly False so _restart_idle_timer_if_queue_empty doesn't return early
+    mock_manager._job_pops_paused = False
 
     # The job has ALREADY been removed from the queue (simulating _fault_cooldown_model_jobs)
     from collections import deque
@@ -1116,6 +1124,8 @@ class TestApiJobPopQueueGate:
         """
         mock_manager = MagicMock()
         mock_manager._shutting_down = False
+        mock_manager._job_pops_paused = False
+        mock_manager._job_pops_pause_until = None
         mock_manager._too_many_consecutive_failed_jobs = False
         mock_manager._consecutive_failed_jobs = 0
 
@@ -1240,6 +1250,8 @@ class TestApiJobPopPerModelFilterRemoved:
         """
         mock_manager = MagicMock()
         mock_manager._shutting_down = False
+        mock_manager._job_pops_paused = False
+        mock_manager._job_pops_pause_until = None
         mock_manager._too_many_consecutive_failed_jobs = False
         mock_manager._consecutive_failed_jobs = 0
         mock_manager._consecutive_pop_failures = 0
