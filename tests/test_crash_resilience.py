@@ -7603,6 +7603,155 @@ class TestPreloadStuckCooldown:
             "Exactly one failure should be recorded for a single MODEL_PRELOADING timeout"
         )
 
+    # ------------------------------------------------------------------
+    # _replace_inference_process: no retry for MODEL_PRELOADING stuck
+    # ------------------------------------------------------------------
+
+    def test_replace_inference_process_skips_retry_for_model_preloading(self) -> None:
+        """_replace_inference_process must permanently fault a MODEL_PRELOADING job without retry.
+
+        When a process is replaced because it timed out in MODEL_PRELOADING, re-queuing the
+        job for retry would send the same broken model to a fresh process, which will get
+        stuck again for another full preload_timeout before the preload-stuck cooldown kicks
+        in.  The fix pre-sets retry_count = MAX_JOB_RETRIES so handle_job_fault permanently
+        faults the job instead of re-queueing it.
+        """
+        import types
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = MagicMock()
+        job.id_ = "aaaa0001-0000-0000-0000-000000000000"
+        job.model = "HungModel"
+        job.payload = MagicMock()
+        job.payload.n_iter = 1
+        job.payload.loras = []
+        job.payload.workflow = None
+
+        job_info = MagicMock()
+        job_info.retry_count = 0
+
+        process_info = MagicMock()
+        process_info.process_id = 1
+        process_info.last_process_state = HordeProcessState.MODEL_PRELOADING
+        process_info.last_progress_value = None
+        process_info.last_job_referenced = job
+        process_info.loaded_horde_model_name = "HungModel"
+
+        mock_manager = MagicMock()
+        mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        mock_manager.jobs_in_progress = []
+        mock_manager.jobs_pending_inference = deque([job])
+        mock_manager.jobs_lookup = {job: job_info}
+        mock_manager.jobs_pending_submit = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_being_safety_checked = []
+        mock_manager._skipped_line_next_job_and_process = None
+        mock_manager._failed_models = {}
+        mock_manager._faulted_jobs_history = []
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+        mock_manager._restart_idle_timer_if_queue_empty = MagicMock()
+        mock_manager.bridge_data.process_timeout = 60
+
+        # Wire the real _record_faulted_job_history and handle_job_fault
+        mock_manager._record_faulted_job_history = types.MethodType(
+            HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager.handle_job_fault = types.MethodType(
+            HordeWorkerProcessManager.handle_job_fault,
+            mock_manager,
+        )
+
+        bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
+        bound(process_info)
+
+        # The job must be permanently faulted (retry_count set to MAX_JOB_RETRIES before
+        # handle_job_fault was called), so it goes straight to jobs_pending_submit.
+        assert job_info.retry_count == HordeWorkerProcessManager.MAX_JOB_RETRIES, (
+            "_replace_inference_process must set retry_count = MAX_JOB_RETRIES for MODEL_PRELOADING "
+            "so handle_job_fault permanently faults the job instead of re-queuing it for retry"
+        )
+        assert job_info in mock_manager.jobs_pending_submit, (
+            "A job permanently faulted during MODEL_PRELOADING stuck replacement must be placed "
+            "in jobs_pending_submit so the horde is notified"
+        )
+        assert job not in mock_manager.jobs_pending_inference, (
+            "The permanently faulted job must not remain in jobs_pending_inference"
+        )
+
+    def test_replace_inference_process_allows_retry_for_inference_processing(self) -> None:
+        """_replace_inference_process must still allow retry for INFERENCE_PROCESSING crashes.
+
+        Only MODEL_PRELOADING stuck replacements skip the retry.  A process crash during
+        active inference (e.g. OOM) is a transient failure that warrants a local retry.
+        """
+        import types
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        job = MagicMock()
+        job.id_ = "bbbb0002-0000-0000-0000-000000000000"
+        job.model = "GoodModel"
+        job.payload = MagicMock()
+        job.payload.n_iter = 1
+        job.payload.loras = []
+        job.payload.workflow = None
+
+        job_info = MagicMock()
+        job_info.retry_count = 0
+
+        process_info = MagicMock()
+        process_info.process_id = 2
+        process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.last_progress_value = 50
+        process_info.last_job_referenced = job
+        process_info.loaded_horde_model_name = "GoodModel"
+
+        mock_manager = MagicMock()
+        mock_manager.MAX_JOB_RETRIES = HordeWorkerProcessManager.MAX_JOB_RETRIES
+        mock_manager.jobs_in_progress = [job]
+        mock_manager.jobs_pending_inference = deque()
+        mock_manager.jobs_lookup = {job: job_info}
+        mock_manager.jobs_pending_submit = []
+        mock_manager.jobs_pending_safety_check = []
+        mock_manager.jobs_being_safety_checked = []
+        mock_manager._skipped_line_next_job_and_process = None
+        mock_manager._failed_models = {}
+        mock_manager._faulted_jobs_history = []
+        mock_manager._max_faulted_jobs_history = HordeWorkerProcessManager._max_faulted_jobs_history
+        mock_manager._invalidate_megapixelsteps_cache = MagicMock()
+        mock_manager._restart_idle_timer_if_queue_empty = MagicMock()
+        mock_manager.bridge_data.process_timeout = 60
+
+        mock_manager._record_faulted_job_history = types.MethodType(
+            HordeWorkerProcessManager._record_faulted_job_history,
+            mock_manager,
+        )
+        mock_manager.handle_job_fault = types.MethodType(
+            HordeWorkerProcessManager.handle_job_fault,
+            mock_manager,
+        )
+
+        bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
+        bound(process_info)
+
+        # For INFERENCE_PROCESSING (not MODEL_PRELOADING), retry_count must remain 0 before
+        # handle_job_fault runs, so the job gets re-queued with retry_count = 1.
+        assert job_info.retry_count == 1, (
+            "For INFERENCE_PROCESSING crashes, retry_count must be incremented to 1 "
+            "(job re-queued for retry), not pre-set to MAX_JOB_RETRIES"
+        )
+        assert job in mock_manager.jobs_pending_inference, (
+            "For INFERENCE_PROCESSING crashes, the job must be re-queued in jobs_pending_inference"
+        )
+        assert job_info not in mock_manager.jobs_pending_submit, (
+            "For INFERENCE_PROCESSING crashes, the job must NOT be permanently faulted on the first attempt"
+        )
+
 
 class TestJobRecoveryAndRetry:
     """End-to-end tests for the job recovery and retry mechanism.

@@ -2502,6 +2502,16 @@ class HordeWorkerProcessManager:
                 and job_to_remove in self.jobs_pending_inference
             )
         ):
+            # For MODEL_PRELOADING stuck replacements: skip the local retry by pre-setting
+            # retry_count to MAX_JOB_RETRIES so handle_job_fault permanently faults the job
+            # rather than re-queuing it.  Re-queuing would send the same broken model to a
+            # fresh process, which will get stuck again for another full preload_timeout before
+            # the preload-stuck cooldown kicks in.  Permanently faulting immediately lets the
+            # horde re-assign the job to another worker without wasting a second preload cycle.
+            if prior_state == HordeProcessState.MODEL_PRELOADING:
+                job_info = self.jobs_lookup.get(job_to_remove)
+                if job_info is not None:
+                    job_info.retry_count = self.MAX_JOB_RETRIES
             self.handle_job_fault(faulted_job=job_to_remove, process_info=process_info)
 
         self._end_inference_process(process_info)
