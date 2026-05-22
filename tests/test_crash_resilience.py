@@ -7666,7 +7666,8 @@ class TestPreloadStuckCooldown:
         )
 
         bound = types.MethodType(HordeWorkerProcessManager._replace_inference_process, mock_manager)
-        bound(process_info)
+        with patch("horde_worker_regen.process_management.process_manager.logger") as mock_logger:
+            bound(process_info)
 
         # The job must be permanently faulted (retry_count set to MAX_JOB_RETRIES before
         # handle_job_fault was called), so it goes straight to jobs_pending_submit.
@@ -7680,6 +7681,12 @@ class TestPreloadStuckCooldown:
         )
         assert job not in mock_manager.jobs_pending_inference, (
             "The permanently faulted job must not remain in jobs_pending_inference"
+        )
+        error_messages = [call.args[0] for call in mock_logger.error.call_args_list]
+        assert any("faulted with retry skipped" in message for message in error_messages)
+        assert any(
+            "retry skipped because the process was replaced while stuck in MODEL_PRELOADING" in message
+            for message in error_messages
         )
 
     def test_replace_inference_process_allows_retry_for_inference_processing(self) -> None:
