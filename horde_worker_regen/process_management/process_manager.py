@@ -2502,7 +2502,26 @@ class HordeWorkerProcessManager:
                 and job_to_remove in self.jobs_pending_inference
             )
         ):
-            self.handle_job_fault(faulted_job=job_to_remove, process_info=process_info)
+            retry_skipped = False
+            fault_info = None
+            # For MODEL_PRELOADING stuck replacements: skip the local retry by pre-setting
+            # retry_count to MAX_JOB_RETRIES so handle_job_fault permanently faults the job
+            # rather than re-queuing it.  Re-queuing would send the same broken model to a
+            # fresh process, which will get stuck again for another full preload_timeout before
+            # the preload-stuck cooldown kicks in.  Permanently faulting immediately lets the
+            # horde re-assign the job to another worker without wasting a second preload cycle.
+            if prior_state == HordeProcessState.MODEL_PRELOADING:
+                job_info = self.jobs_lookup.get(job_to_remove)
+                if job_info is not None:
+                    job_info.retry_count = self.MAX_JOB_RETRIES
+                retry_skipped = True
+                fault_info = "retry skipped because the process was replaced while stuck in MODEL_PRELOADING"
+            self.handle_job_fault(
+                faulted_job=job_to_remove,
+                process_info=process_info,
+                fault_info=fault_info,
+                retry_skipped=retry_skipped,
+            )
 
         self._end_inference_process(process_info)
 
@@ -4934,6 +4953,7 @@ class HordeWorkerProcessManager:
         faulted_job: ImageGenerateJobPopResponse,
         process_info: HordeProcessInfo | None = None,
         fault_info: str | None = None,
+        retry_skipped: bool = False,
     ) -> None:
         """Mark a job as faulted and add it to the completed jobs list to report it faulted.
 
@@ -4943,6 +4963,7 @@ class HordeWorkerProcessManager:
             faulted_job (ImageGenerateJobPopResponse): The job that faulted.
             process_info (HordeProcessInfo | None, optional): The process that faulted the job. Defaults to None.
             fault_info (str | None, optional): A human-readable description of the fault reason. Defaults to None.
+            retry_skipped (bool, optional): Whether the normal local retry path was intentionally bypassed.
         """
         job_info = self.jobs_lookup.get(faulted_job)
 
@@ -4992,12 +5013,18 @@ class HordeWorkerProcessManager:
                 return
 
             # Job has exhausted all retry attempts, proceed with faulting
-            retry_text = "retry attempt" if self.MAX_JOB_RETRIES == 1 else "retry attempts"
             fault_detail = f": {fault_info}" if fault_info else ""
-            logger.error(
-                f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} {retry_text}"
-                f"{fault_detail}, marking as permanently faulted",
-            )
+            if retry_skipped:
+                logger.error(
+                    f"Job {faulted_job.id_} faulted with retry skipped"
+                    f"{fault_detail}, marking as permanently faulted",
+                )
+            else:
+                retry_text = "retry attempt" if self.MAX_JOB_RETRIES == 1 else "retry attempts"
+                logger.error(
+                    f"Job {faulted_job.id_} faulted after {self.MAX_JOB_RETRIES} {retry_text}"
+                    f"{fault_detail}, marking as permanently faulted",
+                )
 
             if faulted_job in self.jobs_pending_inference:
                 self.jobs_pending_inference.remove(faulted_job)
