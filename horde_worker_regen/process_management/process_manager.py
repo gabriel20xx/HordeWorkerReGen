@@ -1803,6 +1803,16 @@ class HordeWorkerProcessManager:
         # Unix timestamp at which a timed pause should auto-expire (None = indefinite).
         self._job_pops_pause_until: float | None = None
 
+        # Auto-mode flags set via the web UI.
+        self._queue_size_auto: bool = False
+        self._max_active_models_auto: bool = False
+
+        # Cached resource metrics used by the auto-tuning logic.
+        # Updated each time update_webui_status() is called.
+        self._last_total_vram_mb: float = 0.0
+        self._last_system_vram_usage_mb: float = 0.0
+        self._last_worker_vram_mb: float = 0.0
+
         # If there is only one model to load and only one inference process, then we can only run one job at a time
         # and there is no point in having more than one inference process
         if len(self.bridge_data.image_models_to_load) == 1 and self.max_concurrent_inference_processes == 1:
@@ -1982,6 +1992,8 @@ class HordeWorkerProcessManager:
             self.webui.set_job_pops_paused_callback(self.set_job_pops_paused)
             self.webui.set_max_queue_size_callback(self.set_max_queue_size)
             self.webui.set_max_active_models_callback(self.set_max_active_models)
+            self.webui.set_queue_size_auto_mode_callback(self.set_queue_size_auto_mode)
+            self.webui.set_max_active_models_auto_mode_callback(self.set_max_active_models_auto_mode)
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
             # Add a log handler to capture logs for webui with colored output.
@@ -2097,6 +2109,7 @@ class HordeWorkerProcessManager:
         if size < 0:
             raise ValueError(f"max_queue_size must be >= 0, got {size}")
         self._queue_size_override = size
+        self._queue_size_auto = False
         logger.info(f"Max queue size changed to {size} via web UI")
 
     def set_max_active_models(self, count: int) -> None:
@@ -2104,7 +2117,8 @@ class HordeWorkerProcessManager:
 
         The new value overrides ``max_inference_processes`` (the sum of queue_size +
         max_threads computed at start-up).  The LRU model cache capacity is updated
-        accordingly so that model eviction respects the new limit.
+        accordingly so that model eviction respects the new limit.  Calling this method
+        also disables auto mode.
 
         Args:
             count: New maximum number of active model slots.  Must be >= 1.
@@ -2112,8 +2126,124 @@ class HordeWorkerProcessManager:
         if count < 1:
             raise ValueError(f"max_active_models must be >= 1, got {count}")
         self._max_active_models_override = count
+        self._max_active_models_auto = False
         self._lru.capacity = count
         logger.info(f"Max active models changed to {count} via web UI")
+
+    def set_queue_size_auto_mode(self, enabled: bool) -> None:
+        """Enable or disable automatic queue-size tuning.
+
+        When enabled, :meth:`_compute_auto_queue_size` is called during each
+        :meth:`update_webui_status` cycle and the result is applied as the runtime
+        override.  When disabled, the last manually-set or auto-computed override
+        remains in effect until the next explicit :meth:`set_max_queue_size` call.
+
+        Args:
+            enabled: ``True`` to activate auto mode, ``False`` to deactivate.
+        """
+        self._queue_size_auto = enabled
+        if enabled:
+            # Apply immediately so the UI reflects the computed value without waiting
+            # for the next update_webui_status() tick.
+            self._queue_size_override = self._compute_auto_queue_size()
+            logger.info(f"Queue size auto mode enabled (initial value: {self._queue_size_override})")
+        else:
+            logger.info("Queue size auto mode disabled")
+
+    def set_max_active_models_auto_mode(self, enabled: bool) -> None:
+        """Enable or disable automatic max-active-models tuning.
+
+        When enabled, :meth:`_compute_auto_max_active_models` is called during
+        each :meth:`update_webui_status` cycle and the result is applied as the
+        runtime override.  When disabled, the last manually-set or auto-computed
+        override remains in effect.
+
+        Args:
+            enabled: ``True`` to activate auto mode, ``False`` to deactivate.
+        """
+        self._max_active_models_auto = enabled
+        if enabled:
+            count = self._compute_auto_max_active_models()
+            self._max_active_models_override = count
+            self._lru.capacity = count
+            logger.info(f"Max active models auto mode enabled (initial value: {count})")
+        else:
+            logger.info("Max active models auto mode disabled")
+
+    def _compute_auto_queue_size(self) -> int:
+        """Compute the optimal max queue size based on job timing data.
+
+        Heuristic:
+        - Start with the "natural" buffer: extra model slots beyond the number of
+          concurrently-running threads (i.e. the pre-loading headroom).
+        - Speed up for fast jobs (< 30 s average total) so inference processes
+          are never starved while waiting for the next pop.
+        - Reduce buffering for slow jobs (>= 120 s average total) where a large
+          queue would just waste VRAM loading models ahead of time.
+
+        Returns:
+            Recommended max queue size (>= 0).
+        """
+        base = max(0, self._max_inference_processes - self._max_concurrent_inference_processes)
+
+        total_stats = self._job_time_stats.get("TOTAL")
+        if total_stats and total_stats["count"] > 0:
+            avg_job_time = total_stats["sum"] / total_stats["count"]
+            if avg_job_time < 30:
+                # Fast jobs – buffer aggressively so processes are never idle
+                base = max(base, self._max_concurrent_inference_processes)
+            elif avg_job_time >= 120:
+                # Slow jobs – minimal headroom; current threads can keep themselves busy
+                base = max(0, self._max_concurrent_inference_processes - 1)
+
+        return max(0, base)
+
+    def _compute_auto_max_active_models(self) -> int:
+        """Compute the optimal active-model count based on available VRAM.
+
+        The heuristic estimates how many models can fit in VRAM simultaneously:
+
+        1. Derive a per-model VRAM footprint from current worker VRAM usage
+           divided by the number of currently-loaded models.  Falls back to a
+           2 GB estimate when no models are loaded or VRAM data is unavailable.
+        2. Compute free VRAM as ``total_vram - system_vram_used``, then apply a
+           10 % safety margin.
+        3. Return ``max(1, floor(free_vram / per_model_vram))``, capped at 16 to
+           avoid runaway values on systems with unusually large VRAM.
+
+        When total VRAM data has not yet been collected (e.g. at startup or on
+        CPU-only machines), the current ``max_inference_processes`` is returned
+        unchanged.
+
+        Returns:
+            Recommended max active model count (>= 1).
+        """
+        total_vram = self._last_total_vram_mb
+        system_vram_used = self._last_system_vram_usage_mb
+        worker_vram = self._last_worker_vram_mb
+
+        if total_vram <= 0:
+            # No VRAM data available yet; keep current value
+            return max(1, self._max_inference_processes)
+
+        # Estimate per-model VRAM from current worker usage
+        num_loaded = len(
+            [p for p in self._process_map.values() if p.loaded_horde_model_name is not None]
+        )
+        if worker_vram > 0 and num_loaded > 0:
+            per_model_vram = worker_vram / num_loaded
+        else:
+            per_model_vram = 2048.0  # 2 GB default estimate
+
+        per_model_vram = max(per_model_vram, 256.0)  # floor at 256 MB to avoid division explosion
+
+        # Available VRAM with safety margin (retain 10 %)
+        available_vram = max(0.0, total_vram - system_vram_used) * 0.9
+        if available_vram <= 0:
+            return max(1, num_loaded)
+
+        auto_count = max(1, int(available_vram / per_model_vram))
+        return min(auto_count, 16)
 
     def enable_performance_mode(self) -> None:
         """Enable performance mode."""
@@ -7395,6 +7525,25 @@ class HordeWorkerProcessManager:
         if self._last_pop_no_jobs_available_time > 0:
             current_time_without_jobs += time.time() - self._last_pop_no_jobs_available_time
 
+        # Cache VRAM metrics for use by auto-tuning computations.
+        self._last_total_vram_mb = total_device_vram_mb
+        self._last_system_vram_usage_mb = system_vram_usage_mb
+        self._last_worker_vram_mb = total_vram_mb
+
+        # Apply auto-tuning overrides when the respective modes are active.
+        if self._queue_size_auto:
+            auto_qs = self._compute_auto_queue_size()
+            if auto_qs != self._queue_size_override:
+                self._queue_size_override = auto_qs
+                logger.debug(f"Auto queue size updated to {auto_qs}")
+
+        if self._max_active_models_auto:
+            auto_ma = self._compute_auto_max_active_models()
+            if auto_ma != self._max_active_models_override:
+                self._max_active_models_override = auto_ma
+                self._lru.capacity = auto_ma
+                logger.debug(f"Auto max active models updated to {auto_ma}")
+
         self.webui.update_status(
             worker_name=self.bridge_data.dreamer_worker_name,
             horde_username=horde_username,
@@ -7410,9 +7559,11 @@ class HordeWorkerProcessManager:
             current_job=current_job,
             job_queue=job_queue,
             max_queue_size=self.max_queue_size,
+            queue_size_auto=self._queue_size_auto,
             processes=processes,
             models_loaded=models_loaded,
             max_active_models=self.max_inference_processes,
+            max_active_models_auto=self._max_active_models_auto,
             ram_usage_mb=total_ram_mb,
             total_ram_mb=total_system_ram_mb,
             system_ram_usage_mb=system_ram_usage_mb,

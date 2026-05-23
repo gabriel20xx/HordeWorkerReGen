@@ -91,7 +91,9 @@ class WorkerWebUI:
             "current_job": None,
             "job_queue": [],
             "max_queue_size": 0,
+            "queue_size_auto": False,
             "max_active_models": 0,
+            "max_active_models_auto": False,
             "processes": [],
             "models_loaded": [],
             "ram_usage_mb": 0,
@@ -152,6 +154,14 @@ class WorkerWebUI:
         # Signature: (max_active_models: int) -> None
         self._set_max_active_models_callback: Callable[[int], None] | None = None
 
+        # Optional callback invoked when the UI toggles auto mode for queue size.
+        # Signature: (enabled: bool) -> None
+        self._set_queue_size_auto_mode_callback: Callable[[bool], None] | None = None
+
+        # Optional callback invoked when the UI toggles auto mode for max active models.
+        # Signature: (enabled: bool) -> None
+        self._set_max_active_models_auto_mode_callback: Callable[[bool], None] | None = None
+
         self._setup_routes()
 
     def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
@@ -192,6 +202,24 @@ class WorkerWebUI:
                       Pass ``None`` to unregister.
         """
         self._set_max_active_models_callback = callback
+
+    def set_queue_size_auto_mode_callback(self, callback: Callable[[bool], None] | None) -> None:
+        """Register (or clear) the callback used to enable or disable auto queue-size mode.
+
+        Args:
+            callback: A callable that accepts a single bool (``True`` = enable auto,
+                      ``False`` = disable auto).  Pass ``None`` to unregister.
+        """
+        self._set_queue_size_auto_mode_callback = callback
+
+    def set_max_active_models_auto_mode_callback(self, callback: Callable[[bool], None] | None) -> None:
+        """Register (or clear) the callback used to enable or disable auto max-active-models mode.
+
+        Args:
+            callback: A callable that accepts a single bool (``True`` = enable auto,
+                      ``False`` = disable auto).  Pass ``None`` to unregister.
+        """
+        self._set_max_active_models_auto_mode_callback = callback
 
     def _setup_routes(self) -> None:
         """Set up the web server routes."""
@@ -385,11 +413,20 @@ class WorkerWebUI:
         .limit-editor { display: flex; align-items: center; gap: 4px; }
         .limit-input { width: 54px; padding: 2px 5px; font-size: 0.75rem; border: 1px solid #cbd5e1; border-radius: 4px; text-align: center; background: #f8fafc; color: #334155; transition: border-color 0.15s; }
         .limit-input:focus { outline: none; border-color: var(--accent); }
+        .limit-input:disabled { opacity: 0.55; cursor: not-allowed; background: #e2e8f0; }
         .limit-set-btn { padding: 2px 9px; font-size: 0.75rem; font-weight: 600; background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: background 0.15s; }
         .limit-set-btn:hover { background: var(--accent-hover); }
         .limit-set-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .limit-auto-btn { padding: 2px 8px; font-size: 0.75rem; font-weight: 600; background: #e2e8f0; color: #475569; border: none; border-radius: 4px; cursor: pointer; transition: background 0.15s, color 0.15s; }
+        .limit-auto-btn:hover { background: #cbd5e1; }
+        .limit-auto-btn.active { background: var(--success); color: #fff; }
+        .limit-auto-btn.active:hover { background: #059669; }
         [data-theme="dark"] .limit-input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
         [data-theme="dark"] .limit-input:focus { border-color: var(--accent); }
+        [data-theme="dark"] .limit-input:disabled { background: #0f1924; }
+        [data-theme="dark"] .limit-auto-btn { background: #1e293b; color: #94a3b8; }
+        [data-theme="dark"] .limit-auto-btn:hover { background: #2d3f55; }
+        [data-theme="dark"] .limit-auto-btn.active { background: var(--success); color: #fff; }
 
         .log-panel { width: 100%; height: min(600px, 70vh); overflow: hidden; }
         .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; height: 100%; box-sizing: border-box; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
@@ -799,11 +836,11 @@ class WorkerWebUI:
                             <div id="processes" class="scrollable-tall"><div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="queue-max-input" class="limit-input" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}"><button class="limit-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button></div></div>
+                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="queue-max-input" class="limit-input" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}"><button class="limit-set-btn" id="queue-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button><button class="limit-auto-btn" id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing">Auto</button></div></div>
                             <div id="job-queue" class="scrollable"><div class="empty-state">Queue is empty</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="models-max-input" class="limit-input" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}"><button class="limit-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button></div></div>
+                            <div class="card-header"><span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="models-max-input" class="limit-input" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}"><button class="limit-set-btn" id="models-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button><button class="limit-auto-btn" id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing">Auto</button></div></div>
                             <div id="models-loaded" class="model-list"><span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span></div>
                         </div>
                     </div>
@@ -1430,50 +1467,78 @@ class WorkerWebUI:
             }
         }, 1000);
         let _setMaxQueueSizeInFlight = false;
-        function setMaxQueueSize() {
-            const inp = document.getElementById('queue-max-input');
-            const btn = inp ? inp.nextElementSibling : null;
-            if (!inp) return;
-            const val = parseInt(inp.value, 10);
-            if (isNaN(val) || val < 0) return;
+        function _sendQueueMaxUpdate(payload) {
             if (_setMaxQueueSizeInFlight) return;
             _setMaxQueueSizeInFlight = true;
-            if (btn) btn.disabled = true;
+            const setBtn = document.getElementById('queue-set-btn');
+            const autoBtn = document.getElementById('queue-auto-btn');
+            if (setBtn) setBtn.disabled = true;
+            if (autoBtn) autoBtn.disabled = true;
             fetch('/api/queue/max_size', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({max_queue_size: val})
+                body: JSON.stringify(payload)
             })
             .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
             .then(data => {
                 document.getElementById('queue-max').textContent = data.max_queue_size;
-                if (inp && document.activeElement !== inp) inp.value = data.max_queue_size;
+                const inp = document.getElementById('queue-max-input');
+                const isAuto = !!data.queue_size_auto;
+                if (autoBtn) { if (isAuto) { autoBtn.classList.add('active'); } else { autoBtn.classList.remove('active'); } }
+                if (inp) { inp.disabled = isAuto; if (!isAuto && document.activeElement !== inp) inp.value = data.max_queue_size; }
+                if (setBtn) setBtn.disabled = isAuto;
             })
-            .catch(err => { console.error('Error setting max queue size:', err); })
-            .finally(() => { _setMaxQueueSizeInFlight = false; if (btn) btn.disabled = false; });
+            .catch(err => { console.error('Error updating max queue size:', err); })
+            .finally(() => { _setMaxQueueSizeInFlight = false; if (setBtn) setBtn.disabled = false; if (autoBtn) autoBtn.disabled = false; });
         }
-        let _setMaxActiveModelsInFlight = false;
-        function setMaxActiveModels() {
-            const inp = document.getElementById('models-max-input');
-            const btn = inp ? inp.nextElementSibling : null;
+        function setMaxQueueSize() {
+            const inp = document.getElementById('queue-max-input');
             if (!inp) return;
             const val = parseInt(inp.value, 10);
-            if (isNaN(val) || val < 1) return;
+            if (isNaN(val) || val < 0) return;
+            _sendQueueMaxUpdate({max_queue_size: val});
+        }
+        function toggleQueueSizeAuto() {
+            const btn = document.getElementById('queue-auto-btn');
+            const currentlyAuto = btn && btn.classList.contains('active');
+            _sendQueueMaxUpdate({auto: !currentlyAuto});
+        }
+        let _setMaxActiveModelsInFlight = false;
+        function _sendModelsMaxUpdate(payload) {
             if (_setMaxActiveModelsInFlight) return;
             _setMaxActiveModelsInFlight = true;
-            if (btn) btn.disabled = true;
+            const setBtn = document.getElementById('models-set-btn');
+            const autoBtn = document.getElementById('models-auto-btn');
+            if (setBtn) setBtn.disabled = true;
+            if (autoBtn) autoBtn.disabled = true;
             fetch('/api/models/max_active', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({max_active_models: val})
+                body: JSON.stringify(payload)
             })
             .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
             .then(data => {
                 document.getElementById('models-max').textContent = data.max_active_models;
-                if (inp && document.activeElement !== inp) inp.value = data.max_active_models;
+                const inp = document.getElementById('models-max-input');
+                const isAuto = !!data.max_active_models_auto;
+                if (autoBtn) { if (isAuto) { autoBtn.classList.add('active'); } else { autoBtn.classList.remove('active'); } }
+                if (inp) { inp.disabled = isAuto; if (!isAuto && document.activeElement !== inp) inp.value = data.max_active_models; }
+                if (setBtn) setBtn.disabled = isAuto;
             })
-            .catch(err => { console.error('Error setting max active models:', err); })
-            .finally(() => { _setMaxActiveModelsInFlight = false; if (btn) btn.disabled = false; });
+            .catch(err => { console.error('Error updating max active models:', err); })
+            .finally(() => { _setMaxActiveModelsInFlight = false; if (setBtn) setBtn.disabled = false; if (autoBtn) autoBtn.disabled = false; });
+        }
+        function setMaxActiveModels() {
+            const inp = document.getElementById('models-max-input');
+            if (!inp) return;
+            const val = parseInt(inp.value, 10);
+            if (isNaN(val) || val < 1) return;
+            _sendModelsMaxUpdate({max_active_models: val});
+        }
+        function toggleMaxActiveModelsAuto() {
+            const btn = document.getElementById('models-auto-btn');
+            const currentlyAuto = btn && btn.classList.contains('active');
+            _sendModelsMaxUpdate({auto: !currentlyAuto});
         }
         let _consoleCopyTimeout = null;
         function showConsoleCopySuccess(btn) {
@@ -2411,7 +2476,12 @@ class WorkerWebUI:
                     document.getElementById('queue-count').textContent = data.job_queue.length;
                     document.getElementById('queue-max').textContent = data.max_queue_size;
                     const qmInput = document.getElementById('queue-max-input');
-                    if (qmInput && document.activeElement !== qmInput) { qmInput.value = data.max_queue_size; }
+                    const qmSetBtn = document.getElementById('queue-set-btn');
+                    const qmAutoBtn = document.getElementById('queue-auto-btn');
+                    const queueAuto = !!data.queue_size_auto;
+                    if (qmAutoBtn) { if (queueAuto) { qmAutoBtn.classList.add('active'); } else { qmAutoBtn.classList.remove('active'); } }
+                    if (qmInput) { if (queueAuto) { qmInput.disabled = true; } else { qmInput.disabled = false; if (document.activeElement !== qmInput) qmInput.value = data.max_queue_size; } }
+                    if (qmSetBtn) qmSetBtn.disabled = queueAuto;
                     if (data.job_queue.length > 0) {
                         qd.innerHTML = data.job_queue.map(j => { const bi = j.batch_size&&j.batch_size>1?' ('+escapeHtml(j.batch_size)+'x batch)':''; return '<div class="job-item"><span class="job-id">'+escapeHtml(j.id||'N/A')+'</span>: '+escapeHtml(j.model||'Unknown model')+bi+'</div>'; }).join('');
                     } else { qd.innerHTML = '<div class="empty-state">Queue is empty</div>'; }
@@ -2419,7 +2489,12 @@ class WorkerWebUI:
                     document.getElementById('models-count').textContent = data.models_loaded.length;
                     document.getElementById('models-max').textContent = data.max_active_models;
                     const mmInput = document.getElementById('models-max-input');
-                    if (mmInput && document.activeElement !== mmInput) { mmInput.value = data.max_active_models; }
+                    const mmSetBtn = document.getElementById('models-set-btn');
+                    const mmAutoBtn = document.getElementById('models-auto-btn');
+                    const modelsAuto = !!data.max_active_models_auto;
+                    if (mmAutoBtn) { if (modelsAuto) { mmAutoBtn.classList.add('active'); } else { mmAutoBtn.classList.remove('active'); } }
+                    if (mmInput) { if (modelsAuto) { mmInput.disabled = true; } else { mmInput.disabled = false; if (document.activeElement !== mmInput) mmInput.value = data.max_active_models; } }
+                    if (mmSetBtn) mmSetBtn.disabled = modelsAuto;
                     if (data.models_loaded.length > 0) {
                         md.innerHTML = data.models_loaded.map(m => '<div class="model-badge">'+escapeHtml(m)+'</div>').join('');
                     } else { md.innerHTML = '<span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span>'; }
@@ -3378,16 +3453,37 @@ class WorkerWebUI:
     async def _handle_set_max_queue_size(self, request: web.Request) -> web.Response:
         """Handle a request to change the maximum job queue size at runtime.
 
-        Expected JSON body: ``{"max_queue_size": <int>}`` where the value is ``>= 0``.
+        Accepted JSON bodies:
+        - ``{"max_queue_size": <int>}`` – set a manual value (``>= 0``); disables auto mode.
+        - ``{"auto": true}``            – enable auto mode (value computed by the worker).
+        - ``{"auto": false}``           – disable auto mode without changing the manual value.
 
         Returns 400 on malformed input, 503 if no callback is registered, and
-        200 with ``{"max_queue_size": <int>}`` on success.
+        200 with ``{"max_queue_size": <int>, "queue_size_auto": <bool>}`` on success.
         """
         try:
             body = await request.json()
         except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
             return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
 
+        auto = body.get("auto")
+        if auto is not None:
+            # Auto-mode toggle
+            if not isinstance(auto, bool):
+                return web.json_response({"error": "Field 'auto' must be a boolean"}, status=400)
+            if self._set_queue_size_auto_mode_callback is None:
+                return web.json_response({"error": "Auto queue size mode is not available"}, status=503)
+            try:
+                self._set_queue_size_auto_mode_callback(auto)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Error setting queue size auto mode={auto}: {exc}")
+                return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+            self.status_data["queue_size_auto"] = auto
+            return web.json_response(
+                {"max_queue_size": self.status_data["max_queue_size"], "queue_size_auto": auto},
+            )
+
+        # Manual value
         max_queue_size = body.get("max_queue_size")
         if not isinstance(max_queue_size, int) or isinstance(max_queue_size, bool):
             return web.json_response({"error": "Field 'max_queue_size' must be a non-negative integer"}, status=400)
@@ -3404,21 +3500,43 @@ class WorkerWebUI:
             return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
 
         self.status_data["max_queue_size"] = max_queue_size
-        return web.json_response({"max_queue_size": max_queue_size})
+        self.status_data["queue_size_auto"] = False
+        return web.json_response({"max_queue_size": max_queue_size, "queue_size_auto": False})
 
     async def _handle_set_max_active_models(self, request: web.Request) -> web.Response:
         """Handle a request to change the maximum number of active model slots at runtime.
 
-        Expected JSON body: ``{"max_active_models": <int>}`` where the value is ``>= 1``.
+        Accepted JSON bodies:
+        - ``{"max_active_models": <int>}`` – set a manual value (``>= 1``); disables auto mode.
+        - ``{"auto": true}``               – enable auto mode (value computed by the worker).
+        - ``{"auto": false}``              – disable auto mode without changing the manual value.
 
         Returns 400 on malformed input, 503 if no callback is registered, and
-        200 with ``{"max_active_models": <int>}`` on success.
+        200 with ``{"max_active_models": <int>, "max_active_models_auto": <bool>}`` on success.
         """
         try:
             body = await request.json()
         except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
             return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
 
+        auto = body.get("auto")
+        if auto is not None:
+            # Auto-mode toggle
+            if not isinstance(auto, bool):
+                return web.json_response({"error": "Field 'auto' must be a boolean"}, status=400)
+            if self._set_max_active_models_auto_mode_callback is None:
+                return web.json_response({"error": "Auto max active models mode is not available"}, status=503)
+            try:
+                self._set_max_active_models_auto_mode_callback(auto)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Error setting max active models auto mode={auto}: {exc}")
+                return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+            self.status_data["max_active_models_auto"] = auto
+            return web.json_response(
+                {"max_active_models": self.status_data["max_active_models"], "max_active_models_auto": auto},
+            )
+
+        # Manual value
         max_active_models = body.get("max_active_models")
         if not isinstance(max_active_models, int) or isinstance(max_active_models, bool):
             return web.json_response({"error": "Field 'max_active_models' must be a positive integer"}, status=400)
@@ -3435,7 +3553,8 @@ class WorkerWebUI:
             return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
 
         self.status_data["max_active_models"] = max_active_models
-        return web.json_response({"max_active_models": max_active_models})
+        self.status_data["max_active_models_auto"] = False
+        return web.json_response({"max_active_models": max_active_models, "max_active_models_auto": False})
 
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Handle status API request.
@@ -3836,9 +3955,11 @@ class WorkerWebUI:
         current_job: dict[str, Any] | None = None,
         job_queue: list[dict[str, Any]] | None = None,
         max_queue_size: int | None = None,
+        queue_size_auto: bool | None = None,
         processes: list[dict[str, Any]] | None = None,
         models_loaded: list[str] | None = None,
         max_active_models: int | None = None,
+        max_active_models_auto: bool | None = None,
         ram_usage_mb: float | None = None,
         system_ram_usage_mb: float | None = None,
         total_ram_mb: float | None = None,
@@ -3884,9 +4005,11 @@ class WorkerWebUI:
             current_job: Information about the current job being processed
             job_queue: List of jobs in the queue
             max_queue_size: Maximum number of jobs that can be queued
+            queue_size_auto: Whether queue size is being managed automatically
             processes: List of process information
             models_loaded: List of currently loaded models
             max_active_models: Maximum number of simultaneously active model slots
+            max_active_models_auto: Whether max active models is being managed automatically
             ram_usage_mb: Worker processes RAM usage in MB (sum of all worker processes)
             system_ram_usage_mb: System-wide RAM currently in use in MB (all processes on the host)
             total_ram_mb: Total system RAM capacity in MB
@@ -3945,12 +4068,16 @@ class WorkerWebUI:
             self.status_data["job_queue"] = job_queue
         if max_queue_size is not None:
             self.status_data["max_queue_size"] = max_queue_size
+        if queue_size_auto is not None:
+            self.status_data["queue_size_auto"] = queue_size_auto
         if processes is not None:
             self.status_data["processes"] = processes
         if models_loaded is not None:
             self.status_data["models_loaded"] = models_loaded
         if max_active_models is not None:
             self.status_data["max_active_models"] = max_active_models
+        if max_active_models_auto is not None:
+            self.status_data["max_active_models_auto"] = max_active_models_auto
         if ram_usage_mb is not None:
             self.status_data["ram_usage_mb"] = ram_usage_mb
         if system_ram_usage_mb is not None:
