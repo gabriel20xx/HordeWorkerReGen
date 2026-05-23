@@ -91,6 +91,7 @@ class WorkerWebUI:
             "current_job": None,
             "job_queue": [],
             "max_queue_size": 0,
+            "max_active_models": 0,
             "processes": [],
             "models_loaded": [],
             "ram_usage_mb": 0,
@@ -143,6 +144,14 @@ class WorkerWebUI:
         # Signature: (paused: bool, pause_until: float | None) -> None
         self._set_job_pops_paused_callback: Callable[[bool, float | None], None] | None = None
 
+        # Optional callback invoked when the UI requests a change to the max queue size.
+        # Signature: (max_queue_size: int) -> None
+        self._set_max_queue_size_callback: Callable[[int], None] | None = None
+
+        # Optional callback invoked when the UI requests a change to the max active models.
+        # Signature: (max_active_models: int) -> None
+        self._set_max_active_models_callback: Callable[[int], None] | None = None
+
         self._setup_routes()
 
     def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
@@ -166,6 +175,24 @@ class WorkerWebUI:
         """
         self._set_job_pops_paused_callback = callback
 
+    def set_max_queue_size_callback(self, callback: Callable[[int], None] | None) -> None:
+        """Register (or clear) the callback used to change the maximum job queue size at runtime.
+
+        Args:
+            callback: A callable that accepts a single int (the new max queue size).
+                      Pass ``None`` to unregister.
+        """
+        self._set_max_queue_size_callback = callback
+
+    def set_max_active_models_callback(self, callback: Callable[[int], None] | None) -> None:
+        """Register (or clear) the callback used to change the maximum active model slots at runtime.
+
+        Args:
+            callback: A callable that accepts a single int (the new max active models count).
+                      Pass ``None`` to unregister.
+        """
+        self._set_max_active_models_callback = callback
+
     def _setup_routes(self) -> None:
         """Set up the web server routes."""
         self.app.router.add_get("/", self._handle_index)
@@ -181,6 +208,8 @@ class WorkerWebUI:
         self.app.router.add_get("/health", self._handle_health)
         self.app.router.add_delete("/api/worker/{worker_id}", self._handle_delete_worker)
         self.app.router.add_post("/api/job_pops/pause", self._handle_set_job_pops_paused)
+        self.app.router.add_post("/api/queue/max_size", self._handle_set_max_queue_size)
+        self.app.router.add_post("/api/models/max_active", self._handle_set_max_active_models)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
         """Handle config API request."""
@@ -351,6 +380,16 @@ class WorkerWebUI:
 
         .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
+
+        /* ---- Inline limit editor (max queue / max active models) ---- */
+        .limit-editor { display: flex; align-items: center; gap: 4px; }
+        .limit-input { width: 54px; padding: 2px 5px; font-size: 0.75rem; border: 1px solid #cbd5e1; border-radius: 4px; text-align: center; background: #f8fafc; color: #334155; transition: border-color 0.15s; }
+        .limit-input:focus { outline: none; border-color: var(--accent); }
+        .limit-set-btn { padding: 2px 9px; font-size: 0.75rem; font-weight: 600; background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: background 0.15s; }
+        .limit-set-btn:hover { background: var(--accent-hover); }
+        .limit-set-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        [data-theme="dark"] .limit-input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        [data-theme="dark"] .limit-input:focus { border-color: var(--accent); }
 
         .log-panel { width: 100%; height: min(600px, 70vh); overflow: hidden; }
         .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; height: 100%; box-sizing: border-box; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
@@ -760,11 +799,11 @@ class WorkerWebUI:
                             <div id="processes" class="scrollable-tall"><div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span></div>
+                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="queue-max-input" class="limit-input" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}"><button class="limit-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button></div></div>
                             <div id="job-queue" class="scrollable"><div class="empty-state">Queue is empty</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#129302; Active Models</span></div>
+                            <div class="card-header"><span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="models-max-input" class="limit-input" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}"><button class="limit-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button></div></div>
                             <div id="models-loaded" class="model-list"><span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span></div>
                         </div>
                     </div>
@@ -1390,6 +1429,52 @@ class WorkerWebUI:
                 _updateStatusBadges(null, null, _jobPopsPauseUntil);
             }
         }, 1000);
+        let _setMaxQueueSizeInFlight = false;
+        function setMaxQueueSize() {
+            const inp = document.getElementById('queue-max-input');
+            const btn = inp ? inp.nextElementSibling : null;
+            if (!inp) return;
+            const val = parseInt(inp.value, 10);
+            if (isNaN(val) || val < 0) return;
+            if (_setMaxQueueSizeInFlight) return;
+            _setMaxQueueSizeInFlight = true;
+            if (btn) btn.disabled = true;
+            fetch('/api/queue/max_size', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({max_queue_size: val})
+            })
+            .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+            .then(data => {
+                document.getElementById('queue-max').textContent = data.max_queue_size;
+                if (inp && document.activeElement !== inp) inp.value = data.max_queue_size;
+            })
+            .catch(err => { console.error('Error setting max queue size:', err); })
+            .finally(() => { _setMaxQueueSizeInFlight = false; if (btn) btn.disabled = false; });
+        }
+        let _setMaxActiveModelsInFlight = false;
+        function setMaxActiveModels() {
+            const inp = document.getElementById('models-max-input');
+            const btn = inp ? inp.nextElementSibling : null;
+            if (!inp) return;
+            const val = parseInt(inp.value, 10);
+            if (isNaN(val) || val < 1) return;
+            if (_setMaxActiveModelsInFlight) return;
+            _setMaxActiveModelsInFlight = true;
+            if (btn) btn.disabled = true;
+            fetch('/api/models/max_active', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({max_active_models: val})
+            })
+            .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+            .then(data => {
+                document.getElementById('models-max').textContent = data.max_active_models;
+                if (inp && document.activeElement !== inp) inp.value = data.max_active_models;
+            })
+            .catch(err => { console.error('Error setting max active models:', err); })
+            .finally(() => { _setMaxActiveModelsInFlight = false; if (btn) btn.disabled = false; });
+        }
         let _consoleCopyTimeout = null;
         function showConsoleCopySuccess(btn) {
             if (_consoleCopyTimeout) { clearTimeout(_consoleCopyTimeout); _consoleCopyTimeout = null; }
@@ -2325,10 +2410,16 @@ class WorkerWebUI:
                     const qd = document.getElementById('job-queue');
                     document.getElementById('queue-count').textContent = data.job_queue.length;
                     document.getElementById('queue-max').textContent = data.max_queue_size;
+                    const qmInput = document.getElementById('queue-max-input');
+                    if (qmInput && document.activeElement !== qmInput) { qmInput.value = data.max_queue_size; }
                     if (data.job_queue.length > 0) {
                         qd.innerHTML = data.job_queue.map(j => { const bi = j.batch_size&&j.batch_size>1?' ('+escapeHtml(j.batch_size)+'x batch)':''; return '<div class="job-item"><span class="job-id">'+escapeHtml(j.id||'N/A')+'</span>: '+escapeHtml(j.model||'Unknown model')+bi+'</div>'; }).join('');
                     } else { qd.innerHTML = '<div class="empty-state">Queue is empty</div>'; }
                     const md = document.getElementById('models-loaded');
+                    document.getElementById('models-count').textContent = data.models_loaded.length;
+                    document.getElementById('models-max').textContent = data.max_active_models;
+                    const mmInput = document.getElementById('models-max-input');
+                    if (mmInput && document.activeElement !== mmInput) { mmInput.value = data.max_active_models; }
                     if (data.models_loaded.length > 0) {
                         md.innerHTML = data.models_loaded.map(m => '<div class="model-badge">'+escapeHtml(m)+'</div>').join('');
                     } else { md.innerHTML = '<span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span>'; }
@@ -3284,6 +3375,68 @@ class WorkerWebUI:
         self.status_data["job_pops_pause_until"] = pause_until
         return web.json_response({"job_pops_paused": paused, "job_pops_pause_until": pause_until})
 
+    async def _handle_set_max_queue_size(self, request: web.Request) -> web.Response:
+        """Handle a request to change the maximum job queue size at runtime.
+
+        Expected JSON body: ``{"max_queue_size": <int>}`` where the value is ``>= 0``.
+
+        Returns 400 on malformed input, 503 if no callback is registered, and
+        200 with ``{"max_queue_size": <int>}`` on success.
+        """
+        try:
+            body = await request.json()
+        except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
+            return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
+
+        max_queue_size = body.get("max_queue_size")
+        if not isinstance(max_queue_size, int) or isinstance(max_queue_size, bool):
+            return web.json_response({"error": "Field 'max_queue_size' must be a non-negative integer"}, status=400)
+        if max_queue_size < 0:
+            return web.json_response({"error": "Field 'max_queue_size' must be >= 0"}, status=400)
+
+        if self._set_max_queue_size_callback is None:
+            return web.json_response({"error": "Setting max queue size is not available"}, status=503)
+
+        try:
+            self._set_max_queue_size_callback(max_queue_size)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Error setting max queue size={max_queue_size}: {exc}")
+            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+
+        self.status_data["max_queue_size"] = max_queue_size
+        return web.json_response({"max_queue_size": max_queue_size})
+
+    async def _handle_set_max_active_models(self, request: web.Request) -> web.Response:
+        """Handle a request to change the maximum number of active model slots at runtime.
+
+        Expected JSON body: ``{"max_active_models": <int>}`` where the value is ``>= 1``.
+
+        Returns 400 on malformed input, 503 if no callback is registered, and
+        200 with ``{"max_active_models": <int>}`` on success.
+        """
+        try:
+            body = await request.json()
+        except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
+            return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
+
+        max_active_models = body.get("max_active_models")
+        if not isinstance(max_active_models, int) or isinstance(max_active_models, bool):
+            return web.json_response({"error": "Field 'max_active_models' must be a positive integer"}, status=400)
+        if max_active_models < 1:
+            return web.json_response({"error": "Field 'max_active_models' must be >= 1"}, status=400)
+
+        if self._set_max_active_models_callback is None:
+            return web.json_response({"error": "Setting max active models is not available"}, status=503)
+
+        try:
+            self._set_max_active_models_callback(max_active_models)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Error setting max active models={max_active_models}: {exc}")
+            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+
+        self.status_data["max_active_models"] = max_active_models
+        return web.json_response({"max_active_models": max_active_models})
+
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Handle status API request.
 
@@ -3685,6 +3838,7 @@ class WorkerWebUI:
         max_queue_size: int | None = None,
         processes: list[dict[str, Any]] | None = None,
         models_loaded: list[str] | None = None,
+        max_active_models: int | None = None,
         ram_usage_mb: float | None = None,
         system_ram_usage_mb: float | None = None,
         total_ram_mb: float | None = None,
@@ -3732,6 +3886,7 @@ class WorkerWebUI:
             max_queue_size: Maximum number of jobs that can be queued
             processes: List of process information
             models_loaded: List of currently loaded models
+            max_active_models: Maximum number of simultaneously active model slots
             ram_usage_mb: Worker processes RAM usage in MB (sum of all worker processes)
             system_ram_usage_mb: System-wide RAM currently in use in MB (all processes on the host)
             total_ram_mb: Total system RAM capacity in MB
@@ -3794,6 +3949,8 @@ class WorkerWebUI:
             self.status_data["processes"] = processes
         if models_loaded is not None:
             self.status_data["models_loaded"] = models_loaded
+        if max_active_models is not None:
+            self.status_data["max_active_models"] = max_active_models
         if ram_usage_mb is not None:
             self.status_data["ram_usage_mb"] = ram_usage_mb
         if system_ram_usage_mb is not None:

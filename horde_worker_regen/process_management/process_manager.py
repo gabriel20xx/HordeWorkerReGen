@@ -1484,18 +1484,37 @@ class HordeWorkerProcessManager:
     horde_model_reference_manager: ModelReferenceManager
     """The model reference manager for this worker."""
 
-    max_inference_processes: int
-    """The maximum number of inference processes that can be active. This is not the number of jobs that
-    can run at once. Use `max_concurrent_inference_processes` to control that behavior."""
+    _max_inference_processes: int
+    """Backing store for the max_inference_processes property.  Updated by __init__ and at runtime
+    by set_max_active_models()."""
+
+    _max_active_models_override: int | None
+    """Runtime override for max_inference_processes set via the web UI.  When not None, takes
+    precedence over the value derived from bridge_data.queue_size + max_threads."""
 
     _max_concurrent_inference_processes: int
     """The maximum number of inference processes that can run jobs concurrently. \
         This is set at initialization to prevent changing the value at runtime."""
 
     @property
+    def max_inference_processes(self) -> int:
+        """The maximum number of inference processes that can be active.
+
+        When a runtime override has been set via :meth:`set_max_active_models`, that value
+        is returned; otherwise the value initialised from bridge_data is used.
+        """
+        if self._max_active_models_override is not None:
+            return self._max_active_models_override
+        return self._max_inference_processes
+
+    @property
     def max_concurrent_inference_processes(self) -> int:
         """The maximum number of inference processes that can run jobs concurrently."""
         return self._max_concurrent_inference_processes
+
+    _queue_size_override: int | None
+    """Runtime override for the queue size set via the web UI.  When not None, takes
+    precedence over bridge_data.queue_size in the max_queue_size property."""
 
     max_safety_processes: int
     """The maximum number of safety processes that can run at once."""
@@ -1525,7 +1544,13 @@ class HordeWorkerProcessManager:
 
     @property
     def max_queue_size(self) -> int:
-        """The maximum number of jobs that can be queued."""
+        """The maximum number of jobs that can be queued.
+
+        When a runtime override has been set via :meth:`set_max_queue_size`, that value
+        is returned; otherwise bridge_data.queue_size is used.
+        """
+        if self._queue_size_override is not None:
+            return self._queue_size_override
         return self.bridge_data.queue_size
 
     @property
@@ -1754,7 +1779,11 @@ class HordeWorkerProcessManager:
 
         self._aux_model_lock = Lock_MultiProcessing(ctx=ctx)
 
-        self.max_inference_processes = self.bridge_data.queue_size + self.bridge_data.max_threads
+        # Runtime overrides set via the web UI.  None means "use derived value".
+        self._queue_size_override: int | None = None
+        self._max_active_models_override: int | None = None
+
+        self._max_inference_processes = self.bridge_data.queue_size + self.bridge_data.max_threads
 
         vae_decode_semaphore_max = 1
 
@@ -1777,7 +1806,7 @@ class HordeWorkerProcessManager:
         # If there is only one model to load and only one inference process, then we can only run one job at a time
         # and there is no point in having more than one inference process
         if len(self.bridge_data.image_models_to_load) == 1 and self.max_concurrent_inference_processes == 1:
-            self.max_inference_processes = 1
+            self._max_inference_processes = 1
 
         self._disk_lock = Lock_MultiProcessing(ctx=ctx)
 
@@ -1951,6 +1980,8 @@ class HordeWorkerProcessManager:
             )
             self.webui.set_delete_worker_callback(self._delete_worker)
             self.webui.set_job_pops_paused_callback(self.set_job_pops_paused)
+            self.webui.set_max_queue_size_callback(self.set_max_queue_size)
+            self.webui.set_max_active_models_callback(self.set_max_active_models)
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
             # Add a log handler to capture logs for webui with colored output.
@@ -2052,6 +2083,37 @@ class HordeWorkerProcessManager:
             # wait up to _job_pop_frequency seconds for the next api_job_pop
             # no-jobs response to set a new anchor.
             self._restart_idle_timer_if_queue_empty()
+
+    def set_max_queue_size(self, size: int) -> None:
+        """Change the maximum job queue size at runtime.
+
+        The new value overrides ``bridge_data.queue_size`` for the purposes of job-pop
+        throttling.  The override persists until the next call or until the worker
+        is restarted.
+
+        Args:
+            size: New maximum number of buffered (queued) jobs.  Must be >= 0.
+        """
+        if size < 0:
+            raise ValueError(f"max_queue_size must be >= 0, got {size}")
+        self._queue_size_override = size
+        logger.info(f"Max queue size changed to {size} via web UI")
+
+    def set_max_active_models(self, count: int) -> None:
+        """Change the maximum number of simultaneously active inference-process slots at runtime.
+
+        The new value overrides ``max_inference_processes`` (the sum of queue_size +
+        max_threads computed at start-up).  The LRU model cache capacity is updated
+        accordingly so that model eviction respects the new limit.
+
+        Args:
+            count: New maximum number of active model slots.  Must be >= 1.
+        """
+        if count < 1:
+            raise ValueError(f"max_active_models must be >= 1, got {count}")
+        self._max_active_models_override = count
+        self._lru.capacity = count
+        logger.info(f"Max active models changed to {count} via web UI")
 
     def enable_performance_mode(self) -> None:
         """Enable performance mode."""
@@ -5447,7 +5509,7 @@ class HordeWorkerProcessManager:
         # are controlled by max_threads and should not consume queue_size slots.
         jobs_queued = max(0, len(self.jobs_pending_inference) - len(self.jobs_in_progress))
 
-        if jobs_queued >= self.bridge_data.queue_size:
+        if jobs_queued >= self.max_queue_size:
             return
 
         if len(self.jobs_pending_inference) >= self.max_inference_processes:
@@ -7350,6 +7412,7 @@ class HordeWorkerProcessManager:
             max_queue_size=self.max_queue_size,
             processes=processes,
             models_loaded=models_loaded,
+            max_active_models=self.max_inference_processes,
             ram_usage_mb=total_ram_mb,
             total_ram_mb=total_system_ram_mb,
             system_ram_usage_mb=system_ram_usage_mb,
