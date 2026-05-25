@@ -142,6 +142,75 @@ def _is_loopback_remote(remote: str | None) -> bool:
         return False
 
 
+def _normalise_remote_host(remote: str | None) -> str | None:
+    """Extract and normalise a host value from an aiohttp remote string."""
+    if remote is None:
+        return None
+
+    host = remote.strip().lower()
+    if host.startswith("["):
+        end = host.find("]")
+        if end != -1:
+            host = host[1:end]
+    elif host.count(":") == 1:
+        maybe_host, maybe_port = host.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host = maybe_host
+    elif host.count(":") > 1 and "." in host:
+        maybe_host, maybe_port = host.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host = maybe_host
+
+    return host.split("%", 1)[0]
+
+
+def _normalise_ip_for_compare(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Normalise IPv4-mapped IPv6 addresses for reliable comparisons."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    return ip
+
+
+def _is_same_host_remote(request: web.Request) -> bool:
+    """Return True when request.remote matches the local socket address."""
+    remote_host = _normalise_remote_host(request.remote)
+    if not remote_host:
+        return False
+
+    try:
+        remote_ip = _normalise_ip_for_compare(ipaddress.ip_address(remote_host))
+    except ValueError:
+        return False
+
+    transport = request.transport
+    if transport is None:
+        return False
+
+    sockname = transport.get_extra_info("sockname")
+    if not isinstance(sockname, tuple) or not sockname:
+        return False
+
+    local_host = sockname[0]
+    if not isinstance(local_host, str) or not local_host:
+        return False
+
+    local_host = local_host.split("%", 1)[0]
+    if local_host in {"0.0.0.0", "::"}:
+        return False
+
+    try:
+        local_ip = _normalise_ip_for_compare(ipaddress.ip_address(local_host))
+    except ValueError:
+        return False
+
+    return remote_ip == local_ip
+
+
+def _is_trusted_local_request(request: web.Request) -> bool:
+    """Return True for loopback requests and same-host local-interface requests."""
+    return _is_loopback_remote(request.remote) or _is_same_host_remote(request)
+
+
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
 
@@ -4494,7 +4563,7 @@ class WorkerWebUI:
             503 if no settings callback has been registered.
             500 on internal error.
         """
-        if not _is_loopback_remote(request.remote):
+        if not _is_trusted_local_request(request):
             return web.json_response({"error": "Settings API is restricted to localhost clients"}, status=403)
 
         try:
@@ -4621,7 +4690,7 @@ class WorkerWebUI:
 
     async def _handle_restart_program(self, request: web.Request) -> web.Response:
         """Handle a request to restart the worker program."""
-        if not _is_loopback_remote(request.remote):
+        if not _is_trusted_local_request(request):
             return web.json_response({"error": "Restart API is restricted to localhost clients"}, status=403)
 
         if self._restart_program_callback is None:
