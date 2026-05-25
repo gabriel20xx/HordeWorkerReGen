@@ -7380,6 +7380,11 @@ class HordeWorkerProcessManager:
         # Get process info
         processes = []
         for process_info in self._process_map.values():
+            if process_info.last_process_state in (
+                HordeProcessState.PROCESS_ENDING,
+                HordeProcessState.PROCESS_ENDED,
+            ):
+                continue
             processes.append(
                 {
                     "id": process_info.process_id,

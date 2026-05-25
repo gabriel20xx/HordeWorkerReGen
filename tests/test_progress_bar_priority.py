@@ -562,6 +562,34 @@ def test_model_preloading_other_queued_jobs_still_shown() -> None:
     )
 
 
+def test_update_webui_status_excludes_ending_and_ended_processes_from_process_list() -> None:
+    """WebUI process list/count should drop slots that are ending or ended."""
+    active_job = _make_mock_job("active1")
+    ending_job = _make_mock_job("ending1")
+    ended_job = _make_mock_job("ended1")
+
+    active = _make_mock_process(active_job, HordeProcessState.WAITING_FOR_JOB, percent_complete=None)
+    active.process_id = 0
+    ending = _make_mock_process(ending_job, HordeProcessState.PROCESS_ENDING, percent_complete=None)
+    ending.process_id = 1
+    ended = _make_mock_process(ended_job, HordeProcessState.PROCESS_ENDED, percent_complete=None)
+    ended.process_id = 2
+
+    kwargs = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        process_list=[active, ending, ended],
+        return_full_kwargs=True,
+    )
+
+    processes = kwargs.get("processes", [])
+    assert len(processes) == 1
+    assert processes[0]["id"] == 0
+    assert processes[0]["state"] == "WAITING_FOR_JOB"
+
+
 # ---------------------------------------------------------------------------
 # time_without_jobs helpers & tests
 # ---------------------------------------------------------------------------

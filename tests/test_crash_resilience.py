@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from horde_worker_regen.process_management.messages import HordeProcessState, HordeProcessType
+from horde_worker_regen.process_management.horde_process import HordeProcessType
+from horde_worker_regen.process_management.messages import HordeProcessState
 
 if TYPE_CHECKING:
     from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -164,6 +165,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 60
         mock_manager.bridge_data.process_timeout = 30
+        mock_manager.bridge_data.preload_timeout = 30
         mock_manager.max_inference_processes = 2
         mock_manager.jobs_pending_inference = []
         mock_manager.jobs_in_progress = []
