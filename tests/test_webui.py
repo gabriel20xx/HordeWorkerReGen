@@ -2109,6 +2109,12 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "id=\"settings-restart-btn\"" in html
         assert "onclick=\"restartProgram()\"" in html
         assert "_clearSettingFeedback(key);" in html
+        assert "function _showSettingFeedback(key, ok, msg, opts)" in html
+        assert "if (opts && opts.pending) {" in html
+        assert "_showSettingFeedback(key, true, 'Pending', {pending: true});" in html
+        assert "_showSettingFeedback('job_queue_size', true, 'Pending', {pending: true});" in html
+        assert "_showSettingFeedback('active_model_count', true, 'Pending', {pending: true});" in html
+        assert ".setting-feedback.pending" in html
         assert "function _isEqualSimple" not in html
         assert "id=\"' + pfx + '-set-btn\"" not in html
         assert "onclick=\"applyNumericSetting(\\'" not in html

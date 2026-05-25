@@ -852,6 +852,8 @@ class WorkerWebUI:
         .setting-feedback { font-size: 0.72rem; font-weight: 600; margin-left: 2px; min-width: 44px; transition: opacity 0.3s; }
         .setting-feedback.ok { color: var(--success); }
         .setting-feedback.err { color: var(--error); }
+        .setting-feedback.pending { color: #b45309; }
+        [data-theme="dark"] .setting-feedback.pending { color: #fcd34d; }
         .settings-unavailable { background: #f1f5f9; border: 1px solid var(--border); border-radius: 10px; padding: 28px 20px; text-align: center; color: #64748b; font-size: 0.92rem; }
         [data-theme="dark"] .settings-unavailable { background: #0f172a; color: #64748b; }
 
@@ -3552,7 +3554,7 @@ class WorkerWebUI:
                 Object.keys(_settingsPending).length > 0 || _settingsPendingQueue !== null || _settingsPendingModels !== null,
             );
             if (isPending) {
-                _showSettingFeedback(key, true, 'Pending');
+                _showSettingFeedback(key, true, 'Pending', {pending: true});
             } else {
                 _clearSettingFeedback(key);
             }
@@ -3587,6 +3589,7 @@ class WorkerWebUI:
                 inp.disabled = isAuto;
                 if (!isAuto && Object.prototype.hasOwnProperty.call(next, 'max_queue_size')) inp.value = String(next.max_queue_size);
             }
+            _showSettingFeedback('job_queue_size', true, 'Pending', {pending: true});
             _setSettingsDirty(true);
             _setSettingsStatus('Queue size change pending Apply', false);
         }
@@ -3620,6 +3623,7 @@ class WorkerWebUI:
                 inp.disabled = isAuto;
                 if (!isAuto && Object.prototype.hasOwnProperty.call(next, 'max_active_models')) inp.value = String(next.max_active_models);
             }
+            _showSettingFeedback('active_model_count', true, 'Pending', {pending: true});
             _setSettingsDirty(true);
             _setSettingsStatus('Max active models change pending Apply', false);
         }
@@ -3729,18 +3733,35 @@ class WorkerWebUI:
             _updateApplyButtonState();
         }
 
-        function _showSettingFeedback(key, ok, msg) {
+        function _showSettingFeedback(key, ok, msg, opts) {
             var fb = document.getElementById('sfb-' + key);
             if (!fb) return;
+            if (fb._hideTimer) {
+                clearTimeout(fb._hideTimer);
+                fb._hideTimer = null;
+            }
             fb.textContent = msg;
-            fb.className = 'setting-feedback ' + (ok ? 'ok' : 'err');
+            if (opts && opts.pending) {
+                fb.className = 'setting-feedback pending';
+            } else {
+                fb.className = 'setting-feedback ' + (ok ? 'ok' : 'err');
+            }
             fb.style.opacity = '1';
-            setTimeout(function() { fb.style.opacity = '0'; setTimeout(function() { fb.textContent = ''; }, 300); }, 2000);
+            if (opts && opts.pending) return;
+            fb._hideTimer = setTimeout(function() {
+                fb.style.opacity = '0';
+                setTimeout(function() { fb.textContent = ''; }, 300);
+                fb._hideTimer = null;
+            }, 2000);
         }
 
         function _clearSettingFeedback(key) {
             var fb = document.getElementById('sfb-' + key);
             if (!fb) return;
+            if (fb._hideTimer) {
+                clearTimeout(fb._hideTimer);
+                fb._hideTimer = null;
+            }
             fb.textContent = '';
             fb.className = 'setting-feedback';
             fb.style.opacity = '0';
