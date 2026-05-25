@@ -142,7 +142,7 @@ def _is_loopback_remote(remote: str | None) -> bool:
         return False
 
 
-def _normalise_remote_host(remote: str | None) -> str | None:
+def _normalize_remote_host(remote: str | None) -> str | None:
     """Extract and normalise a host value from an aiohttp remote string."""
     if remote is None:
         return None
@@ -164,7 +164,7 @@ def _normalise_remote_host(remote: str | None) -> str | None:
     return host.split("%", 1)[0]
 
 
-def _normalise_ip_for_compare(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+def _normalize_ip_for_compare(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     """Normalise IPv4-mapped IPv6 addresses for reliable comparisons."""
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         return ip.ipv4_mapped
@@ -173,12 +173,12 @@ def _normalise_ip_for_compare(ip: ipaddress.IPv4Address | ipaddress.IPv6Address)
 
 def _is_same_host_remote(request: web.Request) -> bool:
     """Return True when request.remote matches the local socket address."""
-    remote_host = _normalise_remote_host(request.remote)
+    remote_host = _normalize_remote_host(request.remote)
     if not remote_host:
         return False
 
     try:
-        remote_ip = _normalise_ip_for_compare(ipaddress.ip_address(remote_host))
+        remote_ip = _normalize_ip_for_compare(ipaddress.ip_address(remote_host))
     except ValueError:
         return False
 
@@ -199,7 +199,7 @@ def _is_same_host_remote(request: web.Request) -> bool:
         return False
 
     try:
-        local_ip = _normalise_ip_for_compare(ipaddress.ip_address(local_host))
+        local_ip = _normalize_ip_for_compare(ipaddress.ip_address(local_host))
     except ValueError:
         return False
 
