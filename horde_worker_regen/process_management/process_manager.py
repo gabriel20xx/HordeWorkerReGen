@@ -2211,6 +2211,15 @@ class HordeWorkerProcessManager:
             except AttributeError:
                 pass
         return result
+
+    def _compute_auto_queue_size(self) -> int:
+        """Compute a queue-size override from observed worker throughput.
+
+        The heuristic starts from available non-concurrent process headroom and
+        then adjusts based on average TOTAL job duration:
+
+        - Increase buffering for fast jobs (< 30 s average total) to keep
+          inference workers fed.
         - Reduce buffering for slow jobs (>= 120 s average total) where a large
           queue would just waste VRAM loading models ahead of time.
 
