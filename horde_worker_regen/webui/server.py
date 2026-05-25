@@ -1,6 +1,7 @@
 """Web server for the Horde Worker status UI."""
 
 import base64
+import ipaddress
 import io
 import math
 import re
@@ -105,6 +106,19 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "purge_loras_on_download": {"type": bool},
     "remove_maintenance_on_init": {"type": bool},
 }
+
+
+def _is_loopback_remote(remote: str | None) -> bool:
+    """Return True when *remote* represents a localhost/loopback client."""
+    if remote is None:
+        return False
+    host = remote.split("%", 1)[0].strip().lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class WorkerWebUI:
@@ -4261,9 +4275,13 @@ class WorkerWebUI:
         Returns:
             200 with ``{"key": ..., "value": ...}`` on success.
             400 on missing/invalid input.
+            403 for non-local clients.
             503 if no settings callback has been registered.
             500 on internal error.
         """
+        if not _is_loopback_remote(request.remote):
+            return web.json_response({"error": "Settings API is restricted to localhost clients"}, status=403)
+
         try:
             body = await request.json()
         except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
@@ -4288,6 +4306,8 @@ class WorkerWebUI:
         elif expected_type is int:
             if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
                 return web.json_response({"error": f"Field 'value' must be a number for setting '{key}'"}, status=400)
+            if isinstance(raw_value, float) and not raw_value.is_integer():
+                return web.json_response({"error": f"Field 'value' must be an integer for setting '{key}'"}, status=400)
             value = int(raw_value)
             min_v = spec.get("min")
             max_v = spec.get("max")

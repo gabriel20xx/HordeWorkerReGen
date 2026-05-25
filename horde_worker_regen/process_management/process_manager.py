@@ -2171,26 +2171,6 @@ class HordeWorkerProcessManager:
         else:
             logger.info("Max active models auto mode disabled")
 
-    def set_max_active_models_auto_mode(self, enabled: bool) -> None:
-        """Enable or disable automatic max-active-models tuning.
-
-        When enabled, :meth:`_compute_auto_max_active_models` is called during
-        each :meth:`update_webui_status` cycle and the result is applied as the
-        runtime override.  When disabled, the last manually-set or auto-computed
-        override remains in effect.
-
-        Args:
-            enabled: ``True`` to activate auto mode, ``False`` to deactivate.
-        """
-        self._max_active_models_auto = enabled
-        if enabled:
-            count = self._compute_auto_max_active_models()
-            self._max_active_models_override = count
-            self._lru.capacity = count
-            logger.info(f"Max active models auto mode enabled (initial value: {count})")
-        else:
-            logger.info("Max active models auto mode disabled")
-
     def apply_setting(self, key: str, value: object) -> None:
         """Apply a runtime setting change to :attr:`bridge_data`.
 

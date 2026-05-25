@@ -2498,6 +2498,13 @@ async def test_webui_settings_post_numeric() -> None:
             json={"key": "max_power", "value": 999},
         ) as response:
             assert response.status == 400
+
+        # Fractional values for int settings should be rejected
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_power", "value": 1.9},
+        ) as response:
+            assert response.status == 400
     finally:
         await webui.stop()
 
@@ -2540,6 +2547,28 @@ async def test_webui_settings_post_no_callback() -> None:
             assert response.status == 503
     finally:
         await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_post_rejects_non_local_clients() -> None:
+    """Test that POST /api/settings rejects non-local clients."""
+    webui = WorkerWebUI(port=0)
+    received: list[tuple[str, object]] = []
+
+    def mock_callback(key: str, value: object) -> None:
+        received.append((key, value))
+
+    webui.set_setting_callback(mock_callback)
+
+    class DummyRequest:
+        remote = "8.8.8.8"
+
+        async def json(self) -> dict[str, object]:
+            return {"key": "nsfw", "value": False}
+
+    response = await webui._handle_set_setting(DummyRequest())  # type: ignore[arg-type]
+    assert response.status == 403
+    assert received == []
 
 
 @pytest.mark.asyncio
