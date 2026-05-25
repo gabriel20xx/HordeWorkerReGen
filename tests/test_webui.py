@@ -2111,6 +2111,10 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "if (applySucceeded) _setSettingsDirty(false);" in html
         assert "id=\"settings-restart-btn\"" in html
         assert "onclick=\"restartProgram()\"" in html
+        assert '<div class="section-header settings-page-header">' in html
+        assert '<span class="section-title">&#9881; Settings</span>' in html
+        assert '<div class="section-header gallery-page-header">' in html
+        assert '<span class="section-title">&#128444; Gallery</span>' in html
         assert 'id="restart-confirm-modal"' in html
         assert "id=\"restart-confirm-accept\"" in html
         assert "function confirmRestartProgram()" in html
@@ -2785,9 +2789,9 @@ async def test_webui_settings_html_nav_and_page() -> None:
         assert 'id="settings-restart-btn"' in html
         assert 'id="restart-confirm-modal"' in html
 
-        # Settings and gallery page titles should not be rendered
-        assert '<span class="section-title">&#9881; Settings</span>' not in html
-        assert '<span class="section-title">&#128444; Gallery</span>' not in html
+        # Settings and gallery page titles should be rendered
+        assert '<span class="section-title">&#9881; Settings</span>' in html
+        assert '<span class="section-title">&#128444; Gallery</span>' in html
 
         # VALID_PAGES must include 'settings'
         assert "'settings'" in html
