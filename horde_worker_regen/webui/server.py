@@ -3832,6 +3832,7 @@ class WorkerWebUI:
             if (restartBtn) restartBtn.disabled = true;
 
             var failures = [];
+            var applySucceeded = false;
             var key;
 
             try {
@@ -3885,11 +3886,11 @@ class WorkerWebUI:
                 _settingsPending = {};
                 _settingsPendingQueue = null;
                 _settingsPendingModels = null;
-                _setSettingsDirty(false);
-                _setSettingsStatus('Changes applied', false);
+                applySucceeded = true;
                 fetchSettings();
             } finally {
                 _settingsApplying = false;
+                if (applySucceeded) _setSettingsDirty(false);
                 _updateApplyButtonState();
                 if (restartBtn) restartBtn.disabled = _restartInFlight;
             }
