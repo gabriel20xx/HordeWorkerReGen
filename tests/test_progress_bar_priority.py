@@ -1569,3 +1569,17 @@ def test_update_webui_status_gpu_cores_count_unknown_arch_keeps_previous_value()
 
     kwargs = mock_manager.webui.update_status.call_args.kwargs
     assert kwargs["gpu_cores_count"] is None
+
+
+def test_compute_auto_max_active_models_uses_runtime_override_without_vram_data() -> None:
+    """When VRAM metrics are unavailable, auto max-active should keep current effective value."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+    manager._last_total_vram_mb = 0.0
+    manager._last_system_vram_usage_mb = 0.0
+    manager._last_worker_vram_mb = 0.0
+    manager._max_inference_processes = 6
+    manager._max_active_models_override = 3
+
+    assert manager._compute_auto_max_active_models() == 3

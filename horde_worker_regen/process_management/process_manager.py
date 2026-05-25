@@ -2224,7 +2224,7 @@ class HordeWorkerProcessManager:
 
         if total_vram <= 0:
             # No VRAM data available yet; keep current value
-            return max(1, self._max_inference_processes)
+            return max(1, self.max_inference_processes)
 
         # Estimate per-model VRAM from current worker usage
         num_loaded = len(

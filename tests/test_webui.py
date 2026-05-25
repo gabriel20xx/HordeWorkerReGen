@@ -2086,6 +2086,11 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert html.index("'POST_PROCESSING_STARTING',") < html.index("'INFERENCE_POST_PROCESSING',")
         assert "if (a === 'TOTAL') return 1;" in html
         assert "if (b === 'TOTAL') return -1;" in html
+        assert 'id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing" aria-pressed="false"' in html
+        assert 'id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing" aria-pressed="false"' in html
+        assert "setBtn.disabled = !!(inp && inp.disabled);" in html
+        assert "autoBtn.setAttribute('aria-pressed', 'true');" in html
+        assert "autoBtn.setAttribute('aria-pressed', 'false');" in html
 
     finally:
         await webui.stop()

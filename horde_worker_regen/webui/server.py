@@ -836,11 +836,11 @@ class WorkerWebUI:
                             <div id="processes" class="scrollable-tall"><div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="queue-max-input" class="limit-input" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}"><button class="limit-set-btn" id="queue-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button><button class="limit-auto-btn" id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing">Auto</button></div></div>
+                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="queue-max-input" class="limit-input" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}"><button class="limit-set-btn" id="queue-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button><button class="limit-auto-btn" id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing" aria-pressed="false">Auto</button></div></div>
                             <div id="job-queue" class="scrollable"><div class="empty-state">Queue is empty</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="models-max-input" class="limit-input" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}"><button class="limit-set-btn" id="models-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button><button class="limit-auto-btn" id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing">Auto</button></div></div>
+                            <div class="card-header"><span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="models-max-input" class="limit-input" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}"><button class="limit-set-btn" id="models-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button><button class="limit-auto-btn" id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing" aria-pressed="false">Auto</button></div></div>
                             <div id="models-loaded" class="model-list"><span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span></div>
                         </div>
                     </div>
@@ -1484,12 +1484,19 @@ class WorkerWebUI:
                 document.getElementById('queue-max').textContent = data.max_queue_size;
                 const inp = document.getElementById('queue-max-input');
                 const isAuto = !!data.queue_size_auto;
-                if (autoBtn) { if (isAuto) { autoBtn.classList.add('active'); } else { autoBtn.classList.remove('active'); } }
+                if (autoBtn) { if (isAuto) { autoBtn.classList.add('active'); autoBtn.setAttribute('aria-pressed', 'true'); } else { autoBtn.classList.remove('active'); autoBtn.setAttribute('aria-pressed', 'false'); } }
                 if (inp) { inp.disabled = isAuto; if (!isAuto && document.activeElement !== inp) inp.value = data.max_queue_size; }
                 if (setBtn) setBtn.disabled = isAuto;
             })
             .catch(err => { console.error('Error updating max queue size:', err); })
-            .finally(() => { _setMaxQueueSizeInFlight = false; if (setBtn) setBtn.disabled = false; if (autoBtn) autoBtn.disabled = false; });
+            .finally(() => {
+                _setMaxQueueSizeInFlight = false;
+                if (setBtn) {
+                    const inp = document.getElementById('queue-max-input');
+                    setBtn.disabled = !!(inp && inp.disabled);
+                }
+                if (autoBtn) autoBtn.disabled = false;
+            });
         }
         function setMaxQueueSize() {
             const inp = document.getElementById('queue-max-input');
@@ -1521,12 +1528,19 @@ class WorkerWebUI:
                 document.getElementById('models-max').textContent = data.max_active_models;
                 const inp = document.getElementById('models-max-input');
                 const isAuto = !!data.max_active_models_auto;
-                if (autoBtn) { if (isAuto) { autoBtn.classList.add('active'); } else { autoBtn.classList.remove('active'); } }
+                if (autoBtn) { if (isAuto) { autoBtn.classList.add('active'); autoBtn.setAttribute('aria-pressed', 'true'); } else { autoBtn.classList.remove('active'); autoBtn.setAttribute('aria-pressed', 'false'); } }
                 if (inp) { inp.disabled = isAuto; if (!isAuto && document.activeElement !== inp) inp.value = data.max_active_models; }
                 if (setBtn) setBtn.disabled = isAuto;
             })
             .catch(err => { console.error('Error updating max active models:', err); })
-            .finally(() => { _setMaxActiveModelsInFlight = false; if (setBtn) setBtn.disabled = false; if (autoBtn) autoBtn.disabled = false; });
+            .finally(() => {
+                _setMaxActiveModelsInFlight = false;
+                if (setBtn) {
+                    const inp = document.getElementById('models-max-input');
+                    setBtn.disabled = !!(inp && inp.disabled);
+                }
+                if (autoBtn) autoBtn.disabled = false;
+            });
         }
         function setMaxActiveModels() {
             const inp = document.getElementById('models-max-input');
@@ -2479,7 +2493,7 @@ class WorkerWebUI:
                     const qmSetBtn = document.getElementById('queue-set-btn');
                     const qmAutoBtn = document.getElementById('queue-auto-btn');
                     const queueAuto = !!data.queue_size_auto;
-                    if (qmAutoBtn) { if (queueAuto) { qmAutoBtn.classList.add('active'); } else { qmAutoBtn.classList.remove('active'); } }
+                    if (qmAutoBtn) { if (queueAuto) { qmAutoBtn.classList.add('active'); qmAutoBtn.setAttribute('aria-pressed', 'true'); } else { qmAutoBtn.classList.remove('active'); qmAutoBtn.setAttribute('aria-pressed', 'false'); } }
                     if (qmInput) { if (queueAuto) { qmInput.disabled = true; } else { qmInput.disabled = false; if (document.activeElement !== qmInput) qmInput.value = data.max_queue_size; } }
                     if (qmSetBtn) qmSetBtn.disabled = queueAuto;
                     if (data.job_queue.length > 0) {
@@ -2492,7 +2506,7 @@ class WorkerWebUI:
                     const mmSetBtn = document.getElementById('models-set-btn');
                     const mmAutoBtn = document.getElementById('models-auto-btn');
                     const modelsAuto = !!data.max_active_models_auto;
-                    if (mmAutoBtn) { if (modelsAuto) { mmAutoBtn.classList.add('active'); } else { mmAutoBtn.classList.remove('active'); } }
+                    if (mmAutoBtn) { if (modelsAuto) { mmAutoBtn.classList.add('active'); mmAutoBtn.setAttribute('aria-pressed', 'true'); } else { mmAutoBtn.classList.remove('active'); mmAutoBtn.setAttribute('aria-pressed', 'false'); } }
                     if (mmInput) { if (modelsAuto) { mmInput.disabled = true; } else { mmInput.disabled = false; if (document.activeElement !== mmInput) mmInput.value = data.max_active_models; } }
                     if (mmSetBtn) mmSetBtn.disabled = modelsAuto;
                     if (data.models_loaded.length > 0) {
@@ -3456,7 +3470,7 @@ class WorkerWebUI:
         Accepted JSON bodies:
         - ``{"max_queue_size": <int>}`` – set a manual value (``>= 0``); disables auto mode.
         - ``{"auto": true}``            – enable auto mode (value computed by the worker).
-        - ``{"auto": false}``           – disable auto mode without changing the manual value.
+        - ``{"auto": false}``           – disable auto mode and keep the current ``max_queue_size`` value.
 
         Returns 400 on malformed input, 503 if no callback is registered, and
         200 with ``{"max_queue_size": <int>, "queue_size_auto": <bool>}`` on success.
@@ -3509,7 +3523,7 @@ class WorkerWebUI:
         Accepted JSON bodies:
         - ``{"max_active_models": <int>}`` – set a manual value (``>= 1``); disables auto mode.
         - ``{"auto": true}``               – enable auto mode (value computed by the worker).
-        - ``{"auto": false}``              – disable auto mode without changing the manual value.
+        - ``{"auto": false}``              – disable auto mode and keep the current ``max_active_models`` value.
 
         Returns 400 on malformed input, 503 if no callback is registered, and
         200 with ``{"max_active_models": <int>, "max_active_models_auto": <bool>}`` on success.
