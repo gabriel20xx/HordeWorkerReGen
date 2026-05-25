@@ -8212,6 +8212,8 @@ class HordeWorkerProcessManager:
         # Pre-compute once so the per-process PROCESS_ENDING recovery check is O(1)
         # rather than O(n) (which would make the overall scan O(n^2)).
         num_loaded_inference = self._process_map.num_loaded_inference_processes()
+        # Pre-compute once so the per-process scale-down guard is O(1) rather than O(n).
+        num_total_inference = self._process_map.num_inference_processes()
         for process_info in self._process_map.values():
             # Determine whether this process appears stuck on inference.
             #
@@ -8362,7 +8364,7 @@ class HordeWorkerProcessManager:
                     and process_info.last_process_state == HordeProcessState.PROCESS_ENDING
                     and (now - process_info.last_received_timestamp) > self.bridge_data.process_timeout
                     and num_loaded_inference < self.max_inference_processes
-                    and self._process_map.num_inference_processes() <= self.max_inference_processes
+                    and num_total_inference <= self.max_inference_processes
                 ):
                     logger.error(
                         f"{process_info} has been stuck in PROCESS_ENDING for "

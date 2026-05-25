@@ -216,7 +216,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager._hung_processes_detected = True
         mock_manager._hung_processes_detected_time = time.time()
         # Capacity is currently below target because one active slot is also ending,
-        # but total inference slots still exceed the configured cap due scale-down.
+        # but total inference slots still exceed the configured cap due to scale-down.
         mock_manager._process_map.num_loaded_inference_processes.return_value = 2
         mock_manager._process_map.num_inference_processes.return_value = 4
         mock_manager._check_and_replace_process.return_value = False
