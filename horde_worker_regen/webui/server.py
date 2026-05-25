@@ -348,6 +348,7 @@ class WorkerWebUI:
         :root {
             --sidebar-width: 260px;
             --action-btn-height: 32px;
+            --page-spacing: 14px;
             --sidebar-bg: #1a1d2e;
             --sidebar-hover: #2d3148;
             --accent: #6366f1;
@@ -441,9 +442,10 @@ class WorkerWebUI:
         /* ---- Page (SPA) ---- */
         .page { display: none; }
         .page.active { display: block; }
+        .page > * + * { margin-top: var(--page-spacing); }
 
-        .section { margin-bottom: 30px; }
-        .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+        .section { margin-bottom: 0; }
+        .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: var(--page-spacing); }
         .section-title { font-size: 0.82rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 1px; }
         .section-count { background: #e2e8f0; color: #475569; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
 
@@ -451,9 +453,9 @@ class WorkerWebUI:
         .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }
         .card-title { font-size: 0.8rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; display: flex; align-items: center; gap: 7px; }
 
-        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--page-spacing); }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--page-spacing); }
+        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--page-spacing); }
         .overview-bottom-grid-left { grid-row: span 2; }
         .card-header-count { font-size: 0.75rem; font-weight: 700; color: #475569; }
 
@@ -814,7 +816,7 @@ class WorkerWebUI:
         .settings-page-btn.restart:hover:not(:disabled) { background: #fffbeb; }
         [data-theme="dark"] .settings-page-btn.restart { border-color: #92400e; color: #fcd34d; }
         [data-theme="dark"] .settings-page-btn.restart:hover:not(:disabled) { background: #2b1a06; }
-        .settings-group { margin-bottom: 24px; }
+        .settings-group { margin-bottom: var(--page-spacing); }
         .settings-group-title { font-size: 0.78rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
         [data-theme="dark"] .settings-group-title { color: #94a3b8; }
         .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
