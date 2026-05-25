@@ -588,7 +588,7 @@ def test_update_webui_status_excludes_ending_and_ended_processes_from_process_li
     processes = kwargs.get("processes", [])
     assert len(processes) == 1
     assert processes[0]["id"] == "inference-0"
-    assert processes[0]["display_id"] == "Inference"
+    assert processes[0]["display_id"] == "Inference 0"
     assert processes[0]["state"] == "WAITING_FOR_JOB"
 
     # Keep per-type index stable by process_id even when lower slots are excluded.
