@@ -8362,6 +8362,7 @@ class HordeWorkerProcessManager:
                     and process_info.last_process_state == HordeProcessState.PROCESS_ENDING
                     and (now - process_info.last_received_timestamp) > self.bridge_data.process_timeout
                     and num_loaded_inference < self.max_inference_processes
+                    and self._process_map.num_inference_processes() <= self.max_inference_processes
                 ):
                     logger.error(
                         f"{process_info} has been stuck in PROCESS_ENDING for "
