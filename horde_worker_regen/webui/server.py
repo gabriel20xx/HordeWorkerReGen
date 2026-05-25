@@ -5,6 +5,7 @@ import ipaddress
 import io
 import math
 import re
+import socket
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -171,6 +172,63 @@ def _normalize_ip_for_compare(ip: ipaddress.IPv4Address | ipaddress.IPv6Address)
     return ip
 
 
+def _get_local_interface_ips() -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Collect known local interface IPs for wildcard-bind host checks."""
+    local_ips: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+    hostnames: set[str] = {"localhost"}
+
+    hostname = socket.gethostname()
+    if hostname:
+        hostnames.add(hostname)
+
+    fqdn = socket.getfqdn()
+    if fqdn:
+        hostnames.add(fqdn)
+
+    for candidate in hostnames:
+        try:
+            addr_infos = socket.getaddrinfo(candidate, None, proto=socket.IPPROTO_TCP)
+        except socket.gaierror:
+            continue
+
+        for addr_info in addr_infos:
+            sockaddr = addr_info[4]
+            if not isinstance(sockaddr, tuple) or not sockaddr:
+                continue
+            resolved_host = sockaddr[0]
+            if not isinstance(resolved_host, str) or not resolved_host:
+                continue
+            resolved_host = resolved_host.split("%", 1)[0]
+            try:
+                local_ips.add(_normalize_ip_for_compare(ipaddress.ip_address(resolved_host)))
+            except ValueError:
+                continue
+
+    for family, destination in (
+        (socket.AF_INET, ("198.51.100.1", 80)),
+        (socket.AF_INET6, ("2001:db8::1", 80, 0, 0)),
+    ):
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as probe_socket:
+                probe_socket.connect(destination)
+                source_sockname = probe_socket.getsockname()
+        except OSError:
+            continue
+
+        if not isinstance(source_sockname, tuple) or not source_sockname:
+            continue
+        source_host = source_sockname[0]
+        if not isinstance(source_host, str) or not source_host:
+            continue
+        source_host = source_host.split("%", 1)[0]
+        try:
+            local_ips.add(_normalize_ip_for_compare(ipaddress.ip_address(source_host)))
+        except ValueError:
+            continue
+
+    return local_ips
+
+
 def _is_same_host_remote(request: web.Request) -> bool:
     """Return True when request.remote matches the local socket address."""
     remote_host = _normalize_remote_host(request.remote)
@@ -196,7 +254,7 @@ def _is_same_host_remote(request: web.Request) -> bool:
 
     local_host = local_host.split("%", 1)[0]
     if local_host in {"0.0.0.0", "::"}:
-        return False
+        return remote_ip in _get_local_interface_ips()
 
     try:
         local_ip = _normalize_ip_for_compare(ipaddress.ip_address(local_host))

@@ -1,6 +1,7 @@
 """Simple test to verify the web UI server can be created and started."""
 
 import asyncio
+import ipaddress
 
 import aiohttp
 import pytest
@@ -503,6 +504,25 @@ def test_is_same_host_remote_rejects_different_host() -> None:
         transport = DummyTransport()
 
     assert not _is_same_host_remote(DummyRequest())  # type: ignore[arg-type]
+
+
+def test_is_same_host_remote_accepts_wildcard_bind_for_local_interface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test wildcard-bound socket accepts a request from a discovered local interface IP."""
+    from horde_worker_regen.webui import server as webui_server
+
+    monkeypatch.setattr(webui_server, "_get_local_interface_ips", lambda: {ipaddress.ip_address("192.168.2.41")})
+
+    class DummyTransport:
+        def get_extra_info(self, name: str) -> tuple[str, int] | None:
+            if name == "sockname":
+                return ("0.0.0.0", 3000)
+            return None
+
+    class DummyRequest:
+        remote = "192.168.2.41"
+        transport = DummyTransport()
+
+    assert webui_server._is_same_host_remote(DummyRequest())  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
