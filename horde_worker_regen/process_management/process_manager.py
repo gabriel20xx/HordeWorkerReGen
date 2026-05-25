@@ -1806,6 +1806,7 @@ class HordeWorkerProcessManager:
         # Auto-mode flags set via the web UI.
         self._queue_size_auto: bool = False
         self._max_active_models_auto: bool = False
+        self._inference_scale_down_requested: bool = False
 
         # Cached resource metrics used by the auto-tuning logic.
         # Updated each time update_webui_status() is called.
@@ -2128,6 +2129,7 @@ class HordeWorkerProcessManager:
         self._max_active_models_override = count
         self._max_active_models_auto = False
         self._lru.capacity = count
+        self._inference_scale_down_requested = True
         logger.info(f"Max active models changed to {count} via web UI")
 
     def set_queue_size_auto_mode(self, enabled: bool) -> None:
@@ -2166,6 +2168,7 @@ class HordeWorkerProcessManager:
             count = self._compute_auto_max_active_models()
             self._max_active_models_override = count
             self._lru.capacity = count
+            self._inference_scale_down_requested = True
             logger.info(f"Max active models auto mode enabled (initial value: {count})")
         else:
             logger.info("Max active models auto mode disabled")
@@ -2484,7 +2487,9 @@ class HordeWorkerProcessManager:
             for process in self._process_map.get_inference_processes():
                 self._end_inference_process(process)
 
-        if len(self.jobs_pending_inference) > 0 and len(self.jobs_pending_inference) != len(self.jobs_in_progress):
+        if not force and (not self._shutting_down) and (
+            self._process_map.num_inference_processes() <= self.max_inference_processes
+        ):
             return
 
         processes_with_model_for_queued_job: list[int] = self.get_processes_with_model_for_queued_job()
@@ -6516,6 +6521,15 @@ class HordeWorkerProcessManager:
                             await asyncio.sleep(self._loop_interval / 2)
                         self._replace_all_safety_process()
 
+                    should_scale_down = self._inference_scale_down_requested or (
+                        self._process_map.num_inference_processes() > self.max_inference_processes
+                    )
+                    if should_scale_down:
+                        self.end_inference_processes()
+                        self._inference_scale_down_requested = (
+                            self._process_map.num_inference_processes() > self.max_inference_processes
+                        )
+
                     if self._shutting_down and not self._last_pop_recently():
                         self.end_inference_processes()
 
@@ -7542,6 +7556,7 @@ class HordeWorkerProcessManager:
             if auto_ma != self._max_active_models_override:
                 self._max_active_models_override = auto_ma
                 self._lru.capacity = auto_ma
+                self._inference_scale_down_requested = True
                 logger.debug(f"Auto max active models updated to {auto_ma}")
 
         self.webui.update_status(
@@ -8005,6 +8020,8 @@ class HordeWorkerProcessManager:
     """The epoch time of when the worker started shutting down."""
     _shut_down = False
     """If true, the worker is out of the process control loop and should halt."""
+    _inference_scale_down_requested = False
+    """Whether a non-blocking inference scale-down pass has been requested."""
 
     def _shutdown(self) -> None:
         if not self._shutting_down:

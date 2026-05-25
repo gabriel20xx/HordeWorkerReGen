@@ -1583,3 +1583,67 @@ def test_compute_auto_max_active_models_uses_runtime_override_without_vram_data(
     manager._max_active_models_override = 3
 
     assert manager._compute_auto_max_active_models() == 3
+
+
+def test_set_max_active_models_requests_runtime_scale_down() -> None:
+    """Changing max active models should request a control-loop scale-down pass."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+    manager._lru = SimpleNamespace(capacity=8)
+    manager._max_active_models_override = None
+    manager._max_active_models_auto = True
+
+    manager.set_max_active_models(3)
+
+    assert manager._max_active_models_override == 3
+    assert manager._max_active_models_auto is False
+    assert manager._lru.capacity == 3
+    assert manager._inference_scale_down_requested is True
+
+
+def test_end_inference_processes_noop_when_not_above_limit() -> None:
+    """Non-shutdown end_inference_processes should not kill workers when at/below configured limit."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+    manager._shutting_down = False
+    manager._max_inference_processes = 3
+    manager._max_active_models_override = None
+    manager.jobs_pending_inference = []
+    manager.jobs_in_progress = []
+    manager.get_processes_with_model_for_queued_job = MagicMock(return_value=[])
+    manager._end_inference_process = MagicMock()
+
+    process_map = MagicMock()
+    process_map.num_inference_processes.return_value = 3
+    process_map._get_first_inference_process_to_kill.return_value = MagicMock()
+    manager._process_map = process_map
+
+    manager.end_inference_processes()
+
+    manager._end_inference_process.assert_not_called()
+
+
+def test_end_inference_processes_does_not_skip_scale_down_with_pending_queue() -> None:
+    """Scale-down should still run when jobs are queued but process count is above the cap."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+    manager._shutting_down = False
+    manager._max_inference_processes = 2
+    manager._max_active_models_override = None
+    manager.jobs_pending_inference = [object(), object()]
+    manager.jobs_in_progress = [object()]
+    manager.get_processes_with_model_for_queued_job = MagicMock(return_value=[])
+    manager._end_inference_process = MagicMock()
+
+    process_to_kill = MagicMock()
+    process_map = MagicMock()
+    process_map.num_inference_processes.return_value = 3
+    process_map._get_first_inference_process_to_kill.return_value = process_to_kill
+    manager._process_map = process_map
+
+    manager.end_inference_processes()
+
+    manager._end_inference_process.assert_called_once_with(process_to_kill)
