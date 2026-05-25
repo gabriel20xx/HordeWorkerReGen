@@ -1178,17 +1178,30 @@ class WorkerWebUI:
                         <div class="section-header">
                             <span id="settings-status" class="section-count" style="margin-left:auto;display:none;"></span>
                         </div>
-                        <div class="grid-2" style="margin-bottom: 14px;">
-                            <div class="card">
-                                <div class="card-header"><span class="card-title">&#128230; Job Queue Size</span></div>
-                                <div style="padding:14px 16px;">
-                                    <div class="limit-editor"><input type="number" id="queue-max-input" class="limit-input" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}"><button class="limit-set-btn" id="queue-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button><button class="limit-auto-btn" id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing" aria-pressed="false">Auto</button></div>
+                        <div class="settings-group" style="margin-bottom: 14px;">
+                            <div class="settings-group-title">Limits</div>
+                            <div class="settings-grid">
+                                <div class="setting-row">
+                                    <div class="setting-info">
+                                        <div class="setting-label">&#128230; Job Queue Size</div>
+                                        <div class="setting-desc">Maximum number of jobs accepted into the queue at once (0 = unlimited).</div>
+                                    </div>
+                                    <div class="setting-ctrl">
+                                        <input type="number" id="queue-max-input" class="setting-number" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}">
+                                        <button class="setting-apply-btn" id="queue-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button>
+                                        <button class="limit-auto-btn" id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing" aria-pressed="false">Auto</button>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="card">
-                                <div class="card-header"><span class="card-title">&#129302; Max Active Models</span></div>
-                                <div style="padding:14px 16px;">
-                                    <div class="limit-editor"><input type="number" id="models-max-input" class="limit-input" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}"><button class="limit-set-btn" id="models-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button><button class="limit-auto-btn" id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing" aria-pressed="false">Auto</button></div>
+                                <div class="setting-row">
+                                    <div class="setting-info">
+                                        <div class="setting-label">&#129302; Max Active Models</div>
+                                        <div class="setting-desc">Maximum number of model slots kept active simultaneously.</div>
+                                    </div>
+                                    <div class="setting-ctrl">
+                                        <input type="number" id="models-max-input" class="setting-number" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}">
+                                        <button class="setting-apply-btn" id="models-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button>
+                                        <button class="limit-auto-btn" id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing" aria-pressed="false">Auto</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -3592,16 +3605,16 @@ class WorkerWebUI:
                     html += '<div class="setting-ctrl">';
                     if (type === 'bool') {
                         var chk = (val === true) ? 'checked' : '';
-                        html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="applySetting(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
+                        html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="applySetting(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
                     } else {
                         var numVal = (val !== null && val !== undefined) ? val : '';
                         var minAttr = (minV !== null) ? ' min="' + minV + '"' : '';
                         var maxAttr = (maxV !== null) ? ' max="' + maxV + '"' : '';
                         var step = (type === 'float') ? ' step="0.01"' : ' step="1"';
+                        html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
                         html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numVal)) + '"' + minAttr + maxAttr + step + ' id="sinp-' + escapeHtml(key) + '" aria-label="' + escapeHtml(label) + '">';
                         html += '<button class="setting-apply-btn" onclick="applyNumericSetting(\'' + escapeHtml(key) + '\')">Set</button>';
-                        html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
                     }
                     html += '</div></div>';
                 }

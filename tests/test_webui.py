@@ -2087,8 +2087,8 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "if (a === 'TOTAL') return 1;" in html
         assert "if (b === 'TOTAL') return -1;" in html
         assert '<div class="page" id="page-settings">' in html
-        assert '<span class="card-title">&#128230; Job Queue Size</span>' in html
-        assert '<span class="card-title">&#129302; Max Active Models</span>' in html
+        assert '<div class="setting-label">&#128230; Job Queue Size</div>' in html
+        assert '<div class="setting-label">&#129302; Max Active Models</div>' in html
         assert 'id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing" aria-pressed="false"' in html
         assert 'id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing" aria-pressed="false"' in html
         assert '<span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor"' not in html
