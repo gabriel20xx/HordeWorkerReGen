@@ -2128,6 +2128,7 @@ class HordeWorkerProcessManager:
         self._max_active_models_override = count
         self._max_active_models_auto = False
         self._lru.capacity = count
+        self.end_inference_processes()
         logger.info(f"Max active models changed to {count} via web UI")
 
     def set_queue_size_auto_mode(self, enabled: bool) -> None:
@@ -2166,6 +2167,7 @@ class HordeWorkerProcessManager:
             count = self._compute_auto_max_active_models()
             self._max_active_models_override = count
             self._lru.capacity = count
+            self.end_inference_processes()
             logger.info(f"Max active models auto mode enabled (initial value: {count})")
         else:
             logger.info("Max active models auto mode disabled")
@@ -2483,6 +2485,11 @@ class HordeWorkerProcessManager:
 
             for process in self._process_map.get_inference_processes():
                 self._end_inference_process(process)
+
+        if not force and (not self._shutting_down) and (
+            self._process_map.num_inference_processes() <= self.max_inference_processes
+        ):
+            return
 
         if len(self.jobs_pending_inference) > 0 and len(self.jobs_pending_inference) != len(self.jobs_in_progress):
             return
@@ -6511,6 +6518,8 @@ class HordeWorkerProcessManager:
                     ):
                         await asyncio.sleep(self._loop_interval)
                         self.receive_and_handle_process_messages()
+                        if self._process_map.num_inference_processes() > self.max_inference_processes:
+                            self.end_inference_processes()
                         if self.replace_hung_processes():
                             await asyncio.sleep(self._loop_interval / 2)
                             await asyncio.sleep(self._loop_interval / 2)
