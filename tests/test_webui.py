@@ -565,6 +565,7 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
         assert "document.getElementById('topbar-total-ram-val').textContent = totalRamVal;" in html
         assert "const gpu = Math.max(sysGpuRaw, workerGpu);" in html
         assert "const sysVram = Math.max(vramTotalMb > 0 ? Math.min(100, Math.round((sysVramMb / vramTotalMb) * 100)) : 0, vram);" in html
+        assert "escapeHtml(proc.display_id || proc.id)" in html
         assert "if (pageId === 'stats') {" in html
         assert "fetchStats(true);" in html
         assert "'/ ' + totalRamVal" not in html
