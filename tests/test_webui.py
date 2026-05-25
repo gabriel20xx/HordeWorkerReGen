@@ -2655,8 +2655,8 @@ async def test_webui_settings_post_no_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webui_settings_post_rejects_non_local_clients() -> None:
-    """Test that POST /api/settings rejects non-local clients."""
+async def test_webui_settings_post_allows_non_local_clients() -> None:
+    """Test that POST /api/settings allows non-local clients."""
     webui = WorkerWebUI(port=0)
     received: list[tuple[str, object]] = []
 
@@ -2672,8 +2672,8 @@ async def test_webui_settings_post_rejects_non_local_clients() -> None:
             return {"key": "nsfw", "value": False}
 
     response = await webui._handle_set_setting(DummyRequest())  # type: ignore[arg-type]
-    assert response.status == 403
-    assert received == []
+    assert response.status == 200
+    assert received == [("nsfw", False)]
 
 
 @pytest.mark.asyncio
@@ -2774,8 +2774,8 @@ async def test_webui_restart_post_no_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webui_restart_post_rejects_non_local_clients() -> None:
-    """Test that POST /api/restart rejects non-local clients."""
+async def test_webui_restart_post_allows_non_local_clients() -> None:
+    """Test that POST /api/restart allows non-local clients."""
     webui = WorkerWebUI(port=0)
     called = {"restart": False}
 
@@ -2788,8 +2788,8 @@ async def test_webui_restart_post_rejects_non_local_clients() -> None:
         remote = "8.8.8.8"
 
     response = await webui._handle_restart_program(DummyRequest())  # type: ignore[arg-type]
-    assert response.status == 403
-    assert called["restart"] is False
+    assert response.status == 200
+    assert called["restart"] is True
 
 
 @pytest.mark.asyncio

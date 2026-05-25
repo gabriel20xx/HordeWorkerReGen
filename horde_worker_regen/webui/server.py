@@ -4631,13 +4631,9 @@ class WorkerWebUI:
         Returns:
             200 with ``{"key": ..., "value": ...}`` on success.
             400 on missing/invalid input.
-            403 for non-local clients.
             503 if no settings callback has been registered.
             500 on internal error.
         """
-        if not _is_trusted_local_request(request):
-            return web.json_response({"error": "Settings API is restricted to localhost clients"}, status=403)
-
         try:
             body = await request.json()
         except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
@@ -4762,9 +4758,6 @@ class WorkerWebUI:
 
     async def _handle_restart_program(self, request: web.Request) -> web.Response:
         """Handle a request to restart the worker program."""
-        if not _is_trusted_local_request(request):
-            return web.json_response({"error": "Restart API is restricted to localhost clients"}, status=403)
-
         if self._restart_program_callback is None:
             return web.json_response({"error": "Restart API is not available"}, status=503)
 
