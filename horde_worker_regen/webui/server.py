@@ -1178,33 +1178,6 @@ class WorkerWebUI:
                         <div class="section-header">
                             <span id="settings-status" class="section-count" style="margin-left:auto;display:none;"></span>
                         </div>
-                        <div class="settings-group" style="margin-bottom: 14px;">
-                            <div class="settings-group-title">Limits</div>
-                            <div class="settings-grid">
-                                <div class="setting-row">
-                                    <div class="setting-info">
-                                        <div class="setting-label">&#128230; Job Queue Size</div>
-                                        <div class="setting-desc">Maximum number of jobs accepted into the queue at once (0 = unlimited).</div>
-                                    </div>
-                                    <div class="setting-ctrl">
-                                        <input type="number" id="queue-max-input" class="setting-number" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}">
-                                        <button class="setting-apply-btn" id="queue-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button>
-                                        <button class="limit-auto-btn" id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing" aria-pressed="false">Auto</button>
-                                    </div>
-                                </div>
-                                <div class="setting-row">
-                                    <div class="setting-info">
-                                        <div class="setting-label">&#129302; Max Active Models</div>
-                                        <div class="setting-desc">Maximum number of model slots kept active simultaneously.</div>
-                                    </div>
-                                    <div class="setting-ctrl">
-                                        <input type="number" id="models-max-input" class="setting-number" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}">
-                                        <button class="setting-apply-btn" id="models-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button>
-                                        <button class="limit-auto-btn" id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing" aria-pressed="false">Auto</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                         <div id="settings-body">
                             <div class="settings-unavailable">Loading settings&#8230;</div>
                         </div>
@@ -3517,7 +3490,7 @@ class WorkerWebUI:
         // SETTINGS PAGE
         // ========================================================
         const _SETTINGS_SPEC = {
-            // key: [label, description, category, type ('bool'|'int'|'float'), min, max, restartRequired]
+            // key: [label, description, category, type ('bool'|'int'|'float'|'int_auto'), min, max, restartRequired, autoPrefix?]
             nsfw:                     ['NSFW',                    'Accept NSFW image jobs.',                                              'Capabilities', 'bool',  null, null, false],
             censor_nsfw:              ['Censor NSFW',             'Censor NSFW content even when accepting NSFW jobs.',                  'Capabilities', 'bool',  null, null, false],
             allow_img2img:            ['Allow img2img',           'Accept image-to-image jobs.',                                         'Capabilities', 'bool',  null, null, false],
@@ -3530,6 +3503,8 @@ class WorkerWebUI:
             require_upfront_kudos:    ['Require Upfront Kudos',   'Only accept jobs from users who have enough kudos upfront.',          'Capabilities', 'bool',  null, null, false],
             limit_max_steps:          ['Limit Max Steps',         'Cap the number of inference steps to the worker\'s configured max.',  'Capabilities', 'bool',  null, null, false],
             extra_slow_worker:        ['Extra Slow Worker',       'Enable extra-slow-worker mode (forces conservative settings).',       'Capabilities', 'bool',  null, null, true],
+            job_queue_size:           ['Job Queue Size',          'Maximum jobs held in the queue at once (0\u00a0=\u00a0unlimited).',  'Performance',  'int_auto', 0, 999, false, 'queue'],
+            active_model_count:       ['Max Active Models',       'Maximum number of model slots kept active simultaneously.',           'Performance',  'int_auto', 1, 999, false, 'models'],
             max_power:                ['Max Power',               'Maximum resolution multiplier (formula: 64\u00d764\u00d78\u00d7max_power pixels).',         'Performance',  'int',   1,    128,  false],
             max_batch:                ['Max Batch',               'Maximum number of images per batched inference job.',                 'Performance',  'int',   1,    100,  false],
             max_threads:              ['Max Threads',             'Maximum number of concurrent inference threads.',                     'Performance',  'int',   1,    8,    true],
@@ -3607,6 +3582,21 @@ class WorkerWebUI:
                         var chk = (val === true) ? 'checked' : '';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
                         html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="applySetting(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
+                    } else if (type === 'int_auto') {
+                        var pfx = spec[7];
+                        var _setFnNames  = {queue: 'setMaxQueueSize',     models: 'setMaxActiveModels'};
+                        var _autoFnNames = {queue: 'toggleQueueSizeAuto', models: 'toggleMaxActiveModelsAuto'};
+                        var _autoTitles  = {
+                            queue:  'Automatically select the best max queue size based on VRAM and job timing',
+                            models: 'Automatically select the best active model count based on available VRAM and job timing',
+                        };
+                        var numValA = (val !== null && val !== undefined) ? val : '';
+                        var minAttrA = (minV !== null) ? ' min="' + minV + '"' : '';
+                        var maxAttrA = (maxV !== null) ? ' max="' + maxV + '"' : '';
+                        html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
+                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numValA)) + '"' + minAttrA + maxAttrA + ' step="1" id="' + pfx + '-max-input" aria-label="' + escapeHtml(label) + '" onkeydown="if(event.key===\'Enter\'){' + _setFnNames[pfx] + '();event.preventDefault();}">';
+                        html += '<button class="setting-apply-btn" id="' + pfx + '-set-btn" onclick="' + _setFnNames[pfx] + '()">Set</button>';
+                        html += '<button class="limit-auto-btn" id="' + pfx + '-auto-btn" onclick="' + _autoFnNames[pfx] + '()" title="' + escapeHtml(_autoTitles[pfx]) + '" aria-pressed="false">Auto</button>';
                     } else {
                         var numVal = (val !== null && val !== undefined) ? val : '';
                         var minAttr = (minV !== null) ? ' min="' + minV + '"' : '';
