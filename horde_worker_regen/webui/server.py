@@ -488,8 +488,8 @@ class WorkerWebUI:
         .process-item:last-child { margin-bottom: 0; }
         .process-id-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 3px; }
         .process-id { font-weight: 700; color: var(--accent); font-size: 0.88rem; }
-        .process-type-badge { font-size: 0.72rem; background: #e0e7ff; color: #4338ca; padding: 1px 7px; border-radius: 4px; font-weight: 600; margin-left: auto; }
-        .process-state-badge { font-size: 0.72rem; background: #f0fdf4; color: #166534; padding: 1px 7px; border-radius: 4px; font-weight: 600; }
+        .process-type-badge { font-size: 0.72rem; background: #e0e7ff; color: #4338ca; padding: 1px 7px; border-radius: 4px; font-weight: 600; }
+        .process-state-badge { font-size: 0.72rem; background: #f0fdf4; color: #166534; padding: 1px 7px; border-radius: 4px; font-weight: 600; margin-left: auto; }
         .process-detail-text { font-size: 0.8rem; color: #64748b; }
 
         .job-item { background: #f8fafc; border: 1px solid #e8eef4; border-radius: 7px; padding: 7px 12px; margin-bottom: 5px; font-size: 0.83rem; }
@@ -2663,7 +2663,7 @@ class WorkerWebUI:
                             if (proc.model) sl.push('Model: '+escapeHtml(proc.model));
                             if (proc.batch_size!=null&&proc.batch_size!==undefined) sl.push('Batch: '+escapeHtml(proc.batch_size)+'x');
                             if (proc.progress!=null&&proc.progress!==undefined) sl.push('Progress: '+escapeHtml(proc.progress)+'%');
-                            return '<div class="process-item"><div class="process-id-row"><span class="process-id">'+escapeHtml(proc.id)+'</span><span class="process-type-badge">'+escapeHtml(proc.type)+'</span><span class="process-state-badge">'+escapeHtml(proc.state)+'</span></div><div class="process-detail-text">'+(sl.length>0?sl.join(' | '):'Idle')+'</div></div>';
+                            return '<div class="process-item"><div class="process-id-row"><span class="process-id">'+escapeHtml(proc.id)+'</span><span class="process-state-badge">'+escapeHtml(proc.state)+'</span><span class="process-type-badge">'+escapeHtml(proc.type)+'</span></div><div class="process-detail-text">'+(sl.length>0?sl.join(' | '):'Idle')+'</div></div>';
                         }).join('');
                     } else { pd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div>'; }
                     const newImagesCount = data.images_count || 0;
