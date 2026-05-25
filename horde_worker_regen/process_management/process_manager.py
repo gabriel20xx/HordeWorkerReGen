@@ -2753,12 +2753,18 @@ class HordeWorkerProcessManager:
                     job_info.retry_count = self.MAX_JOB_RETRIES
                 retry_skipped = True
                 fault_info = "retry skipped because the process was replaced while stuck in MODEL_PRELOADING"
-            self.handle_job_fault(
-                faulted_job=job_to_remove,
-                process_info=process_info,
-                fault_info=fault_info,
-                retry_skipped=retry_skipped,
-            )
+            if fault_info is None and not retry_skipped:
+                self.handle_job_fault(
+                    faulted_job=job_to_remove,
+                    process_info=process_info,
+                )
+            else:
+                self.handle_job_fault(
+                    faulted_job=job_to_remove,
+                    process_info=process_info,
+                    fault_info=fault_info,
+                    retry_skipped=retry_skipped,
+                )
 
         self._end_inference_process(process_info)
 
@@ -5684,7 +5690,10 @@ class HordeWorkerProcessManager:
         # are controlled by max_threads and should not consume queue_size slots.
         jobs_queued = max(0, len(self.jobs_pending_inference) - len(self.jobs_in_progress))
 
-        if jobs_queued >= self.max_queue_size:
+        max_queue_size = self.max_queue_size
+        if not isinstance(max_queue_size, int):
+            max_queue_size = self.bridge_data.queue_size
+        if jobs_queued >= max_queue_size:
             return
 
         if len(self.jobs_pending_inference) >= self.max_inference_processes:
