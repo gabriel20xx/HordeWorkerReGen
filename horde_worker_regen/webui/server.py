@@ -821,8 +821,10 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-toggle input:checked + .setting-toggle-slider { background: var(--accent); }
         /* Number input */
         .setting-number { width: 78px; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
+        .setting-number:disabled { opacity: 0.55; cursor: not-allowed; background: #e2e8f0; color: #64748b; }
         .setting-number:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .setting-number { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        [data-theme="dark"] .setting-number:disabled { background: #0f1924; color: #64748b; }
         .setting-apply-btn { padding: 3px 10px; font-size: 0.78rem; font-weight: 600; background: var(--accent); color: #fff; border: none; border-radius: 5px; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
         .setting-apply-btn:hover { background: var(--accent-hover); }
         .setting-apply-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -3587,7 +3589,7 @@ class WorkerWebUI:
                         html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="applySetting(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
                     } else if (type === 'int_auto') {
                         var pfx = spec[7];
-                        var _setFnNames  = {queue: 'setMaxQueueSize',     models: 'setMaxActiveModels'};
+                        var _changeFnNames = {queue: 'setMaxQueueSize', models: 'setMaxActiveModels'};
                         var _autoFnNames = {queue: 'toggleQueueSizeAuto', models: 'toggleMaxActiveModelsAuto'};
                         var _autoTitles  = {
                             queue:  'Automatically select the best max queue size based on VRAM and job timing',
@@ -3597,8 +3599,7 @@ class WorkerWebUI:
                         var minAttrA = (minV !== null) ? ' min="' + minV + '"' : '';
                         var maxAttrA = (maxV !== null) ? ' max="' + maxV + '"' : '';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
-                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numValA)) + '"' + minAttrA + maxAttrA + ' step="1" id="' + pfx + '-max-input" aria-label="' + escapeHtml(label) + '" onkeydown="if(event.key===\'Enter\'){' + _setFnNames[pfx] + '();event.preventDefault();}">';
-                        html += '<button class="setting-apply-btn" id="' + pfx + '-set-btn" onclick="' + _setFnNames[pfx] + '()">Set</button>';
+                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numValA)) + '"' + minAttrA + maxAttrA + ' step="1" id="' + pfx + '-max-input" aria-label="' + escapeHtml(label) + '" onchange="' + _changeFnNames[pfx] + '()" onkeydown="if(event.key===\'Enter\'){' + _changeFnNames[pfx] + '();event.preventDefault();}">';
                         html += '<button class="limit-auto-btn" id="' + pfx + '-auto-btn" onclick="' + _autoFnNames[pfx] + '()" title="' + escapeHtml(_autoTitles[pfx]) + '" aria-pressed="false">Auto</button>';
                     } else {
                         var numVal = (val !== null && val !== undefined) ? val : '';
@@ -3606,8 +3607,7 @@ class WorkerWebUI:
                         var maxAttr = (maxV !== null) ? ' max="' + maxV + '"' : '';
                         var step = (type === 'float') ? ' step="0.01"' : ' step="1"';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
-                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numVal)) + '"' + minAttr + maxAttr + step + ' id="sinp-' + escapeHtml(key) + '" aria-label="' + escapeHtml(label) + '">';
-                        html += '<button class="setting-apply-btn" onclick="applyNumericSetting(\'' + escapeHtml(key) + '\')">Set</button>';
+                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numVal)) + '"' + minAttr + maxAttr + step + ' id="sinp-' + escapeHtml(key) + '" aria-label="' + escapeHtml(label) + '" onchange="applyNumericSetting(\'' + escapeHtml(key) + '\')" onkeydown="if(event.key===\'Enter\'){applyNumericSetting(\'' + escapeHtml(key) + '\');event.preventDefault();}">';
                     }
                     html += '</div></div>';
                 }
