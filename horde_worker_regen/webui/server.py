@@ -3541,8 +3541,16 @@ class WorkerWebUI:
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(data) { _settingsLoaded = true; renderSettingsPage(data.settings || {}); })
                 .catch(function(err) {
+                    // Render the page shell with default values so queue/model controls remain
+                    // available even when /api/settings fails to load.
+                    renderSettingsPage({});
                     var body = document.getElementById('settings-body');
-                    if (body) body.innerHTML = '<div class="settings-unavailable">&#9888; Failed to load settings: ' + escapeHtml(err.message) + '</div>';
+                    if (body) {
+                        var banner = document.createElement('div');
+                        banner.className = 'settings-unavailable';
+                        banner.innerHTML = '&#9888; Failed to load current values: ' + escapeHtml(err.message) + '. Controls show defaults.';
+                        body.insertBefore(banner, body.firstChild);
+                    }
                 })
                 .finally(function() { _settingsFetchInProgress = false; });
         }

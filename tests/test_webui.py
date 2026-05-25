@@ -2096,6 +2096,9 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "toggleMaxActiveModelsAuto" in html  # auto function referenced in renderer
         # The standalone "Limits" static section must no longer exist.
         assert 'settings-group-title">Limits<' not in html
+        # Old static setting-label HTML entities for the two controls must not reappear.
+        assert '<div class="setting-label">&#128230; Job Queue Size</div>' not in html
+        assert '<div class="setting-label">&#129302; Max Active Models</div>' not in html
         assert '<span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor"' not in html
         assert '<span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span><div class="limit-editor"' not in html
         assert "setBtn.disabled = !!(inp && inp.disabled);" in html
