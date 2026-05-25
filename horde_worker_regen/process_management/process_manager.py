@@ -7271,6 +7271,14 @@ class HordeWorkerProcessManager:
         )
         return f"{ptype}-{type_index}"
 
+    @staticmethod
+    def _webui_process_display_label(process_type: str, type_index: int) -> str:
+        """Return the user-facing process label used by the Web UI."""
+        process_name = process_type.replace("_", " ").title()
+        if type_index == 0:
+            return process_name
+        return f"{process_name} {type_index}"
+
     def update_webui_status(self) -> None:
         """Update the web UI with current worker status."""
         if self.webui is None:
@@ -7433,6 +7441,10 @@ class HordeWorkerProcessManager:
             processes.append(
                 {
                     "id": f"{ptype}-{type_index}",
+                    "display_id": self._webui_process_display_label(
+                        process_info.process_type.name,
+                        type_index,
+                    ),
                     "type": process_info.process_type.name,
                     "state": process_info.last_process_state.name,
                     "model": process_info.loaded_horde_model_name,

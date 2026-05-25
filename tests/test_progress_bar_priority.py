@@ -587,6 +587,7 @@ def test_update_webui_status_excludes_ending_and_ended_processes_from_process_li
     processes = kwargs.get("processes", [])
     assert len(processes) == 1
     assert processes[0]["id"] == "inference-0"
+    assert processes[0]["display_id"] == "Inference"
     assert processes[0]["state"] == "WAITING_FOR_JOB"
 
     # Keep per-type index stable by process_id even when lower slots are excluded.
@@ -606,6 +607,24 @@ def test_update_webui_status_excludes_ending_and_ended_processes_from_process_li
     processes = kwargs.get("processes", [])
     assert len(processes) == 1
     assert processes[0]["id"] == "inference-1"
+    assert processes[0]["display_id"] == "Inference 1"
+
+    safety = _make_mock_process(active_job, HordeProcessState.WAITING_FOR_JOB, percent_complete=None)
+    safety.process_type.name = "SAFETY"
+    safety.process_id = 0
+
+    kwargs = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        process_list=[safety],
+        return_full_kwargs=True,
+    )
+    processes = kwargs.get("processes", [])
+    assert len(processes) == 1
+    assert processes[0]["id"] == "safety-0"
+    assert processes[0]["display_id"] == "Safety"
 
 
 # ---------------------------------------------------------------------------
