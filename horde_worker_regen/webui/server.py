@@ -808,7 +808,7 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-desc { color: #94a3b8; }
         .setting-restart-badge { display: inline-block; font-size: 0.65rem; font-weight: 700; background: #fef3c7; color: #92400e; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
         [data-theme="dark"] .setting-restart-badge { background: #451a03; color: #fcd34d; }
-        .setting-ctrl { flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+        .setting-ctrl { flex-shrink: 0; margin-left: auto; display: flex; align-items: center; justify-content: flex-end; text-align: right; gap: 6px; }
         /* Toggle switch */
         .setting-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
         .setting-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
