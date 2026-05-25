@@ -1312,7 +1312,7 @@ class WorkerWebUI:
                     const models = w.models || [];
                     const modelCount = models.length;
                     const modelTitles = models.map(function(m) { return m.replace(/ /g, '\u00A0'); }).join(', ');
-                    const sizeStr = w.max_pixels ? ('\u2248'+Math.round(Math.sqrt(w.max_pixels))+'px') : '-';
+                    const sizeStr = w.max_pixels ? ('\u2248 '+Math.round(Math.sqrt(w.max_pixels))+' px') : '-';
                     const uptimeSecs = w.uptime || 0;
                     const uh = Math.floor(uptimeSecs/3600), um = Math.floor((uptimeSecs%3600)/60);
                     const uptimeStr = uh > 0 ? uh+'h '+um+'m' : (um > 0 ? um+'m' : uptimeSecs+'s');
@@ -2987,8 +2987,8 @@ class WorkerWebUI:
                 } else {
                     var sortedNames = stateNames.slice().sort(sortByStateOrder);
                     var stateRows = sortedNames.map(function(s) {
-                        var avg = avgTimes[s] !== undefined ? avgTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
-                        var max = maxTimes[s] !== undefined ? maxTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
+                        var avg = avgTimes[s] !== undefined ? avgTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' s' : '-';
+                        var max = maxTimes[s] !== undefined ? maxTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' s' : '-';
                         return '<tr>' +
                             '<td>' + escapeHtml(s) + '</td>' +
                             '<td style="text-align:right;">' + avg + '</td>' +
