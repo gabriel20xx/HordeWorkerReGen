@@ -986,7 +986,6 @@ class WorkerWebUI:
                 <!-- GALLERY PAGE -->
                 <div class="page" id="page-gallery">
                     <div class="section">
-                        <div class="section-header"><span class="section-count" id="gallery-count">0</span></div>
                         <div class="card">
                             <div class="gallery-filter-bar">
                                 <label for="gallery-model-filter">Filter by model:</label>
@@ -1938,9 +1937,7 @@ class WorkerWebUI:
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
                   pi = document.getElementById('gallery-page-info'), pb = document.getElementById('gallery-prev'),
-                  nb = document.getElementById('gallery-next'), pag = document.getElementById('gallery-pagination'),
-                  cnt = document.getElementById('gallery-count');
-            cnt.textContent = total;
+                  nb = document.getElementById('gallery-next'), pag = document.getElementById('gallery-pagination');
             if (page === 1) { const bnr = document.getElementById('gallery-new-banner'); if (bnr) bnr.style.display = 'none'; }
             if (images.length === 0) {
                 grid.style.display = 'none'; grid.innerHTML = ''; empty.style.display = '';
@@ -2072,11 +2069,10 @@ class WorkerWebUI:
                 .then(data => {
                     galleryFetchInProgress = false;
                     galleryCurrentPage = 1; galleryTotalImages = data.total; galleryTotalPages = data.total_pages;
-                    const grid = document.getElementById('gallery-grid'), cnt = document.getElementById('gallery-count'),
+                    const grid = document.getElementById('gallery-grid'),
                           pi = document.getElementById('gallery-page-info'), pb = document.getElementById('gallery-prev'),
                           nb = document.getElementById('gallery-next'), pag = document.getElementById('gallery-pagination'),
                           bnr = document.getElementById('gallery-new-banner'), empty = document.getElementById('gallery-empty');
-                    cnt.textContent = data.total;
                     if (bnr) bnr.style.display = 'none';
                     const tp = Math.max(1, data.total_pages);
                     pi.textContent = 'Page 1 of '+tp; pb.disabled = true; nb.disabled = 1 >= tp; pag.style.display = 'flex';
@@ -2675,7 +2671,6 @@ class WorkerWebUI:
                             return '<div class="process-item"><div class="process-id-row"><span class="process-id">Process #'+escapeHtml(proc.id)+'</span><span class="process-type-badge">'+escapeHtml(proc.type)+'</span><span class="process-state-badge">'+escapeHtml(proc.state)+'</span></div><div class="process-detail-text">'+(sl.length>0?sl.join(' | '):'Idle')+'</div></div>';
                         }).join('');
                     } else { pd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div>'; }
-                    document.getElementById('gallery-count').textContent = data.images_count || 0;
                     const newImagesCount = data.images_count || 0;
                     const hasNewImages = lastKnownImagesCount >= 0 && newImagesCount > lastKnownImagesCount;
                     const galleryPageActive = document.getElementById('page-gallery').classList.contains('active');
