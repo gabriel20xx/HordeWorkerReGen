@@ -462,6 +462,15 @@ def test_webui_images_history() -> None:
     assert "images_history" not in webui.status_data
 
 
+def test_is_loopback_remote_accepts_loopback_with_port() -> None:
+    """Test localhost loopback parsing accepts host:port forms."""
+    from horde_worker_regen.webui.server import _is_loopback_remote
+
+    assert _is_loopback_remote("127.0.0.1:3000")
+    assert _is_loopback_remote("[::1]:3000")
+    assert _is_loopback_remote("[::ffff:127.0.0.1]:3000")
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
@@ -2106,6 +2115,7 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "onchange=\"stageSettingChange(\\'" in html
         assert "id=\"settings-apply-btn\"" in html
         assert "onclick=\"applyPendingSettings()\"" in html
+        assert "if (!_settingsApplying) _setSettingsStatus('', false);" in html
         assert "id=\"settings-restart-btn\"" in html
         assert "onclick=\"restartProgram()\"" in html
         assert 'id="restart-confirm-modal"' in html
@@ -2127,6 +2137,7 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "id=\"' + pfx + '-set-btn\"" not in html
         assert "onclick=\"applyNumericSetting(\\'" not in html
         assert ".setting-number:disabled" in html
+        assert ".setting-number { width: 68px;" in html
         assert "autoBtn.setAttribute('aria-pressed', 'true');" in html
         assert "autoBtn.setAttribute('aria-pressed', 'false');" in html
 
@@ -2605,6 +2616,28 @@ async def test_webui_settings_post_rejects_non_local_clients() -> None:
     response = await webui._handle_set_setting(DummyRequest())  # type: ignore[arg-type]
     assert response.status == 403
     assert received == []
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_post_accepts_ipv4_mapped_loopback_clients() -> None:
+    """Test that POST /api/settings accepts IPv4-mapped loopback clients."""
+    webui = WorkerWebUI(port=0)
+    received: list[tuple[str, object]] = []
+
+    def mock_callback(key: str, value: object) -> None:
+        received.append((key, value))
+
+    webui.set_setting_callback(mock_callback)
+
+    class DummyRequest:
+        remote = "::ffff:127.0.0.1"
+
+        async def json(self) -> dict[str, object]:
+            return {"key": "nsfw", "value": False}
+
+    response = await webui._handle_set_setting(DummyRequest())  # type: ignore[arg-type]
+    assert response.status == 200
+    assert received == [("nsfw", False)]
 
 
 @pytest.mark.asyncio
