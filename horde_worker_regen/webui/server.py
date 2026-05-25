@@ -2670,7 +2670,7 @@ class WorkerWebUI:
                             if (proc.model) sl.push('Model: '+escapeHtml(proc.model));
                             if (proc.batch_size!=null&&proc.batch_size!==undefined) sl.push('Batch: '+escapeHtml(proc.batch_size)+'x');
                             if (proc.progress!=null&&proc.progress!==undefined) sl.push('Progress: '+escapeHtml(proc.progress)+'%');
-                            return '<div class="process-item"><div class="process-id-row"><span class="process-id">Process #'+escapeHtml(proc.id)+'</span><span class="process-type-badge">'+escapeHtml(proc.type)+'</span><span class="process-state-badge">'+escapeHtml(proc.state)+'</span></div><div class="process-detail-text">'+(sl.length>0?sl.join(' | '):'Idle')+'</div></div>';
+                            return '<div class="process-item"><div class="process-id-row"><span class="process-id">'+escapeHtml(proc.id)+'</span><span class="process-type-badge">'+escapeHtml(proc.type)+'</span><span class="process-state-badge">'+escapeHtml(proc.state)+'</span></div><div class="process-detail-text">'+(sl.length>0?sl.join(' | '):'Idle')+'</div></div>';
                         }).join('');
                     } else { pd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div>'; }
                     const newImagesCount = data.images_count || 0;

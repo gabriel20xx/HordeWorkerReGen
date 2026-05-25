@@ -2439,7 +2439,7 @@ class HordeWorkerProcessManager:
                 process_launch_identifier=self.num_processes_launched,
             )
 
-            logger.info(f"Started safety process (id: {pid})")
+            logger.info(f"Started safety process ({self._process_label(pid)})")
             self.num_processes_launched += 1
 
     def start_inference_processes(self) -> None:
@@ -2463,7 +2463,7 @@ class HordeWorkerProcessManager:
             pid = len(self._process_map)
             self._start_inference_process(pid)
 
-            logger.info(f"Started inference process (id: {pid})")
+            logger.info(f"Started inference process ({self._process_label(pid)})")
 
             if i == 0:
                 # Sleep for 4 seconds to allow the first process to start and download the model references
@@ -2475,7 +2475,6 @@ class HordeWorkerProcessManager:
         :param pid: process ID to assign to the process
         :return:
         """
-        logger.info(f"Starting inference process on PID {pid}")
         vram_heavy_models = any(model in VRAM_HEAVY_MODELS for model in self.bridge_data.image_models_to_load)
 
         pipe_connection, child_pipe_connection = multiprocessing.Pipe(duplex=True)
@@ -2511,6 +2510,7 @@ class HordeWorkerProcessManager:
             process_launch_identifier=self.num_processes_launched,
         )
         self._process_map[pid] = process_info
+        logger.info(f"Starting inference process ({self._process_label(pid)})")
         self.num_processes_launched += 1
         return process_info
 
@@ -2570,10 +2570,10 @@ class HordeWorkerProcessManager:
             # released it defensively, permanently leaking the token.
             process_info.mp_process.join(timeout=2)
         except Exception as e:
-            logger.error(f"Failed to kill process {process_info.process_id}: {e}")
+            logger.error(f"Failed to kill {self._process_label(process_info.process_id)}: {e}")
 
         if not self._shutting_down:
-            logger.info(f"Ended inference process {process_info.process_id}")
+            logger.info(f"Ended inference process {self._process_label(process_info.process_id)}")
 
     def _release_vae_decode_semaphore_defensively(self, process_id: int, context: str) -> None:
         """Attempt to release the VAE decode semaphore, logging benign over-releases at DEBUG.
@@ -2834,7 +2834,7 @@ class HordeWorkerProcessManager:
         # Update the process map
         self._process_map.on_process_ending(process_id=process_info.process_id)
 
-        logger.info(f"Ended safety process {process_info.process_id}")
+        logger.info(f"Ended safety process {self._process_label(process_info.process_id)}")
 
     def receive_and_handle_process_messages(self) -> None:
         """Receive and handle any messages from the child processes.
@@ -2872,7 +2872,7 @@ class HordeWorkerProcessManager:
                 if message.process_warning is not None and (
                     in_progress_job_info is not None and in_progress_job_info.payload.n_iter < 4
                 ):
-                    logger.warning(f"Process {message.process_id} warning: {message.process_warning}")
+                    logger.warning(f"{self._process_label(message.process_id)} warning: {message.process_warning}")
 
                     model_name = self._process_map[message.process_id].loaded_horde_model_name
                     model_baseline = self.get_model_baseline(model_name) if model_name is not None else None
@@ -2945,7 +2945,7 @@ class HordeWorkerProcessManager:
                 )
 
                 if message.process_state == HordeProcessState.PROCESS_ENDING:
-                    logger.info(f"Process {message.process_id} is ending")
+                    logger.info(f"{self._process_label(message.process_id)} is ending")
                     # If the process was holding the inference semaphore (i.e., it was in
                     # INFERENCE_PROCESSING or POST_PROCESSING_STARTING), release it now so that
                     # any process blocked in INFERENCE_STARTING waiting to acquire the semaphore
@@ -3042,7 +3042,7 @@ class HordeWorkerProcessManager:
                         and process_info_ending.last_job_referenced in self.jobs_in_progress
                     ):
                         logger.error(
-                            f"Process {message.process_id} is ending while job "
+                            f"{self._process_label(message.process_id)} is ending while job "
                             f"{process_info_ending.last_job_referenced.id_} is still in progress "
                             f"(prior process state: {prior_process_state}). "
                             "Faulting the job to ensure it is not silently lost.",
@@ -3060,7 +3060,7 @@ class HordeWorkerProcessManager:
                     self._process_map.on_process_ending(process_id=message.process_id)
 
                 if message.process_state == HordeProcessState.PROCESS_ENDED:
-                    logger.info(f"Process {message.process_id} has ended with message: {message.info}")
+                    logger.info(f"{self._process_label(message.process_id)} has ended with message: {message.info}")
                     # Restart the process if we're not shutting down. When a process is replaced
                     # intentionally (via _replace_inference_process), _start_inference_process has
                     # already been called and updated _process_map[pid] with a new
@@ -4108,7 +4108,7 @@ class HordeWorkerProcessManager:
         process_info = self._process_map[process_id]
 
         if process_info.process_type != HordeProcessType.INFERENCE:
-            logger.warning(f"Process {process_id} is not an inference process, not unloading models")
+            logger.warning(f"{self._process_label(process_id)} is not an inference process, not unloading models")
             return
 
         if process_info.recently_unloaded_from_ram:
@@ -5294,7 +5294,7 @@ class HordeWorkerProcessManager:
             self._record_faulted_job_history(faulted_job, fault_phase)
 
             if process_info is not None:
-                logger.error(f"Job {faulted_job.id_} faulted due to process {process_info.process_id} crashing")
+                logger.error(f"Job {faulted_job.id_} faulted due to {self._process_label(process_info.process_id)} crashing")
 
             if faulted_job in self.jobs_in_progress:
                 logger.debug(f"Removing job {faulted_job.id_} from jobs_in_progress")
@@ -7235,6 +7235,32 @@ class HordeWorkerProcessManager:
             )
         return serialized_loras
 
+    def _process_label(self, process_id: int) -> str:
+        """Return a human-readable label for a process slot, e.g. ``inference-0`` or ``safety-0``.
+
+        The label embeds the process type and a per-type index computed by counting how many
+        processes of the same type have a strictly lower ``process_id``.  Because ``process_id``
+        values are stable (they are reused when a slot is restarted), the label is also stable
+        across process replacements.
+
+        Args:
+            process_id: The internal slot ID of the process.
+
+        Returns:
+            A string of the form ``"<type>-<index>"``, e.g. ``"inference-0"``.
+            Falls back to ``"process-<id>"`` when the process_id is not found in the map.
+        """
+        process_info = self._process_map.get(process_id)
+        if process_info is None:
+            return f"process-{process_id}"
+        ptype = process_info.process_type.name.lower()
+        type_index = sum(
+            1
+            for p in self._process_map.values()
+            if p.process_type == process_info.process_type and p.process_id < process_id
+        )
+        return f"{ptype}-{type_index}"
+
     def update_webui_status(self) -> None:
         """Update the web UI with current worker status."""
         if self.webui is None:
@@ -7378,7 +7404,9 @@ class HordeWorkerProcessManager:
                     },
                 )
 
-        # Get process info
+        # Get process info with stable per-type IDs (inference-0, safety-0, etc).
+        # Processes that are ending/ended are excluded from the list/count, but their slots
+        # still influence the per-type index so labels remain stable by process_id.
         processes = []
         for process_info in self._process_map.values():
             if process_info.last_process_state in (
@@ -7386,9 +7414,15 @@ class HordeWorkerProcessManager:
                 HordeProcessState.PROCESS_ENDED,
             ):
                 continue
+            ptype = process_info.process_type.name.lower()
+            type_index = sum(
+                1
+                for p in self._process_map.values()
+                if p.process_type.name.lower() == ptype and p.process_id < process_info.process_id
+            )
             processes.append(
                 {
-                    "id": process_info.process_id,
+                    "id": f"{ptype}-{type_index}",
                     "type": process_info.process_type.name,
                     "state": process_info.last_process_state.name,
                     "model": process_info.loaded_horde_model_name,
