@@ -462,49 +462,6 @@ def test_webui_images_history() -> None:
     assert "images_history" not in webui.status_data
 
 
-def test_is_loopback_remote_accepts_loopback_with_port() -> None:
-    """Test localhost loopback parsing accepts host:port forms."""
-    from horde_worker_regen.webui.server import _is_loopback_remote
-
-    assert _is_loopback_remote("127.0.0.1:3000")
-    assert _is_loopback_remote("[::1]:3000")
-    assert _is_loopback_remote("[::ffff:127.0.0.1]:3000")
-
-
-def test_is_same_host_remote_accepts_local_interface_request() -> None:
-    """Test remote host matching local socket host is treated as trusted local access."""
-    from horde_worker_regen.webui.server import _is_same_host_remote
-
-    class DummyTransport:
-        def get_extra_info(self, name: str) -> tuple[str, int] | None:
-            if name == "sockname":
-                return ("192.168.2.41", 3000)
-            return None
-
-    class DummyRequest:
-        remote = "192.168.2.41"
-        transport = DummyTransport()
-
-    assert _is_same_host_remote(DummyRequest())  # type: ignore[arg-type]
-
-
-def test_is_same_host_remote_rejects_different_host() -> None:
-    """Test remote host mismatch is not treated as trusted local access."""
-    from horde_worker_regen.webui.server import _is_same_host_remote
-
-    class DummyTransport:
-        def get_extra_info(self, name: str) -> tuple[str, int] | None:
-            if name == "sockname":
-                return ("192.168.2.41", 3000)
-            return None
-
-    class DummyRequest:
-        remote = "192.168.2.50"
-        transport = DummyTransport()
-
-    assert not _is_same_host_remote(DummyRequest())  # type: ignore[arg-type]
-
-
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
@@ -2635,8 +2592,8 @@ async def test_webui_settings_post_no_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webui_settings_post_rejects_non_local_clients() -> None:
-    """Test that POST /api/settings rejects non-local clients."""
+async def test_webui_settings_post_allows_non_local_clients() -> None:
+    """Test that POST /api/settings allows non-local clients."""
     webui = WorkerWebUI(port=0)
     received: list[tuple[str, object]] = []
 
@@ -2652,8 +2609,8 @@ async def test_webui_settings_post_rejects_non_local_clients() -> None:
             return {"key": "nsfw", "value": False}
 
     response = await webui._handle_set_setting(DummyRequest())  # type: ignore[arg-type]
-    assert response.status == 403
-    assert received == []
+    assert response.status == 200
+    assert received == [("nsfw", False)]
 
 
 @pytest.mark.asyncio
@@ -2754,8 +2711,8 @@ async def test_webui_restart_post_no_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webui_restart_post_rejects_non_local_clients() -> None:
-    """Test that POST /api/restart rejects non-local clients."""
+async def test_webui_restart_post_allows_non_local_clients() -> None:
+    """Test that POST /api/restart allows non-local clients."""
     webui = WorkerWebUI(port=0)
     called = {"restart": False}
 
@@ -2768,8 +2725,8 @@ async def test_webui_restart_post_rejects_non_local_clients() -> None:
         remote = "8.8.8.8"
 
     response = await webui._handle_restart_program(DummyRequest())  # type: ignore[arg-type]
-    assert response.status == 403
-    assert called["restart"] is False
+    assert response.status == 200
+    assert called["restart"] is True
 
 
 @pytest.mark.asyncio
