@@ -170,6 +170,8 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager.jobs_pending_inference = []
         mock_manager.jobs_in_progress = []
         mock_manager._process_map.num_loaded_inference_processes.return_value = 1
+        mock_manager._process_map.num_inference_processes.return_value = 1
+        mock_manager._check_and_replace_process.return_value = False
 
         mock_process = MagicMock()
         mock_process.process_id = 1
@@ -193,6 +195,54 @@ class TestReplaceHungProcessesAnyReplaced:
 
         assert result is True
         mock_manager._replace_inference_process.assert_called_once_with(mock_process)
+
+    def test_stuck_process_ending_slot_is_not_recovered_while_above_scale_down_target(self) -> None:
+        """A stale scale-down PROCESS_ENDING slot must not be resurrected above the active cap."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        import time
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.process_timeout = 30
+        mock_manager.bridge_data.preload_timeout = 30
+        mock_manager.max_inference_processes = 3
+        mock_manager.jobs_pending_inference = []
+        mock_manager.jobs_in_progress = []
+        mock_manager._hung_processes_detected = True
+        mock_manager._hung_processes_detected_time = time.time()
+        # Capacity is currently below target because one active slot is also ending,
+        # but total inference slots still exceed the configured cap due to scale-down.
+        mock_manager._process_map.num_loaded_inference_processes.return_value = 2
+        mock_manager._process_map.num_inference_processes.return_value = 4
+        mock_manager._check_and_replace_process.return_value = False
+
+        mock_process = MagicMock()
+        mock_process.process_id = 3
+        mock_process.process_type = HordeProcessType.INFERENCE
+        mock_process.last_process_state = HordeProcessState.PROCESS_ENDING
+        mock_process.last_received_timestamp = time.time() - 120
+        mock_process.last_heartbeat_timestamp = time.time() - 120
+        mock_process.last_progress_timestamp = time.time() - 120
+        mock_process.last_job_referenced = None
+        mock_process.last_heartbeat_percent_complete = None
+
+        mock_manager._process_map.values.return_value = [mock_process]
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+
+        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+
+        with patch("threading.Thread"):
+            result = bound_method()
+
+        assert result is False
+        mock_manager._replace_inference_process.assert_not_called()
 
 
 class TestBridgeDataLoopExceptionHandling:
