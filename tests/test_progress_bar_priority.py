@@ -103,6 +103,7 @@ def _invoke_update_webui_status(
             mock_manager, HordeWorkerProcessManager
         )
     )
+    mock_manager._webui_process_display_label = HordeWorkerProcessManager._webui_process_display_label
 
     # Bind lora serialiser so the elif body doesn't fail
     mock_manager._serialize_loras_for_webui.return_value = None
