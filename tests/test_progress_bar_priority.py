@@ -562,6 +562,34 @@ def test_model_preloading_other_queued_jobs_still_shown() -> None:
     )
 
 
+def test_update_webui_status_excludes_ending_and_ended_processes_from_process_list() -> None:
+    """WebUI process list/count should drop slots that are ending or ended."""
+    active_job = _make_mock_job("active1")
+    ending_job = _make_mock_job("ending1")
+    ended_job = _make_mock_job("ended1")
+
+    active = _make_mock_process(active_job, HordeProcessState.WAITING_FOR_JOB, percent_complete=None)
+    active.process_id = 0
+    ending = _make_mock_process(ending_job, HordeProcessState.PROCESS_ENDING, percent_complete=None)
+    ending.process_id = 1
+    ended = _make_mock_process(ended_job, HordeProcessState.PROCESS_ENDED, percent_complete=None)
+    ended.process_id = 2
+
+    kwargs = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        process_list=[active, ending, ended],
+        return_full_kwargs=True,
+    )
+
+    processes = kwargs.get("processes", [])
+    assert len(processes) == 1
+    assert processes[0]["id"] == 0
+    assert processes[0]["state"] == "WAITING_FOR_JOB"
+
+
 # ---------------------------------------------------------------------------
 # time_without_jobs helpers & tests
 # ---------------------------------------------------------------------------
@@ -1616,7 +1644,7 @@ def test_end_inference_processes_noop_when_not_above_limit() -> None:
     manager._end_inference_process = MagicMock()
 
     process_map = MagicMock()
-    process_map.num_inference_processes.return_value = 3
+    process_map.num_loaded_inference_processes.return_value = 3
     process_map._get_first_inference_process_to_kill.return_value = MagicMock()
     manager._process_map = process_map
 
@@ -1640,10 +1668,37 @@ def test_end_inference_processes_does_not_skip_scale_down_with_pending_queue() -
 
     process_to_kill = MagicMock()
     process_map = MagicMock()
-    process_map.num_inference_processes.return_value = 3
+    process_map.num_loaded_inference_processes.return_value = 3
     process_map._get_first_inference_process_to_kill.return_value = process_to_kill
     manager._process_map = process_map
 
     manager.end_inference_processes()
 
     manager._end_inference_process.assert_called_once_with(process_to_kill)
+
+
+def test_end_inference_processes_ignores_already_ending_slots_for_scale_down() -> None:
+    """Scale-down should not repeatedly target slots already in PROCESS_ENDING."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+    manager._shutting_down = False
+    manager._max_inference_processes = 1
+    manager._max_active_models_override = None
+    manager.jobs_pending_inference = []
+    manager.jobs_in_progress = []
+    manager.get_processes_with_model_for_queued_job = MagicMock(return_value=[])
+    manager._end_inference_process = MagicMock()
+
+    process_map = MagicMock()
+    process_map.num_loaded_inference_processes.return_value = 1
+    # Deliberately set num_inference_processes > max so that if the code accidentally
+    # uses num_inference_processes() instead of num_loaded_inference_processes() it
+    # would NOT return early and would call _end_inference_process, failing the assertion.
+    process_map.num_inference_processes.return_value = 2
+    process_map._get_first_inference_process_to_kill.return_value = MagicMock()
+    manager._process_map = process_map
+
+    manager.end_inference_processes()
+
+    manager._end_inference_process.assert_not_called()
