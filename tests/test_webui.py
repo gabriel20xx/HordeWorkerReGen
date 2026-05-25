@@ -2108,6 +2108,10 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "onclick=\"applyPendingSettings()\"" in html
         assert "id=\"settings-restart-btn\"" in html
         assert "onclick=\"restartProgram()\"" in html
+        assert 'id="restart-confirm-modal"' in html
+        assert "id=\"restart-confirm-accept\"" in html
+        assert "function confirmRestartProgram()" in html
+        assert "if (!confirm('Restart the worker program now?')) return;" not in html
         assert "_clearSettingFeedback(key);" in html
         assert "function _isEqualSimple" not in html
         assert "id=\"' + pfx + '-set-btn\"" not in html
@@ -2682,6 +2686,7 @@ async def test_webui_settings_html_nav_and_page() -> None:
         assert 'id="page-settings"' in html
         assert 'id="settings-apply-btn"' in html
         assert 'id="settings-restart-btn"' in html
+        assert 'id="restart-confirm-modal"' in html
 
         # Settings and gallery page titles should not be rendered
         assert '<span class="section-title">&#9881; Settings</span>' not in html
