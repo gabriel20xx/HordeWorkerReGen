@@ -229,6 +229,9 @@ class WorkerWebUI:
         # Optional callback invoked when the UI changes a runtime setting.
         # Signature: (key: str, value: Any) -> None
         self._set_setting_callback: Callable[[str, Any], None] | None = None
+        # Optional callback invoked when the UI requests a full worker-program restart.
+        # Signature: () -> None
+        self._restart_program_callback: Callable[[], None] | None = None
 
         # Current settings snapshot pushed by the process manager via update_settings_data().
         self._settings_data: dict[str, Any] = {}
@@ -301,6 +304,14 @@ class WorkerWebUI:
         """
         self._set_setting_callback = callback
 
+    def set_restart_program_callback(self, callback: Callable[[], None] | None) -> None:
+        """Register (or clear) the callback invoked when the UI requests a program restart.
+
+        Args:
+            callback: A callable with no arguments. Pass ``None`` to unregister.
+        """
+        self._restart_program_callback = callback
+
     def update_settings_data(self, settings: dict[str, Any]) -> None:
         """Update the current settings snapshot served by ``GET /api/settings``.
 
@@ -331,6 +342,7 @@ class WorkerWebUI:
         self.app.router.add_post("/api/models/max_active", self._handle_set_max_active_models)
         self.app.router.add_get("/api/settings", self._handle_get_settings)
         self.app.router.add_post("/api/settings", self._handle_set_setting)
+        self.app.router.add_post("/api/restart", self._handle_restart_program)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
         """Handle config API request."""
@@ -793,6 +805,16 @@ class WorkerWebUI:
         @media (max-width: 600px) { #stats-job-state-model-row { grid-template-columns: 1fr; } }
 
         /* ---- Settings page ---- */
+        .settings-header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+        .settings-page-btn { padding: 6px 11px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; cursor: pointer; border: 1px solid transparent; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; }
+        .settings-page-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .settings-page-btn.apply { background: var(--accent); color: #fff; }
+        .settings-page-btn.apply:hover:not(:disabled) { background: var(--accent-hover); }
+        .settings-page-btn.apply.dirty { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); }
+        .settings-page-btn.restart { background: transparent; border-color: #f59e0b; color: #b45309; }
+        .settings-page-btn.restart:hover:not(:disabled) { background: #fffbeb; }
+        [data-theme="dark"] .settings-page-btn.restart { border-color: #92400e; color: #fcd34d; }
+        [data-theme="dark"] .settings-page-btn.restart:hover:not(:disabled) { background: #2b1a06; }
         .settings-group { margin-bottom: 24px; }
         .settings-group-title { font-size: 0.78rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
         [data-theme="dark"] .settings-group-title { color: #94a3b8; }
@@ -1177,7 +1199,11 @@ class WorkerWebUI:
                 <div class="page" id="page-settings">
                     <div class="section">
                         <div class="section-header">
-                            <span id="settings-status" class="section-count" style="margin-left:auto;display:none;"></span>
+                            <div class="settings-header-actions">
+                                <button id="settings-apply-btn" class="settings-page-btn apply" onclick="applyPendingSettings()" disabled>Apply</button>
+                                <button id="settings-restart-btn" class="settings-page-btn restart" onclick="restartProgram()">Restart</button>
+                                <span id="settings-status" class="section-count" style="display:none;"></span>
+                            </div>
                         </div>
                         <div id="settings-body">
                             <div class="settings-unavailable">Loading settings&#8230;</div>
@@ -1619,93 +1645,29 @@ class WorkerWebUI:
                 _updateStatusBadges(null, null, _jobPopsPauseUntil);
             }
         }, 1000);
-        let _setMaxQueueSizeInFlight = false;
-        function _sendQueueMaxUpdate(payload) {
-            if (_setMaxQueueSizeInFlight) return;
-            _setMaxQueueSizeInFlight = true;
-            const setBtn = document.getElementById('queue-set-btn');
-            const autoBtn = document.getElementById('queue-auto-btn');
-            if (setBtn) setBtn.disabled = true;
-            if (autoBtn) autoBtn.disabled = true;
-            fetch('/api/queue/max_size', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            })
-            .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-            .then(data => {
-                document.getElementById('queue-max').textContent = data.max_queue_size;
-                const inp = document.getElementById('queue-max-input');
-                const isAuto = !!data.queue_size_auto;
-                if (autoBtn) { if (isAuto) { autoBtn.classList.add('active'); autoBtn.setAttribute('aria-pressed', 'true'); } else { autoBtn.classList.remove('active'); autoBtn.setAttribute('aria-pressed', 'false'); } }
-                if (inp) { inp.disabled = isAuto; if (!isAuto && document.activeElement !== inp) inp.value = data.max_queue_size; }
-                if (setBtn) setBtn.disabled = isAuto;
-            })
-            .catch(err => { console.error('Error updating max queue size:', err); })
-            .finally(() => {
-                _setMaxQueueSizeInFlight = false;
-                if (setBtn) {
-                    const inp = document.getElementById('queue-max-input');
-                    setBtn.disabled = !!(inp && inp.disabled);
-                }
-                if (autoBtn) autoBtn.disabled = false;
-            });
-        }
         function setMaxQueueSize() {
             const inp = document.getElementById('queue-max-input');
             if (!inp) return;
             const val = parseInt(inp.value, 10);
-            if (isNaN(val) || val < 0) return;
-            _sendQueueMaxUpdate({max_queue_size: val});
+            if (isNaN(val) || val < 0) { _setSettingsStatus('Queue size must be >= 0', true); return; }
+            stageQueueSetting({max_queue_size: val, auto: false});
         }
         function toggleQueueSizeAuto() {
             const btn = document.getElementById('queue-auto-btn');
             const currentlyAuto = btn && btn.classList.contains('active');
-            _sendQueueMaxUpdate({auto: !currentlyAuto});
-        }
-        let _setMaxActiveModelsInFlight = false;
-        function _sendModelsMaxUpdate(payload) {
-            if (_setMaxActiveModelsInFlight) return;
-            _setMaxActiveModelsInFlight = true;
-            const setBtn = document.getElementById('models-set-btn');
-            const autoBtn = document.getElementById('models-auto-btn');
-            if (setBtn) setBtn.disabled = true;
-            if (autoBtn) autoBtn.disabled = true;
-            fetch('/api/models/max_active', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            })
-            .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-            .then(data => {
-                document.getElementById('models-max').textContent = data.max_active_models;
-                const inp = document.getElementById('models-max-input');
-                const isAuto = !!data.max_active_models_auto;
-                if (autoBtn) { if (isAuto) { autoBtn.classList.add('active'); autoBtn.setAttribute('aria-pressed', 'true'); } else { autoBtn.classList.remove('active'); autoBtn.setAttribute('aria-pressed', 'false'); } }
-                if (inp) { inp.disabled = isAuto; if (!isAuto && document.activeElement !== inp) inp.value = data.max_active_models; }
-                if (setBtn) setBtn.disabled = isAuto;
-            })
-            .catch(err => { console.error('Error updating max active models:', err); })
-            .finally(() => {
-                _setMaxActiveModelsInFlight = false;
-                if (setBtn) {
-                    const inp = document.getElementById('models-max-input');
-                    setBtn.disabled = !!(inp && inp.disabled);
-                }
-                if (autoBtn) autoBtn.disabled = false;
-            });
+            stageQueueSetting({auto: !currentlyAuto});
         }
         function setMaxActiveModels() {
             const inp = document.getElementById('models-max-input');
             if (!inp) return;
             const val = parseInt(inp.value, 10);
-            if (isNaN(val) || val < 1) return;
-            _sendModelsMaxUpdate({max_active_models: val});
+            if (isNaN(val) || val < 1) { _setSettingsStatus('Max active models must be >= 1', true); return; }
+            stageModelsSetting({max_active_models: val, auto: false});
         }
         function toggleMaxActiveModelsAuto() {
             const btn = document.getElementById('models-auto-btn');
             const currentlyAuto = btn && btn.classList.contains('active');
-            _sendModelsMaxUpdate({auto: !currentlyAuto});
+            stageModelsSetting({auto: !currentlyAuto});
         }
         let _consoleCopyTimeout = null;
         function showConsoleCopySuccess(btn) {
@@ -2643,9 +2605,11 @@ class WorkerWebUI:
                     const qmSetBtn = document.getElementById('queue-set-btn');
                     const qmAutoBtn = document.getElementById('queue-auto-btn');
                     const queueAuto = !!data.queue_size_auto;
-                    if (qmAutoBtn) { if (queueAuto) { qmAutoBtn.classList.add('active'); qmAutoBtn.setAttribute('aria-pressed', 'true'); } else { qmAutoBtn.classList.remove('active'); qmAutoBtn.setAttribute('aria-pressed', 'false'); } }
-                    if (qmInput) { if (queueAuto) { qmInput.disabled = true; } else { qmInput.disabled = false; if (document.activeElement !== qmInput) qmInput.value = data.max_queue_size; } }
-                    if (qmSetBtn) qmSetBtn.disabled = queueAuto;
+                    if (_settingsPendingQueue === null) {
+                        if (qmAutoBtn) { if (queueAuto) { qmAutoBtn.classList.add('active'); qmAutoBtn.setAttribute('aria-pressed', 'true'); } else { qmAutoBtn.classList.remove('active'); qmAutoBtn.setAttribute('aria-pressed', 'false'); } }
+                        if (qmInput) { if (queueAuto) { qmInput.disabled = true; } else { qmInput.disabled = false; if (document.activeElement !== qmInput) qmInput.value = data.max_queue_size; } }
+                        if (qmSetBtn) qmSetBtn.disabled = queueAuto;
+                    }
                     if (data.job_queue.length > 0) {
                         qd.innerHTML = data.job_queue.map(j => { const bi = j.batch_size&&j.batch_size>1?' ('+escapeHtml(j.batch_size)+'x batch)':''; return '<div class="job-item"><span class="job-id">'+escapeHtml(j.id||'N/A')+'</span>: '+escapeHtml(j.model||'Unknown model')+bi+'</div>'; }).join('');
                     } else { qd.innerHTML = '<div class="empty-state">Queue is empty</div>'; }
@@ -2656,9 +2620,11 @@ class WorkerWebUI:
                     const mmSetBtn = document.getElementById('models-set-btn');
                     const mmAutoBtn = document.getElementById('models-auto-btn');
                     const modelsAuto = !!data.max_active_models_auto;
-                    if (mmAutoBtn) { if (modelsAuto) { mmAutoBtn.classList.add('active'); mmAutoBtn.setAttribute('aria-pressed', 'true'); } else { mmAutoBtn.classList.remove('active'); mmAutoBtn.setAttribute('aria-pressed', 'false'); } }
-                    if (mmInput) { if (modelsAuto) { mmInput.disabled = true; } else { mmInput.disabled = false; if (document.activeElement !== mmInput) mmInput.value = data.max_active_models; } }
-                    if (mmSetBtn) mmSetBtn.disabled = modelsAuto;
+                    if (_settingsPendingModels === null) {
+                        if (mmAutoBtn) { if (modelsAuto) { mmAutoBtn.classList.add('active'); mmAutoBtn.setAttribute('aria-pressed', 'true'); } else { mmAutoBtn.classList.remove('active'); mmAutoBtn.setAttribute('aria-pressed', 'false'); } }
+                        if (mmInput) { if (modelsAuto) { mmInput.disabled = true; } else { mmInput.disabled = false; if (document.activeElement !== mmInput) mmInput.value = data.max_active_models; } }
+                        if (mmSetBtn) mmSetBtn.disabled = modelsAuto;
+                    }
                     if (data.models_loaded.length > 0) {
                         md.innerHTML = data.models_loaded.map(m => '<div class="model-badge">'+escapeHtml(m)+'</div>').join('');
                     } else { md.innerHTML = '<span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span>'; }
@@ -3530,13 +3496,145 @@ class WorkerWebUI:
 
         var _settingsLoaded = false;
         var _settingsFetchInProgress = false;
+        var _settingsApplying = false;
+        var _settingsDirty = false;
+        var _settingsSnapshot = {};
+        var _settingsPending = {};
+        var _settingsPendingQueue = null;
+        var _settingsPendingModels = null;
+        var _restartInFlight = false;
+
+        function _setSettingsStatus(msg, isError) {
+            var el = document.getElementById('settings-status');
+            if (!el) return;
+            if (!msg) {
+                el.style.display = 'none';
+                el.textContent = '';
+                return;
+            }
+            el.style.display = '';
+            el.textContent = msg;
+            el.style.color = isError ? 'var(--error)' : '';
+        }
+
+        function _updateApplyButtonState() {
+            var applyBtn = document.getElementById('settings-apply-btn');
+            if (!applyBtn) return;
+            applyBtn.disabled = !_settingsDirty || _settingsApplying;
+            if (_settingsDirty) applyBtn.classList.add('dirty'); else applyBtn.classList.remove('dirty');
+        }
+
+        function _setSettingsDirty(isDirty) {
+            _settingsDirty = !!isDirty;
+            _updateApplyButtonState();
+            if (!_settingsDirty) _setSettingsStatus('', false);
+        }
+
+        function _postJson(url, payload) {
+            return fetch(url, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(function(r) {
+                return r.json().catch(function() { return {}; }).then(function(body) {
+                    return {ok: r.ok, body: body, status: r.status};
+                });
+            });
+        }
+
+        function _isEqualSimple(a, b) {
+            return JSON.stringify(a) === JSON.stringify(b);
+        }
+
+        function stageSettingChange(key, value) {
+            if (Object.prototype.hasOwnProperty.call(_settingsSnapshot, key) && _settingsSnapshot[key] === value) {
+                delete _settingsPending[key];
+            } else {
+                _settingsPending[key] = value;
+            }
+            _setSettingsDirty(
+                Object.keys(_settingsPending).length > 0 || _settingsPendingQueue !== null || _settingsPendingModels !== null,
+            );
+            _showSettingFeedback(key, true, 'Pending');
+        }
+
+        function stageQueueSetting(payload) {
+            if (!payload || typeof payload !== 'object') return;
+            var next = {};
+            if (Object.prototype.hasOwnProperty.call(payload, 'auto')) next.auto = !!payload.auto;
+            if (Object.prototype.hasOwnProperty.call(payload, 'max_queue_size')) next.max_queue_size = payload.max_queue_size;
+            if (!Object.prototype.hasOwnProperty.call(next, 'auto') && _settingsPendingQueue && Object.prototype.hasOwnProperty.call(_settingsPendingQueue, 'auto')) {
+                next.auto = !!_settingsPendingQueue.auto;
+            }
+            if (!Object.prototype.hasOwnProperty.call(next, 'max_queue_size') && _settingsPendingQueue && Object.prototype.hasOwnProperty.call(_settingsPendingQueue, 'max_queue_size')) {
+                next.max_queue_size = _settingsPendingQueue.max_queue_size;
+            }
+            _settingsPendingQueue = next;
+
+            var autoBtn = document.getElementById('queue-auto-btn');
+            var inp = document.getElementById('queue-max-input');
+            var isAuto = !!next.auto;
+            if (autoBtn) {
+                if (isAuto) {
+                    autoBtn.classList.add('active');
+                    autoBtn.setAttribute('aria-pressed', 'true');
+                } else {
+                    autoBtn.classList.remove('active');
+                    autoBtn.setAttribute('aria-pressed', 'false');
+                }
+            }
+            if (inp) {
+                inp.disabled = isAuto;
+                if (!isAuto && Object.prototype.hasOwnProperty.call(next, 'max_queue_size')) inp.value = String(next.max_queue_size);
+            }
+            _setSettingsDirty(true);
+            _setSettingsStatus('Queue size change pending Apply', false);
+        }
+
+        function stageModelsSetting(payload) {
+            if (!payload || typeof payload !== 'object') return;
+            var next = {};
+            if (Object.prototype.hasOwnProperty.call(payload, 'auto')) next.auto = !!payload.auto;
+            if (Object.prototype.hasOwnProperty.call(payload, 'max_active_models')) next.max_active_models = payload.max_active_models;
+            if (!Object.prototype.hasOwnProperty.call(next, 'auto') && _settingsPendingModels && Object.prototype.hasOwnProperty.call(_settingsPendingModels, 'auto')) {
+                next.auto = !!_settingsPendingModels.auto;
+            }
+            if (!Object.prototype.hasOwnProperty.call(next, 'max_active_models') && _settingsPendingModels && Object.prototype.hasOwnProperty.call(_settingsPendingModels, 'max_active_models')) {
+                next.max_active_models = _settingsPendingModels.max_active_models;
+            }
+            _settingsPendingModels = next;
+
+            var autoBtn = document.getElementById('models-auto-btn');
+            var inp = document.getElementById('models-max-input');
+            var isAuto = !!next.auto;
+            if (autoBtn) {
+                if (isAuto) {
+                    autoBtn.classList.add('active');
+                    autoBtn.setAttribute('aria-pressed', 'true');
+                } else {
+                    autoBtn.classList.remove('active');
+                    autoBtn.setAttribute('aria-pressed', 'false');
+                }
+            }
+            if (inp) {
+                inp.disabled = isAuto;
+                if (!isAuto && Object.prototype.hasOwnProperty.call(next, 'max_active_models')) inp.value = String(next.max_active_models);
+            }
+            _setSettingsDirty(true);
+            _setSettingsStatus('Max active models change pending Apply', false);
+        }
 
         function fetchSettings() {
             if (_settingsFetchInProgress) return;
             _settingsFetchInProgress = true;
             fetch('/api/settings')
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-                .then(function(data) { _settingsLoaded = true; renderSettingsPage(data.settings || {}); })
+                .then(function(data) {
+                    _settingsLoaded = true;
+                    _settingsSnapshot = data.settings || {};
+                    renderSettingsPage(_settingsSnapshot);
+                    _updateApplyButtonState();
+                })
                 .catch(function(err) {
                     // Render the page shell with default values so queue/model controls remain
                     // available even when /api/settings fails to load.
@@ -3579,6 +3677,7 @@ class WorkerWebUI:
                     var spec = _SETTINGS_SPEC[key];
                     var label = spec[0], desc = spec[1], type = spec[3], minV = spec[4], maxV = spec[5], restart = spec[6];
                     var val = (key in settings) ? settings[key] : null;
+                    if (Object.prototype.hasOwnProperty.call(_settingsPending, key)) val = _settingsPending[key];
                     var restartBadge = restart ? '<span class="setting-restart-badge" title="Changes take full effect after restarting the worker">restart</span>' : '';
                     html += '<div class="setting-row">';
                     html += '<div class="setting-info"><div class="setting-label">' + escapeHtml(label) + restartBadge + '</div><div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
@@ -3586,7 +3685,7 @@ class WorkerWebUI:
                     if (type === 'bool') {
                         var chk = (val === true) ? 'checked' : '';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
-                        html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="applySetting(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
+                        html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="stageSettingChange(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
                     } else if (type === 'int_auto') {
                         var pfx = spec[7];
                         var _changeFnNames = {queue: 'setMaxQueueSize', models: 'setMaxActiveModels'};
@@ -3595,25 +3694,39 @@ class WorkerWebUI:
                             queue:  'Automatically select the best max queue size based on VRAM and job timing',
                             models: 'Automatically select the best active model count based on available VRAM and job timing',
                         };
+                        if (pfx === 'queue' && _settingsPendingQueue && Object.prototype.hasOwnProperty.call(_settingsPendingQueue, 'max_queue_size')) {
+                            val = _settingsPendingQueue.max_queue_size;
+                        }
+                        if (pfx === 'models' && _settingsPendingModels && Object.prototype.hasOwnProperty.call(_settingsPendingModels, 'max_active_models')) {
+                            val = _settingsPendingModels.max_active_models;
+                        }
                         var numValA = (val !== null && val !== undefined) ? val : '';
+                        var isAutoA = false;
+                        if (pfx === 'queue' && _settingsPendingQueue && Object.prototype.hasOwnProperty.call(_settingsPendingQueue, 'auto')) {
+                            isAutoA = !!_settingsPendingQueue.auto;
+                        }
+                        if (pfx === 'models' && _settingsPendingModels && Object.prototype.hasOwnProperty.call(_settingsPendingModels, 'auto')) {
+                            isAutoA = !!_settingsPendingModels.auto;
+                        }
                         var minAttrA = (minV !== null) ? ' min="' + minV + '"' : '';
                         var maxAttrA = (maxV !== null) ? ' max="' + maxV + '"' : '';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
-                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numValA)) + '"' + minAttrA + maxAttrA + ' step="1" id="' + pfx + '-max-input" aria-label="' + escapeHtml(label) + '" onchange="' + _changeFnNames[pfx] + '()" onkeydown="if(event.key===\'Enter\'){' + _changeFnNames[pfx] + '();event.preventDefault();}">';
-                        html += '<button class="limit-auto-btn" id="' + pfx + '-auto-btn" onclick="' + _autoFnNames[pfx] + '()" title="' + escapeHtml(_autoTitles[pfx]) + '" aria-pressed="false">Auto</button>';
+                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numValA)) + '"' + minAttrA + maxAttrA + ' step="1" id="' + pfx + '-max-input" aria-label="' + escapeHtml(label) + '"' + (isAutoA ? ' disabled' : '') + ' onchange="' + _changeFnNames[pfx] + '()" onkeydown="if(event.key===\'Enter\'){' + _changeFnNames[pfx] + '();event.preventDefault();}">';
+                        html += '<button class="limit-auto-btn' + (isAutoA ? ' active' : '') + '" id="' + pfx + '-auto-btn" onclick="' + _autoFnNames[pfx] + '()" title="' + escapeHtml(_autoTitles[pfx]) + '" aria-pressed="' + (isAutoA ? 'true' : 'false') + '">Auto</button>';
                     } else {
                         var numVal = (val !== null && val !== undefined) ? val : '';
                         var minAttr = (minV !== null) ? ' min="' + minV + '"' : '';
                         var maxAttr = (maxV !== null) ? ' max="' + maxV + '"' : '';
                         var step = (type === 'float') ? ' step="0.01"' : ' step="1"';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
-                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numVal)) + '"' + minAttr + maxAttr + step + ' id="sinp-' + escapeHtml(key) + '" aria-label="' + escapeHtml(label) + '" onchange="applyNumericSetting(\'' + escapeHtml(key) + '\')" onkeydown="if(event.key===\'Enter\'){applyNumericSetting(\'' + escapeHtml(key) + '\');event.preventDefault();}">';
+                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numVal)) + '"' + minAttr + maxAttr + step + ' id="sinp-' + escapeHtml(key) + '" aria-label="' + escapeHtml(label) + '" onchange="stageNumericSetting(\'' + escapeHtml(key) + '\')" onkeydown="if(event.key===\'Enter\'){stageNumericSetting(\'' + escapeHtml(key) + '\');event.preventDefault();}">';
                     }
                     html += '</div></div>';
                 }
                 html += '</div></div>';
             }
             body.innerHTML = html || '<div class="settings-unavailable">No configurable settings available.</div>';
+            _updateApplyButtonState();
         }
 
         function _showSettingFeedback(key, ok, msg) {
@@ -3625,33 +3738,7 @@ class WorkerWebUI:
             setTimeout(function() { fb.style.opacity = '0'; setTimeout(function() { fb.textContent = ''; }, 300); }, 2000);
         }
 
-        function applySetting(key, value) {
-            fetch('/api/settings', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({key: key, value: value})
-            })
-            .then(function(r) { return r.json().then(function(b) { return {ok: r.ok, body: b}; }); })
-            .then(function(res) {
-                if (res.ok) {
-                    _showSettingFeedback(key, true, '\u2713');
-                } else {
-                    _showSettingFeedback(key, false, res.body.error || 'Error');
-                    // Revert the toggle to the last known good value
-                    fetch('/api/settings').then(function(r) { return r.json(); }).then(function(d) {
-                        var inp = document.getElementById('sinp-' + key);
-                        if (!inp) {
-                            // It's a toggle – find it via the feedback element's parent
-                            var toggleInp = document.querySelector('[onchange*="\'' + key + '\'"]');
-                            if (toggleInp && d.settings && key in d.settings) toggleInp.checked = !!d.settings[key];
-                        }
-                    }).catch(function() {});
-                }
-            })
-            .catch(function(err) { _showSettingFeedback(key, false, 'Net error'); });
-        }
-
-        function applyNumericSetting(key) {
+        function stageNumericSetting(key) {
             var inp = document.getElementById('sinp-' + key);
             if (!inp) return;
             var spec = _SETTINGS_SPEC[key];
@@ -3662,7 +3749,95 @@ class WorkerWebUI:
             if (isNaN(parsed)) { _showSettingFeedback(key, false, 'Invalid'); return; }
             if (minV !== null && parsed < minV) { _showSettingFeedback(key, false, 'Min ' + minV); return; }
             if (maxV !== null && parsed > maxV) { _showSettingFeedback(key, false, 'Max ' + maxV); return; }
-            applySetting(key, parsed);
+            stageSettingChange(key, parsed);
+        }
+
+        async function applyPendingSettings() {
+            if (_settingsApplying) return;
+            if (!_settingsDirty) {
+                _setSettingsStatus('No pending changes', false);
+                return;
+            }
+
+            _settingsApplying = true;
+            _setSettingsStatus('Applying...', false);
+            _updateApplyButtonState();
+            var restartBtn = document.getElementById('settings-restart-btn');
+            if (restartBtn) restartBtn.disabled = true;
+
+            var failures = [];
+            var key;
+
+            try {
+                var pendingKeys = Object.keys(_settingsPending);
+                for (var i = 0; i < pendingKeys.length; i++) {
+                    key = pendingKeys[i];
+                    var settingRes = await _postJson('/api/settings', {key: key, value: _settingsPending[key]});
+                    if (!settingRes.ok) {
+                        failures.push((settingRes.body && settingRes.body.error) ? settingRes.body.error : ('Failed: ' + key));
+                        _showSettingFeedback(key, false, 'Error');
+                    } else {
+                        _showSettingFeedback(key, true, '\u2713');
+                    }
+                }
+
+                if (_settingsPendingQueue !== null) {
+                    var queuePayload = _settingsPendingQueue;
+                    var queueRes = await _postJson('/api/queue/max_size', queuePayload);
+                    if (!queueRes.ok) {
+                        failures.push((queueRes.body && queueRes.body.error) ? queueRes.body.error : 'Failed queue update');
+                    }
+                }
+
+                if (_settingsPendingModels !== null) {
+                    var modelsPayload = _settingsPendingModels;
+                    var modelsRes = await _postJson('/api/models/max_active', modelsPayload);
+                    if (!modelsRes.ok) {
+                        failures.push((modelsRes.body && modelsRes.body.error) ? modelsRes.body.error : 'Failed max active models update');
+                    }
+                }
+
+                if (failures.length > 0) {
+                    _setSettingsStatus(failures[0], true);
+                    return;
+                }
+
+                _settingsPending = {};
+                _settingsPendingQueue = null;
+                _settingsPendingModels = null;
+                _setSettingsDirty(false);
+                _setSettingsStatus('Changes applied', false);
+                fetchSettings();
+            } finally {
+                _settingsApplying = false;
+                _updateApplyButtonState();
+                if (restartBtn) restartBtn.disabled = _restartInFlight;
+            }
+        }
+
+        function restartProgram() {
+            if (_restartInFlight) return;
+            if (!confirm('Restart the worker program now?')) return;
+            _restartInFlight = true;
+            var restartBtn = document.getElementById('settings-restart-btn');
+            if (restartBtn) restartBtn.disabled = true;
+            _setSettingsStatus('Requesting restart...', false);
+            fetch('/api/restart', {method: 'POST'})
+                .then(function(r) { return r.json().catch(function() { return {}; }).then(function(body) { return {ok: r.ok, body: body}; }); })
+                .then(function(res) {
+                    if (!res.ok) {
+                        _restartInFlight = false;
+                        if (restartBtn) restartBtn.disabled = false;
+                        _setSettingsStatus((res.body && res.body.error) ? res.body.error : 'Restart failed', true);
+                        return;
+                    }
+                    _setSettingsStatus('Restart requested...', false);
+                })
+                .catch(function() {
+                    _restartInFlight = false;
+                    if (restartBtn) restartBtn.disabled = false;
+                    _setSettingsStatus('Restart request failed', true);
+                });
         }
 
         async function fetchWithTimeout(url, timeoutMs) {
@@ -4358,6 +4533,22 @@ class WorkerWebUI:
 
         self._settings_data[key] = value
         return web.json_response({"key": key, "value": value})
+
+    async def _handle_restart_program(self, request: web.Request) -> web.Response:
+        """Handle a request to restart the worker program."""
+        if not _is_loopback_remote(request.remote):
+            return web.json_response({"error": "Restart API is restricted to localhost clients"}, status=403)
+
+        if self._restart_program_callback is None:
+            return web.json_response({"error": "Restart API is not available"}, status=503)
+
+        try:
+            self._restart_program_callback()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Error requesting program restart: {exc}")
+            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+
+        return web.json_response({"restarting": True})
 
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
         """Append one image entry to the gallery history.

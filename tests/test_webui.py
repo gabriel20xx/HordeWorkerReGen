@@ -2102,7 +2102,12 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert '<span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor"' not in html
         assert '<span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span><div class="limit-editor"' not in html
         assert "onchange=\"' + _changeFnNames[pfx] + '()\"" in html
-        assert "onchange=\"applyNumericSetting(\\'" in html
+        assert "onchange=\"stageNumericSetting(\\'" in html
+        assert "onchange=\"stageSettingChange(\\'" in html
+        assert "id=\"settings-apply-btn\"" in html
+        assert "onclick=\"applyPendingSettings()\"" in html
+        assert "id=\"settings-restart-btn\"" in html
+        assert "onclick=\"restartProgram()\"" in html
         assert "id=\"' + pfx + '-set-btn\"" not in html
         assert "onclick=\"applyNumericSetting(\\'" not in html
         assert ".setting-number:disabled" in html
@@ -2589,6 +2594,71 @@ async def test_webui_settings_post_rejects_non_local_clients() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_restart_post_calls_callback() -> None:
+    """Test that POST /api/restart triggers the restart callback."""
+    webui = WorkerWebUI(port=0)
+    called = {"restart": False}
+
+    def restart_callback() -> None:
+        called["restart"] = True
+
+    webui.set_restart_program_callback(restart_callback)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/restart",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["restarting"] is True
+        assert called["restart"] is True
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_restart_post_no_callback() -> None:
+    """Test that POST /api/restart returns 503 when no restart callback is registered."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/restart",
+        ) as response:
+            assert response.status == 503
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_restart_post_rejects_non_local_clients() -> None:
+    """Test that POST /api/restart rejects non-local clients."""
+    webui = WorkerWebUI(port=0)
+    called = {"restart": False}
+
+    def restart_callback() -> None:
+        called["restart"] = True
+
+    webui.set_restart_program_callback(restart_callback)
+
+    class DummyRequest:
+        remote = "8.8.8.8"
+
+    response = await webui._handle_restart_program(DummyRequest())  # type: ignore[arg-type]
+    assert response.status == 403
+    assert called["restart"] is False
+
+
+@pytest.mark.asyncio
 async def test_webui_settings_html_nav_and_page() -> None:
     """Test that the settings nav item and page div are present in the HTML."""
     webui = WorkerWebUI(port=0)
@@ -2610,6 +2680,8 @@ async def test_webui_settings_html_nav_and_page() -> None:
 
         # Page container must be present
         assert 'id="page-settings"' in html
+        assert 'id="settings-apply-btn"' in html
+        assert 'id="settings-restart-btn"' in html
 
         # Settings and gallery page titles should not be rendered
         assert '<span class="section-title">&#9881; Settings</span>' not in html

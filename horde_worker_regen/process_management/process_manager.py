@@ -1996,6 +1996,7 @@ class HordeWorkerProcessManager:
             self.webui.set_queue_size_auto_mode_callback(self.set_queue_size_auto_mode)
             self.webui.set_max_active_models_auto_mode_callback(self.set_max_active_models_auto_mode)
             self.webui.set_setting_callback(self.apply_setting)
+            self.webui.set_restart_program_callback(self.request_program_restart)
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
             # Add a log handler to capture logs for webui with colored output.
@@ -7763,6 +7764,8 @@ class HordeWorkerProcessManager:
 
     _caught_sigints = 0
     """The number of SIGINTs or SIGTERMs caught."""
+    _restart_requested = False
+    """If true, restart the current Python process after shutdown completes."""
 
     def start(self) -> None:
         """Start the process manager."""
@@ -7770,6 +7773,15 @@ class HordeWorkerProcessManager:
 
         signal.signal(signal.SIGINT, self.signal_handler)
         asyncio.run(self._main_loop())
+        if self._restart_requested:
+            logger.warning("Restarting worker program...")
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+
+    def request_program_restart(self) -> None:
+        """Request a graceful shutdown followed by an in-process restart."""
+        self._restart_requested = True
+        logger.warning("Worker program restart requested via web UI")
+        self._shutdown()
 
     def signal_handler(self, sig: int, frame: object) -> None:
         """Handle SIGINT and SIGTERM."""
