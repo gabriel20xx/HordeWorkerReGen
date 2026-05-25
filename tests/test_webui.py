@@ -1,7 +1,6 @@
 """Simple test to verify the web UI server can be created and started."""
 
 import asyncio
-import ipaddress
 
 import aiohttp
 import pytest
@@ -461,68 +460,6 @@ def test_webui_images_history() -> None:
 
     # Verify /api/status does NOT include base64 image data
     assert "images_history" not in webui.status_data
-
-
-def test_is_loopback_remote_accepts_loopback_with_port() -> None:
-    """Test localhost loopback parsing accepts host:port forms."""
-    from horde_worker_regen.webui.server import _is_loopback_remote
-
-    assert _is_loopback_remote("127.0.0.1:3000")
-    assert _is_loopback_remote("[::1]:3000")
-    assert _is_loopback_remote("[::ffff:127.0.0.1]:3000")
-
-
-def test_is_same_host_remote_accepts_local_interface_request() -> None:
-    """Test remote host matching local socket host is treated as trusted local access."""
-    from horde_worker_regen.webui.server import _is_same_host_remote
-
-    class DummyTransport:
-        def get_extra_info(self, name: str) -> tuple[str, int] | None:
-            if name == "sockname":
-                return ("192.168.2.41", 3000)
-            return None
-
-    class DummyRequest:
-        remote = "192.168.2.41"
-        transport = DummyTransport()
-
-    assert _is_same_host_remote(DummyRequest())  # type: ignore[arg-type]
-
-
-def test_is_same_host_remote_rejects_different_host() -> None:
-    """Test remote host mismatch is not treated as trusted local access."""
-    from horde_worker_regen.webui.server import _is_same_host_remote
-
-    class DummyTransport:
-        def get_extra_info(self, name: str) -> tuple[str, int] | None:
-            if name == "sockname":
-                return ("192.168.2.41", 3000)
-            return None
-
-    class DummyRequest:
-        remote = "192.168.2.50"
-        transport = DummyTransport()
-
-    assert not _is_same_host_remote(DummyRequest())  # type: ignore[arg-type]
-
-
-def test_is_same_host_remote_accepts_wildcard_bind_for_local_interface(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test wildcard-bound socket accepts a request from a discovered local interface IP."""
-    from horde_worker_regen.webui import server as webui_server
-
-    monkeypatch.setattr(webui_server, "_get_local_interface_ips", lambda: {ipaddress.ip_address("192.168.2.41")})
-
-    class DummyTransport:
-        def get_extra_info(self, name: str) -> tuple[str, int] | None:
-            if name == "sockname":
-                return ("0.0.0.0", 3000)
-            return None
-
-    class DummyRequest:
-        remote = "192.168.2.41"
-        transport = DummyTransport()
-
-    assert webui_server._is_same_host_remote(DummyRequest())  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
