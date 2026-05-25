@@ -75,13 +75,11 @@ def test_bridge_data_loader_yaml_local_if_present() -> None:
     assert len(bridge_data.image_models_to_load) > 0
 
 
-def test_bridge_data_load_from_env_vars() -> None:
+def test_bridge_data_load_from_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that the bridge data can be loaded from environment variables."""
-    import os
-
-    os.environ["AIWORKER_REGEN_HORDE_URL"] = "https://localhost:8080"
-    os.environ["AIWORKER_REGEN_MODELS_TO_LOAD"] = "['model1', 'model2']"
-    os.environ["AIWORKER_MAX_ACTIVE_MODELS"] = "4"
+    monkeypatch.setenv("AIWORKER_REGEN_HORDE_URL", "https://localhost:8080")
+    monkeypatch.setenv("AIWORKER_REGEN_MODELS_TO_LOAD", "['model1', 'model2']")
+    monkeypatch.setenv("AIWORKER_MAX_ACTIVE_MODELS", "4")
 
     horde_model_reference_manager = ModelReferenceManager(
         download_and_convert_legacy_dbs=False,

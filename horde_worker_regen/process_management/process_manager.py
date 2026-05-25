@@ -2121,9 +2121,10 @@ class HordeWorkerProcessManager:
     def set_max_active_models(self, count: int) -> None:
         """Change the maximum number of simultaneously active inference-process slots at runtime.
 
-        The new value overrides ``max_inference_processes`` (the sum of queue_size +
-        max_threads computed at start-up).  The LRU model cache capacity is updated
-        accordingly so that model eviction respects the new limit.  Calling this method
+        The new value overrides the start-up max-active-model limit, which is either
+        ``bridge_data.max_active_models`` when explicitly configured or the fallback
+        sum of ``queue_size + max_threads``. The LRU model cache capacity is updated
+        accordingly so that model eviction respects the new limit. Calling this method
         also disables auto mode.
 
         Args:
