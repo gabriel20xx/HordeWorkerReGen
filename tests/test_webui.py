@@ -2599,6 +2599,10 @@ async def test_webui_settings_html_nav_and_page() -> None:
         # Page container must be present
         assert 'id="page-settings"' in html
 
+        # Settings and gallery page titles should not be rendered
+        assert '<span class="section-title">&#9881; Settings</span>' not in html
+        assert '<span class="section-title">&#128444; Gallery</span>' not in html
+
         # VALID_PAGES must include 'settings'
         assert "'settings'" in html
 
