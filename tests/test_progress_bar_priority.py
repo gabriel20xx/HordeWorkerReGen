@@ -563,7 +563,7 @@ def test_model_preloading_other_queued_jobs_still_shown() -> None:
 
 
 def test_update_webui_status_excludes_ending_and_ended_processes_from_process_list() -> None:
-    """WebUI process list/count should drop slots that are ending or ended."""
+    """WebUI process list/count should drop ending slots without compacting per-type IDs."""
     active_job = _make_mock_job("active1")
     ending_job = _make_mock_job("ending1")
     ended_job = _make_mock_job("ended1")
@@ -588,6 +588,24 @@ def test_update_webui_status_excludes_ending_and_ended_processes_from_process_li
     assert len(processes) == 1
     assert processes[0]["id"] == "inference-0"
     assert processes[0]["state"] == "WAITING_FOR_JOB"
+
+    # Keep per-type index stable by process_id even when lower slots are excluded.
+    active_higher = _make_mock_process(active_job, HordeProcessState.WAITING_FOR_JOB, percent_complete=None)
+    active_higher.process_id = 2
+    ended_lower = _make_mock_process(ended_job, HordeProcessState.PROCESS_ENDED, percent_complete=None)
+    ended_lower.process_id = 1
+
+    kwargs = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        process_list=[ended_lower, active_higher],
+        return_full_kwargs=True,
+    )
+    processes = kwargs.get("processes", [])
+    assert len(processes) == 1
+    assert processes[0]["id"] == "inference-1"
 
 
 # ---------------------------------------------------------------------------

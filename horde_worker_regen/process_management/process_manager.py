@@ -2475,11 +2475,6 @@ class HordeWorkerProcessManager:
         :param pid: process ID to assign to the process
         :return:
         """
-        _infer_type_idx = sum(
-            1 for p in self._process_map.values()
-            if p.process_type == HordeProcessType.INFERENCE and p.process_id < pid
-        )
-        logger.info(f"Starting inference-{_infer_type_idx}")
         vram_heavy_models = any(model in VRAM_HEAVY_MODELS for model in self.bridge_data.image_models_to_load)
 
         pipe_connection, child_pipe_connection = multiprocessing.Pipe(duplex=True)
@@ -2515,6 +2510,7 @@ class HordeWorkerProcessManager:
             process_launch_identifier=self.num_processes_launched,
         )
         self._process_map[pid] = process_info
+        logger.info(f"Starting inference process ({self._process_label(pid)})")
         self.num_processes_launched += 1
         return process_info
 
@@ -7408,10 +7404,10 @@ class HordeWorkerProcessManager:
                     },
                 )
 
-        # Get process info – use per-type counters so IDs are like "inference-0", "safety-0".
-        # Processes that are ending/ended are excluded so the count only reflects active slots.
+        # Get process info with stable per-type IDs (inference-0, safety-0, etc).
+        # Processes that are ending/ended are excluded from the list/count, but their slots
+        # still influence the per-type index so labels remain stable by process_id.
         processes = []
-        type_counters: dict[str, int] = {}
         for process_info in self._process_map.values():
             if process_info.last_process_state in (
                 HordeProcessState.PROCESS_ENDING,
@@ -7419,8 +7415,11 @@ class HordeWorkerProcessManager:
             ):
                 continue
             ptype = process_info.process_type.name.lower()
-            type_index = type_counters.get(ptype, 0)
-            type_counters[ptype] = type_index + 1
+            type_index = sum(
+                1
+                for p in self._process_map.values()
+                if p.process_type.name.lower() == ptype and p.process_id < process_info.process_id
+            )
             processes.append(
                 {
                     "id": f"{ptype}-{type_index}",
