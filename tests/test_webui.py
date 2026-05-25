@@ -2119,8 +2119,8 @@ async def test_webui_stats_job_state_time_container() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_max_queue_size_endpoint() -> None:
-    """Test the POST /api/queue/max_size endpoint (manual and auto modes)."""
+async def test_webui_settings_post_max_queue_size_controls() -> None:
+    """Test that POST /api/settings handles queue size controls."""
     webui = WorkerWebUI(port=0)
     queue_size_calls: list[int] = []
     auto_mode_calls: list[bool] = []
@@ -2141,79 +2141,78 @@ async def test_set_max_queue_size_endpoint() -> None:
 
         # --- success: set manual value ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"max_queue_size": 5},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_queue_size", "value": 5},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        assert body["max_queue_size"] == 5
-        assert body["queue_size_auto"] is False
+        assert body == {"key": "max_queue_size", "value": 5}
         assert webui.status_data["max_queue_size"] == 5
         assert webui.status_data["queue_size_auto"] is False
         assert queue_size_calls[-1] == 5
 
         # --- success: set to 0 (disable buffering) ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"max_queue_size": 0},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_queue_size", "value": 0},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        assert body["max_queue_size"] == 0
+        assert body == {"key": "max_queue_size", "value": 0}
         assert queue_size_calls[-1] == 0
 
         # --- success: enable auto mode ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"auto": True},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "queue_size_auto", "value": True},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        assert body["queue_size_auto"] is True
+        assert body == {"key": "queue_size_auto", "value": True}
         assert webui.status_data["queue_size_auto"] is True
         assert auto_mode_calls[-1] is True
 
         # --- success: disable auto mode ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"auto": False},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "queue_size_auto", "value": False},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        assert body["queue_size_auto"] is False
+        assert body == {"key": "queue_size_auto", "value": False}
         assert auto_mode_calls[-1] is False
 
         # --- 400: missing required field ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"other": "value"},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_queue_size"},
         ) as response:
             assert response.status == 400
 
         # --- 400: negative value ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"max_queue_size": -1},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_queue_size", "value": -1},
         ) as response:
             assert response.status == 400
 
         # --- 400: non-integer value ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"max_queue_size": "lots"},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_queue_size", "value": "lots"},
         ) as response:
             assert response.status == 400
 
         # --- 400: boolean passed for auto ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"auto": "yes"},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "queue_size_auto", "value": "yes"},
         ) as response:
             assert response.status == 400
 
         # --- 400: non-JSON body ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
+            f"http://localhost:{actual_port}/api/settings",
             data=b"not json",
             headers={"Content-Type": "application/json"},
         ) as response:
@@ -2222,15 +2221,15 @@ async def test_set_max_queue_size_endpoint() -> None:
         # --- 503: no callbacks registered ---
         webui.set_max_queue_size_callback(None)
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"max_queue_size": 3},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_queue_size", "value": 3},
         ) as response:
             assert response.status == 503
 
         webui.set_queue_size_auto_mode_callback(None)
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/queue/max_size",
-            json={"auto": True},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "queue_size_auto", "value": True},
         ) as response:
             assert response.status == 503
 
@@ -2239,8 +2238,8 @@ async def test_set_max_queue_size_endpoint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_max_active_models_endpoint() -> None:
-    """Test the POST /api/models/max_active endpoint (manual and auto modes)."""
+async def test_webui_settings_post_max_active_model_controls() -> None:
+    """Test that POST /api/settings handles max active model controls."""
     webui = WorkerWebUI(port=0)
     models_calls: list[int] = []
     auto_mode_calls: list[bool] = []
@@ -2261,76 +2260,75 @@ async def test_set_max_active_models_endpoint() -> None:
 
         # --- success: set manual value ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"max_active_models": 3},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models", "value": 3},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        assert body["max_active_models"] == 3
-        assert body["max_active_models_auto"] is False
+        assert body == {"key": "max_active_models", "value": 3}
         assert webui.status_data["max_active_models"] == 3
         assert webui.status_data["max_active_models_auto"] is False
         assert models_calls[-1] == 3
 
         # --- success: enable auto mode ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"auto": True},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models_auto", "value": True},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        assert body["max_active_models_auto"] is True
+        assert body == {"key": "max_active_models_auto", "value": True}
         assert webui.status_data["max_active_models_auto"] is True
         assert auto_mode_calls[-1] is True
 
         # --- success: disable auto mode ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"auto": False},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models_auto", "value": False},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        assert body["max_active_models_auto"] is False
+        assert body == {"key": "max_active_models_auto", "value": False}
         assert auto_mode_calls[-1] is False
 
         # --- 400: value below 1 ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"max_active_models": 0},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models", "value": 0},
         ) as response:
             assert response.status == 400
 
         # --- 400: non-integer value ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"max_active_models": "many"},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models", "value": "many"},
         ) as response:
             assert response.status == 400
 
         # --- 400: boolean passed as max_active_models ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"max_active_models": True},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models", "value": True},
         ) as response:
             assert response.status == 400
 
         # --- 400: non-boolean for auto ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"auto": 1},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models_auto", "value": 1},
         ) as response:
             assert response.status == 400
 
         # --- 400: missing required field ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"other": "value"},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models"},
         ) as response:
             assert response.status == 400
 
         # --- 400: non-JSON body ---
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
+            f"http://localhost:{actual_port}/api/settings",
             data=b"bad",
             headers={"Content-Type": "application/json"},
         ) as response:
@@ -2339,15 +2337,15 @@ async def test_set_max_active_models_endpoint() -> None:
         # --- 503: no callbacks registered ---
         webui.set_max_active_models_callback(None)
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"max_active_models": 2},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models", "value": 2},
         ) as response:
             assert response.status == 503
 
         webui.set_max_active_models_auto_mode_callback(None)
         async with aiohttp.ClientSession() as session, session.post(
-            f"http://localhost:{actual_port}/api/models/max_active",
-            json={"auto": True},
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_active_models_auto", "value": True},
         ) as response:
             assert response.status == 503
 
@@ -2692,6 +2690,8 @@ async def test_webui_settings_html_nav_and_page() -> None:
 
         # Settings API endpoint must be referenced in the JS
         assert "'/api/settings'" in html or '"/api/settings"' in html
+        assert "'/api/queue/max_size'" not in html and '"/api/queue/max_size"' not in html
+        assert "'/api/models/max_active'" not in html and '"/api/models/max_active"' not in html
     finally:
         await webui.stop()
 

@@ -338,8 +338,6 @@ class WorkerWebUI:
         self.app.router.add_get("/health", self._handle_health)
         self.app.router.add_delete("/api/worker/{worker_id}", self._handle_delete_worker)
         self.app.router.add_post("/api/job_pops/pause", self._handle_set_job_pops_paused)
-        self.app.router.add_post("/api/queue/max_size", self._handle_set_max_queue_size)
-        self.app.router.add_post("/api/models/max_active", self._handle_set_max_active_models)
         self.app.router.add_get("/api/settings", self._handle_get_settings)
         self.app.router.add_post("/api/settings", self._handle_set_setting)
         self.app.router.add_post("/api/restart", self._handle_restart_program)
@@ -3782,18 +3780,32 @@ class WorkerWebUI:
                 }
 
                 if (_settingsPendingQueue !== null) {
-                    var queuePayload = _settingsPendingQueue;
-                    var queueRes = await _postJson('/api/queue/max_size', queuePayload);
-                    if (!queueRes.ok) {
-                        failures.push((queueRes.body && queueRes.body.error) ? queueRes.body.error : 'Failed queue update');
+                    if (_settingsPendingQueue.auto === true || _settingsPendingQueue.auto === false) {
+                        var queueAutoRes = await _postJson('/api/settings', {key: 'queue_size_auto', value: !!_settingsPendingQueue.auto});
+                        if (!queueAutoRes.ok) {
+                            failures.push((queueAutoRes.body && queueAutoRes.body.error) ? queueAutoRes.body.error : 'Failed queue auto update');
+                        }
+                    }
+                    if (_settingsPendingQueue.auto !== true && Object.prototype.hasOwnProperty.call(_settingsPendingQueue, 'max_queue_size')) {
+                        var queueSizeRes = await _postJson('/api/settings', {key: 'max_queue_size', value: _settingsPendingQueue.max_queue_size});
+                        if (!queueSizeRes.ok) {
+                            failures.push((queueSizeRes.body && queueSizeRes.body.error) ? queueSizeRes.body.error : 'Failed queue update');
+                        }
                     }
                 }
 
                 if (_settingsPendingModels !== null) {
-                    var modelsPayload = _settingsPendingModels;
-                    var modelsRes = await _postJson('/api/models/max_active', modelsPayload);
-                    if (!modelsRes.ok) {
-                        failures.push((modelsRes.body && modelsRes.body.error) ? modelsRes.body.error : 'Failed max active models update');
+                    if (_settingsPendingModels.auto === true || _settingsPendingModels.auto === false) {
+                        var modelsAutoRes = await _postJson('/api/settings', {key: 'max_active_models_auto', value: !!_settingsPendingModels.auto});
+                        if (!modelsAutoRes.ok) {
+                            failures.push((modelsAutoRes.body && modelsAutoRes.body.error) ? modelsAutoRes.body.error : 'Failed max active models auto update');
+                        }
+                    }
+                    if (_settingsPendingModels.auto !== true && Object.prototype.hasOwnProperty.call(_settingsPendingModels, 'max_active_models')) {
+                        var modelsSizeRes = await _postJson('/api/settings', {key: 'max_active_models', value: _settingsPendingModels.max_active_models});
+                        if (!modelsSizeRes.ok) {
+                            failures.push((modelsSizeRes.body && modelsSizeRes.body.error) ? modelsSizeRes.body.error : 'Failed max active models update');
+                        }
                     }
                 }
 
@@ -3976,112 +3988,6 @@ class WorkerWebUI:
         self.status_data["job_pops_paused"] = paused
         self.status_data["job_pops_pause_until"] = pause_until
         return web.json_response({"job_pops_paused": paused, "job_pops_pause_until": pause_until})
-
-    async def _handle_set_max_queue_size(self, request: web.Request) -> web.Response:
-        """Handle a request to change the maximum job queue size at runtime.
-
-        Accepted JSON bodies:
-        - ``{"max_queue_size": <int>}`` – set a manual value (``>= 0``); disables auto mode.
-        - ``{"auto": true}``            – enable auto mode (value computed by the worker).
-        - ``{"auto": false}``           – disable auto mode and keep the current ``max_queue_size`` value.
-
-        Returns 400 on malformed input, 503 if no callback is registered, and
-        200 with ``{"max_queue_size": <int>, "queue_size_auto": <bool>}`` on success.
-        """
-        try:
-            body = await request.json()
-        except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
-            return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
-
-        auto = body.get("auto")
-        if auto is not None:
-            # Auto-mode toggle
-            if not isinstance(auto, bool):
-                return web.json_response({"error": "Field 'auto' must be a boolean"}, status=400)
-            if self._set_queue_size_auto_mode_callback is None:
-                return web.json_response({"error": "Auto queue size mode is not available"}, status=503)
-            try:
-                self._set_queue_size_auto_mode_callback(auto)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(f"Error setting queue size auto mode={auto}: {exc}")
-                return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
-            self.status_data["queue_size_auto"] = auto
-            return web.json_response(
-                {"max_queue_size": self.status_data["max_queue_size"], "queue_size_auto": auto},
-            )
-
-        # Manual value
-        max_queue_size = body.get("max_queue_size")
-        if not isinstance(max_queue_size, int) or isinstance(max_queue_size, bool):
-            return web.json_response({"error": "Field 'max_queue_size' must be a non-negative integer"}, status=400)
-        if max_queue_size < 0:
-            return web.json_response({"error": "Field 'max_queue_size' must be >= 0"}, status=400)
-
-        if self._set_max_queue_size_callback is None:
-            return web.json_response({"error": "Setting max queue size is not available"}, status=503)
-
-        try:
-            self._set_max_queue_size_callback(max_queue_size)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(f"Error setting max queue size={max_queue_size}: {exc}")
-            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
-
-        self.status_data["max_queue_size"] = max_queue_size
-        self.status_data["queue_size_auto"] = False
-        return web.json_response({"max_queue_size": max_queue_size, "queue_size_auto": False})
-
-    async def _handle_set_max_active_models(self, request: web.Request) -> web.Response:
-        """Handle a request to change the maximum number of active model slots at runtime.
-
-        Accepted JSON bodies:
-        - ``{"max_active_models": <int>}`` – set a manual value (``>= 1``); disables auto mode.
-        - ``{"auto": true}``               – enable auto mode (value computed by the worker).
-        - ``{"auto": false}``              – disable auto mode and keep the current ``max_active_models`` value.
-
-        Returns 400 on malformed input, 503 if no callback is registered, and
-        200 with ``{"max_active_models": <int>, "max_active_models_auto": <bool>}`` on success.
-        """
-        try:
-            body = await request.json()
-        except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
-            return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
-
-        auto = body.get("auto")
-        if auto is not None:
-            # Auto-mode toggle
-            if not isinstance(auto, bool):
-                return web.json_response({"error": "Field 'auto' must be a boolean"}, status=400)
-            if self._set_max_active_models_auto_mode_callback is None:
-                return web.json_response({"error": "Auto max active models mode is not available"}, status=503)
-            try:
-                self._set_max_active_models_auto_mode_callback(auto)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(f"Error setting max active models auto mode={auto}: {exc}")
-                return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
-            self.status_data["max_active_models_auto"] = auto
-            return web.json_response(
-                {"max_active_models": self.status_data["max_active_models"], "max_active_models_auto": auto},
-            )
-
-        # Manual value
-        max_active_models = body.get("max_active_models")
-        if not isinstance(max_active_models, int) or isinstance(max_active_models, bool):
-            return web.json_response({"error": "Field 'max_active_models' must be a positive integer"}, status=400)
-        if max_active_models < 1:
-            return web.json_response({"error": "Field 'max_active_models' must be >= 1"}, status=400)
-
-        if self._set_max_active_models_callback is None:
-            return web.json_response({"error": "Setting max active models is not available"}, status=503)
-
-        try:
-            self._set_max_active_models_callback(max_active_models)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(f"Error setting max active models={max_active_models}: {exc}")
-            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
-
-        self.status_data["max_active_models"] = max_active_models
-        self.status_data["max_active_models_auto"] = False
-        return web.json_response({"max_active_models": max_active_models, "max_active_models_auto": False})
 
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Handle status API request.
@@ -4485,12 +4391,76 @@ class WorkerWebUI:
         if not isinstance(key, str) or not key:
             return web.json_response({"error": "Field 'key' must be a non-empty string"}, status=400)
 
+        raw_value = body.get("value")
+        if key == "queue_size_auto":
+            if not isinstance(raw_value, bool):
+                return web.json_response({"error": "Field 'value' must be a boolean for setting 'queue_size_auto'"}, status=400)
+            if self._set_queue_size_auto_mode_callback is None:
+                return web.json_response({"error": "Auto queue size mode is not available"}, status=503)
+            try:
+                self._set_queue_size_auto_mode_callback(raw_value)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Error setting queue size auto mode={raw_value}: {exc}")
+                return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+            self.status_data["queue_size_auto"] = raw_value
+            return web.json_response({"key": key, "value": raw_value})
+
+        if key == "max_queue_size":
+            if not isinstance(raw_value, int) or isinstance(raw_value, bool):
+                return web.json_response({"error": "Field 'value' must be a non-negative integer for setting 'max_queue_size'"}, status=400)
+            if raw_value < 0:
+                return web.json_response({"error": "Value for 'max_queue_size' must be >= 0"}, status=400)
+            if self._set_max_queue_size_callback is None:
+                return web.json_response({"error": "Setting max queue size is not available"}, status=503)
+            try:
+                self._set_max_queue_size_callback(raw_value)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Error setting max queue size={raw_value}: {exc}")
+                return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+            self.status_data["max_queue_size"] = raw_value
+            self.status_data["queue_size_auto"] = False
+            return web.json_response({"key": key, "value": raw_value})
+
+        if key == "max_active_models_auto":
+            if not isinstance(raw_value, bool):
+                return web.json_response(
+                    {"error": "Field 'value' must be a boolean for setting 'max_active_models_auto'"},
+                    status=400,
+                )
+            if self._set_max_active_models_auto_mode_callback is None:
+                return web.json_response({"error": "Auto max active models mode is not available"}, status=503)
+            try:
+                self._set_max_active_models_auto_mode_callback(raw_value)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Error setting max active models auto mode={raw_value}: {exc}")
+                return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+            self.status_data["max_active_models_auto"] = raw_value
+            return web.json_response({"key": key, "value": raw_value})
+
+        if key == "max_active_models":
+            if not isinstance(raw_value, int) or isinstance(raw_value, bool):
+                return web.json_response(
+                    {"error": "Field 'value' must be a positive integer for setting 'max_active_models'"},
+                    status=400,
+                )
+            if raw_value < 1:
+                return web.json_response({"error": "Value for 'max_active_models' must be >= 1"}, status=400)
+            if self._set_max_active_models_callback is None:
+                return web.json_response({"error": "Setting max active models is not available"}, status=503)
+            try:
+                self._set_max_active_models_callback(raw_value)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Error setting max active models={raw_value}: {exc}")
+                return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+            self.status_data["max_active_models"] = raw_value
+            self.status_data["max_active_models_auto"] = False
+            return web.json_response({"key": key, "value": raw_value})
+
         if key not in _SETTINGS_SPEC:
             return web.json_response({"error": f"Unknown or non-configurable setting: '{key}'"}, status=400)
 
         spec = _SETTINGS_SPEC[key]
         expected_type = spec["type"]
-        raw_value = body.get("value")
 
         # Type coercion and validation
         if expected_type is bool:
