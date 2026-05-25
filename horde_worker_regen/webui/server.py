@@ -3555,7 +3555,7 @@ class WorkerWebUI:
         function _setSettingsDirty(isDirty) {
             _settingsDirty = !!isDirty;
             _updateApplyButtonState();
-            if (!_settingsDirty) _setSettingsStatus('', false);
+            _setSettingsStatus('', false);
         }
 
         function _postJson(url, payload) {
@@ -3619,7 +3619,6 @@ class WorkerWebUI:
             }
             _showSettingFeedback('job_queue_size', true, 'Pending', {pending: true});
             _setSettingsDirty(true);
-            _setSettingsStatus('Queue size change pending Apply', false);
         }
 
         function stageModelsSetting(payload) {
@@ -3653,7 +3652,6 @@ class WorkerWebUI:
             }
             _showSettingFeedback('active_model_count', true, 'Pending', {pending: true});
             _setSettingsDirty(true);
-            _setSettingsStatus('Max active models change pending Apply', false);
         }
 
         function fetchSettings() {
