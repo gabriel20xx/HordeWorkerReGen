@@ -571,12 +571,13 @@ class WorkerWebUI:
         @keyframes gallery-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
         .image-grid-item.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
         [data-theme="dark"] .image-grid-item.loading { background: linear-gradient(90deg, #1e293b 25%, #2d3f55 50%, #1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
-        .gallery-filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+        .gallery-page-header, .settings-page-header { flex-wrap: wrap; }
+        .gallery-filter-bar { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
         .gallery-filter-bar label { font-size: 0.82rem; font-weight: 500; color: #475569; white-space: nowrap; }
         .gallery-filter-bar select { font-size: 0.82rem; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; color: #1e293b; cursor: pointer; max-width: 320px; }
         [data-theme="dark"] .gallery-filter-bar label { color: #94a3b8; }
         [data-theme="dark"] .gallery-filter-bar select { background: #1e293b; border-color: #334155; color: #e2e8f0; }
-        @media (max-width: 768px) { .gallery-filter-bar { flex-direction: column; align-items: stretch; } .gallery-filter-bar select { max-width: 100%; width: 100%; } }
+        @media (max-width: 768px) { .gallery-filter-bar { flex-direction: column; align-items: stretch; margin-left: 0; width: 100%; } .gallery-filter-bar select { max-width: 100%; width: 100%; } }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 320px; overflow: hidden; }
         .last-image-container.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
@@ -1024,13 +1025,16 @@ class WorkerWebUI:
                 <!-- GALLERY PAGE -->
                 <div class="page" id="page-gallery">
                     <div class="section">
-                        <div class="card">
+                        <div class="section-header gallery-page-header">
+                            <span class="section-title">&#128444; Gallery</span>
                             <div class="gallery-filter-bar">
                                 <label for="gallery-model-filter">Filter by model:</label>
                                 <select id="gallery-model-filter" onchange="galleryChangeModelFilter(this.value)">
                                     <option value="">All models</option>
                                 </select>
                             </div>
+                        </div>
+                        <div class="card">
                             <div id="gallery-new-banner" role="button" tabindex="0" onclick="fetchGalleryPage(1)" onkeydown="if(event.key==='Enter'||event.key===' '){fetchGalleryPage(1);event.preventDefault();}">&#128444; New images available &#8212; click to view latest</div>
                             <div id="gallery-loading" style="display:none;text-align:center;padding:24px 16px;"><div class="loading-spinner" style="margin:0 auto 8px;"></div><span class="loading-text">Loading gallery&#8230;</span></div>
                             <div id="gallery-empty" class="empty-state" style="display:none;"><span class="empty-state-icon">&#128444;</span>No images generated yet</div>
@@ -1212,7 +1216,8 @@ class WorkerWebUI:
                 <!-- SETTINGS PAGE -->
                 <div class="page" id="page-settings">
                     <div class="section">
-                        <div class="section-header">
+                        <div class="section-header settings-page-header">
+                            <span class="section-title">&#9881; Settings</span>
                             <div class="settings-header-actions">
                                 <button id="settings-apply-btn" class="settings-page-btn apply" onclick="applyPendingSettings()" disabled>Apply</button>
                                 <button id="settings-restart-btn" class="settings-page-btn restart" onclick="restartProgram()">Restart</button>
