@@ -462,6 +462,15 @@ def test_webui_images_history() -> None:
     assert "images_history" not in webui.status_data
 
 
+def test_is_loopback_remote_accepts_loopback_with_port() -> None:
+    """Test localhost loopback parsing accepts host:port forms."""
+    from horde_worker_regen.webui.server import _is_loopback_remote
+
+    assert _is_loopback_remote("127.0.0.1:3000")
+    assert _is_loopback_remote("[::1]:3000")
+    assert _is_loopback_remote("[::ffff:127.0.0.1]:3000")
+
+
 @pytest.mark.asyncio
 async def test_webui_start_stop() -> None:
     """Test that WorkerWebUI can be started and stopped."""
@@ -2128,6 +2137,7 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "id=\"' + pfx + '-set-btn\"" not in html
         assert "onclick=\"applyNumericSetting(\\'" not in html
         assert ".setting-number:disabled" in html
+        assert ".setting-number { width: 68px;" in html
         assert "autoBtn.setAttribute('aria-pressed', 'true');" in html
         assert "autoBtn.setAttribute('aria-pressed', 'false');" in html
 

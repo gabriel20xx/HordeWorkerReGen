@@ -112,9 +112,25 @@ def _is_loopback_remote(remote: str | None) -> bool:
     """Return True when *remote* represents a localhost/loopback client."""
     if remote is None:
         return False
-    host = remote.split("%", 1)[0].strip().lower()
+
+    host = remote.strip().lower()
+    if host.startswith("["):
+        end = host.find("]")
+        if end != -1:
+            host = host[1:end]
+    elif host.count(":") == 1:
+        maybe_host, maybe_port = host.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host = maybe_host
+    elif host.count(":") > 1 and "." in host:
+        maybe_host, maybe_port = host.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host = maybe_host
+
+    host = host.split("%", 1)[0]
     if host == "localhost":
         return True
+
     try:
         ip = ipaddress.ip_address(host)
         if ip.is_loopback:
@@ -845,7 +861,7 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-toggle-slider { background: #334155; }
         [data-theme="dark"] .setting-toggle input:checked + .setting-toggle-slider { background: var(--accent); }
         /* Number input */
-        .setting-number { width: 78px; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
+        .setting-number { width: 68px; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
         .setting-number:disabled { opacity: 0.55; cursor: not-allowed; background: #e2e8f0; color: #64748b; }
         .setting-number:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .setting-number { background: #1e293b; border-color: #334155; color: #e2e8f0; }
