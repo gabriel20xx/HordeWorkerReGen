@@ -2173,6 +2173,7 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert ".setting-number:disabled" in html
         assert "--action-btn-height: 32px;" in html
         assert ".theme-toggle, .limit-set-btn, .limit-auto-btn, .console-pause-btn, .console-copy-btn, .job-pops-pause-btn, .errors-view-btn, .pagination-controls button, .image-overlay-close, .worker-delete-btn, .stats-window-btn, .settings-page-btn, .setting-apply-btn, .confirm-modal-btn {" in html
+        assert ".topbar-uptime, .status-badge, .job-state-badge, .process-type-badge, .process-state-badge, .model-badge, .worker-version-badge, .worker-type-badge, .worker-online-badge, .wcap {" in html
         assert ".setting-number { width: 68px; height: var(--action-btn-height);" in html
         assert ".limit-input { width: 54px; height: var(--action-btn-height);" in html
         assert "autoBtn.setAttribute('aria-pressed', 'true');" in html
