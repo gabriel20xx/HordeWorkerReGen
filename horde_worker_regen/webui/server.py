@@ -3560,7 +3560,7 @@ class WorkerWebUI:
         function _setSettingsDirty(isDirty) {
             _settingsDirty = !!isDirty;
             _updateApplyButtonState();
-            _setSettingsStatus('', false);
+            if (!_settingsApplying) _setSettingsStatus('', false);
         }
 
         function _postJson(url, payload) {

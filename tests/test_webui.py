@@ -2106,6 +2106,7 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "onchange=\"stageSettingChange(\\'" in html
         assert "id=\"settings-apply-btn\"" in html
         assert "onclick=\"applyPendingSettings()\"" in html
+        assert "if (!_settingsApplying) _setSettingsStatus('', false);" in html
         assert "id=\"settings-restart-btn\"" in html
         assert "onclick=\"restartProgram()\"" in html
         assert 'id="restart-confirm-modal"' in html
