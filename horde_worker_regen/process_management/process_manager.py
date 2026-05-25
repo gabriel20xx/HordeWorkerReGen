@@ -7275,6 +7275,8 @@ class HordeWorkerProcessManager:
     def _webui_process_display_label(process_type: str, type_index: int) -> str:
         """Return the user-facing process label used by the Web UI."""
         process_name = process_type.replace("_", " ").title()
+        if process_type.upper() == "INFERENCE" and type_index == 0:
+            return f"{process_name} 0"
         if type_index == 0:
             return process_name
         return f"{process_name} {type_index}"
