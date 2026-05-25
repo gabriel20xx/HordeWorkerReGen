@@ -592,7 +592,7 @@ class WorkerWebUI:
         .process-item:last-child { margin-bottom: 0; }
         .process-id-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 3px; }
         .process-id { font-weight: 700; color: var(--accent); font-size: 0.88rem; }
-        .process-type-badge { font-size: 0.72rem; background: #e0e7ff; color: #4338ca; padding: 1px 7px; border-radius: 4px; font-weight: 600; }
+        .process-type-badge { font-size: 0.72rem; background: #e0e7ff; color: #4338ca; padding: 1px 7px; border-radius: 4px; font-weight: 600; margin-left: auto; }
         .process-state-badge { font-size: 0.72rem; background: #f0fdf4; color: #166534; padding: 1px 7px; border-radius: 4px; font-weight: 600; }
         .process-detail-text { font-size: 0.8rem; color: #64748b; }
 
