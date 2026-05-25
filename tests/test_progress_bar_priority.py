@@ -586,7 +586,7 @@ def test_update_webui_status_excludes_ending_and_ended_processes_from_process_li
 
     processes = kwargs.get("processes", [])
     assert len(processes) == 1
-    assert processes[0]["id"] == 0
+    assert processes[0]["id"] == "inference-0"
     assert processes[0]["state"] == "WAITING_FOR_JOB"
 
 
