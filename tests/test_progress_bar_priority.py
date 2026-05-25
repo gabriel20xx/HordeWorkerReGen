@@ -11,6 +11,7 @@ accumulated total.
 """
 
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1655,17 +1656,21 @@ def test_set_max_active_models_requests_runtime_scale_down() -> None:
     """Changing max active models should request a control-loop scale-down pass."""
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
-    manager._lru = SimpleNamespace(capacity=8)
-    manager._max_active_models_override = None
-    manager._max_active_models_auto = True
+    with patch.dict(os.environ, {}, clear=False):
+        manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+        manager._lru = SimpleNamespace(capacity=8)
+        manager._max_active_models_override = None
+        manager._max_active_models_auto = True
+        manager.bridge_data = SimpleNamespace(max_active_models=None)
 
-    manager.set_max_active_models(3)
+        manager.set_max_active_models(3)
 
-    assert manager._max_active_models_override == 3
-    assert manager._max_active_models_auto is False
-    assert manager._lru.capacity == 3
-    assert manager._inference_scale_down_requested is True
+        assert manager._max_active_models_override == 3
+        assert manager._max_active_models_auto is False
+        assert manager._lru.capacity == 3
+        assert manager._inference_scale_down_requested is True
+        assert manager.bridge_data.max_active_models == 3
+        assert os.environ["AIWORKER_MAX_ACTIVE_MODELS"] == "3"
 
 
 def test_end_inference_processes_noop_when_not_above_limit() -> None:

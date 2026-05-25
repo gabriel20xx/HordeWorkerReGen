@@ -149,6 +149,7 @@ AIWORKER_MAX_LORA_CACHE_SIZE=50
 AIWORKER_ALLOW_PAINTING=True
 AIWORKER_MAX_POWER=38
 AIWORKER_MAX_THREADS=1 # Only set to 2 on high end or xx90 machines
+AIWORKER_MAX_ACTIVE_MODELS=3 # Optional: independent cap for active model slots
 AIWORKER_MODELS_TO_LOAD=['TOP 3', 'AlbedoBase XL (SDXL)'] # Be mindful of download times; each model average 2-8 gb
 AIWORKER_MODELS_TO_SKIP=['pix2pix', 'SDXL_beta::stability.ai#6901']
 AIWORKER_QUEUE_SIZE=2

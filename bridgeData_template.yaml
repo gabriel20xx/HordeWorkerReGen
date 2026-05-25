@@ -36,6 +36,11 @@ queue_size: 1
 #   32gb system RAM and offering Flux/Cascade: 0
 #   <32gb system RAM: 0
 
+# Maximum number of active model slots.
+# If unset, this defaults to max_threads + queue_size.
+# This can be changed at runtime from the web UI and maps to AIWORKER_MAX_ACTIVE_MODELS.
+# max_active_models: 2
+
 
 # Number of jobs to pull per request and perform batched inference.
 # More optimized than doing them one by one but slower.

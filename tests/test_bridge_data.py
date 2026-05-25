@@ -81,6 +81,7 @@ def test_bridge_data_load_from_env_vars() -> None:
 
     os.environ["AIWORKER_REGEN_HORDE_URL"] = "https://localhost:8080"
     os.environ["AIWORKER_REGEN_MODELS_TO_LOAD"] = "['model1', 'model2']"
+    os.environ["AIWORKER_MAX_ACTIVE_MODELS"] = "4"
 
     horde_model_reference_manager = ModelReferenceManager(
         download_and_convert_legacy_dbs=False,
@@ -92,6 +93,7 @@ def test_bridge_data_load_from_env_vars() -> None:
     )
     assert bridge_data is not None
     assert bridge_data._loaded_from_env_vars is True
+    assert bridge_data.max_active_models == 4
 
 
 def test_bridge_data_to_dot_env_file() -> None:
