@@ -4385,9 +4385,13 @@ class WorkerWebUI:
         Returns:
             200 with ``{"key": ..., "value": ...}`` on success.
             400 on missing/invalid input.
+            403 for non-local clients.
             503 if no settings callback has been registered.
             500 on internal error.
         """
+        if not _is_loopback_remote(request.remote):
+            return web.json_response({"error": "Settings API is restricted to localhost clients"}, status=403)
+
         try:
             body = await request.json()
         except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
