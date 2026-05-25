@@ -3740,6 +3740,10 @@ class WorkerWebUI:
                 clearTimeout(fb._hideTimer);
                 fb._hideTimer = null;
             }
+            if (fb._clearTimer) {
+                clearTimeout(fb._clearTimer);
+                fb._clearTimer = null;
+            }
             fb.textContent = msg;
             if (opts && opts.pending) {
                 fb.className = 'setting-feedback pending';
@@ -3750,8 +3754,11 @@ class WorkerWebUI:
             if (opts && opts.pending) return;
             fb._hideTimer = setTimeout(function() {
                 fb.style.opacity = '0';
-                setTimeout(function() { fb.textContent = ''; }, 300);
                 fb._hideTimer = null;
+                fb._clearTimer = setTimeout(function() {
+                    fb.textContent = '';
+                    fb._clearTimer = null;
+                }, 300);
             }, 2000);
         }
 
@@ -3761,6 +3768,10 @@ class WorkerWebUI:
             if (fb._hideTimer) {
                 clearTimeout(fb._hideTimer);
                 fb._hideTimer = null;
+            }
+            if (fb._clearTimer) {
+                clearTimeout(fb._clearTimer);
+                fb._clearTimer = null;
             }
             fb.textContent = '';
             fb.className = 'setting-feedback';
