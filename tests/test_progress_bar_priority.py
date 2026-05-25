@@ -1692,6 +1692,10 @@ def test_end_inference_processes_ignores_already_ending_slots_for_scale_down() -
 
     process_map = MagicMock()
     process_map.num_loaded_inference_processes.return_value = 1
+    # Deliberately set num_inference_processes > max so that if the code accidentally
+    # uses num_inference_processes() instead of num_loaded_inference_processes() it
+    # would NOT return early and would call _end_inference_process, failing the assertion.
+    process_map.num_inference_processes.return_value = 2
     process_map._get_first_inference_process_to_kill.return_value = MagicMock()
     manager._process_map = process_map
 
