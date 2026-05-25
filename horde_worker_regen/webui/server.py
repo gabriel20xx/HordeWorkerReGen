@@ -451,6 +451,7 @@ class WorkerWebUI:
 
         :root {
             --sidebar-width: 260px;
+            --action-btn-height: 32px;
             --sidebar-bg: #1a1d2e;
             --sidebar-hover: #2d3148;
             --accent: #6366f1;
@@ -604,7 +605,7 @@ class WorkerWebUI:
 
         /* ---- Inline limit editor (max queue / max active models) ---- */
         .limit-editor { display: flex; align-items: center; gap: 4px; }
-        .limit-input { width: 54px; padding: 2px 5px; font-size: 0.75rem; border: 1px solid #cbd5e1; border-radius: 4px; text-align: center; background: #f8fafc; color: #334155; transition: border-color 0.15s; }
+        .limit-input { width: 54px; height: var(--action-btn-height); padding: 2px 5px; font-size: 0.75rem; border: 1px solid #cbd5e1; border-radius: 4px; text-align: center; background: #f8fafc; color: #334155; transition: border-color 0.15s; }
         .limit-input:focus { outline: none; border-color: var(--accent); }
         .limit-input:disabled { opacity: 0.55; cursor: not-allowed; background: #e2e8f0; }
         .limit-set-btn { padding: 2px 9px; font-size: 0.75rem; font-weight: 600; background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: background 0.15s; }
@@ -620,6 +621,13 @@ class WorkerWebUI:
         [data-theme="dark"] .limit-auto-btn { background: #1e293b; color: #94a3b8; }
         [data-theme="dark"] .limit-auto-btn:hover { background: #2d3f55; }
         [data-theme="dark"] .limit-auto-btn.active { background: var(--success); color: #fff; }
+        .theme-toggle, .limit-set-btn, .limit-auto-btn, .console-pause-btn, .console-copy-btn, .job-pops-pause-btn, .errors-view-btn, .pagination-controls button, .image-overlay-close, .worker-delete-btn, .stats-window-btn, .settings-page-btn, .setting-apply-btn, .confirm-modal-btn {
+            height: var(--action-btn-height);
+            box-sizing: border-box;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
 
         .log-panel { width: 100%; height: min(600px, 70vh); overflow: hidden; }
         .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; height: 100%; box-sizing: border-box; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
@@ -930,7 +938,7 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-toggle-slider { background: #334155; }
         [data-theme="dark"] .setting-toggle input:checked + .setting-toggle-slider { background: var(--accent); }
         /* Number input */
-        .setting-number { width: 68px; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
+        .setting-number { width: 68px; height: var(--action-btn-height); padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
         .setting-number:disabled { opacity: 0.55; cursor: not-allowed; background: #e2e8f0; color: #64748b; }
         .setting-number:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .setting-number { background: #1e293b; border-color: #334155; color: #e2e8f0; }
