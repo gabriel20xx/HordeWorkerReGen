@@ -2362,6 +2362,257 @@ async def test_max_queue_size_and_active_models_in_status() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_webui_settings_get_empty() -> None:
+    """Test that GET /api/settings returns an empty settings dict when no snapshot has been pushed."""
+    webui = WorkerWebUI(port=0)
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/settings",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert "settings" in data
+        assert isinstance(data["settings"], dict)
+        # With no snapshot pushed, the dict should be empty.
+        assert data["settings"] == {}
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_update_settings_data() -> None:
+    """Test that update_settings_data populates the GET /api/settings response."""
+    webui = WorkerWebUI(port=0)
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Push a snapshot of settings
+        webui.update_settings_data({
+            "nsfw": True,
+            "allow_img2img": False,
+            "max_power": 18,
+            "horde_model_stickiness": 0.5,
+            "extra_field_not_in_spec": "ignored",
+        })
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/settings",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        settings = data["settings"]
+        assert settings["nsfw"] is True
+        assert settings["allow_img2img"] is False
+        assert settings["max_power"] == 18
+        assert settings["horde_model_stickiness"] == 0.5
+        # Fields not in _SETTINGS_SPEC must be filtered out.
+        assert "extra_field_not_in_spec" not in settings
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_post_bool() -> None:
+    """Test that POST /api/settings updates a boolean setting and calls the callback."""
+    webui = WorkerWebUI(port=0)
+    received: list[tuple[str, object]] = []
+
+    def mock_callback(key: str, value: object) -> None:
+        received.append((key, value))
+
+    webui.set_setting_callback(mock_callback)
+    webui.update_settings_data({"nsfw": True})
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "nsfw", "value": False},
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["key"] == "nsfw"
+        assert data["value"] is False
+        assert received == [("nsfw", False)]
+
+        # The in-memory snapshot should have been updated.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/settings",
+        ) as response:
+            get_data = await response.json()
+        assert get_data["settings"]["nsfw"] is False
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_post_numeric() -> None:
+    """Test that POST /api/settings updates a numeric setting with range validation."""
+    webui = WorkerWebUI(port=0)
+    received: list[tuple[str, object]] = []
+
+    def mock_callback(key: str, value: object) -> None:
+        received.append((key, value))
+
+    webui.set_setting_callback(mock_callback)
+    webui.update_settings_data({"max_power": 8})
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Valid update
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_power", "value": 18},
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["value"] == 18
+        assert received == [("max_power", 18)]
+
+        # Value below minimum should be rejected
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_power", "value": 0},
+        ) as response:
+            assert response.status == 400
+
+        # Value above maximum should be rejected
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "max_power", "value": 999},
+        ) as response:
+            assert response.status == 400
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_post_unknown_key() -> None:
+    """Test that POST /api/settings rejects unknown setting keys."""
+    webui = WorkerWebUI(port=0)
+    webui.set_setting_callback(lambda k, v: None)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "nonexistent_setting", "value": True},
+        ) as response:
+            assert response.status == 400
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_post_no_callback() -> None:
+    """Test that POST /api/settings returns 503 when no callback is registered."""
+    webui = WorkerWebUI(port=0)
+    # No callback registered
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "nsfw", "value": True},
+        ) as response:
+            assert response.status == 503
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_html_nav_and_page() -> None:
+    """Test that the settings nav item and page div are present in the HTML."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        # Nav item must be present
+        assert 'id="nav-settings"' in html
+        assert "showPage('settings'" in html
+
+        # Page container must be present
+        assert 'id="page-settings"' in html
+
+        # VALID_PAGES must include 'settings'
+        assert "'settings'" in html
+
+        # Settings API endpoint must be referenced in the JS
+        assert "'/api/settings'" in html or '"/api/settings"' in html
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_post_float() -> None:
+    """Test that POST /api/settings accepts a float setting (horde_model_stickiness)."""
+    webui = WorkerWebUI(port=0)
+    received: list[tuple[str, object]] = []
+
+    def mock_callback(key: str, value: object) -> None:
+        received.append((key, value))
+
+    webui.set_setting_callback(mock_callback)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "horde_model_stickiness", "value": 0.75},
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["key"] == "horde_model_stickiness"
+        assert abs(float(data["value"]) - 0.75) < 1e-9
+        assert len(received) == 1
+        assert received[0][0] == "horde_model_stickiness"
+        assert abs(float(received[0][1]) - 0.75) < 1e-9
+
+        # Out-of-range float should be rejected
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "horde_model_stickiness", "value": 1.5},
+        ) as response:
+            assert response.status == 400
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     test_webui_creation()
     print("✓ WebUI creation test passed")

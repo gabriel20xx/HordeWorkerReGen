@@ -56,6 +56,56 @@ _MAX_OCCURRENCES_PER_GROUP = 50
 _UNSET: Any = object()
 """Sentinel used to distinguish an explicitly-passed ``None`` from an omitted argument."""
 
+# ---------------------------------------------------------------------------
+# Runtime-configurable settings exposed via the /api/settings endpoint.
+# Each entry maps a bridge_data field name to a dict describing the field:
+#   type  – Python type used for validation (bool, int, or float)
+#   min   – minimum value (numeric types only)
+#   max   – maximum value (numeric types only)
+# ---------------------------------------------------------------------------
+_SETTINGS_SPEC: dict[str, dict[str, Any]] = {
+    # Capabilities
+    "nsfw": {"type": bool},
+    "censor_nsfw": {"type": bool},
+    "allow_img2img": {"type": bool},
+    "allow_inpainting": {"type": bool},
+    "allow_unsafe_ip": {"type": bool},
+    "allow_post_processing": {"type": bool},
+    "allow_controlnet": {"type": bool},
+    "allow_sdxl_controlnet": {"type": bool},
+    "allow_lora": {"type": bool},
+    "require_upfront_kudos": {"type": bool},
+    "limit_max_steps": {"type": bool},
+    "extra_slow_worker": {"type": bool},
+    # Performance
+    "max_power": {"type": int, "min": 1, "max": 128},
+    "max_batch": {"type": int, "min": 1, "max": 100},
+    "max_threads": {"type": int, "min": 1, "max": 8},
+    "safety_on_gpu": {"type": bool},
+    "high_memory_mode": {"type": bool},
+    "very_high_memory_mode": {"type": bool},
+    "high_performance_mode": {"type": bool},
+    "moderate_performance_mode": {"type": bool},
+    "unload_models_from_vram_often": {"type": bool},
+    "very_fast_disk_mode": {"type": bool},
+    "post_process_job_overlap": {"type": bool},
+    "cycle_process_on_model_change": {"type": bool},
+    "horde_model_stickiness": {"type": float, "min": 0.0, "max": 1.0},
+    # Timeouts
+    "process_timeout": {"type": int, "min": 60, "max": 3600},
+    "post_process_timeout": {"type": int, "min": 15, "max": 600},
+    "preload_timeout": {"type": int, "min": 15, "max": 600},
+    "inference_step_timeout": {"type": int, "min": 60, "max": 1800},
+    # Behavior
+    "minutes_allowed_without_jobs": {"type": int, "min": 0, "max": 3599},
+    "suppress_speed_warnings": {"type": bool},
+    "exit_on_unhandled_faults": {"type": bool},
+    "limited_console_messages": {"type": bool},
+    "stats_output_frequency": {"type": int, "min": 5, "max": 3600},
+    "purge_loras_on_download": {"type": bool},
+    "remove_maintenance_on_init": {"type": bool},
+}
+
 
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
@@ -162,6 +212,13 @@ class WorkerWebUI:
         # Signature: (enabled: bool) -> None
         self._set_max_active_models_auto_mode_callback: Callable[[bool], None] | None = None
 
+        # Optional callback invoked when the UI changes a runtime setting.
+        # Signature: (key: str, value: Any) -> None
+        self._set_setting_callback: Callable[[str, Any], None] | None = None
+
+        # Current settings snapshot pushed by the process manager via update_settings_data().
+        self._settings_data: dict[str, Any] = {}
+
         self._setup_routes()
 
     def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
@@ -221,6 +278,26 @@ class WorkerWebUI:
         """
         self._set_max_active_models_auto_mode_callback = callback
 
+    def set_setting_callback(self, callback: Callable[[str, Any], None] | None) -> None:
+        """Register (or clear) the callback invoked when the UI changes a runtime setting.
+
+        Args:
+            callback: A callable that accepts two arguments: the setting key (str) and
+                      the new validated value.  Pass ``None`` to unregister.
+        """
+        self._set_setting_callback = callback
+
+    def update_settings_data(self, settings: dict[str, Any]) -> None:
+        """Update the current settings snapshot served by ``GET /api/settings``.
+
+        Called by the process manager each status update cycle so the settings
+        page always reflects the live ``bridge_data`` values.
+
+        Args:
+            settings: Flat dict mapping field names to their current values.
+        """
+        self._settings_data = dict(settings)
+
     def _setup_routes(self) -> None:
         """Set up the web server routes."""
         self.app.router.add_get("/", self._handle_index)
@@ -238,6 +315,8 @@ class WorkerWebUI:
         self.app.router.add_post("/api/job_pops/pause", self._handle_set_job_pops_paused)
         self.app.router.add_post("/api/queue/max_size", self._handle_set_max_queue_size)
         self.app.router.add_post("/api/models/max_active", self._handle_set_max_active_models)
+        self.app.router.add_get("/api/settings", self._handle_get_settings)
+        self.app.router.add_post("/api/settings", self._handle_set_setting)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
         """Handle config API request."""
@@ -699,6 +778,47 @@ class WorkerWebUI:
         #stats-job-state-model-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
         @media (max-width: 600px) { #stats-job-state-model-row { grid-template-columns: 1fr; } }
 
+        /* ---- Settings page ---- */
+        .settings-group { margin-bottom: 24px; }
+        .settings-group-title { font-size: 0.78rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        [data-theme="dark"] .settings-group-title { color: #94a3b8; }
+        .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+        @media (max-width: 480px) { .settings-grid { grid-template-columns: 1fr; } }
+        .setting-row { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: flex; align-items: center; gap: 10px; transition: border-color 0.15s; }
+        .setting-row:hover { border-color: #cbd5e1; }
+        [data-theme="dark"] .setting-row:hover { border-color: #334155; }
+        .setting-info { flex: 1; min-width: 0; }
+        .setting-label { font-size: 0.85rem; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        [data-theme="dark"] .setting-label { color: #e2e8f0; }
+        .setting-desc { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+        [data-theme="dark"] .setting-desc { color: #94a3b8; }
+        .setting-restart-badge { display: inline-block; font-size: 0.65rem; font-weight: 700; background: #fef3c7; color: #92400e; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
+        [data-theme="dark"] .setting-restart-badge { background: #451a03; color: #fcd34d; }
+        .setting-ctrl { flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+        /* Toggle switch */
+        .setting-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+        .setting-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .setting-toggle-slider { position: absolute; cursor: pointer; inset: 0; background: #cbd5e1; border-radius: 22px; transition: background 0.2s; }
+        .setting-toggle-slider::before { content: ''; position: absolute; width: 16px; height: 16px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: transform 0.2s; }
+        .setting-toggle input:checked + .setting-toggle-slider { background: var(--accent); }
+        .setting-toggle input:checked + .setting-toggle-slider::before { transform: translateX(18px); }
+        .setting-toggle input:disabled + .setting-toggle-slider { opacity: 0.5; cursor: not-allowed; }
+        [data-theme="dark"] .setting-toggle-slider { background: #334155; }
+        [data-theme="dark"] .setting-toggle input:checked + .setting-toggle-slider { background: var(--accent); }
+        /* Number input */
+        .setting-number { width: 78px; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
+        .setting-number:focus { outline: none; border-color: var(--accent); }
+        [data-theme="dark"] .setting-number { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        .setting-apply-btn { padding: 3px 10px; font-size: 0.78rem; font-weight: 600; background: var(--accent); color: #fff; border: none; border-radius: 5px; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+        .setting-apply-btn:hover { background: var(--accent-hover); }
+        .setting-apply-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        /* Inline feedback */
+        .setting-feedback { font-size: 0.72rem; font-weight: 600; margin-left: 2px; min-width: 44px; transition: opacity 0.3s; }
+        .setting-feedback.ok { color: var(--success); }
+        .setting-feedback.err { color: var(--error); }
+        .settings-unavailable { background: #f1f5f9; border: 1px solid var(--border); border-radius: 10px; padding: 28px 20px; text-align: center; color: #64748b; font-size: 0.92rem; }
+        [data-theme="dark"] .settings-unavailable { background: #0f172a; color: #64748b; }
+
     </style>
 </head>
 <body>
@@ -753,6 +873,9 @@ class WorkerWebUI:
             </button>
             <button class="nav-item" onclick="showPage('stats', this)" id="nav-stats">
                 <span class="nav-icon">&#128202;</span> Statistics
+            </button>
+            <button class="nav-item" onclick="showPage('settings', this)" id="nav-settings">
+                <span class="nav-icon">&#9881;</span> Settings
             </button>
         </nav>
     </aside>
@@ -1035,6 +1158,19 @@ class WorkerWebUI:
                     </div>
                 </div>
 
+                <!-- SETTINGS PAGE -->
+                <div class="page" id="page-settings">
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="section-title">&#9881; Settings</span>
+                            <span id="settings-status" class="section-count" style="margin-left:auto;display:none;"></span>
+                        </div>
+                        <div id="settings-body">
+                            <div class="settings-unavailable">Loading settings&#8230;</div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -1055,7 +1191,7 @@ class WorkerWebUI:
             if (str === null || str === undefined) return '';
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
-        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'stats', 'logs']);
+        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'stats', 'logs', 'settings']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); var parsed = s ? JSON.parse(s) : []; return Array.isArray(parsed) ? parsed : []; } catch(e) { return []; } })();
         let currentWorkerName = '';
@@ -1181,6 +1317,9 @@ class WorkerWebUI:
             }
             if (pageId === 'stats') {
                 fetchStats(true);
+            }
+            if (pageId === 'settings') {
+                fetchSettings();
             }
         }
         window.addEventListener('popstate', function() {
@@ -3327,6 +3466,172 @@ class WorkerWebUI:
             }
         });
 
+        // Redraw charts on window resize when stats page is active
+        window.addEventListener('resize', function() {
+            if (_statsData && document.getElementById('page-stats').classList.contains('active')) {
+                renderStatsPage(_statsData);
+            }
+        });
+
+        // ========================================================
+        // SETTINGS PAGE
+        // ========================================================
+        const _SETTINGS_SPEC = {
+            // key: [label, description, category, type ('bool'|'int'|'float'), min, max, restartRequired]
+            nsfw:                     ['NSFW',                    'Accept NSFW image jobs.',                                              'Capabilities', 'bool',  null, null, false],
+            censor_nsfw:              ['Censor NSFW',             'Censor NSFW content even when accepting NSFW jobs.',                  'Capabilities', 'bool',  null, null, false],
+            allow_img2img:            ['Allow img2img',           'Accept image-to-image jobs.',                                         'Capabilities', 'bool',  null, null, false],
+            allow_inpainting:         ['Allow Painting',          'Accept inpainting / painting jobs.',                                  'Capabilities', 'bool',  null, null, false],
+            allow_unsafe_ip:          ['Allow Unsafe IPs',        'Accept requests from flagged or unsafe IP addresses.',                'Capabilities', 'bool',  null, null, false],
+            allow_post_processing:    ['Allow Post-Processing',   'Accept jobs that include post-processing steps.',                     'Capabilities', 'bool',  null, null, false],
+            allow_controlnet:         ['Allow ControlNet',        'Accept ControlNet jobs.',                                             'Capabilities', 'bool',  null, null, false],
+            allow_sdxl_controlnet:    ['Allow SDXL ControlNet',   'Accept SDXL ControlNet jobs.',                                        'Capabilities', 'bool',  null, null, false],
+            allow_lora:               ['Allow LoRA',              'Accept jobs that use LoRA models.',                                   'Capabilities', 'bool',  null, null, false],
+            require_upfront_kudos:    ['Require Upfront Kudos',   'Only accept jobs from users who have enough kudos upfront.',          'Capabilities', 'bool',  null, null, false],
+            limit_max_steps:          ['Limit Max Steps',         'Cap the number of inference steps to the worker\'s configured max.',  'Capabilities', 'bool',  null, null, false],
+            extra_slow_worker:        ['Extra Slow Worker',       'Enable extra-slow-worker mode (forces conservative settings).',       'Capabilities', 'bool',  null, null, true],
+            max_power:                ['Max Power',               'Maximum resolution multiplier (formula: 64\u00d764\u00d78\u00d7max_power pixels).',         'Performance',  'int',   1,    128,  false],
+            max_batch:                ['Max Batch',               'Maximum number of images per batched inference job.',                 'Performance',  'int',   1,    100,  false],
+            max_threads:              ['Max Threads',             'Maximum number of concurrent inference threads.',                     'Performance',  'int',   1,    8,    true],
+            safety_on_gpu:            ['Safety on GPU',           'Run the safety/CLIP model on GPU instead of CPU (~1.2 GB VRAM).',    'Performance',  'bool',  null, null, true],
+            high_memory_mode:         ['High Memory Mode',        'Keep models in VRAM to reduce load times.',                          'Performance',  'bool',  null, null, true],
+            very_high_memory_mode:    ['Very High Memory Mode',   'Aggressive VRAM retention (data-center GPUs only).',                 'Performance',  'bool',  null, null, true],
+            high_performance_mode:    ['High Performance Mode',   'Enable for GPUs with high throughput (RTX 4090 or better).',         'Performance',  'bool',  null, null, true],
+            moderate_performance_mode:['Moderate Performance Mode','Enable for mid-range high-end GPUs (RTX 3080 or better).',          'Performance',  'bool',  null, null, true],
+            unload_models_from_vram_often: ['Unload VRAM Often',  'Unload models from VRAM between jobs to free memory.',              'Performance',  'bool',  null, null, false],
+            very_fast_disk_mode:      ['Very Fast Disk Mode',     'Load more models concurrently when using a very fast SSD/NVMe.',     'Performance',  'bool',  null, null, false],
+            post_process_job_overlap: ['PP Job Overlap',          'Overlap post-processing with the next inference job.',               'Performance',  'bool',  null, null, false],
+            cycle_process_on_model_change: ['Cycle Process on Model Change', 'Restart the inference process when the loaded model changes.', 'Performance', 'bool', null, null, false],
+            horde_model_stickiness:   ['Model Stickiness',        'Chance (0\u20131) to prefer currently loaded models when popping a job.',  'Performance',  'float', 0.0, 1.0, false],
+            process_timeout:          ['Process Timeout (s)',     'Max seconds a job may run before being killed.',                     'Timeouts',     'int',   60,   3600, false],
+            post_process_timeout:     ['Post-Process Timeout (s)','Max seconds allowed for post-processing.',                          'Timeouts',     'int',   15,   600,  false],
+            preload_timeout:          ['Preload Timeout (s)',      'Max seconds allowed to load a model.',                             'Timeouts',     'int',   15,   600,  false],
+            inference_step_timeout:   ['Inference Step Timeout (s)','Max seconds allowed per inference step before detecting a stuck job.','Timeouts',  'int',   60,   1800, false],
+            minutes_allowed_without_jobs: ['Minutes Without Jobs','Minutes of idle time before the worker warns about no jobs.',       'Behavior',     'int',   0,    3599, false],
+            suppress_speed_warnings:  ['Suppress Speed Warnings', 'Do not print speed-related warning messages.',                      'Behavior',     'bool',  null, null, false],
+            exit_on_unhandled_faults: ['Exit on Unhandled Faults','Exit the worker instead of recovering from an unhandled fault.',    'Behavior',     'bool',  null, null, false],
+            limited_console_messages: ['Limited Console Messages','Only log job submission and status messages to console.',            'Behavior',     'bool',  null, null, false],
+            stats_output_frequency:   ['Stats Frequency (s)',     'How often (in seconds) to print the status line to console.',       'Behavior',     'int',   5,    3600, false],
+            purge_loras_on_download:  ['Purge LoRAs on Download', 'Delete existing LoRA cache before downloading new LoRAs.',          'Behavior',     'bool',  null, null, false],
+            remove_maintenance_on_init:['Remove Maintenance on Init','Clear maintenance mode automatically on startup.',               'Behavior',     'bool',  null, null, false],
+        };
+
+        var _settingsLoaded = false;
+        var _settingsFetchInProgress = false;
+
+        function fetchSettings() {
+            if (_settingsFetchInProgress) return;
+            _settingsFetchInProgress = true;
+            fetch('/api/settings')
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(data) { _settingsLoaded = true; renderSettingsPage(data.settings || {}); })
+                .catch(function(err) {
+                    var body = document.getElementById('settings-body');
+                    if (body) body.innerHTML = '<div class="settings-unavailable">&#9888; Failed to load settings: ' + escapeHtml(err.message) + '</div>';
+                })
+                .finally(function() { _settingsFetchInProgress = false; });
+        }
+
+        function renderSettingsPage(settings) {
+            var body = document.getElementById('settings-body');
+            if (!body) return;
+
+            // Group settings by category
+            var categories = {};
+            var catOrder = [];
+            for (var key in _SETTINGS_SPEC) {
+                if (!Object.prototype.hasOwnProperty.call(_SETTINGS_SPEC, key)) continue;
+                var spec = _SETTINGS_SPEC[key];
+                var cat = spec[2];
+                if (!categories[cat]) { categories[cat] = []; catOrder.push(cat); }
+                categories[cat].push(key);
+            }
+
+            var html = '';
+            for (var ci = 0; ci < catOrder.length; ci++) {
+                var cat = catOrder[ci];
+                var keys = categories[cat];
+                html += '<div class="settings-group">';
+                html += '<div class="settings-group-title">' + escapeHtml(cat) + '</div>';
+                html += '<div class="settings-grid">';
+                for (var ki = 0; ki < keys.length; ki++) {
+                    var key = keys[ki];
+                    var spec = _SETTINGS_SPEC[key];
+                    var label = spec[0], desc = spec[1], type = spec[3], minV = spec[4], maxV = spec[5], restart = spec[6];
+                    var val = (key in settings) ? settings[key] : null;
+                    var restartBadge = restart ? '<span class="setting-restart-badge" title="Changes take full effect after restarting the worker">restart</span>' : '';
+                    html += '<div class="setting-row">';
+                    html += '<div class="setting-info"><div class="setting-label">' + escapeHtml(label) + restartBadge + '</div><div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
+                    html += '<div class="setting-ctrl">';
+                    if (type === 'bool') {
+                        var chk = (val === true) ? 'checked' : '';
+                        html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="applySetting(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
+                        html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
+                    } else {
+                        var numVal = (val !== null && val !== undefined) ? val : '';
+                        var minAttr = (minV !== null) ? ' min="' + minV + '"' : '';
+                        var maxAttr = (maxV !== null) ? ' max="' + maxV + '"' : '';
+                        var step = (type === 'float') ? ' step="0.01"' : ' step="1"';
+                        html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numVal)) + '"' + minAttr + maxAttr + step + ' id="sinp-' + escapeHtml(key) + '" aria-label="' + escapeHtml(label) + '">';
+                        html += '<button class="setting-apply-btn" onclick="applyNumericSetting(\'' + escapeHtml(key) + '\')">Set</button>';
+                        html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
+                    }
+                    html += '</div></div>';
+                }
+                html += '</div></div>';
+            }
+            body.innerHTML = html || '<div class="settings-unavailable">No configurable settings available.</div>';
+        }
+
+        function _showSettingFeedback(key, ok, msg) {
+            var fb = document.getElementById('sfb-' + key);
+            if (!fb) return;
+            fb.textContent = msg;
+            fb.className = 'setting-feedback ' + (ok ? 'ok' : 'err');
+            fb.style.opacity = '1';
+            setTimeout(function() { fb.style.opacity = '0'; setTimeout(function() { fb.textContent = ''; }, 300); }, 2000);
+        }
+
+        function applySetting(key, value) {
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({key: key, value: value})
+            })
+            .then(function(r) { return r.json().then(function(b) { return {ok: r.ok, body: b}; }); })
+            .then(function(res) {
+                if (res.ok) {
+                    _showSettingFeedback(key, true, '\u2713');
+                } else {
+                    _showSettingFeedback(key, false, res.body.error || 'Error');
+                    // Revert the toggle to the last known good value
+                    fetch('/api/settings').then(function(r) { return r.json(); }).then(function(d) {
+                        var inp = document.getElementById('sinp-' + key);
+                        if (!inp) {
+                            // It's a toggle – find it via the feedback element's parent
+                            var toggleInp = document.querySelector('[onchange*="\'' + key + '\'"]');
+                            if (toggleInp && d.settings && key in d.settings) toggleInp.checked = !!d.settings[key];
+                        }
+                    }).catch(function() {});
+                }
+            })
+            .catch(function(err) { _showSettingFeedback(key, false, 'Net error'); });
+        }
+
+        function applyNumericSetting(key) {
+            var inp = document.getElementById('sinp-' + key);
+            if (!inp) return;
+            var spec = _SETTINGS_SPEC[key];
+            if (!spec) return;
+            var type = spec[3], minV = spec[4], maxV = spec[5];
+            var raw = inp.value.trim();
+            var parsed = (type === 'float') ? parseFloat(raw) : parseInt(raw, 10);
+            if (isNaN(parsed)) { _showSettingFeedback(key, false, 'Invalid'); return; }
+            if (minV !== null && parsed < minV) { _showSettingFeedback(key, false, 'Min ' + minV); return; }
+            if (maxV !== null && parsed > maxV) { _showSettingFeedback(key, false, 'Max ' + maxV); return; }
+            applySetting(key, parsed);
+        }
+
         async function fetchWithTimeout(url, timeoutMs) {
             const controller = new AbortController();
             const timerId = setTimeout(() => controller.abort(new Error('Request timed out after '+timeoutMs+'ms')), timeoutMs);
@@ -3926,6 +4231,94 @@ class WorkerWebUI:
         # If no thumbnail is available (e.g. Pillow not installed), fall back to
         # returning the full entry including base64 so the client can still render.
         return web.json_response(entry)
+
+    async def _handle_get_settings(self, request: web.Request) -> web.Response:
+        """Return all runtime-configurable settings and their current values.
+
+        Response shape::
+
+            {
+                "settings": {
+                    "<key>": <value>,
+                    ...
+                }
+            }
+
+        The ``settings`` dict contains only the keys defined in ``_SETTINGS_SPEC``.
+        Keys whose values are not yet available (e.g. before the first status push
+        from the process manager) are omitted rather than returned as ``null``.
+        """
+        visible: dict[str, Any] = {k: v for k, v in self._settings_data.items() if k in _SETTINGS_SPEC}
+        return web.json_response({"settings": visible})
+
+    async def _handle_set_setting(self, request: web.Request) -> web.Response:
+        """Apply a single runtime setting change requested from the UI.
+
+        Expected JSON body::
+
+            {"key": "<setting_name>", "value": <new_value>}
+
+        Returns:
+            200 with ``{"key": ..., "value": ...}`` on success.
+            400 on missing/invalid input.
+            503 if no settings callback has been registered.
+            500 on internal error.
+        """
+        try:
+            body = await request.json()
+        except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
+            return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
+
+        key = body.get("key")
+        if not isinstance(key, str) or not key:
+            return web.json_response({"error": "Field 'key' must be a non-empty string"}, status=400)
+
+        if key not in _SETTINGS_SPEC:
+            return web.json_response({"error": f"Unknown or non-configurable setting: '{key}'"}, status=400)
+
+        spec = _SETTINGS_SPEC[key]
+        expected_type = spec["type"]
+        raw_value = body.get("value")
+
+        # Type coercion and validation
+        if expected_type is bool:
+            if not isinstance(raw_value, bool):
+                return web.json_response({"error": f"Field 'value' must be a boolean for setting '{key}'"}, status=400)
+            value: Any = raw_value
+        elif expected_type is int:
+            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                return web.json_response({"error": f"Field 'value' must be a number for setting '{key}'"}, status=400)
+            value = int(raw_value)
+            min_v = spec.get("min")
+            max_v = spec.get("max")
+            if min_v is not None and value < min_v:
+                return web.json_response({"error": f"Value for '{key}' must be >= {min_v}"}, status=400)
+            if max_v is not None and value > max_v:
+                return web.json_response({"error": f"Value for '{key}' must be <= {max_v}"}, status=400)
+        elif expected_type is float:
+            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                return web.json_response({"error": f"Field 'value' must be a number for setting '{key}'"}, status=400)
+            value = float(raw_value)
+            min_v = spec.get("min")
+            max_v = spec.get("max")
+            if min_v is not None and value < min_v:
+                return web.json_response({"error": f"Value for '{key}' must be >= {min_v}"}, status=400)
+            if max_v is not None and value > max_v:
+                return web.json_response({"error": f"Value for '{key}' must be <= {max_v}"}, status=400)
+        else:
+            return web.json_response({"error": "Internal configuration error"}, status=500)
+
+        if self._set_setting_callback is None:
+            return web.json_response({"error": "Settings API is not available"}, status=503)
+
+        try:
+            self._set_setting_callback(key, value)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Error applying setting {key}={value!r}: {exc}")
+            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+
+        self._settings_data[key] = value
+        return web.json_response({"key": key, "value": value})
 
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
         """Append one image entry to the gallery history.

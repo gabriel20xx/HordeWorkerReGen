@@ -1994,6 +1994,7 @@ class HordeWorkerProcessManager:
             self.webui.set_max_active_models_callback(self.set_max_active_models)
             self.webui.set_queue_size_auto_mode_callback(self.set_queue_size_auto_mode)
             self.webui.set_max_active_models_auto_mode_callback(self.set_max_active_models_auto_mode)
+            self.webui.set_setting_callback(self.apply_setting)
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
             # Add a log handler to capture logs for webui with colored output.
@@ -2170,14 +2171,63 @@ class HordeWorkerProcessManager:
         else:
             logger.info("Max active models auto mode disabled")
 
-    def _compute_auto_queue_size(self) -> int:
-        """Compute the optimal max queue size based on job timing data.
+    def set_max_active_models_auto_mode(self, enabled: bool) -> None:
+        """Enable or disable automatic max-active-models tuning.
 
-        Heuristic:
-        - Start with the "natural" buffer: extra model slots beyond the number of
-          concurrently-running threads (i.e. the pre-loading headroom).
-        - Speed up for fast jobs (< 30 s average total) so inference processes
-          are never starved while waiting for the next pop.
+        When enabled, :meth:`_compute_auto_max_active_models` is called during
+        each :meth:`update_webui_status` cycle and the result is applied as the
+        runtime override.  When disabled, the last manually-set or auto-computed
+        override remains in effect.
+
+        Args:
+            enabled: ``True`` to activate auto mode, ``False`` to deactivate.
+        """
+        self._max_active_models_auto = enabled
+        if enabled:
+            count = self._compute_auto_max_active_models()
+            self._max_active_models_override = count
+            self._lru.capacity = count
+            logger.info(f"Max active models auto mode enabled (initial value: {count})")
+        else:
+            logger.info("Max active models auto mode disabled")
+
+    def apply_setting(self, key: str, value: object) -> None:
+        """Apply a runtime setting change to :attr:`bridge_data`.
+
+        Updates the in-memory ``bridge_data`` attribute identified by *key* to
+        *value*.  The change takes effect immediately for settings that are
+        checked on every job pop or during job processing; settings that control
+        startup-time behaviour (e.g. ``max_threads``, ``safety_on_gpu``) require
+        a worker restart to fully take effect.
+
+        Args:
+            key:   The ``bridge_data`` field name to update.
+            value: The new validated value (type must already match the field).
+
+        Raises:
+            ValueError: If *key* is not a recognised ``bridge_data`` attribute.
+        """
+        if not hasattr(self.bridge_data, key):
+            raise ValueError(f"Unknown bridge_data field: '{key}'")
+        setattr(self.bridge_data, key, value)
+        logger.info(f"Runtime setting '{key}' changed to {value!r} via web UI")
+
+    def _get_settings_snapshot(self) -> dict[str, object]:
+        """Return a flat dict of the current values of all runtime-configurable settings.
+
+        Only fields that are present in the web UI's ``_SETTINGS_SPEC`` are
+        included.  This snapshot is pushed to the web UI each status cycle so
+        that the Settings page always reflects the live configuration.
+        """
+        from horde_worker_regen.webui.server import _SETTINGS_SPEC  # local import to avoid circular
+
+        result: dict[str, object] = {}
+        for field_name in _SETTINGS_SPEC:
+            try:
+                result[field_name] = getattr(self.bridge_data, field_name)
+            except AttributeError:
+                pass
+        return result
         - Reduce buffering for slow jobs (>= 120 s average total) where a large
           queue would just waste VRAM loading models ahead of time.
 
@@ -7599,6 +7649,9 @@ class HordeWorkerProcessManager:
             max_time_per_job_state={k: round(v["max"], 2) for k, v in self._job_time_stats.items()},
         )
         self._errors_history_last_sent_len = len(self._errors_history)
+
+        # Push current settings snapshot so the Settings page reflects live values.
+        self.webui.update_settings_data(self._get_settings_snapshot())
 
     def _handle_exception(self, future: asyncio.Future) -> None:
         """Logs exceptions from asyncio tasks.
