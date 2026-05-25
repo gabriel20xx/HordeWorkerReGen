@@ -2113,6 +2113,16 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "function confirmRestartProgram()" in html
         assert "if (!confirm('Restart the worker program now?')) return;" not in html
         assert "_clearSettingFeedback(key);" in html
+        assert "function _showSettingFeedback(key, ok, msg, opts)" in html
+        assert "if (fb._clearTimer) {" in html
+        assert "clearTimeout(fb._clearTimer);" in html
+        assert "fb._clearTimer = null;" in html
+        assert "if (opts && opts.pending) {" in html
+        assert "fb._clearTimer = setTimeout(function() {" in html
+        assert "_showSettingFeedback(key, true, 'Pending', {pending: true});" in html
+        assert "_showSettingFeedback('job_queue_size', true, 'Pending', {pending: true});" in html
+        assert "_showSettingFeedback('active_model_count', true, 'Pending', {pending: true});" in html
+        assert ".setting-feedback.pending" in html
         assert "function _isEqualSimple" not in html
         assert "id=\"' + pfx + '-set-btn\"" not in html
         assert "onclick=\"applyNumericSetting(\\'" not in html
