@@ -129,6 +129,12 @@ class reGenBridgeData(CombinedHordeBridgeData):
     webui_update_interval: float = Field(default=1.0, ge=0.5, le=10.0)
     """The interval in seconds between web UI backend updates. Valid range: 0.5 to 10 seconds."""
 
+    max_active_models: int | None = Field(default=None, ge=1)
+    """Maximum number of active model slots.
+
+    When set, this overrides the startup-derived value (max_threads + queue_size).
+    """
+
     @model_validator(mode="after")
     def validate_performance_modes(self) -> reGenBridgeData:
         """Validate the performance modes and set the appropriate values.

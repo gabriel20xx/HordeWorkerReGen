@@ -1501,7 +1501,7 @@ class HordeWorkerProcessManager:
         """The maximum number of inference processes that can be active.
 
         When a runtime override has been set via :meth:`set_max_active_models`, that value
-        is returned; otherwise the value initialised from bridge_data is used.
+        is returned; otherwise the startup value is used.
         """
         if self._max_active_models_override is not None:
             return self._max_active_models_override
@@ -1779,11 +1779,14 @@ class HordeWorkerProcessManager:
 
         self._aux_model_lock = Lock_MultiProcessing(ctx=ctx)
 
-        # Runtime overrides set via the web UI.  None means "use derived value".
+        # Runtime overrides set via the web UI.  None means "use startup value".
         self._queue_size_override: int | None = None
         self._max_active_models_override: int | None = None
 
-        self._max_inference_processes = self.bridge_data.queue_size + self.bridge_data.max_threads
+        startup_max_active_models = self.bridge_data.max_active_models
+        if startup_max_active_models is None:
+            startup_max_active_models = self.bridge_data.queue_size + self.bridge_data.max_threads
+        self._max_inference_processes = startup_max_active_models
 
         vae_decode_semaphore_max = 1
 
@@ -2118,9 +2121,10 @@ class HordeWorkerProcessManager:
     def set_max_active_models(self, count: int) -> None:
         """Change the maximum number of simultaneously active inference-process slots at runtime.
 
-        The new value overrides ``max_inference_processes`` (the sum of queue_size +
-        max_threads computed at start-up).  The LRU model cache capacity is updated
-        accordingly so that model eviction respects the new limit.  Calling this method
+        The new value overrides the start-up max-active-model limit, which is either
+        ``bridge_data.max_active_models`` when explicitly configured or the fallback
+        sum of ``queue_size + max_threads``. The LRU model cache capacity is updated
+        accordingly so that model eviction respects the new limit. Calling this method
         also disables auto mode.
 
         Args:
@@ -2129,6 +2133,8 @@ class HordeWorkerProcessManager:
         if count < 1:
             raise ValueError(f"max_active_models must be >= 1, got {count}")
         self._max_active_models_override = count
+        self.bridge_data.max_active_models = count
+        os.environ["AIWORKER_MAX_ACTIVE_MODELS"] = str(count)
         self._max_active_models_auto = False
         self._lru.capacity = count
         self._inference_scale_down_requested = True
@@ -2169,6 +2175,8 @@ class HordeWorkerProcessManager:
         if enabled:
             count = self._compute_auto_max_active_models()
             self._max_active_models_override = count
+            self.bridge_data.max_active_models = count
+            os.environ["AIWORKER_MAX_ACTIVE_MODELS"] = str(count)
             self._lru.capacity = count
             self._inference_scale_down_requested = True
             logger.info(f"Max active models auto mode enabled (initial value: {count})")
@@ -7658,6 +7666,8 @@ class HordeWorkerProcessManager:
             auto_ma = self._compute_auto_max_active_models()
             if auto_ma != self._max_active_models_override:
                 self._max_active_models_override = auto_ma
+                self.bridge_data.max_active_models = auto_ma
+                os.environ["AIWORKER_MAX_ACTIVE_MODELS"] = str(auto_ma)
                 self._lru.capacity = auto_ma
                 self._inference_scale_down_requested = True
                 logger.debug(f"Auto max active models updated to {auto_ma}")
