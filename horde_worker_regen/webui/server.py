@@ -3886,7 +3886,6 @@ class WorkerWebUI:
                 _settingsPendingQueue = null;
                 _settingsPendingModels = null;
                 _setSettingsDirty(false);
-                _setSettingsStatus('Changes applied', false);
                 fetchSettings();
             } finally {
                 _settingsApplying = false;
