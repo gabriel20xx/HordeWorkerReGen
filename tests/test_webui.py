@@ -2572,8 +2572,8 @@ async def test_webui_settings_post_no_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webui_settings_post_rejects_non_local_clients() -> None:
-    """Test that POST /api/settings rejects non-local clients."""
+async def test_webui_settings_post_allows_non_local_clients() -> None:
+    """Test that POST /api/settings allows non-local clients."""
     webui = WorkerWebUI(port=0)
     received: list[tuple[str, object]] = []
 
@@ -2589,8 +2589,8 @@ async def test_webui_settings_post_rejects_non_local_clients() -> None:
             return {"key": "nsfw", "value": False}
 
     response = await webui._handle_set_setting(DummyRequest())  # type: ignore[arg-type]
-    assert response.status == 403
-    assert received == []
+    assert response.status == 200
+    assert received == [("nsfw", False)]
 
 
 @pytest.mark.asyncio
