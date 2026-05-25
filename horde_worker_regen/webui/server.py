@@ -973,11 +973,11 @@ class WorkerWebUI:
                             <div id="processes" class="scrollable-tall"><div class="empty-state"><span class="empty-state-icon">&#9881;</span>No process info</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="queue-max-input" class="limit-input" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}"><button class="limit-set-btn" id="queue-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button><button class="limit-auto-btn" id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing" aria-pressed="false">Auto</button></div></div>
+                            <div class="card-header"><span class="card-title">&#128230; Job Queue</span><span class="card-header-count">(<span id="queue-count">0</span>/<span id="queue-max">0</span>)</span></div>
                             <div id="job-queue" class="scrollable"><div class="empty-state">Queue is empty</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span><div class="limit-editor" style="margin-left:auto;"><input type="number" id="models-max-input" class="limit-input" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}"><button class="limit-set-btn" id="models-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button><button class="limit-auto-btn" id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing" aria-pressed="false">Auto</button></div></div>
+                            <div class="card-header"><span class="card-title">&#129302; Active Models</span><span class="card-header-count">(<span id="models-count">0</span>/<span id="models-max">0</span>)</span></div>
                             <div id="models-loaded" class="model-list"><span style="color:#94a3b8;font-size:0.83rem;">No models loaded</span></div>
                         </div>
                     </div>
@@ -1178,6 +1178,20 @@ class WorkerWebUI:
                         <div class="section-header">
                             <span class="section-title">&#9881; Settings</span>
                             <span id="settings-status" class="section-count" style="margin-left:auto;display:none;"></span>
+                        </div>
+                        <div class="grid-2" style="margin-bottom: 14px;">
+                            <div class="card">
+                                <div class="card-header"><span class="card-title">&#128230; Job Queue Size</span></div>
+                                <div style="padding:14px 16px;">
+                                    <div class="limit-editor"><input type="number" id="queue-max-input" class="limit-input" min="0" max="999" title="Max queue size" aria-label="Max queue size" onkeydown="if(event.key==='Enter'){setMaxQueueSize();event.preventDefault();}"><button class="limit-set-btn" id="queue-set-btn" onclick="setMaxQueueSize()" title="Apply max queue size">Set</button><button class="limit-auto-btn" id="queue-auto-btn" onclick="toggleQueueSizeAuto()" title="Automatically select the best max queue size based on VRAM and job timing" aria-pressed="false">Auto</button></div>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-header"><span class="card-title">&#129302; Max Active Models</span></div>
+                                <div style="padding:14px 16px;">
+                                    <div class="limit-editor"><input type="number" id="models-max-input" class="limit-input" min="1" max="999" title="Max active models" aria-label="Max active models" onkeydown="if(event.key==='Enter'){setMaxActiveModels();event.preventDefault();}"><button class="limit-set-btn" id="models-set-btn" onclick="setMaxActiveModels()" title="Apply max active models">Set</button><button class="limit-auto-btn" id="models-auto-btn" onclick="toggleMaxActiveModelsAuto()" title="Automatically select the best active model count based on available VRAM and job timing" aria-pressed="false">Auto</button></div>
+                                </div>
+                            </div>
                         </div>
                         <div id="settings-body">
                             <div class="settings-unavailable">Loading settings&#8230;</div>
