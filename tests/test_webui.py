@@ -2143,7 +2143,12 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert ".limit-input { width: 54px; height: var(--action-btn-height);" in html
         assert "autoBtn.setAttribute('aria-pressed', 'true');" in html
         assert "autoBtn.setAttribute('aria-pressed', 'false');" in html
-
+        assert ".user-details-grid + .user-details-grid," in html
+        assert ".user-details-grid + .card," in html
+        assert ".stats-summary-grid + .stats-summary-grid { margin-top: var(--page-spacing); }" in html
+        assert html.count('class="grid-3 user-details-grid"') == 2
+        assert 'class="grid-4 stats-summary-grid"' in html
+        assert 'class="grid-2 stats-summary-grid"' in html
     finally:
         await webui.stop()
 

@@ -448,6 +448,9 @@ class WorkerWebUI:
         .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: var(--page-spacing); }
         .section-title { font-size: 0.82rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 1px; }
         .section-count { background: #e2e8f0; color: #475569; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+        .user-details-grid + .user-details-grid,
+        .user-details-grid + .card,
+        .stats-summary-grid + .stats-summary-grid { margin-top: var(--page-spacing); }
 
         .card { background: var(--card-bg); border-radius: 12px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04); border: 1px solid var(--border); }
         .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }
@@ -1061,12 +1064,12 @@ class WorkerWebUI:
                 <div class="page" id="page-user">
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128100; User Details</span></div>
-                        <div class="grid-3">
+                        <div class="grid-3 user-details-grid">
                             <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value" id="user-page-username">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Worker Count</div><div class="stat-card-value" id="user-page-worker-count">-</div></div>
                         </div>
-                        <div class="grid-3">
+                        <div class="grid-3 user-details-grid">
                             <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="user-page-images-per-hour">0</div></div>
                             <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
                             <div class="stat-card"><div class="stat-card-label">Trusted</div><div class="stat-card-value" id="user-page-trusted">-</div></div>
@@ -1115,13 +1118,13 @@ class WorkerWebUI:
                                 <button class="stats-window-btn" id="stats-win-all" onclick="setStatsWindow(null, this)">All</button>
                             </div>
                         </div>
-                        <div class="grid-4">
+                        <div class="grid-4 stats-summary-grid">
                             <div class="stat-card"><div class="stat-card-label">Images Generated</div><div class="stat-card-value success" id="stats-images-generated">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Kudos Earned</div><div class="stat-card-value success" id="stats-kudos-earned">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Avg Images / hr</div><div class="stat-card-value accent" id="stats-avg-iph">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Avg Kudos / hr</div><div class="stat-card-value accent" id="stats-avg-kph">-</div></div>
                         </div>
-                        <div class="grid-2">
+                        <div class="grid-2 stats-summary-grid">
                             <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value" id="stats-jobs-popped">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="stats-jobs-faulted">-</div></div>
                         </div>
@@ -1312,7 +1315,7 @@ class WorkerWebUI:
                     const models = w.models || [];
                     const modelCount = models.length;
                     const modelTitles = models.map(function(m) { return m.replace(/ /g, '\u00A0'); }).join(', ');
-                    const sizeStr = w.max_pixels ? ('\u2248'+Math.round(Math.sqrt(w.max_pixels))+'px') : '-';
+                    const sizeStr = w.max_pixels ? ('\u2248 '+Math.round(Math.sqrt(w.max_pixels))+' px') : '-';
                     const uptimeSecs = w.uptime || 0;
                     const uh = Math.floor(uptimeSecs/3600), um = Math.floor((uptimeSecs%3600)/60);
                     const uptimeStr = uh > 0 ? uh+'h '+um+'m' : (um > 0 ? um+'m' : uptimeSecs+'s');
@@ -2987,8 +2990,8 @@ class WorkerWebUI:
                 } else {
                     var sortedNames = stateNames.slice().sort(sortByStateOrder);
                     var stateRows = sortedNames.map(function(s) {
-                        var avg = avgTimes[s] !== undefined ? avgTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
-                        var max = maxTimes[s] !== undefined ? maxTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + 's' : '-';
+                        var avg = avgTimes[s] !== undefined ? avgTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' s' : '-';
+                        var max = maxTimes[s] !== undefined ? maxTimes[s].toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' s' : '-';
                         return '<tr>' +
                             '<td>' + escapeHtml(s) + '</td>' +
                             '<td style="text-align:right;">' + avg + '</td>' +
