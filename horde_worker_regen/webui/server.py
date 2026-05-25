@@ -854,6 +854,20 @@ class WorkerWebUI:
         .setting-feedback.err { color: var(--error); }
         .settings-unavailable { background: #f1f5f9; border: 1px solid var(--border); border-radius: 10px; padding: 28px 20px; text-align: center; color: #64748b; font-size: 0.92rem; }
         [data-theme="dark"] .settings-unavailable { background: #0f172a; color: #64748b; }
+        .confirm-modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); z-index: 1200; align-items: center; justify-content: center; padding: 18px; }
+        .confirm-modal-backdrop.active { display: flex; }
+        .confirm-modal { width: min(420px, 100%); background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 22px 54px rgba(2, 6, 23, 0.35); padding: 16px; }
+        .confirm-modal-title { font-size: 0.95rem; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+        .confirm-modal-body { font-size: 0.84rem; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5; }
+        .confirm-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+        .confirm-modal-btn { padding: 6px 12px; border-radius: 7px; border: 1px solid transparent; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: background 0.15s, border-color 0.15s; }
+        .confirm-modal-btn.cancel { background: transparent; border-color: var(--border); color: var(--text-muted); }
+        .confirm-modal-btn.cancel:hover { background: #f1f5f9; }
+        .confirm-modal-btn.confirm { background: #b45309; color: #fff; }
+        .confirm-modal-btn.confirm:hover { background: #92400e; }
+        [data-theme="dark"] .confirm-modal-btn.cancel:hover { background: #1e293b; }
+        [data-theme="dark"] .confirm-modal-btn.confirm { background: #d97706; }
+        [data-theme="dark"] .confirm-modal-btn.confirm:hover { background: #b45309; }
 
     </style>
 </head>
@@ -1222,6 +1236,16 @@ class WorkerWebUI:
         </div>
         <button id="overlay-next" class="image-overlay-nav next" onclick="overlayNavigate(1)" aria-label="Next image" title="Next image">&#8250;</button>
     </div>
+    <div id="restart-confirm-modal" class="confirm-modal-backdrop" aria-hidden="true" onclick="dismissRestartConfirm(event)">
+        <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="restart-confirm-title" aria-describedby="restart-confirm-body">
+            <div id="restart-confirm-title" class="confirm-modal-title">Restart worker now?</div>
+            <div id="restart-confirm-body" class="confirm-modal-body">This will restart the worker process and temporarily interrupt job processing.</div>
+            <div class="confirm-modal-actions">
+                <button id="restart-confirm-cancel" class="confirm-modal-btn cancel" type="button" onclick="closeRestartConfirm()">Cancel</button>
+                <button id="restart-confirm-accept" class="confirm-modal-btn confirm" type="button" onclick="confirmRestartProgram()">Restart</button>
+            </div>
+        </div>
+    </div>
     <script>
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebar-overlay').classList.toggle('active'); }
         function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('active'); }
@@ -1475,7 +1499,10 @@ class WorkerWebUI:
         document.getElementById('image-overlay').addEventListener('click', function(e) { if (e.target === this) closeImageOverlay(); });
         document.addEventListener('keydown', function(e) {
             const overlayActive = document.getElementById('image-overlay').classList.contains('active');
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape' && _restartConfirmOpen) {
+                e.preventDefault();
+                closeRestartConfirm();
+            } else if (e.key === 'Escape') {
                 if (overlayActive) { e.preventDefault(); e.stopPropagation(); }
                 closeImageOverlay();
             } else if (overlayActive && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
@@ -3501,6 +3528,7 @@ class WorkerWebUI:
         var _settingsPendingQueue = null;
         var _settingsPendingModels = null;
         var _restartInFlight = false;
+        var _restartConfirmOpen = false;
 
         function _setSettingsStatus(msg, isError) {
             var el = document.getElementById('settings-status');
@@ -3839,7 +3867,33 @@ class WorkerWebUI:
 
         function restartProgram() {
             if (_restartInFlight) return;
-            if (!confirm('Restart the worker program now?')) return;
+            var modal = document.getElementById('restart-confirm-modal');
+            if (!modal) return;
+            _restartConfirmOpen = true;
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+            var acceptBtn = document.getElementById('restart-confirm-accept');
+            if (acceptBtn) acceptBtn.focus();
+        }
+
+        function closeRestartConfirm() {
+            var modal = document.getElementById('restart-confirm-modal');
+            if (!modal) return;
+            _restartConfirmOpen = false;
+            modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
+            var restartBtn = document.getElementById('settings-restart-btn');
+            if (restartBtn) restartBtn.focus();
+        }
+
+        function dismissRestartConfirm(evt) {
+            if (!evt) return;
+            if (evt.target && evt.target.id === 'restart-confirm-modal') closeRestartConfirm();
+        }
+
+        function confirmRestartProgram() {
+            closeRestartConfirm();
+            if (_restartInFlight) return;
             _restartInFlight = true;
             var restartBtn = document.getElementById('settings-restart-btn');
             if (restartBtn) restartBtn.disabled = true;
