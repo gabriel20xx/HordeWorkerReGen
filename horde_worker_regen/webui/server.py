@@ -3540,20 +3540,22 @@ class WorkerWebUI:
             });
         }
 
-        function _isEqualSimple(a, b) {
-            return JSON.stringify(a) === JSON.stringify(b);
-        }
-
         function stageSettingChange(key, value) {
+            var isPending = true;
             if (Object.prototype.hasOwnProperty.call(_settingsSnapshot, key) && _settingsSnapshot[key] === value) {
                 delete _settingsPending[key];
+                isPending = false;
             } else {
                 _settingsPending[key] = value;
             }
             _setSettingsDirty(
                 Object.keys(_settingsPending).length > 0 || _settingsPendingQueue !== null || _settingsPendingModels !== null,
             );
-            _showSettingFeedback(key, true, 'Pending');
+            if (isPending) {
+                _showSettingFeedback(key, true, 'Pending');
+            } else {
+                _clearSettingFeedback(key);
+            }
         }
 
         function stageQueueSetting(payload) {
@@ -3734,6 +3736,14 @@ class WorkerWebUI:
             fb.className = 'setting-feedback ' + (ok ? 'ok' : 'err');
             fb.style.opacity = '1';
             setTimeout(function() { fb.style.opacity = '0'; setTimeout(function() { fb.textContent = ''; }, 300); }, 2000);
+        }
+
+        function _clearSettingFeedback(key) {
+            var fb = document.getElementById('sfb-' + key);
+            if (!fb) return;
+            fb.textContent = '';
+            fb.className = 'setting-feedback';
+            fb.style.opacity = '0';
         }
 
         function stageNumericSetting(key) {

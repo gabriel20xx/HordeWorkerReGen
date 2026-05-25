@@ -452,6 +452,32 @@ class TestIdleHeartbeatTiming:
         assert proc._last_idle_heartbeat_time == send_time
 
 
+def test_start_exits_cleanly_when_restart_exec_fails() -> None:
+    """start() should log and exit cleanly when the restart execv call fails."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+    mock_manager.signal_handler = MagicMock()
+    mock_manager._main_loop = MagicMock(return_value=None)
+    mock_manager._restart_requested = True
+
+    bound_start = HordeWorkerProcessManager.start.__get__(mock_manager, HordeWorkerProcessManager)
+
+    with (
+        patch("signal.signal"),
+        patch("asyncio.run"),
+        patch("os.execv", side_effect=OSError("boom")) as mock_execv,
+        patch.object(sys, "exit") as mock_exit,
+        patch("horde_worker_regen.process_management.process_manager.logger") as mock_logger,
+    ):
+        bound_start()
+
+    mock_execv.assert_called_once_with(sys.executable, [sys.executable, *sys.argv])
+    mock_logger.warning.assert_called_once_with("Restarting worker program...")
+    mock_logger.exception.assert_called_once()
+    mock_exit.assert_called_once_with(1)
+
+
 class TestApiSubmitJobBrokenDataHandling:
     """Tests that api_submit_job skips broken jobs instead of leaving the submit queue blocked."""
 

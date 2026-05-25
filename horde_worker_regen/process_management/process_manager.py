@@ -7775,7 +7775,11 @@ class HordeWorkerProcessManager:
         asyncio.run(self._main_loop())
         if self._restart_requested:
             logger.warning("Restarting worker program...")
-            os.execv(sys.executable, [sys.executable, *sys.argv])
+            try:
+                os.execv(sys.executable, [sys.executable, *sys.argv])
+            except OSError as exc:
+                logger.exception(f"Failed to restart worker program via execv: {exc}")
+                sys.exit(1)
 
     def request_program_restart(self) -> None:
         """Request a graceful shutdown followed by an in-process restart."""

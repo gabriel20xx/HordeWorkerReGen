@@ -2108,6 +2108,8 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "onclick=\"applyPendingSettings()\"" in html
         assert "id=\"settings-restart-btn\"" in html
         assert "onclick=\"restartProgram()\"" in html
+        assert "_clearSettingFeedback(key);" in html
+        assert "function _isEqualSimple" not in html
         assert "id=\"' + pfx + '-set-btn\"" not in html
         assert "onclick=\"applyNumericSetting(\\'" not in html
         assert ".setting-number:disabled" in html
