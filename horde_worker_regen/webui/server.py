@@ -628,6 +628,12 @@ class WorkerWebUI:
             align-items: center;
             justify-content: center;
         }
+        .topbar-uptime, .status-badge, .job-state-badge, .process-type-badge, .process-state-badge, .model-badge, .worker-version-badge, .worker-type-badge, .worker-online-badge, .wcap {
+            height: var(--action-btn-height);
+            box-sizing: border-box;
+            display: inline-flex;
+            align-items: center;
+        }
 
         .log-panel { width: 100%; height: min(600px, 70vh); overflow: hidden; }
         .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; height: 100%; box-sizing: border-box; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
