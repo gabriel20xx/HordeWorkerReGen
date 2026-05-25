@@ -2527,7 +2527,7 @@ class HordeWorkerProcessManager:
                 self._end_inference_process(process)
 
         if not force and (not self._shutting_down) and (
-            self._process_map.num_inference_processes() <= self.max_inference_processes
+            self._process_map.num_loaded_inference_processes() <= self.max_inference_processes
         ):
             return
 
@@ -6561,12 +6561,12 @@ class HordeWorkerProcessManager:
                         self._replace_all_safety_process()
 
                     should_scale_down = self._inference_scale_down_requested or (
-                        self._process_map.num_inference_processes() > self.max_inference_processes
+                        self._process_map.num_loaded_inference_processes() > self.max_inference_processes
                     )
                     if should_scale_down:
                         self.end_inference_processes()
                         self._inference_scale_down_requested = (
-                            self._process_map.num_inference_processes() > self.max_inference_processes
+                            self._process_map.num_loaded_inference_processes() > self.max_inference_processes
                         )
 
                     if self._shutting_down and not self._last_pop_recently():
@@ -8284,6 +8284,25 @@ class HordeWorkerProcessManager:
                         self.jobs_pending_safety_check.append(job_info)
                     self._safety_processes_should_be_replaced = True
                     any_replaced = True
+
+                # Recover inference slots stuck in PROCESS_ENDING only when we need that
+                # slot to meet the configured active-process target. This avoids fighting
+                # legitimate scale-down operations where PROCESS_ENDING is expected.
+                if (
+                    not self._shutting_down
+                    and process_info.process_type == HordeProcessType.INFERENCE
+                    and process_info.last_process_state == HordeProcessState.PROCESS_ENDING
+                    and (now - process_info.last_received_timestamp) > self.bridge_data.process_timeout
+                    and self._process_map.num_loaded_inference_processes() < self.max_inference_processes
+                ):
+                    logger.error(
+                        f"{process_info} has been stuck in PROCESS_ENDING for "
+                        f"{now - process_info.last_received_timestamp:.0f}s; "
+                        "replacing it to restore inference capacity",
+                    )
+                    self._replace_inference_process(process_info)
+                    any_replaced = any_process_replaced = True
+                    continue
 
                 # Skip other state checks if no jobs are available since those states are job-related.
                 # "No jobs available" means either the API reported none, or pops are currently

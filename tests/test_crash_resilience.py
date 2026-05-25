@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from horde_worker_regen.process_management.messages import HordeProcessState
+from horde_worker_regen.process_management.messages import HordeProcessState, HordeProcessType
 
 if TYPE_CHECKING:
     from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -149,6 +149,47 @@ class TestReplaceHungProcessesAnyReplaced:
             "replace_hung_processes must return True for a stuck INFERENCE_PROCESSING process "
             "even when _recently_recovered is True"
         )
+        mock_manager._replace_inference_process.assert_called_once_with(mock_process)
+
+    def test_stuck_process_ending_slot_is_recovered_when_capacity_is_below_target(self) -> None:
+        """A stale PROCESS_ENDING slot should be replaced when active capacity is below max."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        import time
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = False
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
+        mock_manager._shutting_down = False
+        mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.process_timeout = 30
+        mock_manager.max_inference_processes = 2
+        mock_manager.jobs_pending_inference = []
+        mock_manager.jobs_in_progress = []
+        mock_manager._process_map.num_loaded_inference_processes.return_value = 1
+
+        mock_process = MagicMock()
+        mock_process.process_id = 1
+        mock_process.process_type = HordeProcessType.INFERENCE
+        mock_process.last_process_state = HordeProcessState.PROCESS_ENDING
+        mock_process.last_received_timestamp = time.time() - 120
+        mock_process.last_heartbeat_timestamp = time.time() - 120
+        mock_process.last_progress_timestamp = time.time() - 120
+        mock_process.last_job_referenced = None
+        mock_process.last_heartbeat_percent_complete = None
+
+        mock_manager._process_map.values.return_value = [mock_process]
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+
+        bound_method = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+
+        with patch("threading.Thread"):
+            result = bound_method()
+
+        assert result is True
         mock_manager._replace_inference_process.assert_called_once_with(mock_process)
 
 
