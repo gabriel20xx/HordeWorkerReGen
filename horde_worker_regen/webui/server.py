@@ -348,6 +348,7 @@ class WorkerWebUI:
         :root {
             --sidebar-width: 260px;
             --action-btn-height: 32px;
+            --page-spacing: 14px;
             --sidebar-bg: #1a1d2e;
             --sidebar-hover: #2d3148;
             --accent: #6366f1;
@@ -441,9 +442,10 @@ class WorkerWebUI:
         /* ---- Page (SPA) ---- */
         .page { display: none; }
         .page.active { display: block; }
+        .page > * + * { margin-top: var(--page-spacing); }
 
-        .section { margin-bottom: 30px; }
-        .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+        .section { margin-bottom: 0; }
+        .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: var(--page-spacing); }
         .section-title { font-size: 0.82rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 1px; }
         .section-count { background: #e2e8f0; color: #475569; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
 
@@ -451,9 +453,9 @@ class WorkerWebUI:
         .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }
         .card-title { font-size: 0.8rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; display: flex; align-items: center; gap: 7px; }
 
-        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--page-spacing); }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--page-spacing); }
+        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--page-spacing); }
         .overview-bottom-grid-left { grid-row: span 2; }
         .card-header-count { font-size: 0.75rem; font-weight: 700; color: #475569; }
 
@@ -814,7 +816,7 @@ class WorkerWebUI:
         .settings-page-btn.restart:hover:not(:disabled) { background: #fffbeb; }
         [data-theme="dark"] .settings-page-btn.restart { border-color: #92400e; color: #fcd34d; }
         [data-theme="dark"] .settings-page-btn.restart:hover:not(:disabled) { background: #2b1a06; }
-        .settings-group { margin-bottom: 24px; }
+        .settings-group { margin-bottom: var(--page-spacing); }
         .settings-group-title { font-size: 0.78rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
         [data-theme="dark"] .settings-group-title { color: #94a3b8; }
         .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
@@ -984,19 +986,19 @@ class WorkerWebUI:
             <div id="content" style="display: none;">
                 <!-- OVERVIEW PAGE -->
                 <div class="page active" id="page-overview">
-                    <div class="grid-4" style="margin-bottom: 14px;">
+                    <div class="grid-4">
                         <div class="stat-card"><div class="stat-card-label">Kudos This Session</div><div class="stat-card-value success" id="user-kudos-session">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="images-per-hour">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value accent" id="jobs-popped">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="jobs-completed">0</div></div>
                     </div>
-                    <div class="grid-4" style="margin-bottom: 14px;">
+                    <div class="grid-4">
                         <div class="stat-card"><div class="stat-card-label">Total Time without Jobs</div><div class="stat-card-value warning" id="time-without-jobs">0h 0m 0s</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Queued</div><div class="stat-card-value" id="jobs-queued">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Recovered</div><div class="stat-card-value warning" id="processes-recovered">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="jobs-faulted">0</div></div>
                     </div>
-                    <div class="grid-2" style="margin-bottom: 14px;">
+                    <div class="grid-2">
                         <div class="card">
                             <div class="card-header"><span class="card-title">&#9889; Current Job</span><span id="job-total-timer" style="margin-left:auto;font-size:0.75rem;color:#94a3b8;"></span></div>
                             <div id="overview-current-job" class="centered-empty-container"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
@@ -1059,12 +1061,12 @@ class WorkerWebUI:
                 <div class="page" id="page-user">
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128100; User Details</span></div>
-                        <div class="grid-3" style="margin-bottom: 14px;">
+                        <div class="grid-3">
                             <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value" id="user-page-username">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Worker Count</div><div class="stat-card-value" id="user-page-worker-count">-</div></div>
                         </div>
-                        <div class="grid-3" style="margin-bottom: 14px;">
+                        <div class="grid-3">
                             <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="user-page-images-per-hour">0</div></div>
                             <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
                             <div class="stat-card"><div class="stat-card-label">Trusted</div><div class="stat-card-value" id="user-page-trusted">-</div></div>
@@ -1113,13 +1115,13 @@ class WorkerWebUI:
                                 <button class="stats-window-btn" id="stats-win-all" onclick="setStatsWindow(null, this)">All</button>
                             </div>
                         </div>
-                        <div class="grid-4" style="margin-bottom:14px;">
+                        <div class="grid-4">
                             <div class="stat-card"><div class="stat-card-label">Images Generated</div><div class="stat-card-value success" id="stats-images-generated">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Kudos Earned</div><div class="stat-card-value success" id="stats-kudos-earned">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Avg Images / hr</div><div class="stat-card-value accent" id="stats-avg-iph">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Avg Kudos / hr</div><div class="stat-card-value accent" id="stats-avg-kph">-</div></div>
                         </div>
-                        <div class="grid-2" style="margin-bottom:14px;">
+                        <div class="grid-2">
                             <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value" id="stats-jobs-popped">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="stats-jobs-faulted">-</div></div>
                         </div>
