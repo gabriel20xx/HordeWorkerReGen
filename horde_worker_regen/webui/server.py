@@ -116,7 +116,12 @@ def _is_loopback_remote(remote: str | None) -> bool:
     if host == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host).is_loopback
+        ip = ipaddress.ip_address(host)
+        if ip.is_loopback:
+            return True
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            return ip.ipv4_mapped.is_loopback
+        return False
     except ValueError:
         return False
 

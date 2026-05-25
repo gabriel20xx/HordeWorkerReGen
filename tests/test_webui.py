@@ -2608,6 +2608,28 @@ async def test_webui_settings_post_rejects_non_local_clients() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_settings_post_accepts_ipv4_mapped_loopback_clients() -> None:
+    """Test that POST /api/settings accepts IPv4-mapped loopback clients."""
+    webui = WorkerWebUI(port=0)
+    received: list[tuple[str, object]] = []
+
+    def mock_callback(key: str, value: object) -> None:
+        received.append((key, value))
+
+    webui.set_setting_callback(mock_callback)
+
+    class DummyRequest:
+        remote = "::ffff:127.0.0.1"
+
+        async def json(self) -> dict[str, object]:
+            return {"key": "nsfw", "value": False}
+
+    response = await webui._handle_set_setting(DummyRequest())  # type: ignore[arg-type]
+    assert response.status == 200
+    assert received == [("nsfw", False)]
+
+
+@pytest.mark.asyncio
 async def test_webui_restart_post_calls_callback() -> None:
     """Test that POST /api/restart triggers the restart callback."""
     webui = WorkerWebUI(port=0)
