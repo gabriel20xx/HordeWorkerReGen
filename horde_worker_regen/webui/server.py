@@ -182,7 +182,7 @@ def _is_same_host_remote(request: web.Request) -> bool:
     except ValueError:
         return False
 
-    transport = request.transport
+    transport = getattr(request, "transport", None)
     if transport is None:
         return False
 
