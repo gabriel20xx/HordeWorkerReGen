@@ -986,7 +986,7 @@ class WorkerWebUI:
                 <!-- GALLERY PAGE -->
                 <div class="page" id="page-gallery">
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#128444; Gallery</span><span class="section-count" id="gallery-count">0</span></div>
+                        <div class="section-header"><span class="section-count" id="gallery-count">0</span></div>
                         <div class="card">
                             <div class="gallery-filter-bar">
                                 <label for="gallery-model-filter">Filter by model:</label>
@@ -1176,7 +1176,6 @@ class WorkerWebUI:
                 <div class="page" id="page-settings">
                     <div class="section">
                         <div class="section-header">
-                            <span class="section-title">&#9881; Settings</span>
                             <span id="settings-status" class="section-count" style="margin-left:auto;display:none;"></span>
                         </div>
                         <div id="settings-body">
