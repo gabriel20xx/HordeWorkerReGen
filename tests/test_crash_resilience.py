@@ -563,6 +563,47 @@ def test_start_timed_shutdown_skips_hard_exit_after_clean_shutdown() -> None:
     mock_exit.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("jobs_pending_submit", "expected_wait_seconds"),
+    [
+        (3, 14),   # (3 * 4) + 2
+        (100, 30),  # capped from 402 to 30
+    ],
+)
+def test_start_timed_shutdown_wait_seconds_caps_at_30(
+    jobs_pending_submit: int,
+    expected_wait_seconds: int,
+) -> None:
+    """Timed shutdown wait must be linear for small queues and capped for large queues."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    class ImmediateThread:
+        def __init__(self, *, target: object, daemon: bool) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+    mock_manager = MagicMock()
+    mock_manager.jobs_pending_submit = [MagicMock()] * jobs_pending_submit
+    mock_manager._shutting_down = False
+    mock_manager._shut_down = False
+    mock_manager._process_map.values.return_value = []
+
+    bound = HordeWorkerProcessManager._start_timed_shutdown.__get__(mock_manager, HordeWorkerProcessManager)
+
+    with (
+        patch("threading.Thread", side_effect=ImmediateThread),
+        patch("time.sleep") as mock_sleep,
+        patch("os._exit") as mock_exit,
+    ):
+        bound()
+
+    mock_sleep.assert_called_once_with(expected_wait_seconds)
+    mock_exit.assert_not_called()
+
+
 class TestCheckAutoRestartOnIdle:
     """Tests for _check_auto_restart_on_idle()."""
 
