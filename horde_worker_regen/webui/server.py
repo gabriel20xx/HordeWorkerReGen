@@ -548,7 +548,7 @@ class WorkerWebUI:
         .console-copy-btn.copied:hover { background: #16a34a; }
         .console-copy-btn.error { background: #ef4444; color: #fff; }
         .console-copy-btn.error:hover { background: #dc2626; }
-        .console-filter-select { margin-left: 6px; background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; height: var(--action-btn-height); }
+        .console-filter-select { margin-left: 6px; background: var(--card-bg); color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; height: var(--action-btn-height); }
 
         /* ---- Job pops pause button ---- */
         .job-pops-pause-wrap { position: relative; display: flex; width: 100%; }
@@ -721,6 +721,7 @@ class WorkerWebUI:
         [data-theme="dark"] .empty-state { color: #64748b; }
         [data-theme="dark"] .image-grid-item { background: #151e2e; }
         [data-theme="dark"] .page-size-select { color: #cbd5e1; }
+        [data-theme="dark"] .console-filter-select { color: #cbd5e1; }
         [data-theme="dark"] .error-item { background: #1a1010; border-color: #7f1d1d; color: #fca5a5; }
         [data-theme="dark"] .error-group { background: #1a1010; border-color: #7f1d1d; }
         [data-theme="dark"] .error-group-msg { color: #fca5a5; }
