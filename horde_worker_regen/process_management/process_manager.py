@@ -2396,24 +2396,6 @@ class HordeWorkerProcessManager:
         """Return true if there are any jobs not already in progress but are popped."""
         return any(job not in self.jobs_in_progress for job in self.jobs_pending_inference)
 
-    def get_expected_ram_usage(self, horde_model_name: str) -> int:  # TODO: Use or rework this
-        """Return the expected RAM usage of the given model, in bytes."""
-        if self.stable_diffusion_reference is None:
-            raise ValueError("stable_diffusion_reference is None")
-
-        horde_model_record = self.stable_diffusion_reference.root[horde_model_name]
-
-        if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_1:
-            return int(3 * 1024 * 1024 * 1024)
-        if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_2_512:
-            return 4 * 1024 * 1024 * 1024
-        if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_2_768:
-            return 5 * 1024 * 1024 * 1024
-        if horde_model_record.baseline == STABLE_DIFFUSION_BASELINE_CATEGORY.stable_diffusion_xl:
-            return int(5.75 * 1024 * 1024 * 1024)
-
-        raise ValueError(f"Model {horde_model_name} has an unknown baseline {horde_model_record.baseline}")
-
     def start_safety_processes(self) -> None:
         """Start all the safety processes configured to be used.
 
@@ -5813,13 +5795,6 @@ class HordeWorkerProcessManager:
             return
 
         self._last_job_pop_time = time.time()
-
-        # dummy_jobs = get_n_dummy_jobs(1)
-        # async with self._job_deque_lock:
-        #     self.job_deque.extend(dummy_jobs)
-        # logger.debug(f"Added {len(dummy_jobs)} dummy jobs to the job deque")
-        # # log a list of the current model names in the deque
-        # logger.debug(f"Current models in job deque: {[job.model for job in self.job_deque]}")
 
         models = set(self.bridge_data.image_models_to_load)
 
