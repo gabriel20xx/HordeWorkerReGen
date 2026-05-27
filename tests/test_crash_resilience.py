@@ -5869,6 +5869,7 @@ class TestPurgeJobsRetryCount:
 
         mock_manager.handle_job_fault = fake_handle_job_fault
         mock_manager._last_job_submitted_time = 0.0
+        mock_manager._shutting_down = False
         mock_manager._invalidate_megapixelsteps_cache = MagicMock()
 
         bound = types.MethodType(HordeWorkerProcessManager._purge_jobs, mock_manager)
@@ -5944,6 +5945,24 @@ class TestPurgeJobsRetryCount:
 
         assert fresh not in mock_manager.jobs_pending_inference
         assert retried in mock_manager.jobs_pending_inference
+
+    def test_all_jobs_cleared_during_shutdown(self) -> None:
+        """During shutdown, ALL pending jobs (including retry-eligible ones) must be cleared.
+
+        Keeping retry jobs during shutdown blocks the shutdown sequence indefinitely because
+        the process control loop waits for jobs_pending_inference to be empty.
+        """
+        retried = self._make_job("retried")
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[retried],
+            jobs_lookup={retried: self._make_job_info(retry_count=1)},
+        )
+        mock_manager._shutting_down = True
+        mock_manager._bound_purge()
+
+        assert len(mock_manager.jobs_pending_inference) == 0
 
 
 class TestReplaceHungProcessesLocalJobsPending:
