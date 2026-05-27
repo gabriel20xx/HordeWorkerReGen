@@ -843,6 +843,32 @@ class TestReceiveAndHandleProcessMessagesResilience(_ReceiveLoopHarnessMixin):
         msg = self._make_message(HordeProcessState.INFERENCE_STARTING)
         self._run_receive(msg, process_info)
 
+    def test_unloaded_model_from_ram_transition_clears_model_ownership(self) -> None:
+        """Transitioning into UNLOADED_MODEL_FROM_RAM must clear loaded model ownership."""
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.loaded_horde_model_name = "stale-model"
+        process_info.batch_amount = 1
+
+        msg = self._make_message(HordeProcessState.UNLOADED_MODEL_FROM_RAM)
+        mock_manager = self._run_receive(msg, process_info)
+
+        mock_manager._process_map.on_model_ram_clear.assert_called_once_with(process_id=0)
+
+    def test_repeated_unloaded_model_from_ram_state_does_not_double_clear(self) -> None:
+        """Repeated UNLOADED_MODEL_FROM_RAM state must not call RAM-clear again."""
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.UNLOADED_MODEL_FROM_RAM
+        process_info.loaded_horde_model_name = "stale-model"
+        process_info.batch_amount = 1
+
+        msg = self._make_message(HordeProcessState.UNLOADED_MODEL_FROM_RAM)
+        mock_manager = self._run_receive(msg, process_info)
+
+        mock_manager._process_map.on_model_ram_clear.assert_not_called()
+
 
 class TestIsStuckOnInference:
     """Tests for the is_stuck_on_inference() method covering both INFERENCE_STARTING and INFERENCE_PROCESSING."""
@@ -5206,6 +5232,18 @@ class TestReplaceHungModelPreloaded:
 
         mock_manager._replace_inference_process.assert_not_called()
         assert result is False
+
+    def test_unloaded_model_from_ram_replaced_after_timeout(self) -> None:
+        """A process stuck in UNLOADED_MODEL_FROM_RAM beyond preload_timeout must be replaced."""
+        proc = self._make_process(1, HordeProcessState.UNLOADED_MODEL_FROM_RAM, time_elapsed=9999.0)
+        mock_manager = self._make_manager([proc], recently_recovered=False)
+        mock_manager._check_and_replace_process = self._fake_check_and_replace(mock_manager)
+
+        with patch("threading.Thread"):
+            result = mock_manager._bound_replace_hung()
+
+        assert result is True
+        mock_manager._replace_inference_process.assert_called_once_with(proc)
 
 
 class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
