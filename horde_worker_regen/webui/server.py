@@ -320,6 +320,7 @@ class WorkerWebUI:
         self.app.router.add_get("/api/last_image", self._handle_last_image)
         self.app.router.add_get("/api/gallery", self._handle_gallery)
         self.app.router.add_get("/api/gallery/models", self._handle_gallery_models)
+        self.app.router.add_get("/api/gallery/safety", self._handle_gallery_safety)
         self.app.router.add_get("/api/gallery/image", self._handle_gallery_image)
         self.app.router.add_get("/api/config", self._handle_config)
         self.app.router.add_get("/health", self._handle_health)
@@ -1381,6 +1382,7 @@ class WorkerWebUI:
             }
             if (pageId === 'gallery') {
                 populateGalleryModelFilter();
+                populateGallerySafetyFilter();
                 const gridEl = document.getElementById('gallery-grid');
                 const gridEmpty = !gridEl || !gridEl.querySelector('.image-grid-item');
                 if (gridEmpty) {
@@ -2240,6 +2242,26 @@ class WorkerWebUI:
                     }
                 })
                 .catch(err => { console.error('Gallery models fetch error:', err); });
+        }
+        function populateGallerySafetyFilter() {
+            fetch('/api/gallery/safety')
+                .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                .then(data => {
+                    const sel = document.getElementById('gallery-safety-filter');
+                    if (!sel) return;
+                    const prev = sel.value;
+                    const total = data.total || 0;
+                    const sfw = data.sfw || 0;
+                    const nsfw = data.nsfw || 0;
+                    const csam = data.csam || 0;
+                    sel.innerHTML =
+                        '<option value="">' + 'All' + (total ? ' (' + total + ')' : '') + '</option>' +
+                        '<option value="sfw">' + 'SFW only' + (sfw ? ' (' + sfw + ')' : '') + '</option>' +
+                        '<option value="nsfw">' + 'NSFW' + (nsfw ? ' (' + nsfw + ')' : '') + '</option>' +
+                        '<option value="csam">' + 'CSAM' + (csam ? ' (' + csam + ')' : '') + '</option>';
+                    sel.value = prev;
+                })
+                .catch(err => { console.error('Gallery safety fetch error:', err); });
         }
         function isScrolledToBottom(el, tol) { return el.scrollHeight - el.clientHeight <= el.scrollTop + tol; }
         function ansiToHtml(text) {
@@ -4507,6 +4529,34 @@ class WorkerWebUI:
         return web.json_response({
             "total": len(self._gallery_dict),
             "models": [{"name": m, "count": c} for m, c in sorted(counts.items())],
+        })
+
+    async def _handle_gallery_safety(self, request: web.Request) -> web.Response:
+        """Return per-safety-category image counts for the gallery filter dropdown.
+
+        Returns:
+            JSON object with:
+            - ``total`` (int): total number of gallery entries
+            - ``sfw`` (int): entries that are neither NSFW nor CSAM
+            - ``nsfw`` (int): entries flagged as NSFW
+            - ``csam`` (int): entries flagged as CSAM
+        """
+        total = len(self._gallery_dict)
+        nsfw_count = 0
+        csam_count = 0
+        for entry in self._gallery_dict.values():
+            if entry.get("is_nsfw"):
+                nsfw_count += 1
+            if entry.get("is_csam"):
+                csam_count += 1
+        sfw_count = sum(
+            1 for e in self._gallery_dict.values() if not e.get("is_nsfw") and not e.get("is_csam")
+        )
+        return web.json_response({
+            "total": total,
+            "sfw": sfw_count,
+            "nsfw": nsfw_count,
+            "csam": csam_count,
         })
 
     async def _handle_gallery_image(self, request: web.Request) -> web.Response:
