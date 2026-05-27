@@ -3449,7 +3449,12 @@ class HordeWorkerProcessManager:
                         self._last_image_base64 = images_base64
                         self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
                         # Add each image to the WebUI gallery
-                        for img_b64 in images_base64:
+                        for img_idx, img_b64 in enumerate(images_base64):
+                            safety_eval = (
+                                message.safety_evaluations[img_idx]
+                                if img_idx < len(message.safety_evaluations)
+                                else None
+                            )
                             self.webui.add_gallery_image(
                                 {
                                     "base64": img_b64,
@@ -3457,6 +3462,8 @@ class HordeWorkerProcessManager:
                                     "model": completed_job_info.sdk_api_job_info.model
                                     if completed_job_info.sdk_api_job_info
                                     else None,
+                                    "is_nsfw": safety_eval.is_nsfw if safety_eval is not None else False,
+                                    "is_csam": safety_eval.is_csam if safety_eval is not None else False,
                                 },
                             )
                     except (FileNotFoundError, OSError) as e:
