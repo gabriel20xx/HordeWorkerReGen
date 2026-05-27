@@ -227,6 +227,13 @@ class WorkerWebUI:
         # Current settings snapshot pushed by the process manager via update_settings_data().
         self._settings_data: dict[str, Any] = {}
 
+        # Models data: enabled/disabled model lists for the Models settings section.
+        self._models_data: dict[str, list[str]] = {"enabled": [], "disabled": []}
+
+        # Optional callback invoked when the UI toggles a model's enabled state.
+        # Signature: (model_name: str, enabled: bool) -> None
+        self._toggle_model_callback: Callable[[str, bool], None] | None = None
+
         self._setup_routes()
 
     def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
@@ -314,6 +321,26 @@ class WorkerWebUI:
         """
         self._settings_data = dict(settings)
 
+    def set_toggle_model_callback(self, callback: Callable[[str, bool], None] | None) -> None:
+        """Register (or clear) the callback invoked when the UI toggles a model.
+
+        Args:
+            callback: A callable that accepts a model name (str) and enabled state (bool).
+                      Pass ``None`` to unregister.
+        """
+        self._toggle_model_callback = callback
+
+    def update_models_data(self, enabled: list[str], disabled: list[str]) -> None:
+        """Update the enabled/disabled model lists served by ``GET /api/models``.
+
+        Called by the process manager each status update cycle.
+
+        Args:
+            enabled: List of model names currently enabled for job pops.
+            disabled: List of model names currently disabled by the user.
+        """
+        self._models_data = {"enabled": sorted(enabled), "disabled": sorted(disabled)}
+
     def _setup_routes(self) -> None:
         """Set up the web server routes."""
         self.app.router.add_get("/", self._handle_index)
@@ -332,6 +359,8 @@ class WorkerWebUI:
         self.app.router.add_post("/api/job_pops/pause", self._handle_set_job_pops_paused)
         self.app.router.add_get("/api/settings", self._handle_get_settings)
         self.app.router.add_post("/api/settings", self._handle_set_setting)
+        self.app.router.add_get("/api/models", self._handle_get_models)
+        self.app.router.add_post("/api/models", self._handle_toggle_model)
         self.app.router.add_post("/api/restart", self._handle_restart_program)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
@@ -880,6 +909,26 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-feedback.pending { color: #fcd34d; }
         .settings-unavailable { background: #f1f5f9; border: 1px solid var(--border); border-radius: 10px; padding: 28px 20px; text-align: center; color: #64748b; font-size: 0.92rem; }
         [data-theme="dark"] .settings-unavailable { background: #0f172a; color: #64748b; }
+        /* Models section */
+        .models-containers { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        @media (max-width: 640px) { .models-containers { grid-template-columns: 1fr; } }
+        .models-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-height: 80px; }
+        .models-box-title { font-size: 0.75rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        [data-theme="dark"] .models-box-title { color: #94a3b8; }
+        .models-box-title .models-count { font-weight: 400; opacity: 0.7; }
+        .models-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+        .model-pill { display: inline-block; padding: 4px 10px; font-size: 0.78rem; font-weight: 500; border-radius: 14px; cursor: pointer; transition: background 0.15s, color 0.15s, transform 0.1s; user-select: none; }
+        .model-pill:hover { transform: scale(1.04); }
+        .model-pill:active { transform: scale(0.97); }
+        .model-pill.enabled { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
+        .model-pill.enabled:hover { background: #bfdbfe; }
+        [data-theme="dark"] .model-pill.enabled { background: #1e3a5f; color: #93c5fd; border-color: #2563eb; }
+        [data-theme="dark"] .model-pill.enabled:hover { background: #1e40af; }
+        .model-pill.disabled { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+        .model-pill.disabled:hover { background: #e2e8f0; }
+        [data-theme="dark"] .model-pill.disabled { background: #1e293b; color: #94a3b8; border-color: #334155; }
+        [data-theme="dark"] .model-pill.disabled:hover { background: #334155; }
+        .models-empty { font-size: 0.78rem; color: #94a3b8; font-style: italic; }
         .confirm-modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); z-index: 1200; align-items: center; justify-content: center; padding: 18px; }
         .confirm-modal-backdrop.active { display: flex; }
         .confirm-modal { width: min(420px, 100%); background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 22px 54px rgba(2, 6, 23, 0.35); padding: 16px; }
@@ -3943,6 +3992,73 @@ class WorkerWebUI:
             }
             body.innerHTML = html || '<div class="settings-unavailable">No configurable settings available.</div>';
             _updateApplyButtonState();
+            // Fetch and render the Models section after the settings categories
+            fetchModels();
+        }
+
+        var _modelsFetchInProgress = false;
+        function fetchModels() {
+            if (_modelsFetchInProgress) return;
+            _modelsFetchInProgress = true;
+            fetch('/api/models')
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(data) { renderModelsSection(data.enabled || [], data.disabled || []); })
+                .catch(function() { /* silently skip models section if unavailable */ })
+                .finally(function() { _modelsFetchInProgress = false; });
+        }
+
+        function renderModelsSection(enabled, disabled) {
+            var body = document.getElementById('settings-body');
+            if (!body) return;
+            // Remove any existing models section before re-rendering
+            var existing = document.getElementById('models-section');
+            if (existing) existing.remove();
+
+            if (enabled.length === 0 && disabled.length === 0) return;
+
+            var section = document.createElement('div');
+            section.id = 'models-section';
+            section.className = 'settings-group';
+            var h = '<div class="settings-group-title">Models</div>';
+            h += '<div class="models-containers">';
+            // Enabled box
+            h += '<div class="models-box">';
+            h += '<div class="models-box-title">Enabled <span class="models-count">(' + enabled.length + ')</span></div>';
+            h += '<div class="models-pills" id="models-enabled-pills">';
+            if (enabled.length === 0) {
+                h += '<span class="models-empty">No enabled models</span>';
+            } else {
+                for (var i = 0; i < enabled.length; i++) {
+                    h += '<span class="model-pill enabled" onclick="toggleModel(\'' + escapeHtml(enabled[i]).replace(/'/g, "\\'") + '\', false)" title="Click to disable">' + escapeHtml(enabled[i]) + '</span>';
+                }
+            }
+            h += '</div></div>';
+            // Disabled box
+            h += '<div class="models-box">';
+            h += '<div class="models-box-title">Disabled <span class="models-count">(' + disabled.length + ')</span></div>';
+            h += '<div class="models-pills" id="models-disabled-pills">';
+            if (disabled.length === 0) {
+                h += '<span class="models-empty">No disabled models</span>';
+            } else {
+                for (var j = 0; j < disabled.length; j++) {
+                    h += '<span class="model-pill disabled" onclick="toggleModel(\'' + escapeHtml(disabled[j]).replace(/'/g, "\\'") + '\', true)" title="Click to enable">' + escapeHtml(disabled[j]) + '</span>';
+                }
+            }
+            h += '</div></div>';
+            h += '</div>';
+            section.innerHTML = h;
+            body.appendChild(section);
+        }
+
+        function toggleModel(modelName, enable) {
+            fetch('/api/models', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({model: modelName, enabled: enable})
+            })
+            .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function() { fetchModels(); })
+            .catch(function(err) { console.error('Failed to toggle model:', err); });
         }
 
         function _showSettingFeedback(key, ok, msg, opts) {
@@ -4836,6 +4952,60 @@ class WorkerWebUI:
 
         self._settings_data[key] = value
         return web.json_response({"key": key, "value": value})
+
+    async def _handle_get_models(self, request: web.Request) -> web.Response:
+        """Return the current enabled and disabled model lists.
+
+        Response shape::
+
+            {
+                "enabled": ["model_a", "model_b", ...],
+                "disabled": ["model_c", ...]
+            }
+        """
+        return web.json_response(self._models_data)
+
+    async def _handle_toggle_model(self, request: web.Request) -> web.Response:
+        """Toggle a model between enabled and disabled state.
+
+        Expected JSON body::
+
+            {"model": "<model_name>", "enabled": true|false}
+
+        Returns:
+            200 with ``{"model": ..., "enabled": ...}`` on success.
+            400 on missing/invalid input.
+            503 if no toggle callback has been registered.
+            500 on internal error.
+        """
+        try:
+            body = await request.json()
+        except (ValueError, TypeError, aiohttp.ContentTypeError) as exc:
+            return web.json_response({"error": f"Invalid JSON body: {exc}"}, status=400)
+
+        model = body.get("model")
+        if not isinstance(model, str) or not model:
+            return web.json_response({"error": "Field 'model' must be a non-empty string"}, status=400)
+
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            return web.json_response({"error": "Field 'enabled' must be a boolean"}, status=400)
+
+        # Verify the model is known (in either list)
+        all_models = self._models_data["enabled"] + self._models_data["disabled"]
+        if model not in all_models:
+            return web.json_response({"error": f"Unknown model: '{model}'"}, status=400)
+
+        if self._toggle_model_callback is None:
+            return web.json_response({"error": "Models API is not available"}, status=503)
+
+        try:
+            self._toggle_model_callback(model, enabled)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Error toggling model '{model}' enabled={enabled}: {exc}")
+            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+
+        return web.json_response({"model": model, "enabled": enabled})
 
     async def _handle_restart_program(self, request: web.Request) -> web.Response:
         """Handle a request to restart the worker program."""

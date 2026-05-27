@@ -1761,6 +1761,11 @@ class HordeWorkerProcessManager:
         logger.debug(f"Models to load: {bridge_data.image_models_to_load}")
         logger.debug(f"Custom Models to load: {bridge_data.custom_models}")
 
+        # Store the full original model list so the webui can show disabled models.
+        # Runtime-disabled models are tracked separately and removed from image_models_to_load.
+        self._all_models_configured: list[str] = list(bridge_data.image_models_to_load)
+        self._runtime_disabled_models: set[str] = set()
+
         self.horde_model_reference_manager = horde_model_reference_manager
 
         # Initialize HTTP client session as None - will be set in _main_loop
@@ -2005,6 +2010,7 @@ class HordeWorkerProcessManager:
             self.webui.set_max_active_models_auto_mode_callback(self.set_max_active_models_auto_mode)
             self.webui.set_setting_callback(self.apply_setting)
             self.webui.set_restart_program_callback(self.request_program_restart)
+            self.webui.set_toggle_model_callback(self._toggle_model)
             logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
             # Add a log handler to capture logs for webui with colored output.
@@ -2208,6 +2214,27 @@ class HordeWorkerProcessManager:
             raise ValueError(f"Unknown bridge_data field: '{key}'")
         setattr(self.bridge_data, key, value)
         logger.info(f"Runtime setting '{key}' changed to {value!r} via web UI")
+
+    def _toggle_model(self, model_name: str, enabled: bool) -> None:
+        """Toggle a model's enabled state for job pops at runtime.
+
+        When a model is disabled it is removed from ``bridge_data.image_models_to_load``
+        so it will not be included in future job pop requests.  Re-enabling adds it back.
+
+        Args:
+            model_name: The model name to toggle.
+            enabled: ``True`` to enable, ``False`` to disable.
+        """
+        if enabled:
+            self._runtime_disabled_models.discard(model_name)
+            if model_name not in self.bridge_data.image_models_to_load:
+                self.bridge_data.image_models_to_load.append(model_name)
+            logger.info(f"Model '{model_name}' enabled via web UI")
+        else:
+            self._runtime_disabled_models.add(model_name)
+            if model_name in self.bridge_data.image_models_to_load:
+                self.bridge_data.image_models_to_load.remove(model_name)
+            logger.info(f"Model '{model_name}' disabled via web UI")
 
     def _get_settings_snapshot(self) -> dict[str, object]:
         """Return a flat dict of the current values of all runtime-configurable settings.
@@ -7758,6 +7785,11 @@ class HordeWorkerProcessManager:
 
         # Push current settings snapshot so the Settings page reflects live values.
         self.webui.update_settings_data(self._get_settings_snapshot())
+
+        # Push current model enabled/disabled lists so the Models section reflects live state.
+        enabled_models = list(self.bridge_data.image_models_to_load)
+        disabled_models = [m for m in self._all_models_configured if m in self._runtime_disabled_models]
+        self.webui.update_models_data(enabled_models, disabled_models)
 
     def _handle_exception(self, future: asyncio.Future) -> None:
         """Logs exceptions from asyncio tasks.
