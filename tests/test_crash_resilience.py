@@ -528,6 +528,41 @@ def test_start_exits_cleanly_when_restart_exec_fails() -> None:
     mock_exit.assert_called_once_with(1)
 
 
+def test_start_timed_shutdown_skips_hard_exit_after_clean_shutdown() -> None:
+    """Timed shutdown fail-safe must do nothing once shutdown has already completed."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    class ImmediateThread:
+        def __init__(self, *, target: object, daemon: bool) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+    mock_process = MagicMock()
+    mock_manager = MagicMock()
+    mock_manager.jobs_pending_submit = []
+    mock_manager._shutting_down = True
+    mock_manager._shut_down = True
+    mock_manager._process_map.values.return_value = [mock_process]
+
+    bound = HordeWorkerProcessManager._start_timed_shutdown.__get__(mock_manager, HordeWorkerProcessManager)
+
+    with (
+        patch("threading.Thread", side_effect=ImmediateThread) as mock_thread,
+        patch("time.sleep"),
+        patch("os._exit") as mock_exit,
+    ):
+        bound()
+
+    mock_thread.assert_called_once()
+    assert mock_thread.call_args.kwargs["daemon"] is True
+    mock_process.mp_process.kill.assert_not_called()
+    mock_process.mp_process.join.assert_not_called()
+    mock_exit.assert_not_called()
+
+
 class TestCheckAutoRestartOnIdle:
     """Tests for _check_auto_restart_on_idle()."""
 
@@ -5869,6 +5904,7 @@ class TestPurgeJobsRetryCount:
 
         mock_manager.handle_job_fault = fake_handle_job_fault
         mock_manager._last_job_submitted_time = 0.0
+        mock_manager._shutting_down = False
         mock_manager._invalidate_megapixelsteps_cache = MagicMock()
 
         bound = types.MethodType(HordeWorkerProcessManager._purge_jobs, mock_manager)
@@ -5944,6 +5980,24 @@ class TestPurgeJobsRetryCount:
 
         assert fresh not in mock_manager.jobs_pending_inference
         assert retried in mock_manager.jobs_pending_inference
+
+    def test_all_jobs_cleared_during_shutdown(self) -> None:
+        """During shutdown, ALL pending jobs (including retry-eligible ones) must be cleared.
+
+        Keeping retry jobs during shutdown blocks the shutdown sequence indefinitely because
+        the process control loop waits for jobs_pending_inference to be empty.
+        """
+        retried = self._make_job("retried")
+
+        mock_manager = self._make_manager(
+            jobs_in_progress=[],
+            jobs_pending_inference=[retried],
+            jobs_lookup={retried: self._make_job_info(retry_count=1)},
+        )
+        mock_manager._shutting_down = True
+        mock_manager._bound_purge()
+
+        assert len(mock_manager.jobs_pending_inference) == 0
 
 
 class TestReplaceHungProcessesLocalJobsPending:

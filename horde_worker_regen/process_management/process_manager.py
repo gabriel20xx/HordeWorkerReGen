@@ -7960,6 +7960,9 @@ class HordeWorkerProcessManager:
             # Just in case the process manager gets stuck on shutdown
             time.sleep((len(self.jobs_pending_submit) * 4) + 2)
 
+            if self._shut_down or not self._shutting_down:
+                return
+
             for process in self._process_map.values():
                 try:
                     process.mp_process.kill()
@@ -7969,9 +7972,11 @@ class HordeWorkerProcessManager:
                 except Exception as e:
                     logger.error(f"Failed to kill process {process}: {e}")
 
-            sys.exit(1)
+            # Use os._exit instead of sys.exit because sys.exit only raises SystemExit
+            # which, when called from a non-main thread, only terminates that thread.
+            os._exit(1)
 
-        threading.Thread(target=hard_shutdown).start()
+        threading.Thread(target=hard_shutdown, daemon=True).start()
 
     _recently_recovered = False
 
@@ -7990,30 +7995,33 @@ class HordeWorkerProcessManager:
                 self.handle_job_fault(faulted_job=job, process_info=None)
             logger.error("Cleared jobs in progress")
 
-        # Keep only jobs that have already been retried at least once (retry_count > 0).
-        # These were faulted in a prior cycle and are awaiting their retry attempt; discarding
-        # them would permanently lose the job without ever giving it a second chance.
-        # Fresh pending jobs (retry_count == 0) are cleared — the server will re-queue them.
+        # During shutdown, clear ALL pending jobs — there is no opportunity to retry them
+        # and keeping them blocks the shutdown sequence indefinitely.
+        # When not shutting down, keep jobs that have already been retried at least once
+        # (retry_count > 0) so they get a second chance on a fresh process.
         if len(self.jobs_pending_inference) > 0:
-            kept = []
-            for job in self.jobs_pending_inference:
-                job_info = self.jobs_lookup.get(job)
-                if job_info is None:
-                    logger.warning(
-                        f"Job {job.id_} is in jobs_pending_inference but missing from jobs_lookup "
-                        "(state inconsistency); dropping it during purge.",
-                    )
-                elif job_info.retry_count > 0:
-                    kept.append(job)
-            self.jobs_pending_inference = deque(kept)
-            self._last_job_submitted_time = time.time()
-
-            # Log how many jobs were kept for retry
-            jobs_kept_for_retry = len(self.jobs_pending_inference)
-            if jobs_kept_for_retry > 0:
-                logger.warning(f"Cleared jobs pending inference (kept {jobs_kept_for_retry} job(s) for retry)")
+            if self._shutting_down:
+                self.jobs_pending_inference.clear()
+                logger.warning("Cleared all jobs pending inference (shutdown in progress)")
             else:
-                logger.error("Cleared jobs pending inference")
+                kept = []
+                for job in self.jobs_pending_inference:
+                    job_info = self.jobs_lookup.get(job)
+                    if job_info is None:
+                        logger.warning(
+                            f"Job {job.id_} is in jobs_pending_inference but missing from jobs_lookup "
+                            "(state inconsistency); dropping it during purge.",
+                        )
+                    elif job_info.retry_count > 0:
+                        kept.append(job)
+                self.jobs_pending_inference = deque(kept)
+
+                # Log how many jobs were kept for retry
+                jobs_kept_for_retry = len(self.jobs_pending_inference)
+                if jobs_kept_for_retry > 0:
+                    logger.warning(f"Cleared jobs pending inference (kept {jobs_kept_for_retry} job(s) for retry)")
+                else:
+                    logger.error("Cleared jobs pending inference")
 
         if len(self.jobs_being_safety_checked) > 0:
             self.jobs_being_safety_checked.clear()
