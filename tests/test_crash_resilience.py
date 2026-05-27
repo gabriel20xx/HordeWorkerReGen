@@ -8777,7 +8777,7 @@ class TestIsTimeForShutdownRecentlyRecovered:
         assert mock_manager.is_time_for_shutdown() is False
 
     def test_not_recently_recovered_process_starting_allows_shutdown(self) -> None:
-        """_recently_recovered=False with all PROCESS_STARTING allows shutdown (ENDING/ENDING path)."""
+        """_recently_recovered=False with all PROCESS_STARTING allows shutdown (ENDING/ENDED path)."""
         mock_manager = self._make_manager(
             recently_recovered=False,
             process_states=[HordeProcessState.PROCESS_STARTING],
