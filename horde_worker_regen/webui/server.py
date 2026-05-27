@@ -848,6 +848,10 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-label { color: #e2e8f0; }
         .setting-desc { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
         [data-theme="dark"] .setting-desc { color: #94a3b8; }
+        .setting-env { font-size: 0.7rem; color: #8b5cf6; margin-top: 1px; }
+        .setting-env code { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; background: rgba(139, 92, 246, 0.08); padding: 1px 4px; border-radius: 3px; }
+        [data-theme="dark"] .setting-env { color: #a78bfa; }
+        [data-theme="dark"] .setting-env code { background: rgba(167, 139, 250, 0.12); }
         .setting-ctrl { flex-shrink: 0; margin-left: auto; display: flex; align-items: center; justify-content: flex-end; text-align: right; gap: 6px; }
         /* Toggle switch */
         .setting-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
@@ -3647,46 +3651,46 @@ class WorkerWebUI:
         // SETTINGS PAGE
         // ========================================================
         const _SETTINGS_SPEC = {
-            // key: [label, description, category, type ('bool'|'int'|'float'|'int_auto'), min, max, restartRequired, autoPrefix?]
-            nsfw:                     ['NSFW',                    'Accept NSFW image jobs.',                                              'Capabilities', 'bool',  null, null, false],
-            censor_nsfw:              ['Censor NSFW',             'Censor NSFW content even when accepting NSFW jobs.',                  'Capabilities', 'bool',  null, null, false],
-            allow_img2img:            ['Allow img2img',           'Accept image-to-image jobs.',                                         'Capabilities', 'bool',  null, null, false],
-            allow_inpainting:         ['Allow Painting',          'Accept inpainting / painting jobs.',                                  'Capabilities', 'bool',  null, null, false],
-            allow_unsafe_ip:          ['Allow Unsafe IPs',        'Accept requests from flagged or unsafe IP addresses.',                'Capabilities', 'bool',  null, null, false],
-            allow_post_processing:    ['Allow Post-Processing',   'Accept jobs that include post-processing steps.',                     'Capabilities', 'bool',  null, null, false],
-            allow_controlnet:         ['Allow ControlNet',        'Accept ControlNet jobs.',                                             'Capabilities', 'bool',  null, null, false],
-            allow_sdxl_controlnet:    ['Allow SDXL ControlNet',   'Accept SDXL ControlNet jobs.',                                        'Capabilities', 'bool',  null, null, false],
-            allow_lora:               ['Allow LoRA',              'Accept jobs that use LoRA models.',                                   'Capabilities', 'bool',  null, null, false],
-            require_upfront_kudos:    ['Require Upfront Kudos',   'Only accept jobs from users who have enough kudos upfront.',          'Capabilities', 'bool',  null, null, false],
-            limit_max_steps:          ['Limit Max Steps',         'Cap the number of inference steps to the worker\'s configured max.',  'Capabilities', 'bool',  null, null, false],
-            extra_slow_worker:        ['Extra Slow Worker',       'Enable extra-slow-worker mode (forces conservative settings).',       'Capabilities', 'bool',  null, null, true],
-            job_queue_size:           ['Job Queue Size',          'Maximum jobs held in the queue at once (0\u00a0=\u00a0unlimited).',  'Performance',  'int_auto', 0, 999, false, 'queue'],
-            active_model_count:       ['Max Active Models',       'Maximum number of model slots kept active simultaneously.',           'Performance',  'int_auto', 1, 999, false, 'models'],
-            max_power:                ['Max Power',               'Maximum resolution multiplier (formula: 64\u00d764\u00d78\u00d7max_power pixels).',         'Performance',  'int',   1,    128,  false],
-            max_batch:                ['Max Batch',               'Maximum number of images per batched inference job.',                 'Performance',  'int',   1,    100,  false],
-            max_threads:              ['Max Threads',             'Maximum number of concurrent inference threads.',                     'Performance',  'int',   1,    8,    true],
-            safety_on_gpu:            ['Safety on GPU',           'Run the safety/CLIP model on GPU instead of CPU (~1.2 GB VRAM).',    'Performance',  'bool',  null, null, true],
-            high_memory_mode:         ['High Memory Mode',        'Keep models in VRAM to reduce load times.',                          'Performance',  'bool',  null, null, true],
-            very_high_memory_mode:    ['Very High Memory Mode',   'Aggressive VRAM retention (data-center GPUs only).',                 'Performance',  'bool',  null, null, true],
-            high_performance_mode:    ['High Performance Mode',   'Enable for GPUs with high throughput (RTX 4090 or better).',         'Performance',  'bool',  null, null, true],
-            moderate_performance_mode:['Moderate Performance Mode','Enable for mid-range high-end GPUs (RTX 3080 or better).',          'Performance',  'bool',  null, null, true],
-            unload_models_from_vram_often: ['Unload VRAM Often',  'Unload models from VRAM between jobs to free memory.',              'Performance',  'bool',  null, null, false],
-            very_fast_disk_mode:      ['Very Fast Disk Mode',     'Load more models concurrently when using a very fast SSD/NVMe.',     'Performance',  'bool',  null, null, false],
-            post_process_job_overlap: ['PP Job Overlap',          'Overlap post-processing with the next inference job.',               'Performance',  'bool',  null, null, false],
-            cycle_process_on_model_change: ['Cycle Process on Model Change', 'Restart the inference process when the loaded model changes.', 'Performance', 'bool', null, null, false],
-            horde_model_stickiness:   ['Model Stickiness',        'Chance (0\u20131) to prefer currently loaded models when popping a job.',  'Performance',  'float', 0.0, 1.0, false],
-            process_timeout:          ['Process Timeout (s)',     'Max seconds a job may run before being killed.',                     'Timeouts',     'int',   60,   3600, false],
-            post_process_timeout:     ['Post-Process Timeout (s)','Max seconds allowed for post-processing.',                          'Timeouts',     'int',   15,   600,  false],
-            preload_timeout:          ['Preload Timeout (s)',      'Max seconds allowed to load a model.',                             'Timeouts',     'int',   15,   600,  false],
-            inference_step_timeout:   ['Inference Step Timeout (s)','Max seconds allowed per inference step before detecting a stuck job.','Timeouts',  'int',   60,   1800, false],
-            minutes_allowed_without_jobs: ['Minutes Without Jobs','Minutes of idle time before the worker warns about no jobs.',       'Behavior',     'int',   0,    3599, false],
-            auto_restart_on_idle_minutes: ['Auto-Restart Idle (min)','Restart the worker automatically if no job has been submitted for this many minutes (0\u00a0=\u00a0disabled; default\u00a060).', 'Behavior', 'int', 0, 1440, false],
-            suppress_speed_warnings:  ['Suppress Speed Warnings', 'Do not print speed-related warning messages.',                      'Behavior',     'bool',  null, null, false],
-            exit_on_unhandled_faults: ['Exit on Unhandled Faults','Exit the worker instead of recovering from an unhandled fault.',    'Behavior',     'bool',  null, null, false],
-            limited_console_messages: ['Limited Console Messages','Only log job submission and status messages to console.',            'Behavior',     'bool',  null, null, false],
-            stats_output_frequency:   ['Stats Frequency (s)',     'How often (in seconds) to print the status line to console.',       'Behavior',     'int',   5,    3600, false],
-            purge_loras_on_download:  ['Purge LoRAs on Download', 'Delete existing LoRA cache before downloading new LoRAs.',          'Behavior',     'bool',  null, null, false],
-            remove_maintenance_on_init:['Remove Maintenance on Init','Clear maintenance mode automatically on startup.',               'Behavior',     'bool',  null, null, false],
+            // key: [label, description, category, type ('bool'|'int'|'float'|'int_auto'), min, max, restartRequired, autoPrefix?, envVar]
+            nsfw:                     ['NSFW',                    'Accept NSFW image jobs.',                                              'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_NSFW'],
+            censor_nsfw:              ['Censor NSFW',             'Censor NSFW content even when accepting NSFW jobs.',                  'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_CENSOR_NSFW'],
+            allow_img2img:            ['Allow img2img',           'Accept image-to-image jobs.',                                         'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_IMG2IMG'],
+            allow_inpainting:         ['Allow Painting',          'Accept inpainting / painting jobs.',                                  'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_PAINTING'],
+            allow_unsafe_ip:          ['Allow Unsafe IPs',        'Accept requests from flagged or unsafe IP addresses.',                'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_UNSAFE_IP'],
+            allow_post_processing:    ['Allow Post-Processing',   'Accept jobs that include post-processing steps.',                     'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_POST_PROCESSING'],
+            allow_controlnet:         ['Allow ControlNet',        'Accept ControlNet jobs.',                                             'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_CONTROLNET'],
+            allow_sdxl_controlnet:    ['Allow SDXL ControlNet',   'Accept SDXL ControlNet jobs.',                                        'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_SDXL_CONTROLNET'],
+            allow_lora:               ['Allow LoRA',              'Accept jobs that use LoRA models.',                                   'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_LORA'],
+            require_upfront_kudos:    ['Require Upfront Kudos',   'Only accept jobs from users who have enough kudos upfront.',          'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_REQUIRE_UPFRONT_KUDOS'],
+            limit_max_steps:          ['Limit Max Steps',         'Cap the number of inference steps to the worker\'s configured max.',  'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_LIMIT_MAX_STEPS'],
+            extra_slow_worker:        ['Extra Slow Worker',       'Enable extra-slow-worker mode (forces conservative settings).',       'Capabilities', 'bool',  null, null, true, null, 'AIWORKER_EXTRA_SLOW_WORKER'],
+            job_queue_size:           ['Job Queue Size',          'Maximum jobs held in the queue at once (0\u00a0=\u00a0unlimited).',  'Performance',  'int_auto', 0, 999, false, 'queue', 'AIWORKER_QUEUE_SIZE'],
+            active_model_count:       ['Max Active Models',       'Maximum number of model slots kept active simultaneously.',           'Performance',  'int_auto', 1, 999, false, 'models', 'AIWORKER_MAX_ACTIVE_MODELS'],
+            max_power:                ['Max Power',               'Maximum resolution multiplier (formula: 64\u00d764\u00d78\u00d7max_power pixels).',         'Performance',  'int',   1,    128,  false, null, 'AIWORKER_MAX_POWER'],
+            max_batch:                ['Max Batch',               'Maximum number of images per batched inference job.',                 'Performance',  'int',   1,    100,  false, null, 'AIWORKER_MAX_BATCH'],
+            max_threads:              ['Max Threads',             'Maximum number of concurrent inference threads.',                     'Performance',  'int',   1,    8,    true, null, 'AIWORKER_MAX_THREADS'],
+            safety_on_gpu:            ['Safety on GPU',           'Run the safety/CLIP model on GPU instead of CPU (~1.2 GB VRAM).',    'Performance',  'bool',  null, null, true, null, 'AIWORKER_SAFETY_ON_GPU'],
+            high_memory_mode:         ['High Memory Mode',        'Keep models in VRAM to reduce load times.',                          'Performance',  'bool',  null, null, true, null, 'AIWORKER_HIGH_MEMORY_MODE'],
+            very_high_memory_mode:    ['Very High Memory Mode',   'Aggressive VRAM retention (data-center GPUs only).',                 'Performance',  'bool',  null, null, true, null, 'AIWORKER_VERY_HIGH_MEMORY_MODE'],
+            high_performance_mode:    ['High Performance Mode',   'Enable for GPUs with high throughput (RTX 4090 or better).',         'Performance',  'bool',  null, null, true, null, 'AIWORKER_HIGH_PERFORMANCE_MODE'],
+            moderate_performance_mode:['Moderate Performance Mode','Enable for mid-range high-end GPUs (RTX 3080 or better).',          'Performance',  'bool',  null, null, true, null, 'AIWORKER_MODERATE_PERFORMANCE_MODE'],
+            unload_models_from_vram_often: ['Unload VRAM Often',  'Unload models from VRAM between jobs to free memory.',              'Performance',  'bool',  null, null, false, null, 'AIWORKER_UNLOAD_MODELS_FROM_VRAM_OFTEN'],
+            very_fast_disk_mode:      ['Very Fast Disk Mode',     'Load more models concurrently when using a very fast SSD/NVMe.',     'Performance',  'bool',  null, null, false, null, 'AIWORKER_VERY_FAST_DISK_MODE'],
+            post_process_job_overlap: ['PP Job Overlap',          'Overlap post-processing with the next inference job.',               'Performance',  'bool',  null, null, false, null, 'AIWORKER_POST_PROCESS_JOB_OVERLAP'],
+            cycle_process_on_model_change: ['Cycle Process on Model Change', 'Restart the inference process when the loaded model changes.', 'Performance', 'bool', null, null, false, null, 'AIWORKER_CYCLE_PROCESS_ON_MODEL_CHANGE'],
+            horde_model_stickiness:   ['Model Stickiness',        'Chance (0\u20131) to prefer currently loaded models when popping a job.',  'Performance',  'float', 0.0, 1.0, false, null, 'AIWORKER_MODEL_STICKINESS'],
+            process_timeout:          ['Process Timeout (s)',     'Max seconds a job may run before being killed.',                     'Timeouts',     'int',   60,   3600, false, null, 'AIWORKER_PROCESS_TIMEOUT'],
+            post_process_timeout:     ['Post-Process Timeout (s)','Max seconds allowed for post-processing.',                          'Timeouts',     'int',   15,   600,  false, null, 'AIWORKER_POST_PROCESS_TIMEOUT'],
+            preload_timeout:          ['Preload Timeout (s)',      'Max seconds allowed to load a model.',                             'Timeouts',     'int',   15,   600,  false, null, 'AIWORKER_PRELOAD_TIMEOUT'],
+            inference_step_timeout:   ['Inference Step Timeout (s)','Max seconds allowed per inference step before detecting a stuck job.','Timeouts',  'int',   60,   1800, false, null, 'AIWORKER_INFERENCE_STEP_TIMEOUT'],
+            minutes_allowed_without_jobs: ['Minutes Without Jobs','Minutes of idle time before the worker warns about no jobs.',       'Behavior',     'int',   0,    3599, false, null, 'AIWORKER_MINUTES_ALLOWED_WITHOUT_JOBS'],
+            auto_restart_on_idle_minutes: ['Auto-Restart Idle (min)','Restart the worker automatically if no job has been submitted for this many minutes (0\u00a0=\u00a0disabled; default\u00a060).', 'Behavior', 'int', 0, 1440, false, null, 'AIWORKER_AUTO_RESTART_IDLE_MINUTES'],
+            suppress_speed_warnings:  ['Suppress Speed Warnings', 'Do not print speed-related warning messages.',                      'Behavior',     'bool',  null, null, false, null, 'AIWORKER_SUPPRESS_SPEED_WARNINGS'],
+            exit_on_unhandled_faults: ['Exit on Unhandled Faults','Exit the worker instead of recovering from an unhandled fault.',    'Behavior',     'bool',  null, null, false, null, 'AIWORKER_EXIT_ON_UNHANDLED_FAULTS'],
+            limited_console_messages: ['Limited Console Messages','Only log job submission and status messages to console.',            'Behavior',     'bool',  null, null, false, null, 'AIWORKER_LIMITED_CONSOLE_MESSAGES'],
+            stats_output_frequency:   ['Stats Frequency (s)',     'How often (in seconds) to print the status line to console.',       'Behavior',     'int',   5,    3600, false, null, 'AIWORKER_STATS_OUTPUT_FREQUENCY'],
+            purge_loras_on_download:  ['Purge LoRAs on Download', 'Delete existing LoRA cache before downloading new LoRAs.',          'Behavior',     'bool',  null, null, false, null, 'AIWORKER_PURGE_LORAS_ON_DOWNLOAD'],
+            remove_maintenance_on_init:['Remove Maintenance on Init','Clear maintenance mode automatically on startup.',               'Behavior',     'bool',  null, null, false, null, 'AIWORKER_REMOVE_MAINTENANCE_ON_INIT'],
         };
 
         var _settingsLoaded = false;
@@ -3874,10 +3878,13 @@ class WorkerWebUI:
                     var key = keys[ki];
                     var spec = _SETTINGS_SPEC[key];
                     var label = spec[0], desc = spec[1], type = spec[3], minV = spec[4], maxV = spec[5];
+                    var envVar = spec[8] || null;
                     var val = (key in settings) ? settings[key] : null;
                     if (Object.prototype.hasOwnProperty.call(_settingsPending, key)) val = _settingsPending[key];
                     html += '<div class="setting-row">';
-                    html += '<div class="setting-info"><div class="setting-label">' + escapeHtml(label) + '</div><div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
+                    html += '<div class="setting-info"><div class="setting-label">' + escapeHtml(label) + '</div>';
+                    if (envVar) { html += '<div class="setting-env"><code>' + escapeHtml(envVar) + '</code></div>'; }
+                    html += '<div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
                     html += '<div class="setting-ctrl">';
                     if (type === 'bool') {
                         var chk = (val === true) ? 'checked' : '';
