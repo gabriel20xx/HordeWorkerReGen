@@ -4507,9 +4507,12 @@ class WorkerWebUI:
                 }
             }
 
-        The ``settings`` dict contains only the keys defined in ``_SETTINGS_SPEC``.
-        Keys whose values are not yet available (e.g. before the first status push
-        from the process manager) are omitted rather than returned as ``null``.
+        The ``settings`` dict includes keys defined in ``_SETTINGS_SPEC`` plus
+        the live int_auto keys (``max_queue_size``, ``max_active_models``,
+        ``queue_size_auto``, ``max_active_models_auto``) when present in
+        ``status_data``. Other keys whose values are not yet available
+        (e.g. before the first status push from the process manager) are omitted
+        rather than returned as ``null``.
         """
         visible: dict[str, Any] = {k: v for k, v in self._settings_data.items() if k in _SETTINGS_SPEC}
         # Piggy-back the int_auto live values from status_data so the Settings
