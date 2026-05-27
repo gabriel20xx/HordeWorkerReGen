@@ -488,7 +488,7 @@ class WorkerWebUI:
         .progress-bar-container { width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
         .progress-bar { height: 100%; background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%); border-radius: 4px; transition: width 0.4s ease; min-width: 0; }
 
-        .job-state-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; background: #e0e7ff; color: #4338ca; }
+        .job-state-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; background: #f0fdf4; color: #166534; }
         .job-state-timer { margin-left: 4px; }
 
         .process-item { background: #f8fafc; border: 1px solid #e8eef4; border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
@@ -723,7 +723,7 @@ class WorkerWebUI:
         [data-theme="dark"] .process-detail-text { color: #94a3b8; }
         [data-theme="dark"] .job-item { background: #151e2e; border-color: #2d3f55; }
         [data-theme="dark"] .model-badge { background: #312e81; color: #a5b4fc; }
-        [data-theme="dark"] .job-state-badge { background: #312e81; color: #a5b4fc; }
+        [data-theme="dark"] .job-state-badge { background: #14532d; color: #86efac; }
         [data-theme="dark"] .loading-text { color: #94a3b8; }
         [data-theme="dark"] .loading-spinner { border-color: #2d3f55; border-top-color: var(--accent); }
         [data-theme="dark"] .empty-state { color: #64748b; }
