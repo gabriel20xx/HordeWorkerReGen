@@ -266,8 +266,6 @@ class HordeProcessInfo:
     Updated on every call to :meth:`ProcessMap.on_process_state_change` so that
     per-state elapsed time can be computed from the manager's message loop."""
 
-    # TODO: VRAM usage
-
     def __init__(
         self,
         mp_process: multiprocessing.Process,
@@ -1189,7 +1187,7 @@ class TorchDeviceInfo(BaseModel):
     total_memory: int
 
 
-class TorchDeviceMap(RootModel[dict[int, TorchDeviceInfo]]):  # TODO
+class TorchDeviceMap(RootModel[dict[int, TorchDeviceInfo]]):
     """A mapping of device IDs to TorchDeviceInfo objects. Contains some helper methods."""
 
 
@@ -1318,7 +1316,7 @@ class PendingSubmitJob(PendingJob):  # TODO: Split into a new file
     def r2_upload(self) -> str:
         """Return the r2 upload for the job."""
         if self.completed_job_info.sdk_api_job_info.r2_uploads is None:
-            return ""  # FIXME: Is this ever None? Or just a bad declaration on sdk?
+            return ""  # SDK declares r2_uploads as optional; defensive fallback
         return self.completed_job_info.sdk_api_job_info.r2_uploads[self.gen_iter]
 
     @property
@@ -1733,7 +1731,7 @@ class HordeWorkerProcessManager:
         bridge_data: reGenBridgeData,
         horde_model_reference_manager: ModelReferenceManager,
         target_ram_overhead_bytes: int = 9 * 1024 * 1024 * 1024,
-        target_vram_overhead_bytes_map: Mapping[int, int] | None = None,  # FIXME
+        target_vram_overhead_bytes_map: Mapping[int, int] | None = None,
         max_safety_processes: int = 1,
         max_download_processes: int = 1,
         amd_gpu: bool = False,
@@ -1845,7 +1843,7 @@ class HordeWorkerProcessManager:
 
         self._jobs_safety_check_lock = Lock_Asyncio()
 
-        self.target_vram_overhead_bytes_map = target_vram_overhead_bytes_map  # TODO
+        self.target_vram_overhead_bytes_map = target_vram_overhead_bytes_map
 
         self.total_ram_bytes = psutil.virtual_memory().total
 
@@ -3228,7 +3226,6 @@ class HordeWorkerProcessManager:
                             logger.opt(ansi=True).info(f"<fg #7b7d7d>{loaded_message}</>")
 
                 else:
-                    # FIXME this message is wrong for download processes
                     logger.opt(ansi=True).info(
                         "<fg #7b7d7d>" f"Process {message.process_id} unloaded model {message.horde_model_name}" "</>",
                     )
@@ -4366,7 +4363,6 @@ class HordeWorkerProcessManager:
                 sfw_worker=not self.bridge_data.nsfw,
                 horde_model_info=model_info,
                 generation_metadata=generation_metadata,
-                # TODO: update this to use a class instead of a dict?
             ),
         )
 
@@ -4400,14 +4396,14 @@ class HordeWorkerProcessManager:
             A BytesIO stream buffer containing the image, or None if the conversion failed.
         """
         try:
-            image_as_pil = PIL.Image.open(BytesIO(base64.b64decode(image_base64)))
-            image_buffer = BytesIO()
-            image_as_pil.save(
-                image_buffer,
-                format="WebP",
-                quality=95,  # FIXME # TODO
-                method=6,
-            )
+            with PIL.Image.open(BytesIO(base64.b64decode(image_base64))) as image_as_pil:
+                image_buffer = BytesIO()
+                image_as_pil.save(
+                    image_buffer,
+                    format="WebP",
+                    quality=95,
+                    method=6,
+                )
 
             return image_buffer
         except Exception as e:
@@ -4519,9 +4515,9 @@ class HordeWorkerProcessManager:
             apikey=self.bridge_data.api_key,
             id=new_submit.job_id,
             seed=seed,
-            generation="R2",  # TODO # FIXME
+            generation="R2",
             state=new_submit.completed_job_info.state,
-            censored=bool(new_submit.completed_job_info.censored),  # TODO: is this cast problematic?
+            censored=bool(new_submit.completed_job_info.censored),
             gen_metadata=metadata,
         )
         logger.debug(f"Submitting job {new_submit.job_id}")
@@ -4843,7 +4839,7 @@ class HordeWorkerProcessManager:
             self._discard_broken_job(completed_job_info)
             return
 
-        if job_info.r2_upload is None:  # TODO: r2_upload should be being set somewhere
+        if job_info.r2_upload is None:
             logger.error(f"Job {job_info.ids} has r2_upload=None, skipping submission to prevent queue block")
             self._discard_broken_job(completed_job_info)
             return
@@ -5015,7 +5011,6 @@ class HordeWorkerProcessManager:
                         f"Job {completed_job_info.sdk_api_job_info.id_} not found in jobs_lookup "
                         "during submit. Creating a new HordeJobInfo object.",
                     )
-                # TODO: Too much indent. Split into own method
                 if self.bridge_data.capture_kudos_training_data:
                     if self.bridge_data.kudos_training_data_file is None:
                         self.bridge_data.kudos_training_data_file = "kudos_training_data.json"
@@ -5475,8 +5470,6 @@ class HordeWorkerProcessManager:
 
     def should_wait_for_pending_megapixelsteps(self) -> bool:
         """Check if the number of megapixelsteps in the job deque is above the limit."""
-        # TODO: Option to increase the limit for higher end GPUs
-
         return self.get_pending_megapixelsteps() > self._max_pending_megapixelsteps
 
     async def _get_source_images(self, job_pop_response: ImageGenerateJobPopResponse) -> ImageGenerateJobPopResponse:
@@ -5956,7 +5949,7 @@ class HordeWorkerProcessManager:
             except Exception as e:
                 logger.error(f"Failed to process API messages: {e}")
 
-            # TODO: horde_sdk should handle this and return a field with a enum(?) of the reason
+            # Handle error responses by matching on the error message text
             if isinstance(job_pop_response, RequestErrorResponse):
                 if "maintenance mode" in job_pop_response.message.lower():
                     if not self._last_pop_maintenance_mode:
@@ -6074,8 +6067,8 @@ class HordeWorkerProcessManager:
             "</></b>",
         )
 
-        # region TODO: move to horde_sdk
-        if job_pop_response.payload.seed is None:  # TODO # FIXME
+        # SDK workaround: fill in missing seed and strip denoising_strength without source_image
+        if job_pop_response.payload.seed is None:
             logger.warning(f"Job {job_pop_response.id_} has no seed!")
             new_response_dict = job_pop_response.model_dump(by_alias=True)
             new_response_dict["payload"]["seed"] = random.randint(0, (2**32) - 1)
@@ -6091,8 +6084,6 @@ class HordeWorkerProcessManager:
 
         # Initiate the job faults list for this job, so that we don't need to check if it exists every time
         job_pop_response = await self._get_source_images(job_pop_response)
-
-        # endregion
 
         if job_pop_response.id_ is None:
             logger.error("Job has no id!")
@@ -6644,11 +6635,11 @@ class HordeWorkerProcessManager:
         logger.info("Shutting down process manager")
         self._shut_down = True
         for process in self._process_map.values():
-            process.mp_process.terminate()
-            process.mp_process.terminate()
-            process.mp_process.terminate()
-
-            process.mp_process.join(0.2)
+            try:
+                process.mp_process.terminate()
+                process.mp_process.join(0.5)
+            except Exception as e:
+                logger.debug(f"Error terminating process {process.process_id} during shutdown: {e}")
 
         await asyncio.sleep(0.2)
 
@@ -7551,8 +7542,8 @@ class HordeWorkerProcessManager:
             # logical core count converts that sum to a percentage of total system CPU
             # capacity (e.g. 200% on a 4-core machine → 50% of total capacity).
             container_cpu_percent = min(100.0, round(raw_cpu / (cpu_cores_count or 1), 1))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"CPU metrics collection failed: {type(e).__name__}: {e}")
 
         # Get GPU utilization percentage
         gpu_usage_percent = 0.0
@@ -7568,18 +7559,21 @@ class HordeWorkerProcessManager:
                 for i in range(device_count):
                     # Get GPU utilization using nvidia-smi via torch
                     # Note: torch.cuda.utilization() returns GPU utilization percentage
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(RuntimeError, ValueError):
                         total_util += torch.cuda.utilization(i)
                     # system-wide VRAM in use for each device (total capacity minus free)
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(RuntimeError, ValueError):
                         free_bytes, total_bytes = torch.cuda.mem_get_info(i)
                         total_system_vram_used += (total_bytes - free_bytes) / BYTES_TO_MEGABYTES
                 if device_count > 0 and total_util > 0:
                     gpu_usage_percent = total_util / device_count
                 system_vram_usage_mb = total_system_vram_used
-        except Exception:
-            # If torch is not available or CUDA is not available, GPU usage will be 0
+        except ImportError:
+            # torch is not available; GPU usage will remain 0
             pass
+        except Exception:
+            # CUDA is not available or errored; GPU usage will remain 0
+            logger.debug("GPU metrics collection failed", exc_info=True)
 
         # Aggregate per-process GPU utilisation reported by inference workers.
         # Uses max() so that the highest-utilised device is represented when multiple
@@ -7590,7 +7584,7 @@ class HordeWorkerProcessManager:
                 (float(p.gpu_usage_percent) for p in self._process_map.values()),
                 default=0.0,
             )
-        except Exception:
+        except (TypeError, ValueError):
             pass
 
         # Get total GPU cores count across all devices.
@@ -7607,7 +7601,7 @@ class HordeWorkerProcessManager:
                 computed_gpu_cores_count = 0
                 has_known_cuda_core_count = False
                 for i in range(torch.cuda.device_count()):
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(RuntimeError, ValueError):
                         props = torch.cuda.get_device_properties(i)
                         cores_per_sm = _get_cuda_cores_per_sm(props.major, props.minor)
                         if cores_per_sm is None:
@@ -7616,8 +7610,10 @@ class HordeWorkerProcessManager:
                         has_known_cuda_core_count = True
                 if has_known_cuda_core_count:
                     gpu_cores_count = computed_gpu_cores_count
-        except Exception:
+        except ImportError:
             pass
+        except Exception:
+            logger.debug("GPU cores count collection failed", exc_info=True)
 
         # Calculate kudos per hour and images per hour over the rolling window
         now = time.time()
@@ -7957,8 +7953,10 @@ class HordeWorkerProcessManager:
         import threading
 
         def hard_shutdown() -> None:
-            # Just in case the process manager gets stuck on shutdown
-            time.sleep((len(self.jobs_pending_submit) * 4) + 2)
+            # Just in case the process manager gets stuck on shutdown.
+            # Cap the wait time to avoid unbounded hangs when many jobs are pending.
+            wait_seconds = min((len(self.jobs_pending_submit) * 4) + 2, 30)
+            time.sleep(wait_seconds)
 
             if self._shut_down or not self._shutting_down:
                 return
@@ -7966,8 +7964,6 @@ class HordeWorkerProcessManager:
             for process in self._process_map.values():
                 try:
                     process.mp_process.kill()
-                    process.mp_process.kill()
-
                     process.mp_process.join(1)
                 except Exception as e:
                     logger.error(f"Failed to kill process {process}: {e}")
@@ -8059,7 +8055,6 @@ class HordeWorkerProcessManager:
                 or (all_)
             ):
                 try:
-                    process_info.mp_process.kill()
                     process_info.mp_process.kill()
                     process_info.mp_process.join(1)
                 except Exception as e:
