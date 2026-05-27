@@ -7960,6 +7960,9 @@ class HordeWorkerProcessManager:
             # Just in case the process manager gets stuck on shutdown
             time.sleep((len(self.jobs_pending_submit) * 4) + 2)
 
+            if self._shut_down or not self._shutting_down:
+                return
+
             for process in self._process_map.values():
                 try:
                     process.mp_process.kill()
@@ -7973,7 +7976,7 @@ class HordeWorkerProcessManager:
             # which, when called from a non-main thread, only terminates that thread.
             os._exit(1)
 
-        threading.Thread(target=hard_shutdown).start()
+        threading.Thread(target=hard_shutdown, daemon=True).start()
 
     _recently_recovered = False
 
