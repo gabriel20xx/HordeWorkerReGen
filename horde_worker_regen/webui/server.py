@@ -574,10 +574,8 @@ class WorkerWebUI:
         .image-grid-item { position: relative; overflow: hidden; border-radius: 8px; background: #f1f5f9; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; }
         .image-grid-item img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: block; }
         .image-grid-item img:hover { transform: scale(1.04); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-        .image-grid-item .image-timestamp { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #e2e8f0; font-size: 0.65rem; padding: 3px 6px; text-align: center; border-radius: 0 0 8px 8px; opacity: 0; transition: opacity 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .image-grid-item:hover .image-timestamp { opacity: 1; }
-        .image-flag-badges { position: absolute; top: 4px; right: 4px; display: flex; flex-direction: column; gap: 3px; align-items: flex-end; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
-        .image-grid-item:hover .image-flag-badges { opacity: 1; }
+        .image-grid-item .image-timestamp { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #e2e8f0; font-size: 0.65rem; padding: 3px 6px; text-align: center; border-radius: 0 0 8px 8px; opacity: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .image-flag-badges { position: absolute; top: 4px; right: 4px; display: flex; flex-direction: column; gap: 3px; align-items: flex-end; pointer-events: none; opacity: 1; }
         .image-flag-badge { font-size: 0.6rem; font-weight: 700; padding: 2px 5px; border-radius: 4px; line-height: 1.3; text-transform: uppercase; letter-spacing: 0.04em; }
         .image-flag-badge.nsfw { background: rgba(234, 179, 8, 0.92); color: #1c1000; }
         .image-flag-badge.csam { background: rgba(220, 38, 38, 0.92); color: #fff; }
