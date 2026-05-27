@@ -229,11 +229,6 @@ class reGenBridgeData(CombinedHordeBridgeData):
             )
 
         if self.high_memory_mode:
-            # if self.max_threads == 1:
-            #     logger.warning(
-            #         "High memory mode is enabled, you should consider setting max_threads to 2.",
-            #     )
-
             if self.queue_size == 0:
                 logger.warning(
                     "High memory mode is enabled, you should consider setting queue_size to 1 or higher. "

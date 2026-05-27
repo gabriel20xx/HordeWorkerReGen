@@ -15,6 +15,23 @@ from loguru import logger
 
 from horde_worker_regen.process_management._aliased_types import ProcessQueue
 
+_HORDELIB_VERBOSITY = 5
+
+
+def _initialize_horde_logging(process_id: int) -> None:
+    """Initialize HordeLog and configure the standardized log format for a worker process."""
+    from hordelib.utils.logger import HordeLog
+
+    HordeLog.initialise(
+        setup_logging=True,
+        process_id=process_id,
+        verbosity_count=_HORDELIB_VERBOSITY,
+    )
+
+    from horde_worker_regen.logger_config import configure_logger_format
+
+    configure_logger_format(process_id=process_id)
+
 
 def start_inference_process(
     process_id: int,
@@ -64,18 +81,8 @@ def start_inference_process(
 
         try:
             import hordelib
-            from hordelib.utils.logger import HordeLog
 
-            HordeLog.initialise(
-                setup_logging=True,
-                process_id=process_id,
-                verbosity_count=5,  # FIXME
-            )
-
-            # Configure standardized log format: timestamp | level | message
-            from horde_worker_regen.logger_config import configure_logger_format
-
-            configure_logger_format(process_id=process_id)
+            _initialize_horde_logging(process_id)
 
             logger.debug(
                 f"Initialising hordelib with process_id={process_id}, "
@@ -98,7 +105,6 @@ def start_inference_process(
             if very_high_memory_mode:
                 extra_comfyui_args.append("--gpu-only")
             elif high_memory_mode:
-                # extra_comfyui_args.append("--normalvram")
                 models_not_to_force_load.extend(
                     [
                         "cascade",
@@ -185,18 +191,7 @@ def start_safety_process(
         logger.remove()
 
         try:
-            from hordelib.utils.logger import HordeLog
-
-            HordeLog.initialise(
-                setup_logging=True,
-                process_id=process_id,
-                verbosity_count=5,  # FIXME
-            )
-
-            # Configure standardized log format: timestamp | level | message
-            from horde_worker_regen.logger_config import configure_logger_format
-
-            configure_logger_format(process_id=process_id)
+            _initialize_horde_logging(process_id)
 
             logger.debug(f"Initialising hordelib with process_id={process_id} and high_memory_mode={high_memory_mode}")
 
