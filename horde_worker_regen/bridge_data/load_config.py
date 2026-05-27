@@ -37,60 +37,6 @@ class UnsupportedConfigFormat(Exception):
         """Initialise the exception."""
         super().__init__(f"Unsupported config file format: {file_format} ({file_path})")
 
-    @staticmethod
-    def load_from_env_vars(
-        *,
-        horde_model_reference_manager: ModelReferenceManager,
-    ) -> reGenBridgeData:
-        """Checks for AIWORKER_REGEN_* format environment variables and loads the config from them."""
-        raw_config: dict[str, str] = {}
-        for key, value in os.environ.items():
-            if key.startswith(AIWORKER_REGEN_PREFIX):
-                # Coverts the env var name to the attr name found in the reGenBridgeData model
-                raw_config[key[len(AIWORKER_REGEN_PREFIX) :].lower()] = value
-
-        config: dict[str, object] = {}
-
-        for key, value in raw_config.items():
-            attr_name = key[len(AIWORKER_REGEN_PREFIX) :].lower()
-            if value.lower() in {"true", "false"}:
-                config[attr_name] = value.lower() == "true"
-            elif any(delimiter in value for delimiter in ["[", ",", ";"]):
-                if "[" in value and "]" not in value:
-                    raise ValueError(f"Invalid list format for {attr_name}. Missing closing bracket.")
-                value_as_list = re.split(r"[\[\],;]", value.strip("[]"))
-                config[attr_name] = [item.strip().strip("'").strip('"') for item in value_as_list]
-                logger.debug(f"Converted {attr_name} to list: {config[attr_name]} from {value}")
-            else:
-                config[attr_name] = value
-
-        bridge_data = reGenBridgeData.model_validate(config)
-
-        for set_field in bridge_data.model_fields_set:
-            logger.warning(f"AIWORKER_REGEN_{set_field} environment variable set.")
-
-        bridge_data.image_models_to_load = BridgeDataLoader._resolve_meta_instructions(
-            bridge_data,
-            horde_model_reference_manager,
-        )
-
-        return bridge_data
-
-    @staticmethod
-    def write_bridge_data_as_dot_env_file(bridge_data: reGenBridgeData, file_path: str | Path) -> None:
-        """Write the bridge data to a .env file.
-
-        Args:
-            bridge_data (reGenBridgeData): The bridge data to write to the .env file.
-            file_path (str | Path): The path to the .env file to write the bridge data to.
-        """
-        file_path = Path(file_path)
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            for field_name, _ in reGenBridgeData.model_fields.items():
-                if field_name in bridge_data.model_fields_set:
-                    f.write(f"AIWORKER_REGEN_{field_name.upper()}={getattr(bridge_data, field_name)}\n")
-
 
 class ConfigFormat(StrEnum):
     """The format of the config file."""
