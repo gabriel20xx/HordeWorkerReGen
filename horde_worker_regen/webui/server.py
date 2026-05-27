@@ -548,6 +548,7 @@ class WorkerWebUI:
         .console-copy-btn.copied:hover { background: #16a34a; }
         .console-copy-btn.error { background: #ef4444; color: #fff; }
         .console-copy-btn.error:hover { background: #dc2626; }
+        .console-filter-select { margin-left: 6px; background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; height: var(--action-btn-height); }
 
         /* ---- Job pops pause button ---- */
         .job-pops-pause-wrap { position: relative; display: flex; width: 100%; }
@@ -1086,7 +1087,7 @@ class WorkerWebUI:
                 <!-- LOGS PAGE -->
                 <div class="page" id="page-logs">
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button><button id="console-copy-btn" class="console-copy-btn" onclick="copyConsoleLogs()" title="Copy all console logs to clipboard">&#128203; Copy</button></div>
+                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button><button id="console-copy-btn" class="console-copy-btn" onclick="copyConsoleLogs()" title="Copy visible console logs to clipboard">&#128203; Copy</button><select id="console-filter-select" class="console-filter-select" onchange="applyConsoleFilter()" title="Filter logs by severity"><option value="ALL">All levels</option><option value="SUCCESS">Success+</option><option value="WARNING">Warning+</option><option value="ERROR">Error+</option></select></div>
                         <div class="card log-panel" style="padding:0;">
                             <div id="console-logs" class="console-container" style="border-radius:12px;"><div style="text-align:center;color:#475569;padding:18px;">No logs available</div></div>
                         </div>
@@ -1576,6 +1577,34 @@ class WorkerWebUI:
         }
         const SCROLL_TOLERANCE_PX = 1;
         let consolePaused = false;
+        let _consoleLogs = [];
+        const _CONSOLE_LOG_LEVEL_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \| ([A-Z]+)\s*\|/;
+        const _CONSOLE_ANSI_RE = /\x1b\[[0-9;]*m/g;
+        const _CONSOLE_LEVEL_ORDER = {TRACE: 0, DEBUG: 1, INFO: 2, SUCCESS: 3, WARNING: 4, ERROR: 5, CRITICAL: 6};
+        function _getLogLevel(rawLog) {
+            const plain = rawLog.replace(_CONSOLE_ANSI_RE, '');
+            const m = plain.match(_CONSOLE_LOG_LEVEL_RE);
+            return m ? m[1] : 'INFO';
+        }
+        function _renderConsoleLogs() {
+            const cl = document.getElementById('console-logs');
+            if (!cl) return;
+            const filterLevel = (document.getElementById('console-filter-select') || {}).value || 'ALL';
+            const minOrder = filterLevel === 'ALL' ? -1 : (_CONSOLE_LEVEL_ORDER[filterLevel] !== undefined ? _CONSOLE_LEVEL_ORDER[filterLevel] : -1);
+            const visible = minOrder < 0 ? _consoleLogs : _consoleLogs.filter(function(log) {
+                const lvl = _getLogLevel(log);
+                const ord = _CONSOLE_LEVEL_ORDER[lvl] !== undefined ? _CONSOLE_LEVEL_ORDER[lvl] : 2;
+                return ord >= minOrder;
+            });
+            const atb = isScrolledToBottom(cl, SCROLL_TOLERANCE_PX);
+            if (visible.length > 0) {
+                cl.innerHTML = visible.map(function(log) { return '<div style="white-space: pre-wrap; word-break: break-word;">'+ansiToHtml(log)+'</div>'; }).join('');
+            } else {
+                cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>';
+            }
+            if (atb) cl.scrollTop = cl.scrollHeight;
+        }
+        function applyConsoleFilter() { _renderConsoleLogs(); }
         function toggleConsolePause() {
             consolePaused = !consolePaused;
             const btn = document.getElementById('console-pause-btn');
@@ -1731,9 +1760,14 @@ class WorkerWebUI:
             return copied;
         }
         function copyConsoleLogs() {
-            const cl = document.getElementById('console-logs');
-            const logDivs = cl ? Array.from(cl.querySelectorAll('div')) : [];
-            const text = logDivs.length > 0 ? logDivs.map(d => d.textContent).join('\n') : (cl ? cl.textContent : '');
+            const filterLevel = (document.getElementById('console-filter-select') || {}).value || 'ALL';
+            const minOrder = filterLevel === 'ALL' ? -1 : (_CONSOLE_LEVEL_ORDER[filterLevel] !== undefined ? _CONSOLE_LEVEL_ORDER[filterLevel] : -1);
+            const logs = minOrder < 0 ? _consoleLogs : _consoleLogs.filter(function(log) {
+                const lvl = _getLogLevel(log);
+                const ord = _CONSOLE_LEVEL_ORDER[lvl] !== undefined ? _CONSOLE_LEVEL_ORDER[lvl] : 2;
+                return ord >= minOrder;
+            });
+            const text = logs.map(function(log) { return log.replace(_CONSOLE_ANSI_RE, ''); }).join('\n');
             const btn = document.getElementById('console-copy-btn');
             if (navigator.clipboard && window.isSecureContext) {
                 navigator.clipboard.writeText(text).then(function() {
@@ -2712,10 +2746,11 @@ class WorkerWebUI:
                     const cl = document.getElementById('console-logs');
                     if (!consolePaused) {
                         if (data.console_logs && data.console_logs.length > 0) {
-                            const atb = isScrolledToBottom(cl, SCROLL_TOLERANCE_PX);
-                            cl.innerHTML = data.console_logs.map(log => '<div style="white-space: pre-wrap; word-break: break-word;">'+ansiToHtml(log)+'</div>').join('');
-                            if (atb) cl.scrollTop = cl.scrollHeight;
-                        } else { cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>'; }
+                            _consoleLogs = data.console_logs;
+                        } else {
+                            _consoleLogs = [];
+                        }
+                        _renderConsoleLogs();
                     }
                     // Update user page
                     const ud = data.user_details || {};
