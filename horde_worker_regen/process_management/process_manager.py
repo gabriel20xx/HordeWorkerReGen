@@ -3121,8 +3121,6 @@ class HordeWorkerProcessManager:
                     logger.debug(f"Process {message.process_id} changed state to {message.process_state}")
 
                 if message.process_state == HordeProcessState.INFERENCE_STARTING:
-                    # logger.info(f"Process {message.process_id} is starting inference on model {message.info}")
-
                     loaded_model_name = self._process_map[message.process_id].loaded_horde_model_name
                     if loaded_model_name is None:
                         logger.error(
@@ -3475,7 +3473,6 @@ class HordeWorkerProcessManager:
                         fault_phase=HordeProcessState.SAFETY_EVALUATING.name,
                     )
 
-                # logger.debug([c.generation_faults for c in completed_job_info.job_image_results])
                 self._move_pending_process_timings_to_completed_job(
                     process_id=message.process_id,
                     sdk_api_job_info=completed_job_info.sdk_api_job_info,
@@ -3535,7 +3532,6 @@ class HordeWorkerProcessManager:
         # the horde can re-assign them rather than leaving them stranded in our local queue.
         self._fault_cooldown_model_jobs()
 
-        # logger.debug(f"Loaded models: {loaded_models}, queued: {queued_models}")
         # Starting from the left of the deque, preload models that are not yet loaded up to the
         # number of inference processes that are available
         for job in self.jobs_pending_inference:
@@ -3723,11 +3719,6 @@ class HordeWorkerProcessManager:
             processes_post_processing = self._process_map.num_busy_with_post_processing()
 
         if len(self.jobs_in_progress) >= (self.max_concurrent_inference_processes + processes_post_processing):
-            # if self.max_concurrent_inference_processes > 1:
-            #     logger.debug(
-            #         f"Waiting for {len(self.jobs_in_progress)} jobs to finish before starting inference for job "
-            #         f"{next_job.id_}",
-            #     )
             return None
 
         process_with_model = self._process_map.get_process_by_horde_model_name(next_job.model)
@@ -3962,7 +3953,6 @@ class HordeWorkerProcessManager:
             extra_info += f"Workflow: {next_job.payload.workflow}"
 
         if extra_info:
-            # logger.info("  " + extra_info)
             logger.opt(ansi=True).info(
                 color_format_string.format(
                     message=f"  {extra_info}",
@@ -5689,18 +5679,9 @@ class HordeWorkerProcessManager:
             return
 
         if self._consecutive_failed_jobs >= 3:
-            # Disable console/log spamming
-            # logger.error(
-            #     "Too many consecutive failed jobs, pausing job pops. "
-            #     "Please look into what happened and let the devs know. ",
-            #     f"Waiting {self._too_many_consecutive_failed_jobs_wait_time} seconds...",F
-            # )
             if self.bridge_data.exit_on_unhandled_faults:
                 logger.error("Exiting due to exit_on_unhandled_faults being enabled")
                 self._shutdown()
-            # Commented out to remove 180 seconds wait delay
-            # self._too_many_consecutive_failed_jobs = True
-            # self._too_many_consecutive_failed_jobs_time = cur_time
             # Add this to prevent a loophole
             self._consecutive_failed_jobs = 0
             return
@@ -5717,9 +5698,6 @@ class HordeWorkerProcessManager:
 
         if len(self.jobs_pending_inference) >= self.max_inference_processes:
             return
-
-        # if self._testing_jobs_added >= self._testing_max_jobs:
-        #   return
 
         # Don't start jobs if we can't evaluate safety (NSFW/CSAM)
         if self._process_map.get_first_available_safety_process() is None:
@@ -6017,8 +5995,6 @@ class HordeWorkerProcessManager:
 
         if job_pop_response.id_ is None:
             self._last_pop_no_jobs_available = True
-            # Removed no job available spamming log/console
-            # logger.info(info_string)
             if len(self.jobs_pending_inference) == 0:
                 if self._last_pop_no_jobs_available_time == 0.0:
                     self._last_pop_no_jobs_available_time = cur_time
@@ -6234,8 +6210,6 @@ class HordeWorkerProcessManager:
                 logger.error(f"Failed to get user info (API Error): {response}")
                 self._user_info_failed = True
                 return
-            # if self.user_info is None:
-            # logger.info(f"Got user info: {response}")  # FIXME
 
             self.user_info = response
             self._user_info_failed = False
