@@ -58,7 +58,7 @@ class HordeProcess(abc.ABC):
     """The type of process. This distinguishes between inference, safety, and potentially other process types."""
     process_message_queue: ProcessQueue
     """The queue the main process uses to receive messages from all worker processes."""
-    pipe_connection: Connection  # FIXME # TODO - this could be a Queue?
+    pipe_connection: Connection
     """Receives `HordeControlMessage`s from the main process."""
 
     disk_lock: Lock
@@ -112,7 +112,7 @@ class HordeProcess(abc.ABC):
         try:
             device = torch.cuda.current_device()
             return float(torch.cuda.utilization(device))
-        except Exception:
+        except (RuntimeError, ValueError):
             return 0.0
 
     def __init__(
