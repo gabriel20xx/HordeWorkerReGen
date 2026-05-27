@@ -2472,8 +2472,14 @@ async def test_webui_settings_get_empty() -> None:
 
         assert "settings" in data
         assert isinstance(data["settings"], dict)
-        # With no snapshot pushed, the dict should be empty.
-        assert data["settings"] == {}
+        # With no snapshot pushed, only the int_auto live values piggybacked
+        # from status_data should be present (with their default values).
+        assert data["settings"] == {
+            "max_queue_size": 0,
+            "queue_size_auto": False,
+            "max_active_models": 0,
+            "max_active_models_auto": False,
+        }
     finally:
         await webui.stop()
 
