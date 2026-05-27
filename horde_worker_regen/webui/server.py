@@ -5014,6 +5014,22 @@ class WorkerWebUI:
             logger.exception(f"Error toggling model '{model}' enabled={enabled}: {exc}")
             return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
 
+        # Update local models data immediately so the next GET /api/models reflects
+        # the new state without waiting for an external update_models_data() call.
+        enabled_list = list(self._models_data["enabled"])
+        disabled_list = list(self._models_data["disabled"])
+        if enabled:
+            if model in disabled_list:
+                disabled_list.remove(model)
+            if model not in enabled_list:
+                enabled_list.append(model)
+        else:
+            if model in enabled_list:
+                enabled_list.remove(model)
+            if model not in disabled_list:
+                disabled_list.append(model)
+        self._models_data = {"enabled": sorted(enabled_list), "disabled": sorted(disabled_list)}
+
         return web.json_response({"model": model, "enabled": enabled})
 
     async def _handle_restart_program(self, request: web.Request) -> web.Response:
