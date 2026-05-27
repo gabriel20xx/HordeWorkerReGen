@@ -129,6 +129,13 @@ def test_bridge_data_auto_restart_on_idle_env_var_negative(monkeypatch: pytest.M
     assert bridge_data.auto_restart_on_idle_minutes == 60
 
 
+def test_bridge_data_auto_restart_on_idle_env_var_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that an out-of-range AIWORKER_AUTO_RESTART_IDLE_MINUTES value is ignored."""
+    monkeypatch.setenv("AIWORKER_AUTO_RESTART_IDLE_MINUTES", "1441")
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.auto_restart_on_idle_minutes == 60
+
+
 def test_bridge_data_to_dot_env_file() -> None:
     """Test that the bridge data can be written to a .env file."""
     bridge_data = reGenBridgeData.model_validate({})

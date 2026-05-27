@@ -589,6 +589,29 @@ class TestCheckAutoRestartOnIdle:
         assert mgr._restart_requested is True
         mgr._shutdown.assert_called_once()
 
+    def test_auto_restart_idle_loop_uses_short_sleep_steps(self) -> None:
+        """Idle loop should sleep in short steps so shutdown can complete quickly."""
+        import asyncio
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = MagicMock()
+        mgr._shutting_down = False
+        mgr._check_auto_restart_on_idle = MagicMock()
+        mgr._shutdown = MagicMock()
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            mgr._shutting_down = True
+
+        bound = HordeWorkerProcessManager._auto_restart_idle_loop.__get__(mgr, HordeWorkerProcessManager)
+        with patch("asyncio.sleep", side_effect=fake_sleep):
+            asyncio.run(bound())
+
+        assert sleep_calls == [5.0]
+        mgr._check_auto_restart_on_idle.assert_not_called()
+
 
 
 

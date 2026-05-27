@@ -7883,12 +7883,20 @@ class HordeWorkerProcessManager:
     async def _auto_restart_idle_loop(self) -> None:
         """Periodically check whether an idle-triggered auto-restart is required."""
         check_interval = 60.0
+        sleep_step = 5.0
+        seconds_until_check = check_interval
         while True:
             try:
                 if self._shutting_down:
                     break
-                await asyncio.sleep(check_interval)
-                self._check_auto_restart_on_idle()
+                sleep_for = min(sleep_step, seconds_until_check)
+                await asyncio.sleep(sleep_for)
+                if self._shutting_down:
+                    break
+                seconds_until_check -= sleep_for
+                if seconds_until_check <= 0:
+                    self._check_auto_restart_on_idle()
+                    seconds_until_check = check_interval
             except CancelledError:
                 self._shutdown()
                 break

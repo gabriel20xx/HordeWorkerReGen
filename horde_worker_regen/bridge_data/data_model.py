@@ -70,7 +70,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
 
     minutes_allowed_without_jobs: int = Field(default=30, ge=0, lt=60 * 60)
 
-    auto_restart_on_idle_minutes: int = Field(default=60, ge=0, validate_default=True)
+    auto_restart_on_idle_minutes: int = Field(default=60, ge=0, le=1440, validate_default=True)
     """Automatically restart the worker program if no job has been submitted for this many minutes.
 
     Set to 0 to disable. The default is 60 minutes (1 hour).
@@ -272,6 +272,12 @@ class reGenBridgeData(CombinedHordeBridgeData):
                 logger.warning(
                     f"AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable has a negative value: {parsed}. "
                     "It must be >= 0. Ignoring.",
+                )
+                return value
+            if parsed > 1440:
+                logger.warning(
+                    f"AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable has an out-of-range value: {parsed}. "
+                    "It must be <= 1440. Ignoring.",
                 )
                 return value
             logger.info(
