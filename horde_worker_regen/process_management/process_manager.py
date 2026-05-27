@@ -3163,8 +3163,7 @@ class HordeWorkerProcessManager:
 
                 if (
                     message.process_state == HordeProcessState.UNLOADED_MODEL_FROM_RAM
-                    and self._process_map[message.process_id].last_process_state
-                    != HordeProcessState.UNLOADED_MODEL_FROM_RAM
+                    and prior_process_state != HordeProcessState.UNLOADED_MODEL_FROM_RAM
                 ):
                     logger.opt(ansi=True).info(
                         "<fg #7b7d7d>" f"Process {message.process_id} cleared RAM: {message.info}" "</>",
@@ -3809,6 +3808,29 @@ class HordeWorkerProcessManager:
         elif self.bridge_data.moderate_performance_mode:
             candidate_job_size = 50
 
+        def find_line_skip_candidate(
+            *,
+            require_small_non_lora_job: bool,
+        ) -> tuple[ImageGenerateJobPopResponse, HordeProcessInfo] | None:
+            for candidate_job in next_n_jobs:
+                if candidate_job.model is None or candidate_job.model == next_job.model:
+                    continue
+
+                if require_small_non_lora_job:
+                    job_has_loras = candidate_job.payload.loras is not None and len(candidate_job.payload.loras) > 0
+                    if job_has_loras:
+                        continue
+                    if self.get_single_job_effective_megapixelsteps(candidate_job) > candidate_job_size:
+                        continue
+
+                candidate_process_with_model = self._process_map.get_process_by_horde_model_name(
+                    candidate_job.model,
+                )
+                if candidate_process_with_model is not None and candidate_process_with_model.can_accept_job():
+                    return candidate_job, candidate_process_with_model
+
+            return None
+
         if not process_with_model.can_accept_job():
             if (process_with_model.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL) or (
                 self.post_process_job_overlap_allowed
@@ -3820,50 +3842,29 @@ class HordeWorkerProcessManager:
                 # If any of the next n jobs (other than this one) aren't using the same model, see if that job
                 # has a model that's already loaded.
                 # If it does, we'll start inference on that job instead.
-                chosen_candidate: ImageGenerateJobPopResponse | None = None
-                chosen_process: HordeProcessInfo | None = None
-                for candidate_small_job in next_n_jobs:
-                    job_has_loras = (
-                        candidate_small_job.payload.loras is not None and len(candidate_small_job.payload.loras) > 0
-                    )
-                    if (
-                        candidate_small_job.model is not None
-                        and candidate_small_job.model != next_job.model
-                        and not job_has_loras
-                    ):
-                        candidate_process_with_model = self._process_map.get_process_by_horde_model_name(
-                            candidate_small_job.model,
-                        )
-                        if (
-                            candidate_process_with_model is not None
-                            and self.get_single_job_effective_megapixelsteps(candidate_small_job) <= candidate_job_size
-                            and candidate_process_with_model.can_accept_job()
-                        ):
-                            chosen_candidate = candidate_small_job
-                            chosen_process = candidate_process_with_model
-                            break
-                if chosen_candidate is None or chosen_process is None:
+                chosen_candidate_and_process = find_line_skip_candidate(require_small_non_lora_job=True)
+                if chosen_candidate_and_process is None:
                     return None
+                chosen_candidate, chosen_process = chosen_candidate_and_process
             elif process_with_model.last_process_state == HordeProcessState.MODEL_PRELOADING:
                 # The first job's model is still being preloaded. Look for other pending jobs
                 # that already have a preloaded process ready to accept a job. This prevents
                 # MODEL_PRELOADED processes from being stuck waiting while the queue is blocked
                 # by a MODEL_PRELOADING process at the front.
-                chosen_candidate = None
-                chosen_process = None
-                for candidate_job in next_n_jobs:
-                    if candidate_job.model is not None and candidate_job.model != next_job.model:
-                        candidate_process_with_model = self._process_map.get_process_by_horde_model_name(
-                            candidate_job.model,
-                        )
-                        if candidate_process_with_model is not None and candidate_process_with_model.can_accept_job():
-                            chosen_candidate = candidate_job
-                            chosen_process = candidate_process_with_model
-                            break
-                if chosen_candidate is None or chosen_process is None:
+                chosen_candidate_and_process = find_line_skip_candidate(require_small_non_lora_job=False)
+                if chosen_candidate_and_process is None:
                     return None
+                chosen_candidate, chosen_process = chosen_candidate_and_process
             else:
-                return None
+                # The first job's process exists but is not in a state that can accept
+                # a job (e.g. UNLOADED_MODEL_FROM_RAM). Look for other pending jobs that
+                # already have a preloaded process ready. This prevents MODEL_PRELOADED
+                # processes from being permanently starved when a blocking process holds
+                # the model name for the head-of-queue job.
+                chosen_candidate_and_process = find_line_skip_candidate(require_small_non_lora_job=False)
+                if chosen_candidate_and_process is None:
+                    return None
+                chosen_candidate, chosen_process = chosen_candidate_and_process
 
             # A candidate job/process pair was found via line-skipping.
             skipped_line = True
@@ -3901,10 +3902,17 @@ class HordeWorkerProcessManager:
         next_job = next_job_and_process.next_job
 
         if next_job_and_process.skipped_line and next_job_and_process.skipped_line_for is not None:
+            blocked_state = "UNKNOWN"
+            if next_job_and_process.skipped_line_for.model is not None:
+                blocked_process = self._process_map.get_process_by_horde_model_name(
+                    next_job_and_process.skipped_line_for.model,
+                )
+                if blocked_process is not None:
+                    blocked_state = blocked_process.last_process_state.name
             logger.info(
                 f"Job {next_job_and_process.next_job.id_} skipped the line and will be run on process "
                 f"{process_with_model.process_id} before job {next_job_and_process.skipped_line_for.id_}"
-                "which is currently downloading extra models.",
+                f" which is currently blocked in state {blocked_state}.",
             )
 
         processes_post_processing = 0
@@ -8527,6 +8535,11 @@ class HordeWorkerProcessManager:
                     self.bridge_data.preload_timeout,
                     HordeProcessState.MODEL_PRELOADED,
                     "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
+                ),
+                (
+                    self.bridge_data.preload_timeout,
+                    HordeProcessState.UNLOADED_MODEL_FROM_RAM,
+                    "seems to be stuck in UNLOADED_MODEL_FROM_RAM",
                 ),
             ]
             for timeout, state, error_message in conditions:
