@@ -359,7 +359,7 @@ Environment variables override values from the config file (`bridgeData.yaml`). 
 | `AIWORKER_DREAMER_NAME` | string | `An Awesome Dreamer` | Worker name for image generation |
 | `AIWORKER_WORKER_NAME` | string | `An Awesome AI Horde Worker` | Default worker name |
 | `AIWORKER_CACHE_HOME` | string | `./` | Directory to store model files |
-| `AIWORKER_TEMP_DIR` | string | `./tmp/` | Directory for temporary files (ideally fastest drive) |
+| `AIWORKER_TEMP_DIR` | string | `./tmp/` | Directory for temporary files (ideally fastest drive) *(currently unused in reGen)* |
 | `AIWORKER_HORDE_URL` | string | *(default horde)* | Custom AI Horde URL (only change for private horde) |
 | `AIWORKER_CIVITAI_API_TOKEN` | string | *(none)* | CivitAI API token for downloading LoRAs and login-required models |
 
@@ -399,8 +399,8 @@ Environment variables override values from the config file (`bridgeData.yaml`). 
 | `AIWORKER_POST_PROCESS_JOB_OVERLAP` | bool | `false` | Overlap post-processing with next inference job |
 | `AIWORKER_CYCLE_PROCESS_ON_MODEL_CHANGE` | bool | `false` | Restart inference process on model change |
 | `AIWORKER_MODEL_STICKINESS` | float | `0.0` | Chance (0–1) to prefer currently loaded models |
-| `AIWORKER_RAM_TO_LEAVE_FREE` | string | `80%` | Amount of system RAM to leave free |
-| `AIWORKER_VRAM_TO_LEAVE_FREE` | string | `80%` | Amount of VRAM to leave free |
+| `AIWORKER_RAM_TO_LEAVE_FREE` | string | `80%` | Amount of system RAM to leave free *(currently unused in reGen)* |
+| `AIWORKER_VRAM_TO_LEAVE_FREE` | string | `80%` | Amount of VRAM to leave free *(currently unused in reGen)* |
 
 ### Models
 
@@ -408,12 +408,12 @@ Environment variables override values from the config file (`bridgeData.yaml`). 
 |----------|------|---------|-------------|
 | `AIWORKER_MODELS_TO_LOAD` | list | *(empty)* | Models to load (comma-separated, or `ALL MODELS`, `top N`) |
 | `AIWORKER_MODELS_TO_SKIP` | list | *(empty)* | Models to skip when using meta-instructions |
-| `AIWORKER_DYNAMIC_MODELS` | bool | `false` | Auto-load models with high queue times |
-| `AIWORKER_MAX_MODELS_TO_DOWNLOAD` | int | `10` | Max models to download when dynamic_models is enabled |
-| `AIWORKER_NUMBER_OF_DYNAMIC_MODELS` | int | `1` | Number of dynamic models to load at a time |
+| `AIWORKER_DYNAMIC_MODELS` | bool | `false` | Auto-load models with high queue times *(currently unused in reGen)* |
+| `AIWORKER_MAX_MODELS_TO_DOWNLOAD` | int | `10` | Max models to download when dynamic_models is enabled *(currently unused in reGen)* |
+| `AIWORKER_NUMBER_OF_DYNAMIC_MODELS` | int | `1` | Number of dynamic models to load at a time *(currently unused in reGen)* |
 | `AIWORKER_LOAD_LARGE_MODELS` | bool | `true` | Allow loading large models (Flux, SDXL, etc.) |
 | `AIWORKER_MAX_LORA_CACHE_SIZE` | int | `10` | Max LoRA cache size in GB |
-| `AIWORKER_DISABLE_DISK_CACHE` | bool | `false` | Disable disk cache for model spill-over |
+| `AIWORKER_DISABLE_DISK_CACHE` | bool | `false` | Disable disk cache for model spill-over *(currently unused in reGen)* |
 
 ### Timeouts
 
@@ -430,14 +430,14 @@ Environment variables override values from the config file (`bridgeData.yaml`). 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `AIWORKER_MINUTES_ALLOWED_WITHOUT_JOBS` | int | `30` | Minutes before warning about no jobs |
-| `AIWORKER_AUTO_RESTART_ON_IDLE_MINUTES` | int | `60` | Auto-restart after N idle minutes (0=disabled, max 1440) |
+| `AIWORKER_AUTO_RESTART_IDLE_MINUTES` | int | `60` | Auto-restart after N idle minutes (0=disabled, max 1440) |
 | `AIWORKER_SUPPRESS_SPEED_WARNINGS` | bool | `false` | Suppress speed-related warning messages |
 | `AIWORKER_EXIT_ON_UNHANDLED_FAULTS` | bool | `false` | Exit on unhandled faults instead of recovering |
 | `AIWORKER_LIMITED_CONSOLE_MESSAGES` | bool | `false` | Only log submissions and status messages |
 | `AIWORKER_STATS_OUTPUT_FREQUENCY` | int | `30` | Seconds between status line prints |
 | `AIWORKER_PURGE_LORAS_ON_DOWNLOAD` | bool | `false` | Delete LoRA cache before downloading new LoRAs |
 | `AIWORKER_REMOVE_MAINTENANCE_ON_INIT` | bool | `false` | Clear maintenance mode on startup |
-| `AIWORKER_ALWAYS_DOWNLOAD` | bool | `true` | Always download models without prompting |
+| `AIWORKER_ALWAYS_DOWNLOAD` | bool | `true` | Always download models without prompting *(currently unused in reGen)* |
 
 ### Web UI
 
@@ -453,7 +453,7 @@ Environment variables override values from the config file (`bridgeData.yaml`). 
 |----------|------|---------|-------------|
 | `AIWORKER_LOG_LEVEL` | string | `INFO` | Log level: TRACE, DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL |
 | `AIWORKER_DEBUG` | flag | *(unset)* | Set to `1` for debug mode (equivalent to LOG_LEVEL=DEBUG) |
-| `AIWORKER_DISABLE_TERMINAL_UI` | bool | `true` | Disable the terminal GUI |
+| `AIWORKER_DISABLE_TERMINAL_UI` | bool | `true` | Disable the terminal GUI *(currently unused in reGen)* |
 
 ### Other / Advanced
 
