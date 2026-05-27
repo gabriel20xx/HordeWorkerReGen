@@ -667,7 +667,7 @@ class WorkerWebUI:
         .empty-state { text-align: center; padding: 24px 16px; color: #94a3b8; font-size: 0.87rem; }
         .empty-state-icon { font-size: 1.8rem; margin-bottom: 6px; display: block; }
         .centered-empty-container { display: flex; align-items: center; justify-content: center; height: 360px; }
-        #overview-current-job { height: 360px; overflow: hidden; }
+        #overview-current-job { height: 360px; overflow-y: auto; overflow-x: hidden; }
 
         ::-webkit-scrollbar { width: 5px; height: 5px; }
         ::-webkit-scrollbar-track { background: transparent; }
