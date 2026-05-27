@@ -8652,3 +8652,190 @@ class TestReplaceHungProcessesProcessStartingTimeout:
         assert starting_calls[0].args[1] == expected_timeout, (
             "PROCESS_STARTING stuck timeout must use max(process_timeout, preload_timeout)"
         )
+
+
+class TestIsTimeForShutdownRecentlyRecovered:
+    """Regression tests: _recently_recovered must not block shutdown for idle/stuck processes.
+
+    Before the fix, is_time_for_shutdown() returned False whenever _recently_recovered was
+    True, regardless of whether any processes were actually alive or only initialising.
+    This could block a user-requested restart for up to inference_step_timeout (≈600 s).
+
+    After the fix, _recently_recovered only blocks shutdown when at least one process is
+    still in PROCESS_STARTING (the case it was designed to guard against: a freshly spawned
+    replacement process that could trigger a false "all done" early return).
+    """
+
+    def _make_process(self, state: HordeProcessState) -> MagicMock:
+        """Return a minimal process-info mock in the requested state."""
+        proc = MagicMock()
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = state
+        return proc
+
+    def _make_manager(
+        self,
+        *,
+        recently_recovered: bool,
+        process_states: list[HordeProcessState],
+        jobs_pending_submit: int = 0,
+        jobs_in_progress: int = 0,
+        jobs_pending_inference: int = 0,
+        jobs_being_safety_checked: int = 0,
+        jobs_pending_safety_check: int = 0,
+    ) -> MagicMock:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        processes = [self._make_process(s) for s in process_states]
+
+        mock_manager = MagicMock()
+        mock_manager._shutting_down = True
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager.jobs_pending_submit = [MagicMock()] * jobs_pending_submit
+        mock_manager.jobs_in_progress = [MagicMock()] * jobs_in_progress
+        mock_manager.jobs_pending_inference = [MagicMock()] * jobs_pending_inference
+        mock_manager.jobs_being_safety_checked = [MagicMock()] * jobs_being_safety_checked
+        mock_manager.jobs_pending_safety_check = [MagicMock()] * jobs_pending_safety_check
+        mock_manager._process_map.get_inference_processes.return_value = processes
+        mock_manager._process_map.values.return_value = processes
+
+        bound = HordeWorkerProcessManager.is_time_for_shutdown.__get__(mock_manager, HordeWorkerProcessManager)
+        # Attach as callable so callers use mock_manager.is_time_for_shutdown()
+        mock_manager.is_time_for_shutdown = bound
+        return mock_manager
+
+    # ------------------------------------------------------------------
+    # Cases where shutdown SHOULD proceed (fix: no longer blocked)
+    # ------------------------------------------------------------------
+
+    def test_recently_recovered_idle_processes_allows_shutdown(self) -> None:
+        """_recently_recovered=True with all processes WAITING_FOR_JOB must allow shutdown.
+
+        Idle workers are not in PROCESS_STARTING so there is no false-positive risk.
+        """
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.WAITING_FOR_JOB, HordeProcessState.WAITING_FOR_JOB],
+        )
+        assert mock_manager.is_time_for_shutdown() is True
+
+    def test_recently_recovered_all_ending_allows_shutdown(self) -> None:
+        """_recently_recovered=True with all processes PROCESS_ENDING must allow shutdown."""
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.PROCESS_ENDING, HordeProcessState.PROCESS_ENDING],
+        )
+        assert mock_manager.is_time_for_shutdown() is True
+
+    def test_recently_recovered_all_ended_allows_shutdown(self) -> None:
+        """_recently_recovered=True with all processes PROCESS_ENDED must allow shutdown."""
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.PROCESS_ENDED, HordeProcessState.PROCESS_ENDED],
+        )
+        assert mock_manager.is_time_for_shutdown() is True
+
+    def test_recently_recovered_mixed_ending_ended_allows_shutdown(self) -> None:
+        """_recently_recovered=True with a mix of PROCESS_ENDING and PROCESS_ENDED allows shutdown."""
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.PROCESS_ENDING, HordeProcessState.PROCESS_ENDED],
+        )
+        assert mock_manager.is_time_for_shutdown() is True
+
+    def test_recently_recovered_model_preloaded_allows_shutdown(self) -> None:
+        """_recently_recovered=True with all processes MODEL_PRELOADED (idle) must allow shutdown."""
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.MODEL_PRELOADED],
+        )
+        assert mock_manager.is_time_for_shutdown() is True
+
+    # ------------------------------------------------------------------
+    # Cases where shutdown MUST NOT proceed (guard still active)
+    # ------------------------------------------------------------------
+
+    def test_recently_recovered_process_starting_blocks_shutdown(self) -> None:
+        """_recently_recovered=True with a PROCESS_STARTING process must block shutdown.
+
+        A freshly spawned replacement process sits in PROCESS_STARTING while loading.
+        Without the guard it would look idle (not in any "alive" state) and trigger a
+        premature shutdown while the process is still initialising.
+        """
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.PROCESS_STARTING],
+        )
+        assert mock_manager.is_time_for_shutdown() is False
+
+    def test_recently_recovered_mixed_starting_and_ending_blocks_shutdown(self) -> None:
+        """_recently_recovered=True with at least one PROCESS_STARTING blocks shutdown."""
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.PROCESS_STARTING, HordeProcessState.PROCESS_ENDING],
+        )
+        assert mock_manager.is_time_for_shutdown() is False
+
+    def test_not_recently_recovered_process_starting_allows_shutdown(self) -> None:
+        """_recently_recovered=False with all PROCESS_STARTING allows shutdown (ENDING/ENDED path)."""
+        mock_manager = self._make_manager(
+            recently_recovered=False,
+            process_states=[HordeProcessState.PROCESS_STARTING],
+        )
+        assert mock_manager.is_time_for_shutdown() is True
+
+    # ------------------------------------------------------------------
+    # Baseline: not shutting down must always return False
+    # ------------------------------------------------------------------
+
+    def test_not_shutting_down_returns_false_regardless_of_recovered(self) -> None:
+        """is_time_for_shutdown() must return False when not in shutdown mode."""
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.WAITING_FOR_JOB],
+        )
+        mock_manager._shutting_down = False
+        assert mock_manager.is_time_for_shutdown() is False
+
+    def test_active_inference_blocks_shutdown_despite_not_recently_recovered(self) -> None:
+        """INFERENCE_PROCESSING blocks shutdown regardless of _recently_recovered."""
+        mock_manager = self._make_manager(
+            recently_recovered=False,
+            process_states=[HordeProcessState.INFERENCE_PROCESSING],
+        )
+        assert mock_manager.is_time_for_shutdown() is False
+
+    def test_pending_jobs_blocks_shutdown_despite_idle_processes(self) -> None:
+        """Pending jobs in the submit queue must still block shutdown."""
+        mock_manager = self._make_manager(
+            recently_recovered=True,
+            process_states=[HordeProcessState.WAITING_FOR_JOB],
+            jobs_pending_submit=1,
+        )
+        assert mock_manager.is_time_for_shutdown() is False
+
+
+class TestRequestProgramRestartResetsJobPopTime:
+    """Regression test: request_program_restart() must reset _last_job_pop_time to 0.
+
+    The _process_control_loop checks `not self._last_pop_recently()` before calling
+    end_inference_processes() while shutting down.  _last_pop_recently() returns True
+    when the last pop was within 10 seconds, which delays killing stuck processes.
+    Setting _last_job_pop_time=0 makes _last_pop_recently() return False immediately.
+    """
+
+    def test_request_program_restart_resets_last_job_pop_time(self) -> None:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._last_job_pop_time = 999_999_999.0  # simulate a very recent pop
+        mock_manager._restart_requested = False
+
+        bound = HordeWorkerProcessManager.request_program_restart.__get__(mock_manager, HordeWorkerProcessManager)
+        bound()
+
+        assert mock_manager._last_job_pop_time == 0.0, (
+            "_last_job_pop_time must be reset to 0.0 so _last_pop_recently() expires immediately"
+        )
+        assert mock_manager._restart_requested is True
+        mock_manager._shutdown.assert_called_once()
