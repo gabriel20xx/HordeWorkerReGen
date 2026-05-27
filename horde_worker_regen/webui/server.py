@@ -921,14 +921,14 @@ class WorkerWebUI:
         .model-pill:hover { transform: scale(1.04); }
         .model-pill:active { transform: scale(0.97); }
         .model-pill:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
-        .model-pill.enabled { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
-        .model-pill.enabled:hover { background: #bfdbfe; }
-        [data-theme="dark"] .model-pill.enabled { background: #1e3a5f; color: #93c5fd; border-color: #2563eb; }
-        [data-theme="dark"] .model-pill.enabled:hover { background: #1e40af; }
-        .model-pill.disabled { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
-        .model-pill.disabled:hover { background: #e2e8f0; }
-        [data-theme="dark"] .model-pill.disabled { background: #1e293b; color: #94a3b8; border-color: #334155; }
-        [data-theme="dark"] .model-pill.disabled:hover { background: #334155; }
+        .model-pill.enabled { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+        .model-pill.enabled:hover { background: #bbf7d0; }
+        [data-theme="dark"] .model-pill.enabled { background: #14532d; color: #86efac; border-color: #22c55e; }
+        [data-theme="dark"] .model-pill.enabled:hover { background: #166534; }
+        .model-pill.disabled { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+        .model-pill.disabled:hover { background: #fecaca; }
+        [data-theme="dark"] .model-pill.disabled { background: #7f1d1d; color: #fca5a5; border-color: #ef4444; }
+        [data-theme="dark"] .model-pill.disabled:hover { background: #991b1b; }
         .models-empty { font-size: 0.78rem; color: #94a3b8; font-style: italic; }
         .confirm-modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); z-index: 1200; align-items: center; justify-content: center; padding: 18px; }
         .confirm-modal-backdrop.active { display: flex; }
@@ -5013,6 +5013,22 @@ class WorkerWebUI:
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"Error toggling model '{model}' enabled={enabled}: {exc}")
             return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+
+        # Update local models data immediately so the next GET /api/models reflects
+        # the new state without waiting for an external update_models_data() call.
+        enabled_list = list(self._models_data["enabled"])
+        disabled_list = list(self._models_data["disabled"])
+        if enabled:
+            if model in disabled_list:
+                disabled_list.remove(model)
+            if model not in enabled_list:
+                enabled_list.append(model)
+        else:
+            if model in enabled_list:
+                enabled_list.remove(model)
+            if model not in disabled_list:
+                disabled_list.append(model)
+        self.update_models_data(enabled_list, disabled_list)
 
         return web.json_response({"model": model, "enabled": enabled})
 

@@ -3176,6 +3176,14 @@ async def test_webui_models_toggle() -> None:
             data = await response.json()
             assert data == {"model": "Stable Diffusion 1.5", "enabled": False}
 
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/models",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+            assert data["enabled"] == ["SDXL 1.0"]
+            assert data["disabled"] == [special_model_name, "Deliberate", "Stable Diffusion 1.5"]
+
         assert toggled == [("Stable Diffusion 1.5", False)]
 
         # Enable a model with characters that require escaping in HTML
@@ -3186,6 +3194,14 @@ async def test_webui_models_toggle() -> None:
             assert response.status == 200
             data = await response.json()
             assert data == {"model": special_model_name, "enabled": True}
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/models",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+            assert data["enabled"] == [special_model_name, "SDXL 1.0"]
+            assert data["disabled"] == ["Deliberate", "Stable Diffusion 1.5"]
 
         assert toggled == [("Stable Diffusion 1.5", False), (special_model_name, True)]
     finally:
