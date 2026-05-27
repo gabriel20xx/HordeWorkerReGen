@@ -3100,6 +3100,171 @@ async def test_webui_settings_auto_restart_on_idle() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_webui_models_get_empty() -> None:
+    """Test that GET /api/models returns empty lists when no models data has been pushed."""
+    webui = WorkerWebUI(port=0)
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/models",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data == {"enabled": [], "disabled": []}
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_models_get_with_data() -> None:
+    """Test that GET /api/models returns the pushed model lists."""
+    webui = WorkerWebUI(port=0)
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        webui.update_models_data(
+            enabled=["Stable Diffusion 1.5", "SDXL 1.0"],
+            disabled=["Deliberate"],
+        )
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/models",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["enabled"] == ["SDXL 1.0", "Stable Diffusion 1.5"]
+        assert data["disabled"] == ["Deliberate"]
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_models_toggle() -> None:
+    """Test that POST /api/models toggles a model and invokes the callback."""
+    webui = WorkerWebUI(port=0)
+    toggled = []
+    special_model_name = "A&B <Model> \"Quoted\" \\"
+
+    def on_toggle(model: str, enabled: bool) -> None:
+        toggled.append((model, enabled))
+
+    webui.set_toggle_model_callback(on_toggle)
+    webui.update_models_data(
+        enabled=["Stable Diffusion 1.5", "SDXL 1.0"],
+        disabled=["Deliberate", special_model_name],
+    )
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Disable a model
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/models",
+            json={"model": "Stable Diffusion 1.5", "enabled": False},
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+            assert data == {"model": "Stable Diffusion 1.5", "enabled": False}
+
+        assert toggled == [("Stable Diffusion 1.5", False)]
+
+        # Enable a model with characters that require escaping in HTML
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/models",
+            json={"model": special_model_name, "enabled": True},
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+            assert data == {"model": special_model_name, "enabled": True}
+
+        assert toggled == [("Stable Diffusion 1.5", False), (special_model_name, True)]
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_models_toggle_invalid() -> None:
+    """Test that POST /api/models returns errors for invalid requests."""
+    webui = WorkerWebUI(port=0)
+    webui.update_models_data(enabled=["ModelA"], disabled=[])
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Missing model field
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/models",
+            json={"enabled": True},
+        ) as response:
+            assert response.status == 400
+
+        # Missing enabled field
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/models",
+            json={"model": "ModelA"},
+        ) as response:
+            assert response.status == 400
+
+        # Unknown model
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/models",
+            json={"model": "UnknownModel", "enabled": True},
+        ) as response:
+            assert response.status == 400
+
+        # No callback registered
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/models",
+            json={"model": "ModelA", "enabled": False},
+        ) as response:
+            assert response.status == 503
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_models_section_html() -> None:
+    """Test that the index page includes the models section CSS and JS."""
+    webui = WorkerWebUI(port=0)
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        # CSS classes for models section
+        assert "models-containers" in html
+        assert "model-pill" in html
+        assert "models-box" in html
+        # JS functions
+        assert "fetchModels" in html
+        assert "toggleModel" in html
+        assert "renderModelsSection" in html
+        # Models are interactive buttons with delegated click handling and data attributes
+        assert 'class="model-pill enabled" data-model="' in html
+        assert "addEventListener('click'" in html
+        assert 'aria-pressed="true"' in html
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     test_webui_creation()
     print("✓ WebUI creation test passed")

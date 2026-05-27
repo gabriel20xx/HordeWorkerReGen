@@ -1673,6 +1673,39 @@ def test_set_max_active_models_requests_runtime_scale_down() -> None:
         assert os.environ["AIWORKER_MAX_ACTIVE_MODELS"] == "3"
 
 
+def test_get_bridge_data_from_disk_reconciles_models_runtime_state() -> None:
+    """Reloading bridge data should keep runtime-disabled configured models disabled."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+    manager.horde_model_reference_manager = MagicMock()
+    manager._max_concurrent_inference_processes = 1
+    manager._all_models_configured = ["Model A", "Model B", "Removed Model"]
+    manager._runtime_disabled_models = {"Model A", "Removed Model"}
+    manager.bridge_data = SimpleNamespace(
+        _loaded_from_env_vars=False,
+        image_models_to_load=["Model A", "Model B"],
+        max_threads=1,
+        custom_models=None,
+    )
+
+    reloaded_bridge_data = SimpleNamespace(
+        image_models_to_load=["Model A", "Model C"],
+        max_threads=1,
+        custom_models=None,
+    )
+
+    with patch(
+        "horde_worker_regen.process_management.process_manager.BridgeDataLoader.load",
+        return_value=reloaded_bridge_data,
+    ):
+        manager.get_bridge_data_from_disk()
+
+    assert manager._all_models_configured == ["Model A", "Model C"]
+    assert manager._runtime_disabled_models == {"Model A"}
+    assert manager.bridge_data.image_models_to_load == ["Model C"]
+
+
 def test_end_inference_processes_noop_when_not_above_limit() -> None:
     """Non-shutdown end_inference_processes should not kill workers when at/below configured limit."""
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
