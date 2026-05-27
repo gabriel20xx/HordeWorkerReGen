@@ -32,6 +32,7 @@ You can read about [kudos](https://github.com/Haidra-Org/haidra-assets/blob/main
     - [Updating the Runtime](#updating-the-runtime)
   - [Custom Models](#custom-models)
   - [Docker](#docker)
+  - [Environment Variables](#environment-variables)
   - [Support \& Troubleshooting](#support--troubleshooting)
   - [Model Usage \& Licenses](#model-usage--licenses)
 
@@ -344,7 +345,130 @@ Detailed guide: [Dockerfiles/README.md](Dockerfiles/README.md)
 
 Manual worker setup: [README_advanced.md](README_advanced.md)
 
-## Support & Troubleshooting
+## Environment Variables
+
+All configuration options can be set via environment variables using the `AIWORKER_` prefix. This is useful for Docker deployments, CI/CD, or when you prefer not to use a config file.
+
+Environment variables override values from the config file (`bridgeData.yaml`). You can also place them in a `.env` file in the worker directory.
+
+### General / Identity
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_API_KEY` | string | `0000000000` | Your AI Horde API key |
+| `AIWORKER_DREAMER_NAME` | string | `An Awesome Dreamer` | Worker name for image generation |
+| `AIWORKER_WORKER_NAME` | string | `An Awesome AI Horde Worker` | Default worker name |
+| `AIWORKER_CACHE_HOME` | string | `./` | Directory to store model files |
+| `AIWORKER_TEMP_DIR` | string | `./tmp/` | Directory for temporary files (ideally fastest drive) |
+| `AIWORKER_HORDE_URL` | string | *(default horde)* | Custom AI Horde URL (only change for private horde) |
+| `AIWORKER_CIVITAI_API_TOKEN` | string | *(none)* | CivitAI API token for downloading LoRAs and login-required models |
+
+### Capabilities
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_NSFW` | bool | `true` | Accept NSFW image jobs |
+| `AIWORKER_CENSOR_NSFW` | bool | `false` | Censor NSFW content even when accepting NSFW jobs |
+| `AIWORKER_ALLOW_IMG2IMG` | bool | `true` | Accept image-to-image jobs |
+| `AIWORKER_ALLOW_PAINTING` | bool | `false` | Accept inpainting/painting jobs |
+| `AIWORKER_ALLOW_UNSAFE_IP` | bool | `true` | Accept requests from flagged or unsafe IP addresses |
+| `AIWORKER_ALLOW_POST_PROCESSING` | bool | `false` | Accept jobs with post-processing steps |
+| `AIWORKER_ALLOW_CONTROLNET` | bool | `false` | Accept ControlNet jobs (requires ~12GB VRAM) |
+| `AIWORKER_ALLOW_SDXL_CONTROLNET` | bool | `false` | Accept SDXL ControlNet jobs |
+| `AIWORKER_ALLOW_LORA` | bool | `false` | Accept jobs that use LoRA models |
+| `AIWORKER_REQUIRE_UPFRONT_KUDOS` | bool | `false` | Only accept jobs from users with enough kudos |
+| `AIWORKER_LIMIT_MAX_STEPS` | bool | `false` | Cap inference steps to worker's configured max |
+| `AIWORKER_EXTRA_SLOW_WORKER` | bool | `false` | Enable extra-slow-worker mode (forces conservative settings) |
+
+### Performance
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_MAX_POWER` | int | `8` | Max resolution multiplier (64×64×8×max_power pixels) |
+| `AIWORKER_MAX_BATCH` | int | `1` | Maximum images per batched inference job |
+| `AIWORKER_MAX_THREADS` | int | `1` | Maximum concurrent inference threads |
+| `AIWORKER_QUEUE_SIZE` | int | `1` | Number of jobs to hold in queue |
+| `AIWORKER_MAX_ACTIVE_MODELS` | int | *(auto)* | Maximum active model slots (overrides auto-detection) |
+| `AIWORKER_SAFETY_ON_GPU` | bool | `false` | Run safety model on GPU (~1.2 GB VRAM) |
+| `AIWORKER_HIGH_MEMORY_MODE` | bool | `true` | Keep models in VRAM to reduce load times |
+| `AIWORKER_VERY_HIGH_MEMORY_MODE` | bool | `false` | Aggressive VRAM retention (data-center GPUs only) |
+| `AIWORKER_HIGH_PERFORMANCE_MODE` | bool | `true` | High throughput mode (RTX 4090 or better) |
+| `AIWORKER_MODERATE_PERFORMANCE_MODE` | bool | `false` | Moderate performance mode (RTX 3080 or better) |
+| `AIWORKER_UNLOAD_MODELS_FROM_VRAM_OFTEN` | bool | `true` | Unload models from VRAM between jobs |
+| `AIWORKER_VERY_FAST_DISK_MODE` | bool | `false` | Load more models concurrently (fast SSD/NVMe) |
+| `AIWORKER_POST_PROCESS_JOB_OVERLAP` | bool | `false` | Overlap post-processing with next inference job |
+| `AIWORKER_CYCLE_PROCESS_ON_MODEL_CHANGE` | bool | `false` | Restart inference process on model change |
+| `AIWORKER_MODEL_STICKINESS` | float | `0.0` | Chance (0–1) to prefer currently loaded models |
+| `AIWORKER_RAM_TO_LEAVE_FREE` | string | `80%` | Amount of system RAM to leave free |
+| `AIWORKER_VRAM_TO_LEAVE_FREE` | string | `80%` | Amount of VRAM to leave free |
+
+### Models
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_MODELS_TO_LOAD` | list | *(empty)* | Models to load (comma-separated, or `ALL MODELS`, `top N`) |
+| `AIWORKER_MODELS_TO_SKIP` | list | *(empty)* | Models to skip when using meta-instructions |
+| `AIWORKER_DYNAMIC_MODELS` | bool | `false` | Auto-load models with high queue times |
+| `AIWORKER_MAX_MODELS_TO_DOWNLOAD` | int | `10` | Max models to download when dynamic_models is enabled |
+| `AIWORKER_NUMBER_OF_DYNAMIC_MODELS` | int | `1` | Number of dynamic models to load at a time |
+| `AIWORKER_LOAD_LARGE_MODELS` | bool | `true` | Allow loading large models (Flux, SDXL, etc.) |
+| `AIWORKER_MAX_LORA_CACHE_SIZE` | int | `10` | Max LoRA cache size in GB |
+| `AIWORKER_DISABLE_DISK_CACHE` | bool | `false` | Disable disk cache for model spill-over |
+
+### Timeouts
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_PROCESS_TIMEOUT` | int | `300` | Max seconds a job may run before being killed |
+| `AIWORKER_POST_PROCESS_TIMEOUT` | int | `60` | Max seconds for post-processing |
+| `AIWORKER_PRELOAD_TIMEOUT` | int | `80` | Max seconds to load a model |
+| `AIWORKER_DOWNLOAD_TIMEOUT` | int | `121` | Max seconds for aux model download |
+| `AIWORKER_INFERENCE_STEP_TIMEOUT` | int | `600` | Max seconds per inference step before stuck detection |
+
+### Behavior
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_MINUTES_ALLOWED_WITHOUT_JOBS` | int | `30` | Minutes before warning about no jobs |
+| `AIWORKER_AUTO_RESTART_ON_IDLE_MINUTES` | int | `60` | Auto-restart after N idle minutes (0=disabled, max 1440) |
+| `AIWORKER_SUPPRESS_SPEED_WARNINGS` | bool | `false` | Suppress speed-related warning messages |
+| `AIWORKER_EXIT_ON_UNHANDLED_FAULTS` | bool | `false` | Exit on unhandled faults instead of recovering |
+| `AIWORKER_LIMITED_CONSOLE_MESSAGES` | bool | `false` | Only log submissions and status messages |
+| `AIWORKER_STATS_OUTPUT_FREQUENCY` | int | `30` | Seconds between status line prints |
+| `AIWORKER_PURGE_LORAS_ON_DOWNLOAD` | bool | `false` | Delete LoRA cache before downloading new LoRAs |
+| `AIWORKER_REMOVE_MAINTENANCE_ON_INIT` | bool | `false` | Clear maintenance mode on startup |
+| `AIWORKER_ALWAYS_DOWNLOAD` | bool | `true` | Always download models without prompting |
+
+### Web UI
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_ENABLE_WEBUI` | bool | `true` | Enable the web UI |
+| `AIWORKER_WEBUI_PORT` | int | `3000` | Port for the web UI |
+| `AIWORKER_WEBUI_UPDATE_INTERVAL` | float | `1.0` | Seconds between web UI backend updates (0.5–10) |
+
+### Logging & Debug
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_LOG_LEVEL` | string | `INFO` | Log level: TRACE, DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL |
+| `AIWORKER_DEBUG` | flag | *(unset)* | Set to `1` for debug mode (equivalent to LOG_LEVEL=DEBUG) |
+| `AIWORKER_DISABLE_TERMINAL_UI` | bool | `true` | Disable the terminal GUI |
+
+### Other / Advanced
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AIWORKER_PRIORITY_USERNAMES` | list | *(empty)* | Additional usernames with priority access |
+| `AIWORKER_BLACKLIST` | list | *(empty)* | Words that cause jobs to be rejected |
+| `AIWORKER_CENSORLIST` | list | *(empty)* | Words that always trigger NSFW censor |
+| `AIWORKER_EXTRA_STABLE_DIFFUSION_MODELS_FOLDERS` | list | *(empty)* | Extra folders to search for SD models |
+| `AIWORKER_CAPTURE_KUDOS_TRAINING_DATA` | bool | `false` | Capture kudos training data |
+| `AIWORKER_KUDOS_TRAINING_DATA_FILE` | string | *(none)* | File path for kudos training data |
+
+> **Note:** Boolean values accept `true`/`false` (case-insensitive). List values can be comma-separated or use bracket syntax: `[item1, item2]` or `item1;item2`.
+
+
 
 Check the [#local-workers Discord channel](https://discord.com/channels/781145214752129095/1076124012305993768) for the latest info and community support.
 
