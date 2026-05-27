@@ -1089,7 +1089,7 @@ class WorkerWebUI:
                 <!-- LOGS PAGE -->
                 <div class="page" id="page-logs">
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button><button id="console-copy-btn" class="console-copy-btn" onclick="copyConsoleLogs()" title="Copy all console logs to clipboard">&#128203; Copy</button><select id="console-filter-select" class="console-filter-select" onchange="applyConsoleFilter()" title="Filter logs by severity"><option value="ALL">All levels</option><option value="SUCCESS">Success+</option><option value="WARNING">Warning+</option><option value="ERROR">Error+</option></select></div>
+                        <div class="section-header"><span class="section-title">&#128203; Console</span><button id="console-pause-btn" class="console-pause-btn" onclick="toggleConsolePause()" title="Pause console output" aria-pressed="false">&#9646;&#9646; Pause</button><button id="console-copy-btn" class="console-copy-btn" onclick="copyConsoleLogs()" title="Copy visible console logs to clipboard">&#128203; Copy</button><select id="console-filter-select" class="console-filter-select" onchange="applyConsoleFilter()" title="Filter logs by severity"><option value="ALL">All levels</option><option value="SUCCESS">Success+</option><option value="WARNING">Warning+</option><option value="ERROR">Error+</option></select></div>
                         <div class="card log-panel" style="padding:0;">
                             <div id="console-logs" class="console-container" style="border-radius:12px;"><div style="text-align:center;color:#475569;padding:18px;">No logs available</div></div>
                         </div>
@@ -1762,9 +1762,14 @@ class WorkerWebUI:
             return copied;
         }
         function copyConsoleLogs() {
-            const cl = document.getElementById('console-logs');
-            const logDivs = cl ? Array.from(cl.querySelectorAll('div')) : [];
-            const text = logDivs.length > 0 ? logDivs.map(d => d.textContent).join('\n') : (cl ? cl.textContent : '');
+            const filterLevel = (document.getElementById('console-filter-select') || {}).value || 'ALL';
+            const minOrder = filterLevel === 'ALL' ? -1 : (_CONSOLE_LEVEL_ORDER[filterLevel] !== undefined ? _CONSOLE_LEVEL_ORDER[filterLevel] : -1);
+            const logs = minOrder < 0 ? _consoleLogs : _consoleLogs.filter(function(log) {
+                const lvl = _getLogLevel(log);
+                const ord = _CONSOLE_LEVEL_ORDER[lvl] !== undefined ? _CONSOLE_LEVEL_ORDER[lvl] : 2;
+                return ord >= minOrder;
+            });
+            const text = logs.map(function(log) { return log.replace(_CONSOLE_ANSI_RE, ''); }).join('\n');
             const btn = document.getElementById('console-copy-btn');
             if (navigator.clipboard && window.isSecureContext) {
                 navigator.clipboard.writeText(text).then(function() {

@@ -294,6 +294,11 @@ async def test_webui_console_filter_html() -> None:
         assert '_CONSOLE_LOG_LEVEL_RE' in html
         assert '_CONSOLE_LEVEL_ORDER' in html
         assert '.console-filter-select' in html
+        # copy button should use the same filter logic as _renderConsoleLogs
+        assert 'function copyConsoleLogs()' in html
+        assert 'title="Copy visible console logs to clipboard"' in html
+        assert '_consoleLogs.filter(function(log)' in html
+        assert 'log.replace(_CONSOLE_ANSI_RE,' in html
     finally:
         await webui.stop()
 
