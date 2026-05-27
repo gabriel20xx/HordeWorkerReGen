@@ -5028,7 +5028,7 @@ class WorkerWebUI:
                 enabled_list.remove(model)
             if model not in disabled_list:
                 disabled_list.append(model)
-        self._models_data = {"enabled": sorted(enabled_list), "disabled": sorted(disabled_list)}
+        self.update_models_data(enabled_list, disabled_list)
 
         return web.json_response({"model": model, "enabled": enabled})
 
