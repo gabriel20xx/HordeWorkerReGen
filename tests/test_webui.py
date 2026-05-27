@@ -618,7 +618,8 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
         assert 'id="mobile-sysvram">SYS 0%</span>' in html
         assert 'id="mobile-ram">WRK 0%</span>' in html
         assert 'id="mobile-sysram">SYS 0%</span>' in html
-        assert '#overview-current-job { height: 360px; overflow-y: auto; overflow-x: hidden; }' in html
+        assert '.last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 400px; overflow: hidden; }' in html
+        assert '#overview-current-job { height: 400px; overflow: hidden; }' in html
         assert html.count("mobile-res-chip-secondary") == 5
         # 4 column groups with headers must be present
         assert html.count('class="mobile-res-col"') == 4
