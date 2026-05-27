@@ -536,7 +536,7 @@ class WorkerWebUI:
             align-items: center;
         }
 
-        .log-panel { width: 100%; height: min(600px, 70vh); overflow: hidden; }
+        .log-panel { width: 100%; height: min(800px, 80vh); overflow: hidden; }
         .console-container { background: #0c0c0c; border-radius: 8px; padding: 12px 14px; height: 100%; box-sizing: border-box; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 1rem; font-weight: 400; color: #cccccc; line-height: 1.2; }
         .console-pause-btn { margin-left: auto; background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; }
         .console-pause-btn:hover { background: #cbd5e1; }
