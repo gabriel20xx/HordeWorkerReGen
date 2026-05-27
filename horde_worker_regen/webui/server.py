@@ -832,8 +832,6 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-label { color: #e2e8f0; }
         .setting-desc { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
         [data-theme="dark"] .setting-desc { color: #94a3b8; }
-        .setting-restart-badge { display: inline-block; font-size: 0.65rem; font-weight: 700; background: #fef3c7; color: #92400e; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
-        [data-theme="dark"] .setting-restart-badge { background: #451a03; color: #fcd34d; }
         .setting-ctrl { flex-shrink: 0; margin-left: auto; display: flex; align-items: center; justify-content: flex-end; text-align: right; gap: 6px; }
         /* Toggle switch */
         .setting-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
@@ -3715,12 +3713,11 @@ class WorkerWebUI:
                 for (var ki = 0; ki < keys.length; ki++) {
                     var key = keys[ki];
                     var spec = _SETTINGS_SPEC[key];
-                    var label = spec[0], desc = spec[1], type = spec[3], minV = spec[4], maxV = spec[5], restart = spec[6];
+                    var label = spec[0], desc = spec[1], type = spec[3], minV = spec[4], maxV = spec[5];
                     var val = (key in settings) ? settings[key] : null;
                     if (Object.prototype.hasOwnProperty.call(_settingsPending, key)) val = _settingsPending[key];
-                    var restartBadge = restart ? '<span class="setting-restart-badge" title="Changes take full effect after restarting the worker">restart</span>' : '';
                     html += '<div class="setting-row">';
-                    html += '<div class="setting-info"><div class="setting-label">' + escapeHtml(label) + restartBadge + '</div><div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
+                    html += '<div class="setting-info"><div class="setting-label">' + escapeHtml(label) + '</div><div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
                     html += '<div class="setting-ctrl">';
                     if (type === 'bool') {
                         var chk = (val === true) ? 'checked' : '';
