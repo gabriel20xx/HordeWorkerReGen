@@ -2321,9 +2321,6 @@ class HordeWorkerProcessManager:
         if not self._shutting_down:
             return False
 
-        if self._recently_recovered:
-            return False
-
         # If any job hasn't been submitted to the API yet, then we can't shut down
         if len(self.jobs_pending_submit) > 0:
             return False
@@ -2337,13 +2334,27 @@ class HordeWorkerProcessManager:
         if len(self.jobs_pending_submit) > 0:
             return False
 
+        inference_processes = list(self._process_map.get_inference_processes())
+
         if all(
             inference_process.last_process_state == HordeProcessState.PROCESS_ENDING
             or inference_process.last_process_state == HordeProcessState.PROCESS_ENDED
             or inference_process.last_process_state == HordeProcessState.PROCESS_STARTING
-            for inference_process in self._process_map.get_inference_processes()
+            for inference_process in inference_processes
         ):
-            return True
+            # _recently_recovered: a replacement process was just spawned and may be in
+            # PROCESS_STARTING, which would falsely satisfy this "all ending/ended/starting"
+            # check while the process is still initialising.  Block premature shutdown only
+            # when at least one process is actually in PROCESS_STARTING; if all are already
+            # in ENDING/ENDED it is always safe to stop regardless of the recovery window.
+            if not (
+                self._recently_recovered
+                and any(
+                    p.last_process_state == HordeProcessState.PROCESS_STARTING
+                    for p in inference_processes
+                )
+            ):
+                return True
 
         any_process_alive = False
 
@@ -2360,6 +2371,15 @@ class HordeWorkerProcessManager:
             ):
                 any_process_alive = True
                 continue
+
+        # _recently_recovered: a just-replaced process sits in PROCESS_STARTING and looks
+        # idle (not in any of the "alive" inference states above).  Block premature shutdown
+        # while the recovery window is active and at least one process is still initialising.
+        if self._recently_recovered and any(
+            p.last_process_state == HordeProcessState.PROCESS_STARTING
+            for p in inference_processes
+        ):
+            return False
 
         # If there are any inference processes still alive, then we can't shut down
         return not any_process_alive
@@ -7851,6 +7871,10 @@ class HordeWorkerProcessManager:
     def request_program_restart(self) -> None:
         """Request a graceful shutdown followed by an in-process restart."""
         self._restart_requested = True
+        # Reset the last job-pop timestamp so that end_inference_processes() is invoked
+        # immediately on the next _process_control_loop iteration instead of waiting up
+        # to 10 seconds for _last_pop_recently() to expire.
+        self._last_job_pop_time = 0.0
         logger.warning("Worker program restart requested via web UI")
         self._shutdown()
 
