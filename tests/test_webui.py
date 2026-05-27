@@ -606,6 +606,7 @@ async def test_webui_index_initial_gpu_and_vram_markup() -> None:
         assert "escapeHtml(proc.display_id || proc.id)" in html
         assert "if (pageId === 'stats') {" in html
         assert "fetchStats(true);" in html
+        assert ".image-grid-item .image-timestamp { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #e2e8f0; font-size: 0.65rem; padding: 3px 6px; text-align: center; border-radius: 0 0 8px 8px; pointer-events: none; opacity: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }" in html
         assert "'/ ' + totalRamVal" not in html
         assert "topbar-vram-val" not in html
         assert "topbar-ram-val" not in html
