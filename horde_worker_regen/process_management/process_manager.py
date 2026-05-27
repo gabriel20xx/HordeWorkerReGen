@@ -7815,6 +7815,10 @@ class HordeWorkerProcessManager:
         if webui_update_loop is not None:
             tasks.append(webui_update_loop)
 
+        auto_restart_idle_loop = asyncio.create_task(self._auto_restart_idle_loop(), name="auto_restart_idle_loop")
+        auto_restart_idle_loop.add_done_callback(self._handle_exception)
+        tasks.append(auto_restart_idle_loop)
+
         self._aiohttp_client_session = ClientSession(requote_redirect_url=False)
         self.horde_client_session = AIHordeAPIAsyncClientSession(
             aiohttp_session=self._aiohttp_client_session,
@@ -7853,6 +7857,43 @@ class HordeWorkerProcessManager:
         self._restart_requested = True
         logger.warning("Worker program restart requested via web UI")
         self._shutdown()
+
+    def _check_auto_restart_on_idle(self) -> None:
+        """Restart the worker if no job has been submitted within the configured idle threshold.
+
+        When ``bridge_data.auto_restart_on_idle_minutes`` is greater than zero and no job
+        has been submitted since at least that many minutes, a graceful restart is triggered.
+        Does nothing while already shutting down.
+        """
+        if self._shutting_down:
+            return
+        threshold_minutes = self.bridge_data.auto_restart_on_idle_minutes
+        if not threshold_minutes:
+            return
+        elapsed_seconds = time.time() - self._last_job_submitted_time
+        threshold_seconds = threshold_minutes * 60
+        if elapsed_seconds >= threshold_seconds:
+            logger.warning(
+                f"No job has been submitted in the last {threshold_minutes} minute(s) "
+                f"({elapsed_seconds / 60:.1f} min elapsed). Auto-restarting the worker program...",
+            )
+            self._restart_requested = True
+            self._shutdown()
+
+    async def _auto_restart_idle_loop(self) -> None:
+        """Periodically check whether an idle-triggered auto-restart is required."""
+        check_interval = 60.0
+        while True:
+            try:
+                if self._shutting_down:
+                    break
+                await asyncio.sleep(check_interval)
+                self._check_auto_restart_on_idle()
+            except CancelledError:
+                self._shutdown()
+                break
+            except Exception:
+                logger.exception("Unexpected error in auto-restart idle loop")
 
     def signal_handler(self, sig: int, frame: object) -> None:
         """Handle SIGINT and SIGTERM."""

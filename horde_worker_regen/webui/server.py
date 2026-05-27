@@ -98,6 +98,7 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "inference_step_timeout": {"type": int, "min": 60, "max": 1800},
     # Behavior
     "minutes_allowed_without_jobs": {"type": int, "min": 0, "max": 3599},
+    "auto_restart_on_idle_minutes": {"type": int, "min": 0, "max": 1440},
     "suppress_speed_warnings": {"type": bool},
     "exit_on_unhandled_faults": {"type": bool},
     "limited_console_messages": {"type": bool},
@@ -3521,6 +3522,7 @@ class WorkerWebUI:
             preload_timeout:          ['Preload Timeout (s)',      'Max seconds allowed to load a model.',                             'Timeouts',     'int',   15,   600,  false],
             inference_step_timeout:   ['Inference Step Timeout (s)','Max seconds allowed per inference step before detecting a stuck job.','Timeouts',  'int',   60,   1800, false],
             minutes_allowed_without_jobs: ['Minutes Without Jobs','Minutes of idle time before the worker warns about no jobs.',       'Behavior',     'int',   0,    3599, false],
+            auto_restart_on_idle_minutes: ['Auto-Restart Idle (min)','Restart the worker automatically if no job has been submitted for this many minutes (0\u00a0=\u00a0disabled; default\u00a060).', 'Behavior', 'int', 0, 1440, false],
             suppress_speed_warnings:  ['Suppress Speed Warnings', 'Do not print speed-related warning messages.',                      'Behavior',     'bool',  null, null, false],
             exit_on_unhandled_faults: ['Exit on Unhandled Faults','Exit the worker instead of recovering from an unhandled fault.',    'Behavior',     'bool',  null, null, false],
             limited_console_messages: ['Limited Console Messages','Only log job submission and status messages to console.',            'Behavior',     'bool',  null, null, false],

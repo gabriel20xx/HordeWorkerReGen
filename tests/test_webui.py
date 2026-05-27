@@ -2848,6 +2848,66 @@ async def test_webui_settings_post_float() -> None:
         await webui.stop()
 
 
+@pytest.mark.asyncio
+async def test_webui_settings_auto_restart_on_idle() -> None:
+    """Test that auto_restart_on_idle_minutes can be updated via POST /api/settings."""
+    webui = WorkerWebUI(port=0)
+    received: list[tuple[str, object]] = []
+
+    def mock_callback(key: str, value: object) -> None:
+        received.append((key, value))
+
+    webui.set_setting_callback(mock_callback)
+    webui.update_settings_data({"auto_restart_on_idle_minutes": 60})
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # Valid update — set to 120 minutes
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "auto_restart_on_idle_minutes", "value": 120},
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data == {"key": "auto_restart_on_idle_minutes", "value": 120}
+        assert received == [("auto_restart_on_idle_minutes", 120)]
+
+        # Valid update — set to 0 (disabled)
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "auto_restart_on_idle_minutes", "value": 0},
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data == {"key": "auto_restart_on_idle_minutes", "value": 0}
+
+        # Value above maximum (1440 min = 24 h) should be rejected
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "auto_restart_on_idle_minutes", "value": 9999},
+        ) as response:
+            assert response.status == 400
+
+        # Negative value should be rejected
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "auto_restart_on_idle_minutes", "value": -1},
+        ) as response:
+            assert response.status == 400
+
+        # Non-integer should be rejected
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "auto_restart_on_idle_minutes", "value": "soon"},
+        ) as response:
+            assert response.status == 400
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     test_webui_creation()
     print("✓ WebUI creation test passed")

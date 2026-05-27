@@ -70,6 +70,13 @@ class reGenBridgeData(CombinedHordeBridgeData):
 
     minutes_allowed_without_jobs: int = Field(default=30, ge=0, lt=60 * 60)
 
+    auto_restart_on_idle_minutes: int = Field(default=60, ge=0, validate_default=True)
+    """Automatically restart the worker program if no job has been submitted for this many minutes.
+
+    Set to 0 to disable. The default is 60 minutes (1 hour).
+    Can also be configured via the AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable.
+    """
+
     horde_model_stickiness: float = Field(default=0.0, le=1.0, ge=0.0, alias="model_stickiness")
     """
     A percent chance (expressed as a decimal between 0 and 1) that the currently loaded models will
@@ -247,7 +254,35 @@ class reGenBridgeData(CombinedHordeBridgeData):
 
         return self
 
+    @field_validator("auto_restart_on_idle_minutes", mode="after")
+    @classmethod
+    def validate_auto_restart_on_idle_minutes(cls, value: int) -> int:
+        """Apply the environment variable override for the `auto_restart_on_idle_minutes` field."""
+        env_val = os.getenv("AIWORKER_AUTO_RESTART_IDLE_MINUTES")
+        if env_val is not None:
+            try:
+                parsed = int(env_val)
+            except ValueError:
+                logger.warning(
+                    f"AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable has an invalid value: '{env_val}'. "
+                    "It must be a non-negative integer. Ignoring.",
+                )
+                return value
+            if parsed < 0:
+                logger.warning(
+                    f"AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable has a negative value: {parsed}. "
+                    "It must be >= 0. Ignoring.",
+                )
+                return value
+            logger.info(
+                f"AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable is set to {parsed}. "
+                "This overrides the value for `auto_restart_on_idle_minutes` in the config file.",
+            )
+            return parsed
+        return value
+
     @field_validator("dreamer_worker_name", mode="after")
+    @classmethod
     def validate_dreamer_worker_name(cls, value: str) -> str:
         """Apply the environment variable override for the `dreamer_worker_name` field."""
         AIWORKER_DREAMER_WORKER_NAME = os.getenv("AIWORKER_DREAMER_WORKER_NAME")

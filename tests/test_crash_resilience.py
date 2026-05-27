@@ -528,8 +528,69 @@ def test_start_exits_cleanly_when_restart_exec_fails() -> None:
     mock_exit.assert_called_once_with(1)
 
 
-class TestApiSubmitJobBrokenDataHandling:
-    """Tests that api_submit_job skips broken jobs instead of leaving the submit queue blocked."""
+class TestCheckAutoRestartOnIdle:
+    """Tests for _check_auto_restart_on_idle()."""
+
+    def _make_manager(self, *, threshold_minutes: int = 60, elapsed_seconds: float = 0.0, shutting_down: bool = False) -> MagicMock:
+        """Return a minimal mock manager with the attributes needed by _check_auto_restart_on_idle."""
+        import time
+
+        mock_manager = MagicMock()
+        mock_manager._shutting_down = shutting_down
+        mock_manager.bridge_data.auto_restart_on_idle_minutes = threshold_minutes
+        mock_manager._last_job_submitted_time = time.time() - elapsed_seconds
+        mock_manager._restart_requested = False
+        return mock_manager
+
+    def test_does_nothing_when_disabled(self) -> None:
+        """auto_restart_on_idle_minutes=0 should never trigger a restart."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(threshold_minutes=0, elapsed_seconds=9999)
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()
+        mgr._shutdown.assert_not_called()
+
+    def test_does_nothing_when_shutting_down(self) -> None:
+        """No restart should be triggered when already shutting down."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(threshold_minutes=1, elapsed_seconds=9999, shutting_down=True)
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()
+        mgr._shutdown.assert_not_called()
+
+    def test_does_nothing_when_below_threshold(self) -> None:
+        """No restart when elapsed time is below the threshold."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(threshold_minutes=60, elapsed_seconds=30)
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()
+        mgr._shutdown.assert_not_called()
+
+    def test_triggers_restart_when_threshold_exceeded(self) -> None:
+        """A restart should be requested when elapsed time exceeds the threshold."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(threshold_minutes=60, elapsed_seconds=3601)
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()
+        assert mgr._restart_requested is True
+        mgr._shutdown.assert_called_once()
+
+    def test_triggers_restart_at_exact_threshold(self) -> None:
+        """Restart should trigger when elapsed equals the threshold exactly."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(threshold_minutes=1, elapsed_seconds=60)
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()
+        assert mgr._restart_requested is True
+        mgr._shutdown.assert_called_once()
+
+
+
 
     def _make_job_info(self, *, id_: object = "test-id", seed: object = 42, r2_upload: object = "url") -> MagicMock:
         """Return a minimal sdk_api_job_info mock."""
