@@ -2052,6 +2052,70 @@ async def test_webui_gallery_model_filter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_gallery_safety_filter() -> None:
+    """Test that /api/gallery?safety=... filters images by safety flags."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 1.0, "model": "stable_diffusion"})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 2.0, "model": "stable_diffusion", "is_nsfw": True})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 3.0, "model": "sdxl", "is_csam": True})
+        webui.add_gallery_image(
+            {"base64": test_b64, "timestamp": 4.0, "model": "stable_diffusion", "is_nsfw": True, "is_csam": True},
+        )
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 5.0, "model": "sdxl"})
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&safety=sfw",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 2
+        assert all(not img.get("is_nsfw") and not img.get("is_csam") for img in data["images"])
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&safety=nsfw",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 2
+        assert all(img.get("is_nsfw") for img in data["images"])
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&safety=csam",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 2
+        assert all(img.get("is_csam") for img in data["images"])
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&model=stable_diffusion&safety=nsfw",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data["total"] == 2
+        assert all(img.get("model") == "stable_diffusion" and img.get("is_nsfw") for img in data["images"])
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery?page=1&page_size=96&safety=foo",
+        ) as response:
+            assert response.status == 400
+            data = await response.json()
+        assert "safety" in data["error"].lower()
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_gallery_models_endpoint() -> None:
     """Test that /api/gallery/models returns sorted unique non-empty model names with counts."""
     webui = WorkerWebUI(port=0)

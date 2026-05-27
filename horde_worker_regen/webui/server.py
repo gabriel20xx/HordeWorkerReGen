@@ -575,6 +575,13 @@ class WorkerWebUI:
         .image-grid-item img:hover { transform: scale(1.04); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         .image-grid-item .image-timestamp { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #e2e8f0; font-size: 0.65rem; padding: 3px 6px; text-align: center; border-radius: 0 0 8px 8px; opacity: 0; transition: opacity 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .image-grid-item:hover .image-timestamp { opacity: 1; }
+        .image-flag-badges { position: absolute; top: 4px; right: 4px; display: flex; flex-direction: column; gap: 3px; align-items: flex-end; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
+        .image-grid-item:hover .image-flag-badges { opacity: 1; }
+        .image-flag-badge { font-size: 0.6rem; font-weight: 700; padding: 2px 5px; border-radius: 4px; line-height: 1.3; text-transform: uppercase; letter-spacing: 0.04em; }
+        .image-flag-badge.nsfw { background: rgba(234, 179, 8, 0.92); color: #1c1000; }
+        .image-flag-badge.csam { background: rgba(220, 38, 38, 0.92); color: #fff; }
+        [data-theme="dark"] .image-flag-badge.nsfw { background: rgba(202, 138, 4, 0.92); color: #fef9c3; }
+        [data-theme="dark"] .image-flag-badge.csam { background: rgba(185, 28, 28, 0.92); color: #fee2e2; }
         @keyframes gallery-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
         .image-grid-item.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
         [data-theme="dark"] .image-grid-item.loading { background: linear-gradient(90deg, #1e293b 25%, #2d3f55 50%, #1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
@@ -1037,6 +1044,13 @@ class WorkerWebUI:
                                 <label for="gallery-model-filter">Filter by model:</label>
                                 <select id="gallery-model-filter" onchange="galleryChangeModelFilter(this.value)">
                                     <option value="">All models</option>
+                                </select>
+                                <label for="gallery-safety-filter">Safety:</label>
+                                <select id="gallery-safety-filter" onchange="galleryChangeSafetyFilter(this.value)">
+                                    <option value="">All</option>
+                                    <option value="sfw">SFW only</option>
+                                    <option value="nsfw">NSFW</option>
+                                    <option value="csam">CSAM</option>
                                 </select>
                             </div>
                         </div>
@@ -1924,6 +1938,7 @@ class WorkerWebUI:
         // Sync the select element's initial value with the JS constant (single source of truth)
         document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
         let galleryModelFilter = ''; // Empty string = show all models
+        let gallerySafetyFilter = ''; // Empty string = show all (sfw + nsfw + csam)
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
         // Set to true when new images arrive while the gallery tab is not active.
         // Consumed by showPage() to refresh or show the banner on return.
@@ -1992,15 +2007,17 @@ class WorkerWebUI:
                 const galleryId = img.gallery_id;
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
+                const isNsfw = img.is_nsfw === true, isCsam = img.is_csam === true;
+                const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                 const cachedSrc = _galleryThumbnailCache.get(galleryId);
                 // Only use the cached value when it is a well-formed image data URL to
                 // guard against any unexpected cache content reaching innerHTML.
                 if (cachedSrc && (cachedSrc.startsWith('data:image/jpeg;base64,') || cachedSrc.startsWith('data:image/png;base64,'))) {
-                    return '<div class="image-grid-item" data-gallery-id="'+galleryId+'"><img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />'+
-                        (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
+                    return '<div class="image-grid-item" data-gallery-id="'+galleryId+'"'+(isNsfw ? ' data-nsfw="1"' : '')+(isCsam ? ' data-csam="1"' : '')+'><img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />'+
+                        flagBadges+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
                 }
-                return '<div class="image-grid-item loading" data-gallery-id="'+galleryId+'"><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+
-                    (cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
+                return '<div class="image-grid-item loading" data-gallery-id="'+galleryId+'"'+(isNsfw ? ' data-nsfw="1"' : '')+(isCsam ? ' data-csam="1"' : '')+'><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+
+                    flagBadges+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
             grid.querySelectorAll('img[data-gallery-id]').forEach(img => {
                 img.onclick = function() {
@@ -2071,7 +2088,8 @@ class WorkerWebUI:
             // Phase 1: fetch lightweight metadata only so the page skeleton can be shown
             // immediately without waiting for all thumbnail data to transfer.
             const modelParam = galleryModelFilter ? '&model='+encodeURIComponent(galleryModelFilter) : '';
-            fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+'&metadata_only=true'+modelParam)
+            const safetyParam = gallerySafetyFilter ? '&safety='+encodeURIComponent(gallerySafetyFilter) : '';
+            fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+'&metadata_only=true'+modelParam+safetyParam)
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                 .then(data => {
                     if (glEl) glEl.style.display = 'none';
@@ -2099,7 +2117,8 @@ class WorkerWebUI:
             if (galleryFetchInProgress) return;
             galleryFetchInProgress = true;
             const modelParam = galleryModelFilter ? '&model='+encodeURIComponent(galleryModelFilter) : '';
-            fetch('/api/gallery?page=1&page_size='+galleryPageSize+'&metadata_only=true'+modelParam)
+            const safetyParam = gallerySafetyFilter ? '&safety='+encodeURIComponent(gallerySafetyFilter) : '';
+            fetch('/api/gallery?page=1&page_size='+galleryPageSize+'&metadata_only=true'+modelParam+safetyParam)
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                 .then(data => {
                     galleryFetchInProgress = false;
@@ -2142,10 +2161,14 @@ class WorkerWebUI:
                             const galleryId = img.gallery_id;
                             const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
                             const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
+                            const isNsfw = img.is_nsfw === true, isCsam = img.is_csam === true;
+                            const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                             const div = document.createElement('div');
                             div.className = 'image-grid-item loading';
                             div.setAttribute('data-gallery-id', galleryId);
-                            div.innerHTML = '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '');
+                            if (isNsfw) div.setAttribute('data-nsfw', '1');
+                            if (isCsam) div.setAttribute('data-csam', '1');
+                            div.innerHTML = '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+flagBadges+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '');
                             div.querySelector('img').onclick = function() { openGalleryImageOverlay(parseInt(this.getAttribute('data-gallery-id')||'0',10), _currentPageGalleryIds, parseInt(this.getAttribute('data-idx')||'0',10)); };
                             frag.appendChild(div);
                         });
@@ -2188,6 +2211,10 @@ class WorkerWebUI:
         }
         function galleryChangeModelFilter(val) {
             galleryModelFilter = val;
+            fetchGalleryPage(1);
+        }
+        function galleryChangeSafetyFilter(val) {
+            gallerySafetyFilter = val;
             fetchGalleryPage(1);
         }
         function populateGalleryModelFilter() {
@@ -4388,6 +4415,11 @@ class WorkerWebUI:
                 fetched individually via ``/api/gallery/image``.
             model: if provided, only return images whose ``model`` field matches this
                 value (case-insensitive).  Pass an empty string or omit to return all.
+            safety: if provided, filter by safety flag.  Accepted values:
+                ``sfw`` – exclude images flagged as NSFW or CSAM;
+                ``nsfw`` – only images flagged as NSFW;
+                ``csam`` – only images flagged as CSAM.
+                Omit or pass an empty string to return all images regardless of safety flags.
         """
         try:
             page = max(1, int(request.rel_url.query.get("page", "1")))
@@ -4399,16 +4431,26 @@ class WorkerWebUI:
             page_size = 96
         metadata_only = request.rel_url.query.get("metadata_only", "").lower() in ("1", "true", "yes")
         model_filter = request.rel_url.query.get("model", "").strip()
+        model_filter_lower = model_filter.lower()
+        safety_filter = request.rel_url.query.get("safety", "").strip().lower()
+        if safety_filter not in ("", "sfw", "nsfw", "csam"):
+            return web.json_response({"error": "Invalid safety filter"}, status=400)
 
         # Gallery is stored oldest-first (insertion order); serve newest-first to the UI.
-        # When a model filter is active, materialise a filtered list first (smallest possible
-        # intermediate); when no filter is active, use reversed() directly to avoid allocating
-        # a full copy of the values list.
-        if model_filter:
-            model_filter_lower = model_filter.lower()
-            images_reversed: list[dict[str, Any]] = list(
-                reversed([e for e in self._gallery_dict.values() if (e.get("model") or "").lower() == model_filter_lower])
-            )
+        # Apply model and safety filters together to avoid multiple passes.
+        def _entry_matches(e: dict[str, Any]) -> bool:
+            if model_filter_lower and (e.get("model") or "").lower() != model_filter_lower:
+                return False
+            if safety_filter == "sfw" and (e.get("is_nsfw") or e.get("is_csam")):
+                return False
+            if safety_filter == "nsfw" and not e.get("is_nsfw"):
+                return False
+            if safety_filter == "csam" and not e.get("is_csam"):
+                return False
+            return True
+
+        if model_filter_lower or safety_filter:
+            images_reversed: list[dict[str, Any]] = list(reversed([e for e in self._gallery_dict.values() if _entry_matches(e)]))
             total = len(images_reversed)
         else:
             total = len(self._gallery_dict)
