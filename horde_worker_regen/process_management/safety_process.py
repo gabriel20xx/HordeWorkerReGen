@@ -438,7 +438,11 @@ class HordeSafetyProcess(HordeProcess):
                 metadata.add_text("CSAM", "true" if nsfw_result.is_csam else "false")
 
             try:
-                # Save the image as a PNG file (skip if no output directory is available)
+                # Save the image as a PNG file (skip if no output directory is available).
+                # NOTE: All images are intentionally saved to disk regardless of their safety
+                # classification (including CSAM). The CSAM/NSFW flags embedded in the metadata
+                # allow downstream tooling to identify and handle flagged content. Skipping the
+                # save for CSAM would discard evidence that may be needed for review/reporting.
                 if output_path is None:
                     logger.debug(
                         f"Skipping image save for job {message.job_id}: "
