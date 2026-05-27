@@ -1930,6 +1930,13 @@ class HordeWorkerProcessManager:
         # Buffered per-state timings for completed jobs awaiting final successful submission.
         self._pending_completed_job_timings: dict[ImageGenerateJobPopResponse, dict[str, float]] = {}
 
+        # Per-model timing accumulators (session totals).
+        # Maps model name → {"sum": float, "count": int, "max": float}
+        # _time_per_step_per_model: inference_time / ddim_steps per job
+        self._time_per_step_per_model: dict[str, dict[str, float | int]] = {}
+        # _time_per_job_per_model: total job time (pop → submission) per job
+        self._time_per_job_per_model: dict[str, dict[str, float | int]] = {}
+
         # Track per-model preload-stuck failure timestamps for cooldown logic.
         # Maps model name → deque of epoch timestamps when that model caused a MODEL_PRELOADING timeout.
         self._preload_stuck_failures: dict[str, deque[float]] = {}
@@ -4677,6 +4684,28 @@ class HordeWorkerProcessManager:
         if elapsed > entry["max"]:
             entry["max"] = elapsed
 
+    def _record_model_timing(
+        self,
+        accumulator: dict[str, dict[str, float | int]],
+        model_name: str,
+        elapsed: float,
+    ) -> None:
+        """Accumulate per-model timing data.
+
+        Args:
+            accumulator: The dict to record into (e.g. ``_time_per_step_per_model``).
+            model_name: The model name key.
+            elapsed: Time value in seconds to accumulate.
+        """
+        if elapsed < 0:
+            logger.warning(f"Ignoring negative elapsed model timing for {model_name}: {elapsed}")
+            return
+        entry = accumulator.setdefault(model_name, {"sum": 0.0, "count": 0, "max": 0.0})
+        entry["sum"] += elapsed
+        entry["count"] += 1
+        if elapsed > entry["max"]:
+            entry["max"] = elapsed
+
     def _record_pending_job_timing(self, owner_timings: dict[str, float], state: str, elapsed: float) -> None:
         """Buffer timing data until the associated job is successfully submitted."""
         if elapsed < 0:
@@ -4929,6 +4958,17 @@ class HordeWorkerProcessManager:
                     HordeProcessState.DOWNLOADING_AUX_MODEL.name,
                     completed_job_info.time_to_download_aux_models,
                 )
+            # Accumulate per-model timing stats.
+            model_name = completed_job_info.sdk_api_job_info.model
+            if model_name:
+                self._record_model_timing(self._time_per_job_per_model, model_name, time_taken)
+                ddim_steps = completed_job_info.sdk_api_job_info.payload.ddim_steps
+                if ddim_steps and ddim_steps > 0:
+                    self._record_model_timing(
+                        self._time_per_step_per_model,
+                        model_name,
+                        time_to_generate / ddim_steps,
+                    )
         else:
             self._discard_completed_job_timings(completed_job_info.sdk_api_job_info)
 
@@ -7709,6 +7749,14 @@ class HordeWorkerProcessManager:
                 k: round(v["sum"] / v["count"], 2) for k, v in self._job_time_stats.items() if v["count"] > 0
             },
             max_time_per_job_state={k: round(v["max"], 2) for k, v in self._job_time_stats.items()},
+            avg_time_per_step_per_model={
+                k: round(v["sum"] / v["count"], 3) for k, v in self._time_per_step_per_model.items() if v["count"] > 0
+            },
+            max_time_per_step_per_model={k: round(v["max"], 3) for k, v in self._time_per_step_per_model.items()},
+            avg_time_per_job_per_model={
+                k: round(v["sum"] / v["count"], 2) for k, v in self._time_per_job_per_model.items() if v["count"] > 0
+            },
+            max_time_per_job_per_model={k: round(v["max"], 2) for k, v in self._time_per_job_per_model.items()},
         )
         self._errors_history_last_sent_len = len(self._errors_history)
 

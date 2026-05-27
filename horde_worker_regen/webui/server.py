@@ -175,6 +175,10 @@ class WorkerWebUI:
             "faulted_jobs_per_phase": {},
             "avg_time_per_job_state": {},
             "max_time_per_job_state": {},
+            "avg_time_per_step_per_model": {},
+            "max_time_per_step_per_model": {},
+            "avg_time_per_job_per_model": {},
+            "max_time_per_job_per_model": {},
         }
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
@@ -817,6 +821,8 @@ class WorkerWebUI:
         @media (max-width: 600px) { #stats-model-tables-grid { grid-template-columns: 1fr; } }
         #stats-job-state-model-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
         @media (max-width: 600px) { #stats-job-state-model-row { grid-template-columns: 1fr; } }
+        #stats-model-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 600px) { #stats-model-time-row { grid-template-columns: 1fr; } }
 
         /* ---- Settings page ---- */
         .settings-header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
@@ -1206,6 +1212,26 @@ class WorkerWebUI:
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-model-table-wrap" class="stats-model-table-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No images generated yet.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div id="stats-model-time-row">
+                            <div>
+                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Step per Model (Session)</span></div>
+                                <div class="card" style="padding:14px 16px;">
+                                    <div id="stats-step-time-model-wrap" class="stats-model-table-wrap">
+                                        <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job per Model (Session)</span></div>
+                                <div class="card" style="padding:14px 16px;">
+                                    <div id="stats-job-time-model-wrap" class="stats-model-table-wrap">
+                                        <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
                                     </div>
                                 </div>
                             </div>
@@ -3087,7 +3113,55 @@ class WorkerWebUI:
                 }
             }
 
-            // Charts
+            // Avg & Max time per inference step per model table (session totals)
+            var stepTimeModelWrap = document.getElementById('stats-step-time-model-wrap');
+            if (stepTimeModelWrap) {
+                var avgStepTimes = data.avg_time_per_step_per_model || {};
+                var maxStepTimes = data.max_time_per_step_per_model || {};
+                var stepModelNames = Object.keys(avgStepTimes);
+                if (stepModelNames.length === 0) {
+                    stepTimeModelWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>';
+                } else {
+                    stepModelNames.sort(function(a, b) { return (avgStepTimes[a] || 0) - (avgStepTimes[b] || 0); });
+                    var stepModelRows = stepModelNames.map(function(m) {
+                        var avg = avgStepTimes[m] !== undefined ? avgStepTimes[m].toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' s' : '-';
+                        var max = maxStepTimes[m] !== undefined ? maxStepTimes[m].toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' s' : '-';
+                        return '<tr>' +
+                            '<td>' + escapeHtml(m) + '</td>' +
+                            '<td style="text-align:right;">' + avg + '</td>' +
+                            '<td style="text-align:right;">' + max + '</td>' +
+                            '</tr>';
+                    }).join('');
+                    stepTimeModelWrap.innerHTML = '<table class="model-images-table">' +
+                        '<thead><tr><th>Model</th><th style="text-align:right;">Avg/step</th><th style="text-align:right;">Max/step</th></tr></thead>' +
+                        '<tbody>' + stepModelRows + '</tbody></table>';
+                }
+            }
+
+            // Avg & Max total job time per model table (session totals)
+            var jobTimeModelWrap = document.getElementById('stats-job-time-model-wrap');
+            if (jobTimeModelWrap) {
+                var avgJobTimes = data.avg_time_per_job_per_model || {};
+                var maxJobTimes = data.max_time_per_job_per_model || {};
+                var jobModelNames = Object.keys(avgJobTimes);
+                if (jobModelNames.length === 0) {
+                    jobTimeModelWrap.innerHTML = '<div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>';
+                } else {
+                    jobModelNames.sort(function(a, b) { return (avgJobTimes[a] || 0) - (avgJobTimes[b] || 0); });
+                    var jobModelRows = jobModelNames.map(function(m) {
+                        var avg = avgJobTimes[m] !== undefined ? avgJobTimes[m].toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' s' : '-';
+                        var max = maxJobTimes[m] !== undefined ? maxJobTimes[m].toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' s' : '-';
+                        return '<tr>' +
+                            '<td>' + escapeHtml(m) + '</td>' +
+                            '<td style="text-align:right;">' + avg + '</td>' +
+                            '<td style="text-align:right;">' + max + '</td>' +
+                            '</tr>';
+                    }).join('');
+                    jobTimeModelWrap.innerHTML = '<table class="model-images-table">' +
+                        '<thead><tr><th>Model</th><th style="text-align:right;">Avg</th><th style="text-align:right;">Max</th></tr></thead>' +
+                        '<tbody>' + jobModelRows + '</tbody></table>';
+                }
+            }
             drawDualAxisLineChart('chart-iph-kph',
                 { points: snaps.map(function(s) { return { t: s.t, v: s.iph }; }), color: '#10b981' },
                 { points: snaps.map(function(s) { return { t: s.t, v: s.kph }; }), color: '#6366f1' });
@@ -4265,6 +4339,10 @@ class WorkerWebUI:
             "faulted_jobs_per_phase": self.status_data.get("faulted_jobs_per_phase", {}),
             "avg_time_per_job_state": self.status_data.get("avg_time_per_job_state", {}),
             "max_time_per_job_state": self.status_data.get("max_time_per_job_state", {}),
+            "avg_time_per_step_per_model": self.status_data.get("avg_time_per_step_per_model", {}),
+            "max_time_per_step_per_model": self.status_data.get("max_time_per_step_per_model", {}),
+            "avg_time_per_job_per_model": self.status_data.get("avg_time_per_job_per_model", {}),
+            "max_time_per_job_per_model": self.status_data.get("max_time_per_job_per_model", {}),
             "jobs_faulted": int(self.status_data.get("jobs_faulted", 0)),
         })
 
@@ -4839,6 +4917,10 @@ class WorkerWebUI:
         faulted_jobs_per_phase: dict[str, int] | None = None,
         avg_time_per_job_state: dict[str, float] | None = None,
         max_time_per_job_state: dict[str, float] | None = None,
+        avg_time_per_step_per_model: dict[str, float] | None = None,
+        max_time_per_step_per_model: dict[str, float] | None = None,
+        avg_time_per_job_per_model: dict[str, float] | None = None,
+        max_time_per_job_per_model: dict[str, float] | None = None,
     ) -> None:
         """Update the status data for the web UI.
 
@@ -4889,6 +4971,10 @@ class WorkerWebUI:
             faulted_jobs_per_phase: Cumulative per-phase fault counts for the current session
             avg_time_per_job_state: Average time in seconds per job state for completed jobs this session
             max_time_per_job_state: Maximum time in seconds per job state for completed jobs this session
+            avg_time_per_step_per_model: Average inference time per step (inference_time/steps) per model this session
+            max_time_per_step_per_model: Maximum inference time per step per model this session
+            avg_time_per_job_per_model: Average total job time per model this session
+            max_time_per_job_per_model: Maximum total job time per model this session
         """
         if worker_name is not None:
             self.status_data["worker_name"] = worker_name
@@ -4984,6 +5070,14 @@ class WorkerWebUI:
             self.status_data["avg_time_per_job_state"] = dict(avg_time_per_job_state)
         if max_time_per_job_state is not None:
             self.status_data["max_time_per_job_state"] = dict(max_time_per_job_state)
+        if avg_time_per_step_per_model is not None:
+            self.status_data["avg_time_per_step_per_model"] = dict(avg_time_per_step_per_model)
+        if max_time_per_step_per_model is not None:
+            self.status_data["max_time_per_step_per_model"] = dict(max_time_per_step_per_model)
+        if avg_time_per_job_per_model is not None:
+            self.status_data["avg_time_per_job_per_model"] = dict(avg_time_per_job_per_model)
+        if max_time_per_job_per_model is not None:
+            self.status_data["max_time_per_job_per_model"] = dict(max_time_per_job_per_model)
 
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]

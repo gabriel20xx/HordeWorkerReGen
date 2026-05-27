@@ -2304,6 +2304,42 @@ async def test_webui_stats_job_state_time_container() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_stats_per_model_time_containers() -> None:
+    """Test that the statistics page HTML contains the per-model step and job timing containers."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        # Per-step timing container must be present.
+        assert 'id="stats-step-time-model-wrap"' in html
+        # Per-step section title must mention "Step".
+        assert "Avg &amp; Max Time per Step per Model" in html
+        # Per-job timing container must be present.
+        assert 'id="stats-job-time-model-wrap"' in html
+        # Per-job section title must mention "Job per Model" to disambiguate from other timings.
+        assert "Avg &amp; Max Time per Job per Model" in html
+        # Per-step JS must use fixed 3-decimal formatting (min and max fraction digits).
+        assert "minimumFractionDigits: 3, maximumFractionDigits: 3" in html
+        # JS must read avg_time_per_step_per_model and max_time_per_step_per_model from data.
+        assert "data.avg_time_per_step_per_model" in html
+        assert "data.max_time_per_step_per_model" in html
+        # JS must read avg_time_per_job_per_model and max_time_per_job_per_model from data.
+        assert "data.avg_time_per_job_per_model" in html
+        assert "data.max_time_per_job_per_model" in html
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_settings_post_max_queue_size_controls() -> None:
     """Test that POST /api/settings handles queue size controls."""
     webui = WorkerWebUI(port=0)
