@@ -434,6 +434,8 @@ class HordeSafetyProcess(HordeProcess):
                     metadata.add_text("Safety", "nsfw")
                 else:
                     metadata.add_text("Safety", "clean")
+                metadata.add_text("NSFW", "true" if nsfw_result.is_nsfw else "false")
+                metadata.add_text("CSAM", "true" if nsfw_result.is_csam else "false")
 
             try:
                 # Save the image as a PNG file (skip if no output directory is available)
