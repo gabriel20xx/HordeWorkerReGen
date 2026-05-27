@@ -4431,12 +4431,15 @@ class WorkerWebUI:
             page_size = 96
         metadata_only = request.rel_url.query.get("metadata_only", "").lower() in ("1", "true", "yes")
         model_filter = request.rel_url.query.get("model", "").strip()
+        model_filter_lower = model_filter.lower()
         safety_filter = request.rel_url.query.get("safety", "").strip().lower()
+        if safety_filter not in ("", "sfw", "nsfw", "csam"):
+            return web.json_response({"error": "Invalid safety filter"}, status=400)
 
         # Gallery is stored oldest-first (insertion order); serve newest-first to the UI.
         # Apply model and safety filters together to avoid multiple passes.
         def _entry_matches(e: dict[str, Any]) -> bool:
-            if model_filter and (e.get("model") or "").lower() != model_filter.lower():
+            if model_filter_lower and (e.get("model") or "").lower() != model_filter_lower:
                 return False
             if safety_filter == "sfw" and (e.get("is_nsfw") or e.get("is_csam")):
                 return False
@@ -4446,7 +4449,7 @@ class WorkerWebUI:
                 return False
             return True
 
-        if model_filter or safety_filter:
+        if model_filter_lower or safety_filter:
             images_reversed: list[dict[str, Any]] = list(reversed([e for e in self._gallery_dict.values() if _entry_matches(e)]))
             total = len(images_reversed)
         else:
