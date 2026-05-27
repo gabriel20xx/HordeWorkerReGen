@@ -2164,6 +2164,51 @@ async def test_webui_gallery_models_endpoint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_gallery_safety_endpoint() -> None:
+    """Test that /api/gallery/safety returns correct per-category counts."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+
+        # Empty gallery.
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/safety",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+        assert data == {"total": 0, "sfw": 0, "nsfw": 0, "csam": 0}
+
+        # 1 SFW, 1 NSFW-only, 1 CSAM-only, 1 both NSFW+CSAM, 1 SFW
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 1.0, "model": "m"})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 2.0, "model": "m", "is_nsfw": True})
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 3.0, "model": "m", "is_csam": True})
+        webui.add_gallery_image(
+            {"base64": test_b64, "timestamp": 4.0, "model": "m", "is_nsfw": True, "is_csam": True},
+        )
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 5.0, "model": "m"})
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/safety",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert data["total"] == 5
+        assert data["sfw"] == 2    # entries 1 and 5
+        assert data["nsfw"] == 2   # entries 2 and 4
+        assert data["csam"] == 2   # entries 3 and 4
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_stats_job_state_time_container() -> None:
     """Test that the statistics page HTML contains the avg & max time per job state container."""
     webui = WorkerWebUI(port=0)
