@@ -265,6 +265,39 @@ def test_webui_new_features() -> None:
     assert webui.status_data["current_job"]["is_complete"] is True
 
 
+@pytest.mark.asyncio
+async def test_webui_console_filter_html() -> None:
+    """Test that the console section contains the filter dropdown."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        assert 'id="console-filter-select"' in html
+        assert 'class="console-filter-select"' in html
+        assert 'onchange="applyConsoleFilter()"' in html
+        assert 'title="Filter logs by severity"' in html
+        assert '<option value="ALL">All levels</option>' in html
+        assert '<option value="WARNING">Warning+</option>' in html
+        assert '<option value="ERROR">Error+</option>' in html
+        assert 'function applyConsoleFilter()' in html
+        assert 'function _renderConsoleLogs()' in html
+        assert '_consoleLogs' in html
+        assert '_CONSOLE_LOG_LEVEL_RE' in html
+        assert '_CONSOLE_LEVEL_ORDER' in html
+        assert '.console-filter-select' in html
+    finally:
+        await webui.stop()
+
+
 def test_webui_faulted_jobs_history() -> None:
     """Test that WorkerWebUI handles faulted jobs history."""
     webui = WorkerWebUI(port=0)
