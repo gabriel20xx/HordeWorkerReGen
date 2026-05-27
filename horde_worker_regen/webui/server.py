@@ -1227,7 +1227,7 @@ class WorkerWebUI:
                                 </div>
                             </div>
                             <div>
-                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Model (Session)</span></div>
+                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job per Model (Session)</span></div>
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-job-time-model-wrap" class="stats-model-table-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
@@ -3123,8 +3123,8 @@ class WorkerWebUI:
                 } else {
                     stepModelNames.sort(function(a, b) { return (avgStepTimes[a] || 0) - (avgStepTimes[b] || 0); });
                     var stepModelRows = stepModelNames.map(function(m) {
-                        var avg = avgStepTimes[m] !== undefined ? avgStepTimes[m].toLocaleString(undefined, { maximumFractionDigits: 3 }) + ' s' : '-';
-                        var max = maxStepTimes[m] !== undefined ? maxStepTimes[m].toLocaleString(undefined, { maximumFractionDigits: 3 }) + ' s' : '-';
+                        var avg = avgStepTimes[m] !== undefined ? avgStepTimes[m].toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' s' : '-';
+                        var max = maxStepTimes[m] !== undefined ? maxStepTimes[m].toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' s' : '-';
                         return '<tr>' +
                             '<td>' + escapeHtml(m) + '</td>' +
                             '<td style="text-align:right;">' + avg + '</td>' +

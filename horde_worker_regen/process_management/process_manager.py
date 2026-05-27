@@ -7750,9 +7750,9 @@ class HordeWorkerProcessManager:
             },
             max_time_per_job_state={k: round(v["max"], 2) for k, v in self._job_time_stats.items()},
             avg_time_per_step_per_model={
-                k: round(v["sum"] / v["count"], 2) for k, v in self._time_per_step_per_model.items() if v["count"] > 0
+                k: round(v["sum"] / v["count"], 3) for k, v in self._time_per_step_per_model.items() if v["count"] > 0
             },
-            max_time_per_step_per_model={k: round(v["max"], 2) for k, v in self._time_per_step_per_model.items()},
+            max_time_per_step_per_model={k: round(v["max"], 3) for k, v in self._time_per_step_per_model.items()},
             avg_time_per_job_per_model={
                 k: round(v["sum"] / v["count"], 2) for k, v in self._time_per_job_per_model.items() if v["count"] > 0
             },
