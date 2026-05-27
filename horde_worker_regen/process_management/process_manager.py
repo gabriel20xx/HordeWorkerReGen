@@ -2236,6 +2236,16 @@ class HordeWorkerProcessManager:
                 self.bridge_data.image_models_to_load.remove(model_name)
             logger.info(f"Model '{model_name}' disabled via web UI")
 
+    def _refresh_model_configuration_state_after_reload(self) -> None:
+        """Reconcile model UI/runtime state after bridge-data reload."""
+        configured_models = list(self.bridge_data.image_models_to_load)
+        configured_model_set = set(configured_models)
+        self._runtime_disabled_models.intersection_update(configured_model_set)
+        self._all_models_configured = configured_models
+        self.bridge_data.image_models_to_load = [
+            model for model in configured_models if model not in self._runtime_disabled_models
+        ]
+
     def _get_settings_snapshot(self) -> dict[str, object]:
         """Return a flat dict of the current values of all runtime-configurable settings.
 
@@ -7090,6 +7100,7 @@ class HordeWorkerProcessManager:
                 logger.warning(
                     f"max_threads in {BRIDGE_CONFIG_FILENAME} cannot be changed while the worker is running.",
                 )
+            self._refresh_model_configuration_state_after_reload()
             logger.debug(f"Models to load: {self.bridge_data.image_models_to_load}")
             logger.debug(f"Custom models: {self.bridge_data.custom_models}")
         except Exception as e:

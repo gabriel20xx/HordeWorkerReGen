@@ -3151,6 +3151,7 @@ async def test_webui_models_toggle() -> None:
     """Test that POST /api/models toggles a model and invokes the callback."""
     webui = WorkerWebUI(port=0)
     toggled = []
+    special_model_name = "A&B <Model> \"Quoted\" \\"
 
     def on_toggle(model: str, enabled: bool) -> None:
         toggled.append((model, enabled))
@@ -3158,7 +3159,7 @@ async def test_webui_models_toggle() -> None:
     webui.set_toggle_model_callback(on_toggle)
     webui.update_models_data(
         enabled=["Stable Diffusion 1.5", "SDXL 1.0"],
-        disabled=["Deliberate"],
+        disabled=["Deliberate", special_model_name],
     )
 
     try:
@@ -3177,16 +3178,16 @@ async def test_webui_models_toggle() -> None:
 
         assert toggled == [("Stable Diffusion 1.5", False)]
 
-        # Enable a model
+        # Enable a model with characters that require escaping in HTML
         async with aiohttp.ClientSession() as session, session.post(
             f"http://localhost:{actual_port}/api/models",
-            json={"model": "Deliberate", "enabled": True},
+            json={"model": special_model_name, "enabled": True},
         ) as response:
             assert response.status == 200
             data = await response.json()
-            assert data == {"model": "Deliberate", "enabled": True}
+            assert data == {"model": special_model_name, "enabled": True}
 
-        assert toggled == [("Stable Diffusion 1.5", False), ("Deliberate", True)]
+        assert toggled == [("Stable Diffusion 1.5", False), (special_model_name, True)]
     finally:
         await webui.stop()
 
@@ -3256,6 +3257,10 @@ async def test_webui_models_section_html() -> None:
         assert "fetchModels" in html
         assert "toggleModel" in html
         assert "renderModelsSection" in html
+        # Models are interactive buttons with delegated click handling and data attributes
+        assert 'class="model-pill enabled" data-model="' in html
+        assert "addEventListener('click'" in html
+        assert 'aria-pressed="true"' in html
     finally:
         await webui.stop()
 

@@ -917,9 +917,10 @@ class WorkerWebUI:
         [data-theme="dark"] .models-box-title { color: #94a3b8; }
         .models-box-title .models-count { font-weight: 400; opacity: 0.7; }
         .models-pills { display: flex; flex-wrap: wrap; gap: 6px; }
-        .model-pill { display: inline-block; padding: 4px 10px; font-size: 0.78rem; font-weight: 500; border-radius: 14px; cursor: pointer; transition: background 0.15s, color 0.15s, transform 0.1s; user-select: none; }
+        .model-pill { display: inline-block; padding: 4px 10px; font-size: 0.78rem; font-weight: 500; border-radius: 14px; cursor: pointer; transition: background 0.15s, color 0.15s, transform 0.1s; user-select: none; font-family: inherit; }
         .model-pill:hover { transform: scale(1.04); }
         .model-pill:active { transform: scale(0.97); }
+        .model-pill:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
         .model-pill.enabled { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
         .model-pill.enabled:hover { background: #bfdbfe; }
         [data-theme="dark"] .model-pill.enabled { background: #1e3a5f; color: #93c5fd; border-color: #2563eb; }
@@ -4029,7 +4030,7 @@ class WorkerWebUI:
                 h += '<span class="models-empty">No enabled models</span>';
             } else {
                 for (var i = 0; i < enabled.length; i++) {
-                    h += '<span class="model-pill enabled" onclick="toggleModel(\'' + escapeHtml(enabled[i]).replace(/'/g, "\\'") + '\', false)" title="Click to disable">' + escapeHtml(enabled[i]) + '</span>';
+                    h += '<button type="button" class="model-pill enabled" data-model="' + escapeHtml(enabled[i]) + '" data-enable="false" title="Click to disable" aria-label="Disable model ' + escapeHtml(enabled[i]) + '" aria-pressed="true">' + escapeHtml(enabled[i]) + '</button>';
                 }
             }
             h += '</div></div>';
@@ -4041,12 +4042,20 @@ class WorkerWebUI:
                 h += '<span class="models-empty">No disabled models</span>';
             } else {
                 for (var j = 0; j < disabled.length; j++) {
-                    h += '<span class="model-pill disabled" onclick="toggleModel(\'' + escapeHtml(disabled[j]).replace(/'/g, "\\'") + '\', true)" title="Click to enable">' + escapeHtml(disabled[j]) + '</span>';
+                    h += '<button type="button" class="model-pill disabled" data-model="' + escapeHtml(disabled[j]) + '" data-enable="true" title="Click to enable" aria-label="Enable model ' + escapeHtml(disabled[j]) + '" aria-pressed="false">' + escapeHtml(disabled[j]) + '</button>';
                 }
             }
             h += '</div></div>';
             h += '</div>';
             section.innerHTML = h;
+            var modelButtons = section.querySelectorAll('.model-pill[data-model][data-enable]');
+            for (var k = 0; k < modelButtons.length; k++) {
+                modelButtons[k].addEventListener('click', function() {
+                    var modelName = this.getAttribute('data-model') || '';
+                    if (!modelName) return;
+                    toggleModel(modelName, this.getAttribute('data-enable') === 'true');
+                });
+            }
             body.appendChild(section);
         }
 
