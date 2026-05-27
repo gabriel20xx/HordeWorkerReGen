@@ -3143,8 +3143,7 @@ class HordeWorkerProcessManager:
 
                 if (
                     message.process_state == HordeProcessState.UNLOADED_MODEL_FROM_RAM
-                    and self._process_map[message.process_id].last_process_state
-                    != HordeProcessState.UNLOADED_MODEL_FROM_RAM
+                    and prior_process_state != HordeProcessState.UNLOADED_MODEL_FROM_RAM
                 ):
                     logger.opt(ansi=True).info(
                         "<fg #7b7d7d>" f"Process {message.process_id} cleared RAM: {message.info}" "</>",
@@ -3843,7 +3842,24 @@ class HordeWorkerProcessManager:
                 if chosen_candidate is None or chosen_process is None:
                     return None
             else:
-                return None
+                # The first job's process exists but is not in a state that can accept
+                # a job (e.g. UNLOADED_MODEL_FROM_RAM). Look for other pending jobs that
+                # already have a preloaded process ready. This prevents MODEL_PRELOADED
+                # processes from being permanently starved when a blocking process holds
+                # the model name for the head-of-queue job.
+                chosen_candidate = None
+                chosen_process = None
+                for candidate_job in next_n_jobs:
+                    if candidate_job.model is not None and candidate_job.model != next_job.model:
+                        candidate_process_with_model = self._process_map.get_process_by_horde_model_name(
+                            candidate_job.model,
+                        )
+                        if candidate_process_with_model is not None and candidate_process_with_model.can_accept_job():
+                            chosen_candidate = candidate_job
+                            chosen_process = candidate_process_with_model
+                            break
+                if chosen_candidate is None or chosen_process is None:
+                    return None
 
             # A candidate job/process pair was found via line-skipping.
             skipped_line = True
@@ -8503,6 +8519,11 @@ class HordeWorkerProcessManager:
                     self.bridge_data.preload_timeout,
                     HordeProcessState.MODEL_PRELOADED,
                     "seems to be stuck in MODEL_PRELOADED (job was never dispatched)",
+                ),
+                (
+                    self.bridge_data.preload_timeout,
+                    HordeProcessState.UNLOADED_MODEL_FROM_RAM,
+                    "seems to be stuck in UNLOADED_MODEL_FROM_RAM",
                 ),
             ]
             for timeout, state, error_message in conditions:
