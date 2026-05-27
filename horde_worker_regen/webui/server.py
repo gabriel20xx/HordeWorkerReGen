@@ -3766,6 +3766,12 @@ class WorkerWebUI:
                             queue:  'Automatically select the best max queue size based on VRAM and job timing',
                             models: 'Automatically select the best active model count based on available VRAM and job timing',
                         };
+                        if (pfx === 'queue' && Object.prototype.hasOwnProperty.call(settings, 'max_queue_size')) {
+                            val = settings['max_queue_size'];
+                        }
+                        if (pfx === 'models' && Object.prototype.hasOwnProperty.call(settings, 'max_active_models')) {
+                            val = settings['max_active_models'];
+                        }
                         if (pfx === 'queue' && _settingsPendingQueue && Object.prototype.hasOwnProperty.call(_settingsPendingQueue, 'max_queue_size')) {
                             val = _settingsPendingQueue.max_queue_size;
                         }
@@ -3774,6 +3780,12 @@ class WorkerWebUI:
                         }
                         var numValA = (val !== null && val !== undefined) ? val : '';
                         var isAutoA = false;
+                        if (pfx === 'queue' && Object.prototype.hasOwnProperty.call(settings, 'queue_size_auto')) {
+                            isAutoA = !!settings['queue_size_auto'];
+                        }
+                        if (pfx === 'models' && Object.prototype.hasOwnProperty.call(settings, 'max_active_models_auto')) {
+                            isAutoA = !!settings['max_active_models_auto'];
+                        }
                         if (pfx === 'queue' && _settingsPendingQueue && Object.prototype.hasOwnProperty.call(_settingsPendingQueue, 'auto')) {
                             isAutoA = !!_settingsPendingQueue.auto;
                         }
@@ -4500,6 +4512,12 @@ class WorkerWebUI:
         from the process manager) are omitted rather than returned as ``null``.
         """
         visible: dict[str, Any] = {k: v for k, v in self._settings_data.items() if k in _SETTINGS_SPEC}
+        # Piggy-back the int_auto live values from status_data so the Settings
+        # page can render the correct initial values without waiting for the
+        # first status poll.
+        for k in ("max_queue_size", "max_active_models", "queue_size_auto", "max_active_models_auto"):
+            if k in self.status_data:
+                visible[k] = self.status_data[k]
         return web.json_response({"settings": visible})
 
     async def _handle_set_setting(self, request: web.Request) -> web.Response:
