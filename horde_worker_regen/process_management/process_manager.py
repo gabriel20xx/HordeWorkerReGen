@@ -1756,6 +1756,7 @@ class HordeWorkerProcessManager:
         """
         self.session_start_time = time.time()
         self._last_pop_no_jobs_available_time = self.session_start_time
+        self._last_job_submitted_time = self.session_start_time
 
         self.bridge_data = bridge_data
         logger.debug(f"Models to load: {bridge_data.image_models_to_load}")
@@ -7938,12 +7939,27 @@ class HordeWorkerProcessManager:
 
         When ``bridge_data.auto_restart_on_idle_minutes`` is greater than zero and no job
         has been submitted since at least that many minutes, a graceful restart is triggered.
-        Does nothing while already shutting down.
+        Does nothing while already shutting down, while job pops are paused (intentional user
+        pause), or while there are active jobs in the pipeline (the worker is not truly idle).
         """
         if self._shutting_down:
             return
         threshold_minutes = self.bridge_data.auto_restart_on_idle_minutes
         if not threshold_minutes:
+            return
+        # Don't restart while the user has intentionally paused job pops.
+        if self._job_pops_paused:
+            return
+        # Don't restart while there are active jobs being processed — the worker
+        # is not truly idle in that case, and triggering shutdown would stall until
+        # those jobs finish, making it appear as though the restart never happens.
+        if (
+            len(self.jobs_pending_inference) > 0
+            or len(self.jobs_in_progress) > 0
+            or len(self.jobs_being_safety_checked) > 0
+            or len(self.jobs_pending_safety_check) > 0
+            or len(self.jobs_pending_submit) > 0
+        ):
             return
         elapsed_seconds = time.time() - self._last_job_submitted_time
         threshold_seconds = threshold_minutes * 60
@@ -7953,6 +7969,10 @@ class HordeWorkerProcessManager:
                 f"({elapsed_seconds / 60:.1f} min elapsed). Auto-restarting the worker program...",
             )
             self._restart_requested = True
+            # Reset the last job-pop timestamp so that end_inference_processes() is invoked
+            # immediately on the next _process_control_loop iteration instead of waiting up
+            # to 10 seconds for _last_pop_recently() to expire.
+            self._last_job_pop_time = 0.0
             self._shutdown()
 
     async def _auto_restart_idle_loop(self) -> None:
