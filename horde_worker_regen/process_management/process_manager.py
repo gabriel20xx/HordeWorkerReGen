@@ -7502,6 +7502,21 @@ class HordeWorkerProcessManager:
                 for p in self._process_map.values()
                 if p.process_type.name.lower() == ptype and p.process_id < process_info.process_id
             )
+            # For safety processes actively evaluating, show the safety model name
+            # instead of None so the UI displays it rather than "Idle".
+            model_name = process_info.loaded_horde_model_name
+            if (
+                model_name is None
+                and process_info.process_type == HordeProcessType.SAFETY
+                and process_info.last_process_state
+                in (
+                    HordeProcessState.SAFETY_STARTING,
+                    HordeProcessState.SAFETY_EVALUATING,
+                    HordeProcessState.SAFETY_COMPLETE,
+                )
+            ):
+                model_name = "CLIP / DeepDanbooru"
+
             processes.append(
                 {
                     "id": f"{ptype}-{type_index}",
@@ -7511,7 +7526,7 @@ class HordeWorkerProcessManager:
                     ),
                     "type": process_info.process_type.name,
                     "state": process_info.last_process_state.name,
-                    "model": process_info.loaded_horde_model_name,
+                    "model": model_name,
                     "progress": process_info.last_heartbeat_percent_complete,
                     "batch_size": process_info.batch_amount,
                 },
