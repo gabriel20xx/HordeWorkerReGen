@@ -145,8 +145,10 @@ class BridgeDataLoader:
 
         for key, value in os.environ.items():
             if key.startswith(AIWORKER_REGEN_PREFIX):
-                # Coverts the env var name to the attr name found in the reGenBridgeData model
+                # Converts the env var name to the attr name found in the reGenBridgeData model
                 attr_name = key[len(AIWORKER_REGEN_PREFIX) :].lower()
+                if attr_name == "auto_restart_idle_minutes":
+                    continue
                 if value.lower() in ("true", "false"):
                     config[attr_name] = value.lower() == "true"
                 elif any(delimiter in value for delimiter in ["[", ",", ";"]):

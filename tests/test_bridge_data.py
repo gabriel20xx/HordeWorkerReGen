@@ -1,5 +1,5 @@
-# import yaml
 import pathlib
+import os
 
 import pytest
 from horde_model_reference.model_reference_manager import ModelReferenceManager
@@ -92,6 +92,20 @@ def test_bridge_data_load_from_env_vars(monkeypatch: pytest.MonkeyPatch) -> None
     assert bridge_data is not None
     assert bridge_data._loaded_from_env_vars is True
     assert bridge_data.max_active_models == 4
+
+
+def test_bridge_data_load_from_env_vars_auto_restart_idle_minutes_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that invalid AIWORKER_AUTO_RESTART_IDLE_MINUTES is ignored during env-var config loading."""
+    for key in list(os.environ):
+        if key.startswith("AIWORKER_"):
+            monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv("AIWORKER_AUTO_RESTART_IDLE_MINUTES", "not_a_number")
+
+    bridge_data = BridgeDataLoader.load_from_env_vars()
+
+    assert bridge_data.auto_restart_on_idle_minutes == 60
+    assert bridge_data.model_extra is None or "auto_restart_idle_minutes" not in bridge_data.model_extra
 
 
 def test_bridge_data_auto_restart_on_idle_default() -> None:
