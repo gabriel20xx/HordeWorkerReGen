@@ -2833,7 +2833,7 @@ class WorkerWebUI:
                         pd.innerHTML = data.processes.map(proc => {
                             let sl = [];
                             if (proc.model) sl.push('Model: '+escapeHtml(proc.model));
-                            if (proc.batch_size!=null&&proc.batch_size!==undefined) sl.push('Batch: '+escapeHtml(proc.batch_size)+'x');
+                            if (proc.batch_size!=null&&proc.batch_size>1) sl.push('Batch: '+escapeHtml(proc.batch_size)+'x');
                             if (proc.progress!=null&&proc.progress!==undefined) sl.push('Progress: '+escapeHtml(proc.progress)+'%');
                             return '<div class="process-item"><div class="process-id-row"><span class="process-id">'+escapeHtml(proc.display_id || proc.id)+'</span><span class="process-state-badge">'+escapeHtml(proc.state)+'</span><span class="process-type-badge">'+escapeHtml(proc.type)+'</span></div><div class="process-detail-text">'+(sl.length>0?sl.join(' | '):'Idle')+'</div></div>';
                         }).join('');
