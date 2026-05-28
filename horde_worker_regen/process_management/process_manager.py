@@ -6667,11 +6667,18 @@ class HordeWorkerProcessManager:
                 self.replace_hung_processes()  # Only checks for hung processes, doesn't replace them during shutdown
             await asyncio.sleep(0.2)
 
+        # Set _shut_down early so the timed-shutdown safety thread (started by
+        # _start_timed_shutdown above) backs off before calling os._exit(1).
+        # Without this, the timed-shutdown fires after its short wait (2 s when
+        # no jobs are pending) while end_inference_processes(force=True) is still
+        # blocking on join() calls — killing the program before os.execv can
+        # perform a restart.
+        self._shut_down = True
+
         self.end_inference_processes(force=True)
         self.end_safety_processes()
 
         logger.info("Shutting down process manager")
-        self._shut_down = True
         for process in self._process_map.values():
             try:
                 process.mp_process.terminate()

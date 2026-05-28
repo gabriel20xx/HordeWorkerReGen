@@ -843,6 +843,85 @@ class TestCheckAutoRestartOnIdle:
         assert "test-id" not in faults
 
 
+class TestShutDownSetBeforeForceKill:
+    """Tests that _shut_down is set before end_inference_processes(force=True).
+
+    This prevents the timed-shutdown safety thread (started by _start_timed_shutdown)
+    from calling os._exit(1) while the force kill is still blocking on join() calls,
+    which would prevent os.execv from performing a program restart.
+    """
+
+    def test_shut_down_set_before_force_kill(self) -> None:
+        """_shut_down must be True before end_inference_processes(force=True) is called."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = MagicMock()
+        mgr._shutting_down = True
+        mgr._shut_down = False
+        mgr._loop_interval = 0.001
+        mgr._restart_requested = True
+        mgr.stable_diffusion_reference = MagicMock()
+        mgr.jobs_pending_inference = []
+        mgr.jobs_in_progress = []
+        mgr.jobs_being_safety_checked = []
+        mgr.jobs_pending_safety_check = []
+        mgr.jobs_pending_submit = []
+        mgr._process_map = MagicMock()
+        mgr._process_map.values.return_value = []
+        mgr._last_job_pop_time = 0.0
+        mgr._inference_scale_down_requested = False
+        mgr._jobs_lookup_lock = asyncio.Lock()
+        mgr._jobs_pending_inference_lock = asyncio.Lock()
+        mgr._jobs_safety_check_lock = asyncio.Lock()
+        mgr._completed_jobs_lock = asyncio.Lock()
+        mgr._job_pop_timestamps_lock = asyncio.Lock()
+        mgr._last_pop_maintenance_mode = False
+        mgr._job_pops_paused = False
+        mgr._replaced_due_to_maintenance = False
+        mgr._recently_recovered = False
+        mgr._last_pop_no_jobs_available = True
+        mgr._process_map.num_loaded_inference_processes.return_value = 1
+        mgr.max_inference_processes = 1
+        mgr._process_map.get_inference_processes.return_value = []
+
+        # Track the order of _shut_down assignment vs end_inference_processes call
+        call_order: list[str] = []
+        original_shut_down = mgr._shut_down
+
+        def track_end_inference(force: bool = False) -> None:
+            call_order.append(f"end_inference(shut_down={mgr._shut_down})")
+
+        mgr.end_inference_processes = track_end_inference
+        mgr.end_safety_processes = MagicMock()
+
+        # Make is_time_for_shutdown return False first (so the loop runs once)
+        # then True (so the loop breaks).
+        iteration = [0]
+
+        def fake_is_time_for_shutdown() -> bool:
+            iteration[0] += 1
+            return iteration[0] > 1
+
+        mgr.is_time_for_shutdown = fake_is_time_for_shutdown
+        mgr._start_timed_shutdown = MagicMock()
+        mgr._last_pop_recently = MagicMock(return_value=False)
+        mgr.print_status_method = MagicMock()
+        mgr.is_free_inference_process_available = MagicMock(return_value=False)
+        mgr.is_any_model_preloaded = MagicMock(return_value=False)
+        mgr.receive_and_handle_process_messages = MagicMock()
+        mgr.detect_deadlock = MagicMock()
+        mgr.replace_hung_processes = MagicMock(return_value=False)
+        mgr._replace_all_safety_process = MagicMock()
+
+        bound = HordeWorkerProcessManager._process_control_loop.__get__(mgr, HordeWorkerProcessManager)
+        asyncio.run(bound())
+
+        # end_inference_processes(force=True) must see _shut_down=True
+        assert any("shut_down=True" in c for c in call_order), (
+            f"end_inference_processes(force=True) was called before _shut_down was set: {call_order}"
+        )
+
+
 class TestJobSubmitLoopExceptionHandling:
     """Tests that _job_submit_loop discards the head job when api_submit_job raises unexpectedly."""
 
