@@ -607,7 +607,16 @@ def test_start_timed_shutdown_wait_seconds_caps_at_30(
 class TestCheckAutoRestartOnIdle:
     """Tests for _check_auto_restart_on_idle()."""
 
-    def _make_manager(self, *, threshold_minutes: int = 60, elapsed_seconds: float = 0.0, shutting_down: bool = False, job_pops_paused: bool = False, active_jobs: bool = False) -> MagicMock:
+    def _make_manager(
+        self,
+        *,
+        threshold_minutes: int = 60,
+        elapsed_seconds: float = 0.0,
+        shutting_down: bool = False,
+        job_pops_paused: bool = False,
+        active_jobs: bool = False,
+        active_job_queue: str | None = None,
+    ) -> MagicMock:
         """Return a minimal mock manager with the attributes needed by _check_auto_restart_on_idle."""
         import time
 
@@ -619,11 +628,14 @@ class TestCheckAutoRestartOnIdle:
         mock_manager._job_pops_paused = job_pops_paused
         mock_manager._last_job_pop_time = time.time()
         # Simulate active jobs (non-empty queues) or idle state (empty queues)
-        mock_manager.jobs_pending_inference = [MagicMock()] if active_jobs else []
+        mock_manager.jobs_pending_inference = []
         mock_manager.jobs_in_progress = []
         mock_manager.jobs_being_safety_checked = []
         mock_manager.jobs_pending_safety_check = []
         mock_manager.jobs_pending_submit = []
+        if active_jobs:
+            queue_name = active_job_queue or "jobs_pending_inference"
+            setattr(mock_manager, queue_name, [MagicMock()])
         return mock_manager
 
     def test_does_nothing_when_disabled(self) -> None:
@@ -685,11 +697,26 @@ class TestCheckAutoRestartOnIdle:
         bound()
         mgr._shutdown.assert_not_called()
 
-    def test_does_nothing_when_active_jobs_exist(self) -> None:
+    @pytest.mark.parametrize(
+        "active_job_queue",
+        (
+            "jobs_pending_inference",
+            "jobs_in_progress",
+            "jobs_being_safety_checked",
+            "jobs_pending_safety_check",
+            "jobs_pending_submit",
+        ),
+    )
+    def test_does_nothing_when_active_jobs_exist(self, active_job_queue: str) -> None:
         """No restart should be triggered while jobs are actively being processed."""
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
-        mgr = self._make_manager(threshold_minutes=1, elapsed_seconds=9999, active_jobs=True)
+        mgr = self._make_manager(
+            threshold_minutes=1,
+            elapsed_seconds=9999,
+            active_jobs=True,
+            active_job_queue=active_job_queue,
+        )
         bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
         bound()
         mgr._shutdown.assert_not_called()
