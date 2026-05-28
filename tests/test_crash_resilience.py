@@ -886,7 +886,6 @@ class TestShutDownSetBeforeForceKill:
 
         # Track the order of _shut_down assignment vs end_inference_processes call
         call_order: list[str] = []
-        original_shut_down = mgr._shut_down
 
         def track_end_inference(force: bool = False) -> None:
             call_order.append(f"end_inference(shut_down={mgr._shut_down})")
