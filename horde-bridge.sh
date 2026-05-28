@@ -2,6 +2,11 @@
 # Get the directory of the current script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Prevent NVIDIA driver file-cache init errors ("driverInitFileInfo ... result=11")
+export CUDA_CACHE_DISABLE="${CUDA_CACHE_DISABLE:-1}"
+# Defer CUDA module loading to reduce startup errors with mismatched driver versions
+export CUDA_MODULE_LOADING="${CUDA_MODULE_LOADING:-LAZY}"
+
 # Build the absolute path to the Conda environment
 CONDA_ENV_PATH="$SCRIPT_DIR/conda/envs/linux/lib"
 

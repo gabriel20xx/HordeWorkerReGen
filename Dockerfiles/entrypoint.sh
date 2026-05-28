@@ -48,6 +48,9 @@ elif [ ! -z "${CUDA_VERSION_SHORT}" ]; then
     export CUDA_HOME=/usr/local/cuda
     export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
     export PATH=${CUDA_HOME}/bin:${PATH}
+    # Prevent NVIDIA driver file-cache init errors ("driverInitFileInfo ... result=11")
+    export CUDA_CACHE_DISABLE="${CUDA_CACHE_DISABLE:-1}"
+    export CUDA_MODULE_LOADING="${CUDA_MODULE_LOADING:-LAZY}"
     export PYTORCH_EXTRA_INDEX="https://download.pytorch.org/whl/cu${CUDA_VERSION_SHORT}"
     export REQUIREMENTS_FILE="requirements.txt"
 else
