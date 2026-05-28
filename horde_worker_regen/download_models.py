@@ -72,8 +72,7 @@ def download_all_models(
     from horde_safety.interrogate import get_interrogator_no_blip
 
     download_deep_danbooru_model()
-    _ = get_interrogator_no_blip()
-    del _
+    get_interrogator_no_blip()
 
     extra_comfyui_args = []
     if directml is not None:
@@ -138,7 +137,6 @@ def download_all_models(
                 continue
 
             SharedModelManager.manager.controlnet.download_model(cn_model)
-            SharedModelManager.manager.controlnet.download_model(cn_model)
         if not SharedModelManager.preload_annotators():
             logger.error("Failed to download the controlnet annotators")
             exit(1)
@@ -147,7 +145,6 @@ def download_all_models(
         if SharedModelManager.manager.miscellaneous is None:
             logger.error("Failed to load miscellaneous model manager")
             exit(1)
-        SharedModelManager.manager.miscellaneous.download_all_models()
         SharedModelManager.manager.miscellaneous.download_all_models()
         for model in SharedModelManager.manager.miscellaneous.model_reference:
             if not SharedModelManager.manager.miscellaneous.validate_model(
@@ -170,7 +167,6 @@ def download_all_models(
             exit(1)
 
         SharedModelManager.manager.gfpgan.download_all_models()
-        SharedModelManager.manager.gfpgan.download_all_models()
         for model in SharedModelManager.manager.gfpgan.model_reference:
             if not SharedModelManager.manager.gfpgan.validate_model(
                 model,
@@ -181,7 +177,6 @@ def download_all_models(
             logger.success("Downloaded all GFPGAN models")
 
         SharedModelManager.manager.esrgan.download_all_models()
-        SharedModelManager.manager.esrgan.download_all_models()
         for model in SharedModelManager.manager.esrgan.model_reference:
             if not SharedModelManager.manager.esrgan.validate_model(
                 model,
@@ -191,7 +186,6 @@ def download_all_models(
         else:
             logger.success("Downloaded all ESRGAN models")
 
-        SharedModelManager.manager.codeformer.download_all_models()
         SharedModelManager.manager.codeformer.download_all_models()
         for model in SharedModelManager.manager.codeformer.model_reference:
             if not SharedModelManager.manager.codeformer.validate_model(

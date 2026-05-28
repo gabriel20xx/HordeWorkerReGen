@@ -294,7 +294,6 @@ class HordeInferenceProcess(HordeProcess):
         Args:
             horde_model_name (str): The name of the model to download.\
         """
-        # TODO
         self.send_process_state_change_message(
             process_state=HordeProcessState.DOWNLOADING_MODEL,
             info=f"Downloading model {horde_model_name}",
