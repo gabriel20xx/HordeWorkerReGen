@@ -460,6 +460,17 @@ class HordeInferenceProcess(HordeProcess):
 
         time_start = time.time()
 
+        # Start a background heartbeat thread to keep last_heartbeat_timestamp fresh
+        # during the blocking load_checkpoint() call.  If the process crashes, the thread
+        # dies with it and heartbeats stop — allowing faster stuck detection.
+        _preload_heartbeat_stop = threading.Event()
+        _preload_heartbeat_thread = threading.Thread(
+            target=self._preload_heartbeat_loop,
+            args=(_preload_heartbeat_stop,),
+            daemon=True,
+        )
+        _preload_heartbeat_thread.start()
+
         with contextlib.nullcontext():  # self.disk_lock:
             try:
                 self._checkpoint_loader.load_checkpoint(
@@ -471,6 +482,9 @@ class HordeInferenceProcess(HordeProcess):
             except Exception as e:
                 logger.error(f"Problem loading model {horde_model_name}: {type(e).__name__}: {e}")
                 raise
+            finally:
+                _preload_heartbeat_stop.set()
+                _preload_heartbeat_thread.join(timeout=self._HEARTBEAT_THREAD_JOIN_TIMEOUT)
 
         logger.info(f"Preloaded model {horde_model_name}")
         self._active_model_name = horde_model_name
@@ -514,6 +528,16 @@ class HordeInferenceProcess(HordeProcess):
     between callbacks during heavy computation (e.g., VAE decode for large SDXL images).
     The background heartbeat thread fills these gaps so the process manager does not
     incorrectly declare the process stuck.
+    """
+
+    _PRELOAD_HEARTBEAT_INTERVAL: float = 15.0
+    """How often (seconds) the background heartbeat thread fires during model preloading.
+
+    Model loading via load_checkpoint() is a blocking synchronous call that sends no messages
+    back to the process manager.  Without periodic heartbeats a crashed/dead process during
+    preloading can only be detected after the full preload_timeout expires.  This thread
+    keeps last_heartbeat_timestamp fresh so the process manager can distinguish a genuinely
+    alive-but-slow process from one that has died.
     """
 
     _HEARTBEAT_THREAD_JOIN_TIMEOUT: float = 5.0
@@ -563,6 +587,28 @@ class HordeInferenceProcess(HordeProcess):
                     )
             except Exception as e:
                 logger.debug(f"Background inference heartbeat failed: {type(e).__name__}: {e}")
+
+    def _preload_heartbeat_loop(self, stop_event: threading.Event) -> None:
+        """Send periodic heartbeats during model preloading to keep the process alive.
+
+        Model loading (load_checkpoint) is a blocking call that sends no messages to the
+        process manager.  If the process is genuinely alive (just slow), these heartbeats
+        keep ``last_heartbeat_timestamp`` fresh so the manager does not kill it prematurely.
+        If the process crashes or deadlocks, the thread dies with it and heartbeats stop,
+        allowing the manager to detect the failure faster (via heartbeat staleness) than
+        waiting for the full ``preload_timeout``.
+
+        Args:
+            stop_event: Set this event to signal the thread to exit.
+        """
+        while not stop_event.wait(timeout=self._PRELOAD_HEARTBEAT_INTERVAL):
+            try:
+                self.send_heartbeat_message(
+                    heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
+                )
+                logger.debug("Preload heartbeat sent — model loading still in progress")
+            except Exception as e:
+                logger.debug(f"Background preload heartbeat failed: {type(e).__name__}: {e}")
 
     def progress_callback(
         self,

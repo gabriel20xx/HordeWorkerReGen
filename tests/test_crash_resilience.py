@@ -4671,12 +4671,16 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
     ) -> MagicMock:
         import time as _time
 
+        from horde_worker_regen.process_management.horde_process import HordeProcessType
+
         proc = MagicMock()
         proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = state
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.state_entered_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_percent_complete = None
         proc.last_job_referenced = None
         return proc
@@ -5464,6 +5468,7 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.state_entered_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_percent_complete = None
         proc.last_job_referenced = None
         return proc
@@ -9056,3 +9061,163 @@ class TestRequestProgramRestartResetsJobPopTime:
         )
         assert mock_manager._restart_requested is True
         mock_manager._shutdown.assert_called_once()
+
+
+class TestReplaceHungJobReceivedAndDownloading:
+    """Tests that JOB_RECEIVED and DOWNLOADING_MODEL stuck detection works.
+
+    These states are checked in the multi-pass scan to detect processes that have received
+    a job but never started processing it, or that stalled during model download.
+    """
+
+    def _make_manager(
+        self,
+        processes: list,
+        *,
+        recently_recovered: bool = False,
+    ):
+        from unittest.mock import MagicMock
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._recently_recovered = recently_recovered
+        mock_manager._last_pop_no_jobs_available = False
+        mock_manager._job_pops_paused = False
+        mock_manager._shutting_down = False
+        mock_manager._hung_processes_detected = False
+        mock_manager._hung_processes_detected_time = 0.0
+        mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.preload_timeout = 80
+        mock_manager.bridge_data.process_timeout = 300
+        mock_manager.bridge_data.download_timeout = 300
+        mock_manager.bridge_data.post_process_timeout = 60
+        mock_manager.bridge_data.max_batch = 1
+        mock_manager._process_map.is_stuck_on_inference.return_value = False
+        mock_manager._check_and_replace_process.return_value = False
+        mock_manager._process_map.values.return_value = processes
+        mock_manager._process_map.__iter__ = MagicMock(return_value=iter(processes))
+        mock_manager.jobs_pending_inference = [MagicMock()]  # local work pending
+        mock_manager.jobs_in_progress = []
+
+        mock_manager._bound_replace_hung = HordeWorkerProcessManager.replace_hung_processes.__get__(
+            mock_manager, HordeWorkerProcessManager,
+        )
+        return mock_manager
+
+    def _make_process(self, process_id: int, state, *, time_elapsed: float = 9999.0):
+        import time as _time
+        from unittest.mock import MagicMock
+
+        from horde_worker_regen.process_management.horde_process import HordeProcessType
+
+        proc = MagicMock()
+        proc.process_id = process_id
+        proc.process_type = HordeProcessType.INFERENCE
+        proc.last_process_state = state
+        proc.last_received_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_timestamp = _time.time() - time_elapsed
+        proc.last_progress_timestamp = _time.time() - time_elapsed
+        proc.state_entered_timestamp = _time.time() - time_elapsed
+        proc.last_heartbeat_percent_complete = None
+        proc.last_job_referenced = None
+        return proc
+
+    def test_job_received_stuck_check_runs(self) -> None:
+        """JOB_RECEIVED stuck check must be evaluated in the multi-pass scan."""
+        from unittest.mock import patch
+
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        proc = self._make_process(0, HordeProcessState.JOB_RECEIVED)
+        mock_manager = self._make_manager([proc])
+
+        with patch("threading.Thread"):
+            mock_manager._bound_replace_hung()
+
+        called_states = [call.args[2] for call in mock_manager._check_and_replace_process.call_args_list]
+        assert HordeProcessState.JOB_RECEIVED in called_states, (
+            "JOB_RECEIVED must be checked in the multi-pass scan"
+        )
+
+    def test_downloading_model_stuck_check_runs(self) -> None:
+        """DOWNLOADING_MODEL stuck check must be evaluated in the multi-pass scan."""
+        from unittest.mock import patch
+
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        proc = self._make_process(0, HordeProcessState.DOWNLOADING_MODEL)
+        mock_manager = self._make_manager([proc])
+
+        with patch("threading.Thread"):
+            mock_manager._bound_replace_hung()
+
+        called_states = [call.args[2] for call in mock_manager._check_and_replace_process.call_args_list]
+        assert HordeProcessState.DOWNLOADING_MODEL in called_states, (
+            "DOWNLOADING_MODEL must be checked in the multi-pass scan"
+        )
+
+    def test_job_received_uses_preload_timeout(self) -> None:
+        """JOB_RECEIVED timeout must use preload_timeout (not process_timeout)."""
+        from unittest.mock import patch
+
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        proc = self._make_process(0, HordeProcessState.JOB_RECEIVED)
+        mock_manager = self._make_manager([proc])
+        mock_manager.bridge_data.preload_timeout = 42  # distinctive value
+
+        with patch("threading.Thread"):
+            mock_manager._bound_replace_hung()
+
+        # Find the JOB_RECEIVED call and verify the timeout used
+        for call in mock_manager._check_and_replace_process.call_args_list:
+            if call.args[2] == HordeProcessState.JOB_RECEIVED:
+                assert call.args[1] == 42, (
+                    f"JOB_RECEIVED timeout must be preload_timeout (42), got {call.args[1]}"
+                )
+                break
+        else:
+            raise AssertionError("JOB_RECEIVED check was never called")
+
+    def test_downloading_model_uses_download_timeout(self) -> None:
+        """DOWNLOADING_MODEL timeout must use download_timeout."""
+        from unittest.mock import patch
+
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        proc = self._make_process(0, HordeProcessState.DOWNLOADING_MODEL)
+        mock_manager = self._make_manager([proc])
+        mock_manager.bridge_data.download_timeout = 77  # distinctive value
+
+        with patch("threading.Thread"):
+            mock_manager._bound_replace_hung()
+
+        for call in mock_manager._check_and_replace_process.call_args_list:
+            if call.args[2] == HordeProcessState.DOWNLOADING_MODEL:
+                assert call.args[1] == 77, (
+                    f"DOWNLOADING_MODEL timeout must be download_timeout (77), got {call.args[1]}"
+                )
+                break
+        else:
+            raise AssertionError("DOWNLOADING_MODEL check was never called")
+
+    def test_job_received_skipped_when_no_work(self) -> None:
+        """JOB_RECEIVED must be skipped when no jobs are available anywhere."""
+        from unittest.mock import patch
+
+        from horde_worker_regen.process_management.messages import HordeProcessState
+
+        proc = self._make_process(0, HordeProcessState.JOB_RECEIVED)
+        mock_manager = self._make_manager([proc])
+        mock_manager._last_pop_no_jobs_available = True
+        mock_manager.jobs_pending_inference = []
+        mock_manager.jobs_in_progress = []
+
+        with patch("threading.Thread"):
+            mock_manager._bound_replace_hung()
+
+        called_states = [call.args[2] for call in mock_manager._check_and_replace_process.call_args_list]
+        assert HordeProcessState.JOB_RECEIVED not in called_states, (
+            "JOB_RECEIVED check must be skipped when no jobs are available"
+        )

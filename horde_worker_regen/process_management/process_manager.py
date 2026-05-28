@@ -8331,17 +8331,18 @@ class HordeWorkerProcessManager:
           semaphore is available and any process stuck in INFERENCE_STARTING for longer than
           ``preload_timeout`` is genuinely hung regardless of how recently a recovery was performed.
         - ``INFERENCE_POST_PROCESSING``, ``POST_PROCESSING_STARTING``, ``MODEL_PRELOADING``,
-          ``MODEL_PRELOADED``, ``DOWNLOADING_AUX_MODEL``, and ``PROCESS_STARTING`` are **always**
-          evaluated, so a process that is genuinely stuck in one of those states is recovered even
-          when a different process was recently replaced.
+          ``MODEL_PRELOADED``, ``DOWNLOADING_AUX_MODEL``, ``DOWNLOADING_MODEL``,
+          ``JOB_RECEIVED``, and ``PROCESS_STARTING`` are **always** evaluated, so a process
+          that is genuinely stuck in one of those states is recovered even when a different
+          process was recently replaced.
 
         Job-related stuck states are checked in a multi-pass scan (condition-first, then
         processes) so that every process is examined for the highest-priority state before any
         process is examined for the next state.  This gives true cross-process prioritization:
         actively-in-progress states (``INFERENCE_POST_PROCESSING``, ``POST_PROCESSING_STARTING``,
-        ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``) are cleared across the entire worker
-        before idle/finished states (``MODEL_PRELOADED``) are reclaimed, regardless of subprocess
-        map ordering.
+        ``MODEL_PRELOADING``, ``DOWNLOADING_AUX_MODEL``, ``DOWNLOADING_MODEL``,
+        ``JOB_RECEIVED``) are cleared across the entire worker before idle/finished states
+        (``MODEL_PRELOADED``) are reclaimed, regardless of subprocess map ordering.
         """
         import threading
 
@@ -8628,6 +8629,16 @@ class HordeWorkerProcessManager:
                     self.bridge_data.download_timeout,
                     HordeProcessState.DOWNLOADING_AUX_MODEL,
                     "seems to be stuck downloading an auxiliary model (LoRa, etc)",
+                ),
+                (
+                    self.bridge_data.download_timeout,
+                    HordeProcessState.DOWNLOADING_MODEL,
+                    "seems to be stuck downloading a model",
+                ),
+                (
+                    self.bridge_data.preload_timeout,
+                    HordeProcessState.JOB_RECEIVED,
+                    "seems to be stuck after receiving a job (never started processing)",
                 ),
                 # --- finished / idle ---
                 (
