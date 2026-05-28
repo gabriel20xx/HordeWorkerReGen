@@ -1,6 +1,11 @@
 @echo off
 cd /d %~dp0
 
+: Prevent NVIDIA driver file-cache init errors
+if not defined CUDA_CACHE_DISABLE set CUDA_CACHE_DISABLE=1
+: Defer CUDA module loading to reduce startup errors with mismatched driver versions
+if not defined CUDA_MODULE_LOADING set CUDA_MODULE_LOADING=LAZY
+
 : This first call to runtime activates the environment for the rest of the script
 call runtime python -s -m pip -V
 

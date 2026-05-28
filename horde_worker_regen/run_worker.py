@@ -273,6 +273,15 @@ def init() -> int:
 
     os.environ["HORDE_SDK_DISABLE_CUSTOM_SINKS"] = "1"
 
+    # Prevent NVIDIA driver from attempting file-based compute cache initialization, which can fail
+    # with "ERROR: driverInitFileInfo ... result=11" messages on stderr when the cache directory is
+    # inaccessible or the driver version doesn't fully support the installed CUDA toolkit.
+    os.environ.setdefault("CUDA_CACHE_DISABLE", "1")
+
+    # Defer CUDA module loading until actually needed, reducing startup errors and improving
+    # initialization time when CUDA modules have compatibility issues with the installed driver.
+    os.environ.setdefault("CUDA_MODULE_LOADING", "LAZY")
+
     # Prevent ONNX Runtime from attempting to set CPU thread affinity, which fails in containers
     # and restricted environments with error: "pthread_setaffinity_np failed ... Invalid argument"
     # Setting OMP_NUM_THREADS explicitly suppresses the auto-detection that triggers the affinity attempt.
