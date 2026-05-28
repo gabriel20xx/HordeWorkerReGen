@@ -1,6 +1,5 @@
 """Configures pytest and creates fixtures."""
 
-# import hordelib
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,6 @@ from loguru import logger
 @pytest.fixture(scope="session", autouse=True)
 def init_hordelib() -> None:
     """Initialise hordelib for the tests."""
-    # hordelib.initialise() # FIXME
     logger.warning("hordelib.initialise() not called")
 
 
