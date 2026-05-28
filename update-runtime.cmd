@@ -67,6 +67,8 @@ micromamba.exe shell hook -s cmd.exe %MAMBA_ROOT_PREFIX% -v
 call "%MAMBA_ROOT_PREFIX%\condabin\mamba_hook.bat"
 call "%MAMBA_ROOT_PREFIX%\condabin\micromamba.bat" activate windows
 
+python -s -m pip install --upgrade pip
+
 python -s -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128 -U
 
 REM Uninstall deprecated pynvml package to ensure nvidia-ml-py is used instead

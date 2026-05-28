@@ -28,6 +28,9 @@ fi
 
 . venv/bin/activate
 
+# Upgrade pip to the latest version
+python -m pip install --upgrade pip
+
 # Determine the GPU type and set environment variables accordingly
 if [ ! -z "${ROCM_VERSION_SHORT}" ]; then
     # ROCm environment

@@ -67,6 +67,8 @@ micromamba.exe shell hook -s cmd.exe %MAMBA_ROOT_PREFIX% -v
 call "%MAMBA_ROOT_PREFIX%\condabin\mamba_hook.bat"
 call "%MAMBA_ROOT_PREFIX%\condabin\mamba.bat" activate windows
 
+python -s -m pip install --upgrade pip
+
 python -s -m pip install torch-directml torchvision==0.19.1
 
 if defined hordelib (
