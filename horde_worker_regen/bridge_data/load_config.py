@@ -135,6 +135,13 @@ class BridgeDataLoader:
 
         return bridge_data
 
+    # Environment variable suffixes (after stripping the AIWORKER_ prefix and lowercasing)
+    # that don't directly match a model field name.  Map them to the correct field name so
+    # they are not treated as unknown extras.
+    _ENV_VAR_NAME_TO_FIELD: dict[str, str] = {
+        "auto_restart_idle_minutes": "auto_restart_on_idle_minutes",
+    }
+
     @staticmethod
     def load_from_env_vars(
         *,
@@ -147,6 +154,7 @@ class BridgeDataLoader:
             if key.startswith(AIWORKER_REGEN_PREFIX):
                 # Coverts the env var name to the attr name found in the reGenBridgeData model
                 attr_name = key[len(AIWORKER_REGEN_PREFIX) :].lower()
+                attr_name = BridgeDataLoader._ENV_VAR_NAME_TO_FIELD.get(attr_name, attr_name)
                 if value.lower() in ("true", "false"):
                     config[attr_name] = value.lower() == "true"
                 elif any(delimiter in value for delimiter in ["[", ",", ";"]):
