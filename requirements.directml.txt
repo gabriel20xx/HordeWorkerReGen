@@ -1,4 +1,5 @@
 torch-directml==0.2.5.dev240914
+torchaudio
 
 horde_sdk~=0.17.1
 horde_safety~=0.3.0

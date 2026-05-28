@@ -1,4 +1,5 @@
 torch==2.12.0
+torchaudio
 
 horde_sdk~=0.17.1
 horde_safety~=0.3.0
