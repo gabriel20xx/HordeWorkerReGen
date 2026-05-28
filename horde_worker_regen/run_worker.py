@@ -235,7 +235,7 @@ def init() -> int:
             logger.warning(f"Failed to remove .abort file: {e}")
     # ! IMPORTANT: End of own code
 
-    print(f"Multiprocessing start method: {multiprocessing.get_start_method()}")
+    logger.info(f"Multiprocessing start method: {multiprocessing.get_start_method()}")
 
     # Create args for -v, allowing -vvv
     parser = argparse.ArgumentParser()
