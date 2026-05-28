@@ -33,6 +33,9 @@ if [ ! -f "$SCRIPT_DIR/conda/envs/linux/bin/python" ]; then
 fi
 ${SCRIPT_DIR}/bin/micromamba create --no-shortcuts -r "$SCRIPT_DIR/conda" -n linux -f ${CONDA_ENVIRONMENT_FILE} -y
 
+# Upgrade pip to the latest version
+${SCRIPT_DIR}/bin/micromamba run -r "$SCRIPT_DIR/conda" -n linux python -s -m pip install --upgrade pip
+
 # Uninstall deprecated pynvml package to ensure nvidia-ml-py is used instead
 ${SCRIPT_DIR}/bin/micromamba run -r "$SCRIPT_DIR/conda" -n linux python -s -m pip uninstall -y pynvml
 

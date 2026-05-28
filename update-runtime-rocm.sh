@@ -44,6 +44,9 @@ if [ ! -f "$SCRIPT_DIR/conda/envs/linux/bin/python" ]; then
 fi
 ${SCRIPT_DIR}/bin/micromamba update --no-shortcuts -r "$SCRIPT_DIR/conda" -n linux -f ${CONDA_ENVIRONMENT_FILE} -y
 
+# Upgrade pip to the latest version
+${SCRIPT_DIR}/bin/micromamba run -r "$SCRIPT_DIR/conda" -n linux python -m pip install --upgrade pip
+
 # 3. Clean up "Ghost" folders that break imports
 echo "--- Cleaning up potential workspace conflicts ---"
 rm -rf "$SCRIPT_DIR/mediapipe" 2>/dev/null
