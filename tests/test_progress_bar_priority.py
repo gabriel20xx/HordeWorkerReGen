@@ -15,6 +15,7 @@ import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from horde_worker_regen.process_management.horde_process import HordeProcessType
 from horde_worker_regen.process_management.messages import HordeProcessState
 
 
@@ -628,6 +629,33 @@ def test_update_webui_status_excludes_ending_and_ended_processes_from_process_li
     assert processes[0]["id"] == "safety-0"
     assert processes[0]["display_id"] == "Safety"
 
+
+def test_update_webui_status_sets_safety_model_label_in_active_safety_states() -> None:
+    """Safety processes in active safety states should expose the horde_safety model label."""
+    active_safety_states = (
+        HordeProcessState.SAFETY_STARTING,
+        HordeProcessState.SAFETY_EVALUATING,
+        HordeProcessState.SAFETY_COMPLETE,
+    )
+
+    for safety_state in active_safety_states:
+        safety = _make_mock_process(_make_mock_job(f"safety-{safety_state.name}"), safety_state, percent_complete=None)
+        safety.process_type = HordeProcessType.SAFETY
+        safety.loaded_horde_model_name = None
+
+        kwargs = _invoke_update_webui_status(
+            jobs_pending_submit=[],
+            jobs_being_safety_checked=[],
+            jobs_pending_safety_check=[],
+            jobs_in_progress=[],
+            process_list=[safety],
+            return_full_kwargs=True,
+        )
+
+        processes = kwargs.get("processes", [])
+        assert len(processes) == 1
+        assert processes[0]["state"] == safety_state.name
+        assert processes[0]["model"] == "CLIP / DeepDanbooru"
 
 # ---------------------------------------------------------------------------
 # time_without_jobs helpers & tests
