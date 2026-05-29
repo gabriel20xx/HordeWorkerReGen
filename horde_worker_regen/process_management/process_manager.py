@@ -7992,6 +7992,10 @@ class HordeWorkerProcessManager:
             # immediately on the next _process_control_loop iteration instead of waiting up
             # to 10 seconds for _last_pop_recently() to expire.
             self._last_job_pop_time = 0.0
+            # Reset the WebUI uptime pill immediately so the header shows near-zero during
+            # the shutdown window rather than the accumulated uptime of the old session.
+            if self.webui is not None:
+                self.webui.reset_session_start_time()
             self._shutdown()
 
     async def _auto_restart_idle_loop(self) -> None:
