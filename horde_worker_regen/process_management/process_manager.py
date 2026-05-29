@@ -7961,8 +7961,16 @@ class HordeWorkerProcessManager:
 
         When ``bridge_data.auto_restart_on_idle_minutes`` is greater than zero and no job
         has been submitted since at least that many minutes, a graceful restart is triggered.
-        Does nothing while already shutting down, while job pops are paused (intentional user
-        pause), or while there are active jobs in the pipeline (the worker is not truly idle).
+        Does nothing while already shutting down or while job pops are paused (intentional
+        user pause).
+
+        The "last submission" criterion is deliberately evaluated regardless of whether jobs
+        are sitting in the local pipeline.  A genuinely-busy worker keeps submitting jobs and
+        therefore continuously refreshes ``_last_job_submitted_time``; if that timestamp has
+        not advanced for ``threshold_minutes``, the worker is wedged (for example every
+        inference subprocess is stuck in ``PROCESS_STARTING`` with popped-but-never-processed
+        jobs still in ``jobs_pending_inference``).  Skipping the restart in that situation —
+        as previous versions did — left the worker effectively dead until manual intervention.
         """
         if self._shutting_down:
             return
@@ -7971,17 +7979,6 @@ class HordeWorkerProcessManager:
             return
         # Don't restart while the user has intentionally paused job pops.
         if self._job_pops_paused:
-            return
-        # Don't restart while there are active jobs being processed — the worker
-        # is not truly idle in that case, and triggering shutdown would stall until
-        # those jobs finish, making it appear as though the restart never happens.
-        if (
-            len(self.jobs_pending_inference) > 0
-            or len(self.jobs_in_progress) > 0
-            or len(self.jobs_being_safety_checked) > 0
-            or len(self.jobs_pending_safety_check) > 0
-            or len(self.jobs_pending_submit) > 0
-        ):
             return
         elapsed_seconds = time.time() - self._last_job_submitted_time
         threshold_seconds = threshold_minutes * 60
