@@ -3281,6 +3281,25 @@ async def test_webui_models_section_html() -> None:
         await webui.stop()
 
 
+def test_webui_reset_session_start_time_resets_uptime() -> None:
+    """reset_session_start_time() should set uptime to 0.0 and refresh session_start_time."""
+    import time
+
+    webui = WorkerWebUI(port=0)
+    # Simulate time passing by back-dating the session start
+    webui.status_data["session_start_time"] = time.time() - 3600
+    webui.update_status()
+
+    assert webui.status_data["uptime"] >= 3600, "uptime should reflect elapsed time before reset"
+
+    webui.reset_session_start_time()
+
+    assert webui.status_data["uptime"] == 0.0, "uptime should be 0.0 immediately after reset"
+    assert webui.status_data["session_start_time"] == pytest.approx(time.time(), abs=2), (
+        "session_start_time should be refreshed to now"
+    )
+
+
 if __name__ == "__main__":
     test_webui_creation()
     print("✓ WebUI creation test passed")

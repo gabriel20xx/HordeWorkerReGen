@@ -5286,6 +5286,17 @@ class WorkerWebUI:
         # Record a statistics snapshot (throttled to at most once per _STATS_SNAPSHOT_INTERVAL).
         self._record_stats_snapshot()
 
+    def reset_session_start_time(self) -> None:
+        """Reset the session start time so the uptime pill shows near-zero immediately.
+
+        Called when a program restart is imminent (e.g. idle auto-restart) so that
+        the header uptime pill reflects the new session rather than the accumulated
+        uptime of the old session during the brief shutdown window before the process
+        is actually replaced via ``os.execv``.
+        """
+        self.status_data["session_start_time"] = time.time()
+        self.status_data["uptime"] = 0.0
+
     async def start(self) -> None:
         """Start the web server."""
         try:

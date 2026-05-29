@@ -677,6 +677,36 @@ class TestCheckAutoRestartOnIdle:
         # Should also reset _last_job_pop_time for immediate process termination
         assert mgr._last_job_pop_time == 0.0
 
+    def test_resets_webui_uptime_when_restart_triggered(self) -> None:
+        """When idle restart is triggered, WebUI session start time should be reset so the uptime pill shows near-zero."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(threshold_minutes=1, elapsed_seconds=3600)
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()
+        assert mgr._restart_requested is True
+        mgr.webui.reset_session_start_time.assert_called_once()
+
+    def test_does_not_reset_webui_uptime_when_no_restart(self) -> None:
+        """When restart is not triggered (below threshold), WebUI session start time should NOT be reset."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(threshold_minutes=60, elapsed_seconds=30)
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()
+        assert mgr._restart_requested is False
+        mgr.webui.reset_session_start_time.assert_not_called()
+
+    def test_does_not_reset_webui_uptime_when_webui_is_none(self) -> None:
+        """When webui is None, reset should not be attempted (no AttributeError)."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(threshold_minutes=1, elapsed_seconds=3600)
+        mgr.webui = None
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()  # Should not raise
+        assert mgr._restart_requested is True
+
     def test_triggers_restart_at_exact_threshold(self) -> None:
         """Restart should trigger when elapsed equals the threshold exactly."""
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
