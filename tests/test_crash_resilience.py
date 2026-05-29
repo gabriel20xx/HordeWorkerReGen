@@ -707,8 +707,16 @@ class TestCheckAutoRestartOnIdle:
             "jobs_pending_submit",
         ),
     )
-    def test_does_nothing_when_active_jobs_exist(self, active_job_queue: str) -> None:
-        """No restart should be triggered while jobs are actively being processed."""
+    def test_triggers_restart_when_active_jobs_exist_but_idle_threshold_exceeded(
+        self,
+        active_job_queue: str,
+    ) -> None:
+        """Restart should still trigger when last-submission age exceeds threshold even if jobs are queued.
+
+        A worker whose inference subprocesses are wedged (e.g. all stuck in PROCESS_STARTING) keeps
+        previously-popped jobs in its pipeline forever; relying on the last-submission timestamp is the
+        only reliable signal that the worker has stalled, so the active-jobs guard must not suppress it.
+        """
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
         mgr = self._make_manager(
@@ -719,7 +727,9 @@ class TestCheckAutoRestartOnIdle:
         )
         bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
         bound()
-        mgr._shutdown.assert_not_called()
+        assert mgr._restart_requested is True
+        mgr._shutdown.assert_called_once()
+        assert mgr._last_job_pop_time == 0.0
 
     def test_auto_restart_idle_loop_uses_short_sleep_steps(self) -> None:
         """Idle loop should sleep in short steps so shutdown can complete quickly."""
