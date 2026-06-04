@@ -1874,6 +1874,8 @@ async def test_webui_stats_endpoint() -> None:
 @pytest.mark.asyncio
 async def test_job_pops_pause_endpoint() -> None:
     """Test the POST /api/job_pops/pause endpoint."""
+    import time as _time
+
     webui = WorkerWebUI(port=0)
     paused_calls: list[tuple[bool, float | None]] = []
 
@@ -1887,10 +1889,27 @@ async def test_job_pops_pause_endpoint() -> None:
         await asyncio.sleep(0.5)
         actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
 
-        # --- success: pause indefinitely ---
+        # --- success: pause with no duration_seconds → defaults to 15 minutes ---
+        before = _time.time()
         async with aiohttp.ClientSession() as session, session.post(
             f"http://localhost:{actual_port}/api/job_pops/pause",
             json={"paused": True},
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        after = _time.time()
+        assert body["job_pops_paused"] is True
+        assert body["job_pops_pause_until"] is not None
+        assert before + 900 <= body["job_pops_pause_until"] <= after + 900
+        assert webui.status_data["job_pops_paused"] is True
+        assert webui.status_data["job_pops_pause_until"] == body["job_pops_pause_until"]
+        assert paused_calls[-1][0] is True
+        assert paused_calls[-1][1] is not None
+
+        # --- success: pause indefinitely via explicit null ---
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": True, "duration_seconds": None},
         ) as response:
             assert response.status == 200
             body = await response.json()
@@ -1901,8 +1920,7 @@ async def test_job_pops_pause_endpoint() -> None:
         assert paused_calls[-1][0] is True
         assert paused_calls[-1][1] is None
 
-        # --- success: pause for 15 minutes ---
-        import time as _time
+        # --- success: pause for 15 minutes via explicit duration ---
         before = _time.time()
         async with aiohttp.ClientSession() as session, session.post(
             f"http://localhost:{actual_port}/api/job_pops/pause",
@@ -1917,6 +1935,35 @@ async def test_job_pops_pause_endpoint() -> None:
         assert webui.status_data["job_pops_pause_until"] == body["job_pops_pause_until"]
         assert paused_calls[-1][0] is True
         assert paused_calls[-1][1] is not None
+
+        # --- timer reset: second pause resets the timer to specified duration ---
+        first_pause_until = webui.status_data["job_pops_pause_until"]
+        before = _time.time()
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": True, "duration_seconds": 1800},
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        after = _time.time()
+        assert body["job_pops_paused"] is True
+        # New pause_until should be ~30 min from now, not the old ~15 min value
+        assert body["job_pops_pause_until"] is not None
+        assert before + 1800 <= body["job_pops_pause_until"] <= after + 1800
+        assert body["job_pops_pause_until"] != first_pause_until
+
+        # --- timer reset: second default pause resets timer to default 15 minutes ---
+        before = _time.time()
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/job_pops/pause",
+            json={"paused": True},
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        after = _time.time()
+        assert body["job_pops_paused"] is True
+        assert body["job_pops_pause_until"] is not None
+        assert before + 900 <= body["job_pops_pause_until"] <= after + 900
 
         # --- success: resume ---
         async with aiohttp.ClientSession() as session, session.post(
