@@ -2824,6 +2824,52 @@ async def test_webui_settings_post_unknown_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_settings_post_readonly_key() -> None:
+    """Test that POST /api/settings rejects writes to read-only fields such as horde_url."""
+    webui = WorkerWebUI(port=0)
+    webui.set_setting_callback(lambda k, v: None)
+    webui.update_settings_data({"horde_url": "https://aihorde.net/api/"})
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "horde_url", "value": "https://evil.example.com/api/"},
+        ) as response:
+            assert response.status == 400
+            data = await response.json()
+            assert "read-only" in data.get("error", "").lower()
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_get_includes_horde_url() -> None:
+    """Test that GET /api/settings returns horde_url when it has been pushed."""
+    webui = WorkerWebUI(port=0)
+    webui.update_settings_data({"horde_url": "https://aihorde.net/api/"})
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/settings",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert "horde_url" in data["settings"]
+        assert data["settings"]["horde_url"] == "https://aihorde.net/api/"
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_settings_post_no_callback() -> None:
     """Test that POST /api/settings returns 503 when no callback is registered."""
     webui = WorkerWebUI(port=0)
