@@ -64,6 +64,8 @@ _UNSET: Any = object()
 #   max   – maximum value (numeric types only)
 # ---------------------------------------------------------------------------
 _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
+    # Connection
+    "horde_url": {"type": str, "readonly": True},
     # Capabilities
     "nsfw": {"type": bool},
     "censor_nsfw": {"type": bool},
@@ -909,6 +911,9 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-feedback.pending { color: #fcd34d; }
         .settings-unavailable { background: #f1f5f9; border: 1px solid var(--border); border-radius: 10px; padding: 28px 20px; text-align: center; color: #64748b; font-size: 0.92rem; }
         [data-theme="dark"] .settings-unavailable { background: #0f172a; color: #64748b; }
+        /* Readonly string value */
+        .setting-value { font-size: 0.82rem; color: #475569; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; background: #f1f5f9; border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+        [data-theme="dark"] .setting-value { color: #94a3b8; background: #0f172a; }
         /* Models section */
         .models-containers { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         @media (max-width: 640px) { .models-containers { grid-template-columns: 1fr; } }
@@ -3700,7 +3705,8 @@ class WorkerWebUI:
         // SETTINGS PAGE
         // ========================================================
         const _SETTINGS_SPEC = {
-            // key: [label, description, category, type ('bool'|'int'|'float'|'int_auto'), min, max, restartRequired, autoPrefix?, envVar]
+            // key: [label, description, category, type ('bool'|'int'|'float'|'int_auto'|'str_readonly'), min, max, restartRequired, autoPrefix?, envVar]
+            horde_url:                ['Endpoint URL',             'AI Horde API endpoint URL.',                                          'Connection',   'str_readonly', null, null, true, null, 'AI_HORDE_URL'],
             nsfw:                     ['NSFW',                    'Accept NSFW image jobs.',                                              'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_NSFW'],
             censor_nsfw:              ['Censor NSFW',             'Censor NSFW content even when accepting NSFW jobs.',                  'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_CENSOR_NSFW'],
             allow_img2img:            ['Allow img2img',           'Accept image-to-image jobs.',                                         'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_IMG2IMG'],
@@ -3935,7 +3941,10 @@ class WorkerWebUI:
                     if (envVar) { html += '<div class="setting-env"><code>' + escapeHtml(envVar) + '</code></div>'; }
                     html += '<div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
                     html += '<div class="setting-ctrl">';
-                    if (type === 'bool') {
+                    if (type === 'str_readonly') {
+                        var strVal = (val !== null && val !== undefined) ? String(val) : '—';
+                        html += '<span class="setting-value" title="' + escapeHtml(strVal) + '">' + escapeHtml(strVal) + '</span>';
+                    } else if (type === 'bool') {
                         var chk = (val === true) ? 'checked' : '';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
                         html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="stageSettingChange(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
@@ -4353,10 +4362,17 @@ class WorkerWebUI:
         """Handle a request to pause or resume accepting new job pops.
 
         Expected JSON body: ``{"paused": true}`` or ``{"paused": false}``.
-        When pausing, an optional ``duration_seconds`` field (number) may be
-        included to request a timed pause that auto-expires after the given
-        number of seconds.  Omit ``duration_seconds`` or set it to ``null``
-        for an indefinite pause.
+        When pausing, an optional ``duration_seconds`` field (positive number)
+        may be included to set how long the pause lasts. If the key is absent
+        (or explicitly ``null``), the pause is indefinite.
+
+        If a pause request arrives while a pause is already active the timer is
+        reset to the duration specified in the new request (or becomes
+        indefinite if ``duration_seconds`` is omitted).
+
+        The endpoint is accessible from any IP address, so external
+        applications and automation scripts can pause/resume job pops without
+        needing access to the local UI.
 
         Returns 400 on malformed input, 503 if no callback is registered, and
         200 with ``{"job_pops_paused": <bool>, "job_pops_pause_until": <float|null>}``
@@ -4381,8 +4397,9 @@ class WorkerWebUI:
             return web.json_response({"error": "Pause job pops is not available"}, status=503)
 
         pause_until: float | None = None
-        if paused and duration_seconds is not None:
-            pause_until = time.time() + float(duration_seconds)
+        if paused:
+            if duration_seconds is not None:
+                pause_until = time.time() + float(duration_seconds)
 
         try:
             self._set_job_pops_paused_callback(paused, pause_until)
@@ -4917,6 +4934,9 @@ class WorkerWebUI:
             return web.json_response({"error": f"Unknown or non-configurable setting: '{key}'"}, status=400)
 
         spec = _SETTINGS_SPEC[key]
+        if spec.get("readonly"):
+            return web.json_response({"error": f"Setting '{key}' is read-only"}, status=400)
+
         expected_type = spec["type"]
 
         # Type coercion and validation
