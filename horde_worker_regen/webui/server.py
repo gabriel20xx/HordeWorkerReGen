@@ -3711,7 +3711,7 @@ class WorkerWebUI:
         // SETTINGS PAGE
         // ========================================================
         const _SETTINGS_SPEC = {
-            // key: [label, description, category, type ('bool'|'int'|'float'|'int_auto'|'str_readonly'), min, max, restartRequired, autoPrefix?, envVar]
+            // key: [label, description, category, type ('bool'|'int'|'float'|'int_auto'|'str_readonly'|'url_readonly'), min, max, restartRequired, autoPrefix?, envVar]
             horde_url:                ['Endpoint URL',             'AI Horde API endpoint URL.',                                          'Connection',   'str_readonly', null, null, true, null, 'AI_HORDE_URL'],
             webui_url:                ['Web UI URL',               'URL where this Web UI is accessible. The port is set via AIWORKER_WEBUI_PORT or webui_port in the bridge config (default\u00a03000). Requires restart to change.',  'Connection',   'url_readonly', null, null, true, null, 'AIWORKER_WEBUI_PORT'],
             nsfw:                     ['NSFW',                    'Accept NSFW image jobs.',                                              'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_NSFW'],
@@ -4849,8 +4849,10 @@ class WorkerWebUI:
         rather than returned as ``null``.
         """
         visible: dict[str, Any] = {k: v for k, v in self._settings_data.items() if k in _SETTINGS_SPEC}
-        # Inject the Web UI's own URL (derived automatically from the listen port).
-        visible["webui_url"] = f"http://localhost:{self.port}"
+        # Inject the Web UI's own URL derived from the incoming request origin so
+        # that remote browsers receive a usable address rather than localhost.
+        host = request.host or f"localhost:{self.port}"
+        visible["webui_url"] = f"{request.scheme}://{host}"
         # Piggy-back the int_auto live values from status_data so the Settings
         # page can render the correct initial values without waiting for the
         # first status poll.

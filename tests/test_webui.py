@@ -2875,7 +2875,7 @@ async def test_webui_settings_get_includes_webui_url() -> None:
     try:
         await webui.start()
         await asyncio.sleep(0.5)
-        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+        actual_port = webui.port
 
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/settings",
@@ -2898,7 +2898,7 @@ async def test_webui_settings_post_rejects_webui_url() -> None:
     try:
         await webui.start()
         await asyncio.sleep(0.5)
-        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+        actual_port = webui.port
 
         async with aiohttp.ClientSession() as session, session.post(
             f"http://localhost:{actual_port}/api/settings",
