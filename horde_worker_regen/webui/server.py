@@ -53,9 +53,6 @@ _MAX_STATS_SNAPSHOTS = 2160
 _MAX_OCCURRENCES_PER_GROUP = 50
 """Maximum individual occurrences returned per error group in the /api/errors/grouped response."""
 
-_DEFAULT_JOB_POP_PAUSE_SECONDS = 900
-"""Default pause duration for job pops when no ``duration_seconds`` is specified (15 minutes)."""
-
 _UNSET: Any = object()
 """Sentinel used to distinguish an explicitly-passed ``None`` from an omitted argument."""
 
@@ -4366,14 +4363,12 @@ class WorkerWebUI:
 
         Expected JSON body: ``{"paused": true}`` or ``{"paused": false}``.
         When pausing, an optional ``duration_seconds`` field (positive number)
-        may be included to set how long the pause lasts.  If the key is
-        **absent**, the pause defaults to ``_DEFAULT_JOB_POP_PAUSE_SECONDS``
-        (15 minutes).  Pass ``"duration_seconds": null`` explicitly to request
-        an indefinite pause.
+        may be included to set how long the pause lasts. If the key is absent
+        (or explicitly ``null``), the pause is indefinite.
 
         If a pause request arrives while a pause is already active the timer is
-        reset to the duration specified in the new request (or the default
-        15-minute window if ``duration_seconds`` is omitted).
+        reset to the duration specified in the new request (or becomes
+        indefinite if ``duration_seconds`` is omitted).
 
         The endpoint is accessible from any IP address, so external
         applications and automation scripts can pause/resume job pops without
@@ -4392,8 +4387,6 @@ class WorkerWebUI:
         if not isinstance(paused, bool):
             return web.json_response({"error": "Field 'paused' must be a boolean"}, status=400)
 
-        # Distinguish "key absent" (use default) from "key present as null" (indefinite).
-        duration_key_present = "duration_seconds" in body
         duration_seconds = body.get("duration_seconds")
         if duration_seconds is not None and not isinstance(duration_seconds, (int, float)):
             return web.json_response({"error": "Field 'duration_seconds' must be a number or null"}, status=400)
@@ -4405,13 +4398,8 @@ class WorkerWebUI:
 
         pause_until: float | None = None
         if paused:
-            if duration_key_present and duration_seconds is None:
-                # Caller explicitly sent null → indefinite pause.
-                pause_until = None
-            else:
-                # Key absent → use default duration; key present with value → use that value.
-                secs = float(duration_seconds) if duration_seconds is not None else float(_DEFAULT_JOB_POP_PAUSE_SECONDS)
-                pause_until = time.time() + secs
+            if duration_seconds is not None:
+                pause_until = time.time() + float(duration_seconds)
 
         try:
             self._set_job_pops_paused_callback(paused, pause_until)

@@ -1889,22 +1889,19 @@ async def test_job_pops_pause_endpoint() -> None:
         await asyncio.sleep(0.5)
         actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
 
-        # --- success: pause with no duration_seconds → defaults to 15 minutes ---
-        before = _time.time()
+        # --- success: pause with no duration_seconds → indefinite ---
         async with aiohttp.ClientSession() as session, session.post(
             f"http://localhost:{actual_port}/api/job_pops/pause",
             json={"paused": True},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        after = _time.time()
         assert body["job_pops_paused"] is True
-        assert body["job_pops_pause_until"] is not None
-        assert before + 900 <= body["job_pops_pause_until"] <= after + 900
+        assert body["job_pops_pause_until"] is None
         assert webui.status_data["job_pops_paused"] is True
         assert webui.status_data["job_pops_pause_until"] == body["job_pops_pause_until"]
         assert paused_calls[-1][0] is True
-        assert paused_calls[-1][1] is not None
+        assert paused_calls[-1][1] is None
 
         # --- success: pause indefinitely via explicit null ---
         async with aiohttp.ClientSession() as session, session.post(
@@ -1952,18 +1949,15 @@ async def test_job_pops_pause_endpoint() -> None:
         assert before + 1800 <= body["job_pops_pause_until"] <= after + 1800
         assert body["job_pops_pause_until"] != first_pause_until
 
-        # --- timer reset: second default pause resets timer to default 15 minutes ---
-        before = _time.time()
+        # --- timer reset: second pause with omitted duration becomes indefinite ---
         async with aiohttp.ClientSession() as session, session.post(
             f"http://localhost:{actual_port}/api/job_pops/pause",
             json={"paused": True},
         ) as response:
             assert response.status == 200
             body = await response.json()
-        after = _time.time()
         assert body["job_pops_paused"] is True
-        assert body["job_pops_pause_until"] is not None
-        assert before + 900 <= body["job_pops_pause_until"] <= after + 900
+        assert body["job_pops_pause_until"] is None
 
         # --- success: resume ---
         async with aiohttp.ClientSession() as session, session.post(
