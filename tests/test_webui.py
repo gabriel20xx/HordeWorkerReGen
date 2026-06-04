@@ -2662,12 +2662,16 @@ async def test_webui_settings_get_empty() -> None:
         assert "settings" in data
         assert isinstance(data["settings"], dict)
         # With no snapshot pushed, only the int_auto live values piggybacked
-        # from status_data should be present (with their default values).
-        assert data["settings"] == {
-            "max_queue_size": 0,
-            "queue_size_auto": False,
-            "max_active_models": 0,
-            "max_active_models_auto": False,
+        # from status_data plus the auto-derived webui_url should be present.
+        assert data["settings"]["max_queue_size"] == 0
+        assert data["settings"]["queue_size_auto"] is False
+        assert data["settings"]["max_active_models"] == 0
+        assert data["settings"]["max_active_models_auto"] is False
+        # webui_url is always injected from the server's own port.
+        assert data["settings"]["webui_url"] == f"http://localhost:{actual_port}"
+        # No other keys should be present.
+        assert set(data["settings"].keys()) == {
+            "max_queue_size", "queue_size_auto", "max_active_models", "max_active_models_auto", "webui_url",
         }
     finally:
         await webui.stop()
@@ -2859,6 +2863,50 @@ async def test_webui_settings_get_includes_horde_url() -> None:
 
         assert "horde_url" in data["settings"]
         assert data["settings"]["horde_url"] == "https://aihorde.net/api/"
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_get_includes_webui_url() -> None:
+    """Test that GET /api/settings always returns webui_url pointing to the server's own port."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.port
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/settings",
+        ) as response:
+            assert response.status == 200
+            data = await response.json()
+
+        assert "webui_url" in data["settings"]
+        assert data["settings"]["webui_url"] == f"http://localhost:{actual_port}"
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_settings_post_rejects_webui_url() -> None:
+    """Test that POST /api/settings rejects writes to the read-only webui_url field."""
+    webui = WorkerWebUI(port=0)
+    webui.set_setting_callback(lambda k, v: None)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.port
+
+        async with aiohttp.ClientSession() as session, session.post(
+            f"http://localhost:{actual_port}/api/settings",
+            json={"key": "webui_url", "value": "http://evil.example.com"},
+        ) as response:
+            assert response.status == 400
+            data = await response.json()
+            assert "read-only" in data.get("error", "").lower()
     finally:
         await webui.stop()
 
