@@ -4047,7 +4047,7 @@ class WorkerWebUI:
             var existing = document.getElementById('api-ref-section');
             if (existing) existing.remove();
             var webuiUrl = (settings && settings.webui_url) ? String(settings.webui_url) : window.location.origin;
-            var pauseUrl = webuiUrl.replace(/\/$/, '') + '/api/job_pops/pause';
+            var pauseUrl = webuiUrl.replace(/\/+$/, '') + '/api/job_pops/pause';
             var section = document.createElement('div');
             section.id = 'api-ref-section';
             section.className = 'settings-group';

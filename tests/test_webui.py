@@ -3137,6 +3137,31 @@ async def test_webui_settings_html_nav_and_page() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_settings_html_api_ref_section() -> None:
+    """Test that the settings page HTML includes the API Reference section."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        # API Reference section must be rendered by _renderApiRefSection
+        assert "API Reference" in html
+        assert "/api/job_pops/pause" in html
+        assert "api-ref-section" in html
+        assert "api-ref-pause-url" in html
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_settings_post_float() -> None:
     """Test that POST /api/settings accepts a float setting (horde_model_stickiness)."""
     webui = WorkerWebUI(port=0)
