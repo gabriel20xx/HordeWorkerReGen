@@ -4043,6 +4043,15 @@ class WorkerWebUI:
         }
 
         var _modelsFetchInProgress = false;
+        function fetchModels() {
+            if (_modelsFetchInProgress) return;
+            _modelsFetchInProgress = true;
+            fetch('/api/models')
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(data) { renderModelsSection(data.enabled || [], data.disabled || []); })
+                .catch(function() { /* silently skip models section if unavailable */ })
+                .finally(function() { _modelsFetchInProgress = false; });
+        }
         function _renderApiRefSection(body, settings) {
             var existing = document.getElementById('api-ref-section');
             if (existing) existing.remove();
@@ -4064,16 +4073,7 @@ class WorkerWebUI:
             h += '</tbody></table>';
             h += '</div>';
             section.innerHTML = h;
-            body.appendChild(section);
-        }
-        function fetchModels() {
-            if (_modelsFetchInProgress) return;
-            _modelsFetchInProgress = true;
-            fetch('/api/models')
-                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-                .then(function(data) { renderModelsSection(data.enabled || [], data.disabled || []); })
-                .catch(function() { /* silently skip models section if unavailable */ })
-                .finally(function() { _modelsFetchInProgress = false; });
+            body.insertBefore(section, body.firstChild);
         }
 
         function renderModelsSection(enabled, disabled) {
