@@ -1009,9 +1009,10 @@ class HordeInferenceProcess(HordeProcess):
 
     @logger.catch(reraise=True)
     def unload_models_from_ram(self) -> None:
-        """Unload all models from RAM."""
-        from hordelib.comfy_horde import unload_all_models_ram
+        """Unload all models from VRAM and RAM."""
+        from hordelib.comfy_horde import unload_all_models_ram, unload_all_models_vram
 
+        unload_all_models_vram()
         unload_all_models_ram()
 
         self.clear_gc_and_torch_cache()
