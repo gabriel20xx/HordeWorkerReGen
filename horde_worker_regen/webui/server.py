@@ -4064,9 +4064,7 @@ class WorkerWebUI:
             h += '</tbody></table>';
             h += '</div>';
             section.innerHTML = h;
-            body.appendChild(section);
-        }
-        function fetchModels() {
+            body.insertBefore(section, body.firstChild);
             if (_modelsFetchInProgress) return;
             _modelsFetchInProgress = true;
             fetch('/api/models')
