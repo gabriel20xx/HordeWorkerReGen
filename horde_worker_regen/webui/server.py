@@ -920,6 +920,29 @@ class WorkerWebUI:
         .setting-url-link:hover { text-decoration: underline; color: #1d4ed8; }
         [data-theme="dark"] .setting-url-link { color: #60a5fa; }
         [data-theme="dark"] .setting-url-link:hover { color: #93c5fd; }
+        /* API reference info box */
+        .api-ref-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+        [data-theme="dark"] .api-ref-box { background: var(--card-bg); }
+        .api-ref-endpoint { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+        .api-ref-method { font-size: 0.72rem; font-weight: 700; background: #dcfce7; color: #166534; border-radius: 4px; padding: 2px 8px; letter-spacing: 0.5px; flex-shrink: 0; }
+        [data-theme="dark"] .api-ref-method { background: #14532d; color: #86efac; }
+        .api-ref-url { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 0.82rem; color: #1e293b; background: #f1f5f9; border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; word-break: break-all; }
+        [data-theme="dark"] .api-ref-url { color: #e2e8f0; background: #0f172a; }
+        .api-ref-params-title { font-size: 0.75rem; font-weight: 700; color: #475569; margin-bottom: 6px; }
+        [data-theme="dark"] .api-ref-params-title { color: #94a3b8; }
+        .api-ref-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+        .api-ref-table th { text-align: left; padding: 4px 10px; color: #64748b; font-weight: 600; border-bottom: 1px solid var(--border); }
+        .api-ref-table td { padding: 5px 10px; color: #334155; vertical-align: top; border-bottom: 1px solid #f1f5f9; }
+        [data-theme="dark"] .api-ref-table th { color: #94a3b8; border-bottom-color: #334155; }
+        [data-theme="dark"] .api-ref-table td { color: #cbd5e1; border-bottom-color: #1e293b; }
+        .api-ref-table td:first-child { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; color: #7c3aed; font-weight: 600; }
+        [data-theme="dark"] .api-ref-table td:first-child { color: #a78bfa; }
+        .api-ref-table tr:last-child td { border-bottom: none; }
+        .api-ref-badge { display: inline-block; font-size: 0.68rem; font-weight: 600; border-radius: 3px; padding: 1px 5px; margin-left: 4px; }
+        .api-ref-badge.required { background: #fee2e2; color: #991b1b; }
+        .api-ref-badge.optional { background: #e0f2fe; color: #075985; }
+        [data-theme="dark"] .api-ref-badge.required { background: #450a0a; color: #fca5a5; }
+        [data-theme="dark"] .api-ref-badge.optional { background: #082f49; color: #7dd3fc; }
         /* Models section */
         .models-containers { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         @media (max-width: 640px) { .models-containers { grid-template-columns: 1fr; } }
@@ -3712,8 +3735,6 @@ class WorkerWebUI:
         // ========================================================
         const _SETTINGS_SPEC = {
             // key: [label, description, category, type ('bool'|'int'|'float'|'int_auto'|'str_readonly'|'url_readonly'), min, max, restartRequired, autoPrefix?, envVar]
-            horde_url:                ['Endpoint URL',             'AI Horde API endpoint URL.',                                          'Connection',   'str_readonly', null, null, true, null, 'AI_HORDE_URL'],
-            webui_url:                ['Web UI URL',               'URL where this Web UI is accessible. The port is set via AIWORKER_WEBUI_PORT or webui_port in the bridge config (default\u00a03000). Requires restart to change.',  'Connection',   'url_readonly', null, null, true, null, 'AIWORKER_WEBUI_PORT'],
             nsfw:                     ['NSFW',                    'Accept NSFW image jobs.',                                              'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_NSFW'],
             censor_nsfw:              ['Censor NSFW',             'Censor NSFW content even when accepting NSFW jobs.',                  'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_CENSOR_NSFW'],
             allow_img2img:            ['Allow img2img',           'Accept image-to-image jobs.',                                         'Capabilities', 'bool',  null, null, false, null, 'AIWORKER_ALLOW_IMG2IMG'],
@@ -4015,11 +4036,36 @@ class WorkerWebUI:
             }
             body.innerHTML = html || '<div class="settings-unavailable">No configurable settings available.</div>';
             _updateApplyButtonState();
+            // Render the API reference section for the pause-jobs endpoint
+            _renderApiRefSection(body, settings);
             // Fetch and render the Models section after the settings categories
             fetchModels();
         }
 
         var _modelsFetchInProgress = false;
+        function _renderApiRefSection(body, settings) {
+            var existing = document.getElementById('api-ref-section');
+            if (existing) existing.remove();
+            var webuiUrl = (settings && settings.webui_url) ? String(settings.webui_url) : window.location.origin;
+            var pauseUrl = webuiUrl.replace(/\/+$/, '') + '/api/job_pops/pause';
+            var section = document.createElement('div');
+            section.id = 'api-ref-section';
+            section.className = 'settings-group';
+            var h = '<div class="settings-group-title">API Reference</div>';
+            h += '<div class="api-ref-box">';
+            h += '<div class="api-ref-endpoint">';
+            h += '<span class="api-ref-method">POST</span>';
+            h += '<span class="api-ref-url" id="api-ref-pause-url">' + escapeHtml(pauseUrl) + '</span>';
+            h += '</div>';
+            h += '<div class="api-ref-params-title">Pause / resume job pops &mdash; body parameters</div>';
+            h += '<table class="api-ref-table"><thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead><tbody>';
+            h += '<tr><td>paused</td><td>boolean<span class="api-ref-badge required">required</span></td><td><code>true</code> to pause accepting new jobs, <code>false</code> to resume.</td></tr>';
+            h += '<tr><td>duration_seconds</td><td>number<span class="api-ref-badge optional">optional</span></td><td>How long to pause in seconds. Omit or set to <code>null</code> for an indefinite pause.</td></tr>';
+            h += '</tbody></table>';
+            h += '</div>';
+            section.innerHTML = h;
+            body.appendChild(section);
+        }
         function fetchModels() {
             if (_modelsFetchInProgress) return;
             _modelsFetchInProgress = true;
