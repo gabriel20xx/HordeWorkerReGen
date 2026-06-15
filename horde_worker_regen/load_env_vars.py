@@ -81,12 +81,12 @@ def load_env_vars_from_config() -> None:  # FIXME: there is a dynamic way to do 
     if "max_lora_cache_size" in config:
         if os.getenv("AIWORKER_LORA_CACHE_SIZE") is None:
             try:
-                int(config["max_lora_cache_size"])
-            except ValueError as e:
+                lora_cache_mb = int(config["max_lora_cache_size"]) * 1024
+            except (ValueError, TypeError) as e:
                 raise ValueError(
                     "max_lora_cache_size must be an integer, but is not.",
                 ) from e
-            os.environ["AIWORKER_LORA_CACHE_SIZE"] = str(int(config["max_lora_cache_size"]) * 1024)
+            os.environ["AIWORKER_LORA_CACHE_SIZE"] = str(lora_cache_mb)
         else:
             print(
                 "AIWORKER_LORA_CACHE_SIZE environment variable already set. "
