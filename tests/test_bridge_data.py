@@ -159,3 +159,42 @@ def test_bridge_data_to_dot_env_file() -> None:
 
     BridgeDataLoader.write_bridge_data_as_dot_env_file(bridge_data, "bridgeData.env")
     assert pathlib.Path("bridgeData.env").is_file()
+
+
+def test_load_env_vars_from_config_lora_cache_size(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that load_env_vars_from_config sets AIWORKER_LORA_CACHE_SIZE in MB (multiplied by 1024)."""
+    monkeypatch.delenv("AIWORKER_LORA_CACHE_SIZE", raising=False)
+
+    config_file = tmp_path / "bridgeData.yaml"
+    config_file.write_text("max_lora_cache_size: 10\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+
+    from horde_worker_regen.load_env_vars import load_env_vars_from_config
+
+    load_env_vars_from_config()
+
+    assert os.environ.get("AIWORKER_LORA_CACHE_SIZE") == str(10 * 1024), (
+        "AIWORKER_LORA_CACHE_SIZE should be set in MB (GB * 1024)"
+    )
+
+
+def test_load_env_vars_from_config_lora_cache_size_not_overwritten(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that load_env_vars_from_config does not overwrite a pre-existing AIWORKER_LORA_CACHE_SIZE."""
+    monkeypatch.setenv("AIWORKER_LORA_CACHE_SIZE", "99999")
+
+    config_file = tmp_path / "bridgeData.yaml"
+    config_file.write_text("max_lora_cache_size: 10\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+
+    from horde_worker_regen.load_env_vars import load_env_vars_from_config
+
+    load_env_vars_from_config()
+
+    assert os.environ.get("AIWORKER_LORA_CACHE_SIZE") == "99999", (
+        "A pre-existing AIWORKER_LORA_CACHE_SIZE should not be overwritten"
+    )
