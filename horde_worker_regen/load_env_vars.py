@@ -86,7 +86,7 @@ def load_env_vars_from_config() -> None:  # FIXME: there is a dynamic way to do 
                 raise ValueError(
                     "max_lora_cache_size must be an integer, but is not.",
                 ) from e
-            os.environ["AIWORKER_LORA_CACHE_SIZE"] = str(config["max_lora_cache_size"])
+            os.environ["AIWORKER_LORA_CACHE_SIZE"] = str(int(config["max_lora_cache_size"]) * 1024)
         else:
             print(
                 "AIWORKER_LORA_CACHE_SIZE environment variable already set. "

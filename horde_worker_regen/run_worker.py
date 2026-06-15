@@ -80,7 +80,10 @@ def main(
             )
     except ConnectionRefusedError:
         logger.error("Could not connect to the the horde. Is it down?")
-        input("Press any key to exit...")
+        try:
+            input("Press any key to exit...")
+        except EOFError:
+            pass
         return
     except Exception as e:
         logger.exception(e)
@@ -94,7 +97,10 @@ def main(
             for error in e.errors():
                 logger.error(f"{error['loc'][0]}: {error['msg']}")
 
-        input("Press any key to exit...")
+        try:
+            input("Press any key to exit...")
+        except EOFError:
+            pass
         return
 
     if not bridge_data:
