@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 from horde_sdk.ai_horde_worker.bridge_data import CombinedHordeBridgeData
 from loguru import logger
@@ -141,6 +142,21 @@ class reGenBridgeData(CombinedHordeBridgeData):
 
     When set, this overrides the startup-derived value (max_threads + queue_size).
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_deprecated_fields(cls, values: Any) -> Any:
+        """Remap deprecated/renamed field keys before validation."""
+        if isinstance(values, dict) and "lora_cache_size" in values:
+            values = values.copy()
+            lora_cache_size = values.pop("lora_cache_size")
+            if "max_lora_cache_size" not in values:
+                logger.warning(
+                    "The `lora_cache_size` parameter is deprecated. Please rename it to `max_lora_cache_size` "
+                    "in your bridge data file.",
+                )
+                values["max_lora_cache_size"] = lora_cache_size
+        return values
 
     @model_validator(mode="after")
     def validate_performance_modes(self) -> reGenBridgeData:

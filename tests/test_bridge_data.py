@@ -198,3 +198,54 @@ def test_load_env_vars_from_config_lora_cache_size_not_overwritten(
     assert os.environ.get("AIWORKER_LORA_CACHE_SIZE") == "99999", (
         "A pre-existing AIWORKER_LORA_CACHE_SIZE should not be overwritten"
     )
+
+
+def test_bridge_data_deprecated_lora_cache_size_remap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that deprecated lora_cache_size remaps to max_lora_cache_size, is removed from extras, and emits a warning."""
+    warning_messages: list[str] = []
+    deprecated_warning = (
+        "The `lora_cache_size` parameter is deprecated. Please rename it to `max_lora_cache_size` "
+        "in your bridge data file."
+    )
+
+    def _capture_warning(message: str, *args: object, **kwargs: object) -> None:
+        warning_messages.append(message)
+
+    import horde_worker_regen.bridge_data.data_model as _data_model_module
+
+    monkeypatch.setattr(_data_model_module.logger, "warning", _capture_warning)
+
+    bridge_data = reGenBridgeData.model_validate({"lora_cache_size": 10})
+    assert bridge_data.max_lora_cache_size == 10
+    assert bridge_data.model_extra is None or "lora_cache_size" not in bridge_data.model_extra
+    assert deprecated_warning in warning_messages
+
+
+def test_bridge_data_deprecated_lora_cache_size_dropped_when_both_keys_present() -> None:
+    """Test that deprecated lora_cache_size is dropped when max_lora_cache_size is also provided."""
+    bridge_data = reGenBridgeData.model_validate({"lora_cache_size": 10, "max_lora_cache_size": 12})
+    assert bridge_data.max_lora_cache_size == 12
+    assert bridge_data.model_extra is None or "lora_cache_size" not in bridge_data.model_extra
+
+
+def test_bridge_data_deprecated_lora_cache_size_does_not_warn_when_new_key_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that deprecation warning is skipped when max_lora_cache_size is already set."""
+    warning_messages: list[str] = []
+    deprecated_warning = (
+        "The `lora_cache_size` parameter is deprecated. Please rename it to `max_lora_cache_size` "
+        "in your bridge data file."
+    )
+
+    def _capture_warning(message: str, *args: object, **kwargs: object) -> None:
+        warning_messages.append(message)
+
+    import horde_worker_regen.bridge_data.data_model as _data_model_module
+
+    monkeypatch.setattr(_data_model_module.logger, "warning", _capture_warning)
+
+    bridge_data = reGenBridgeData.model_validate({"lora_cache_size": 10, "max_lora_cache_size": 12})
+
+    assert bridge_data.max_lora_cache_size == 12
+    assert deprecated_warning not in warning_messages
