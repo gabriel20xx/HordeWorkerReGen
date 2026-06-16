@@ -5333,6 +5333,8 @@ class TestResultSubmittingStuckRecovery:
         manager._images_per_model = {}
         manager._num_job_slowdowns = 0
         manager._num_jobs_faulted = 0
+        manager._job_pop_timestamps_lock = asyncio.Lock()
+        manager.job_pop_timestamps = {}
 
         class _UploadResponse:
             status = 200
