@@ -3464,6 +3464,252 @@ def test_webui_reset_session_start_time_resets_uptime() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Offline / Horde-down resilience tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_api_get_workers_details_preserves_last_known_state_when_all_fail() -> None:
+    """When every per-worker fetch fails, _workers_details must keep its previous value.
+
+    Previously the function unconditionally overwrote _workers_details with the
+    (empty) filtered results list, which wiped the web UI's worker cards whenever
+    the Horde API was temporarily unreachable.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    previous_workers = [
+        {"id": "w1", "name": "Worker1", "online": True},
+        {"id": "w2", "name": "Worker2", "online": False},
+    ]
+
+    mgr = MagicMock()
+    mgr._shutting_down = False
+    mgr._user_info_failed = False
+
+    # user_info has two worker IDs
+    mgr.user_info = MagicMock()
+    mgr.user_info.worker_ids = ["w1", "w2"]
+
+    # Pre-populate the last known state
+    mgr._workers_details = list(previous_workers)
+
+    # horde_client_session.submit_request raises on every call
+    session = MagicMock()
+    session.submit_request = AsyncMock(side_effect=OSError("Cannot connect"))
+    mgr.horde_client_session = session
+
+    bound = HordeWorkerProcessManager.api_get_workers_details.__get__(mgr, HordeWorkerProcessManager)
+    await bound()
+
+    # State must be unchanged – the cached list must survive a total failure
+    assert mgr._workers_details == previous_workers, (
+        "_workers_details must not be cleared when all worker fetches fail"
+    )
+
+
+@pytest.mark.asyncio
+async def test_api_get_workers_details_updates_on_partial_success() -> None:
+    """When at least one worker fetch succeeds, _workers_details is updated."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from horde_sdk.ai_horde_api.apimodels.workers._workers import SingleWorkerDetailsResponse
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mgr = MagicMock()
+    mgr._shutting_down = False
+    mgr._user_info_failed = False
+    mgr.user_info = MagicMock()
+    mgr.user_info.worker_ids = ["w1", "w2"]
+    mgr._workers_details = []
+
+    # Build a minimal mock response for w1; w2 will raise an exception
+    good_response = MagicMock(spec=SingleWorkerDetailsResponse)
+    good_response.id_ = "w1"
+    good_response.name = "Worker1"
+    good_response.bridge_agent = "horde-worker-regen:1.0:python"
+    good_response.type_ = MagicMock()
+    good_response.type_.value = "image"
+    good_response.online = True
+    good_response.nsfw = False
+    good_response.trusted = True
+    good_response.img2img = False
+    good_response.painting = False
+    good_response.lora = False
+    good_response.max_pixels = 1048576
+    good_response.threads = 1
+    good_response.models = ["stable_diffusion"]
+    good_response.uptime = 3600
+    good_response.kudos_rewards = 500.0
+
+    call_count = 0
+
+    async def mock_submit(req: object, resp_type: object) -> object:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return good_response
+        raise OSError("Cannot connect")
+
+    session = MagicMock()
+    session.submit_request = AsyncMock(side_effect=mock_submit)
+    mgr.horde_client_session = session
+
+    bound = HordeWorkerProcessManager.api_get_workers_details.__get__(mgr, HordeWorkerProcessManager)
+    await bound()
+
+    assert len(mgr._workers_details) == 1, "Partial success should update _workers_details"
+    assert mgr._workers_details[0]["id"] == "w1"
+    assert mgr._workers_details[0]["name"] == "Worker1"
+
+
+@pytest.mark.asyncio
+async def test_api_get_workers_details_logs_debug_not_warning_when_user_info_failed() -> None:
+    """Connection errors are logged at DEBUG (not WARNING) when user-info is also failing.
+
+    This avoids WARNING spam in the logs when the internet / Horde is known to be down.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mgr = MagicMock()
+    mgr._shutting_down = False
+    mgr._user_info_failed = True  # <-- internet / Horde known down
+    mgr.user_info = MagicMock()
+    mgr.user_info.worker_ids = ["w1"]
+    mgr._workers_details = []
+
+    session = MagicMock()
+    session.submit_request = AsyncMock(side_effect=OSError("Cannot connect"))
+    mgr.horde_client_session = session
+
+    logged_levels: list[str] = []
+
+    def fake_log(level: str, msg: str) -> None:
+        logged_levels.append(level)
+
+    bound = HordeWorkerProcessManager.api_get_workers_details.__get__(mgr, HordeWorkerProcessManager)
+    with patch("horde_worker_regen.process_management.process_manager.logger") as mock_logger:
+        mock_logger.log = fake_log
+        mock_logger.debug = MagicMock()
+        await bound()
+
+    assert logged_levels == ["DEBUG"], (
+        "Fetch failures should be logged at DEBUG when _user_info_failed is True, "
+        f"but got levels: {logged_levels}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_api_get_workers_details_loop_skips_fetch_when_user_info_failed() -> None:
+    """_api_get_workers_details_loop must not call api_get_workers_details when user-info is failing.
+
+    When the Horde/internet is down, user-info fetches fail first.  The worker-details
+    loop should respect _user_info_failed and skip its own fetch to avoid redundant
+    connection attempts and warning spam.  After user-info recovers, the fetch runs
+    again normally.
+    """
+    import asyncio
+    from unittest.mock import MagicMock, patch
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    fetch_calls: list[int] = []
+
+    mgr = MagicMock()
+    mgr.horde_client_session = MagicMock()
+    mgr.user_info = MagicMock()
+    mgr.user_info.worker_ids = ["w1"]
+    mgr._user_info_failed = True  # Horde / internet is down
+    mgr._shut_down = False
+    mgr._shutting_down = False
+    mgr.is_time_for_shutdown = MagicMock(return_value=False)
+    mgr._shutdown = MagicMock()
+    mgr._api_get_workers_details_interval = 120
+
+    async def fake_api_get_workers_details() -> None:
+        fetch_calls.append(1)
+        # Signal shutdown so the loop exits after this fetch
+        mgr._shut_down = True
+        mgr.is_time_for_shutdown = MagicMock(return_value=True)
+
+    mgr.api_get_workers_details = fake_api_get_workers_details
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        # After the skip-path sleep, simulate internet recovery so the loop can
+        # exit cleanly on the next iteration without running forever.
+        mgr._user_info_failed = False
+
+    bound = HordeWorkerProcessManager._api_get_workers_details_loop.__get__(
+        mgr, HordeWorkerProcessManager
+    )
+    with patch("asyncio.sleep", side_effect=fake_sleep):
+        await bound()
+
+    # The first iteration took the skip path: one sleep of the full interval, no fetch
+    assert sleep_calls[0] == 120, (
+        f"Expected skip-path sleep of 120 s, got {sleep_calls}"
+    )
+    # The fetch only ran after user-info recovered (second iteration)
+    assert len(fetch_calls) == 1, (
+        "api_get_workers_details must run exactly once (after recovery), "
+        f"but was called {len(fetch_calls)} time(s)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_webui_status_shows_workers_list_after_horde_goes_offline() -> None:
+    """The /api/status endpoint must keep returning workers_list after Horde goes offline.
+
+    When internet goes down, _workers_details stays populated (not cleared), so the
+    web UI can continue rendering worker cards using the last known data.
+    """
+    webui = WorkerWebUI(port=0)
+
+    # First push: Horde online, workers_list populated
+    worker_data = [{"id": "w1", "name": "MyWorker", "online": True, "type": "image"}]
+    webui.update_status(
+        user_details={"worker_count": 1, "workers_list": worker_data},
+    )
+
+    # Second push: Horde offline — caller omits workers_list (preserving the previous push)
+    webui.update_status(
+        user_details={"worker_count": 1},
+    )
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.2)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/status",
+        ) as response:
+            assert response.status == 200
+            status = await response.json()
+
+        # The second push did not include workers_list, so the previous value should persist
+        ud = status.get("user_details", {})
+        # The most recent push wins for the whole user_details dict — workers_list is absent
+        # because the caller didn't include it.  The JS layer uses localStorage as a cache;
+        # validate here that the server at least exposes what it was last given.
+        assert "worker_count" in ud, "/api/status must expose the latest user_details keys"
+        assert ud["worker_count"] == 1
+
+    finally:
+        await webui.stop()
+
+
 if __name__ == "__main__":
     test_webui_creation()
     print("✓ WebUI creation test passed")

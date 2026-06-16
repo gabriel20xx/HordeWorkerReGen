@@ -54,6 +54,18 @@ def main(
                         return horde_model_reference_manager
             except Exception as e:
                 logger.error(f"Failed to download model references: ({type(e).__name__}) {e}")
+                # If internet is down but a cached copy exists, use it so the worker
+                # (including the web UI) can start without an internet connection.
+                try:
+                    cached_refs = horde_model_reference_manager.get_all_model_references(redownload_all=False)
+                    if cached_refs.get(MODEL_REFERENCE_CATEGORY.stable_diffusion):
+                        logger.warning(
+                            "Could not download fresh model references — using cached copy. "
+                            "The worker will start, but model list may be outdated.",
+                        )
+                        return horde_model_reference_manager
+                except Exception:
+                    pass
                 logger.error("Retrying in 5 seconds...")
                 time.sleep(5)
 
