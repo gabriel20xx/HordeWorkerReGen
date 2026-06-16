@@ -6601,9 +6601,15 @@ class HordeWorkerProcessManager:
                         continue
                     # Skip the fetch when user-info is already failing (internet / Horde is
                     # down).  Worker details would also fail, so avoid the extra noise and
-                    # wait for user-info to recover before retrying.
+                    # wait for user-info to recover before retrying.  Sleep in 1-second
+                    # increments so a pending shutdown is not delayed by the full interval.
                     if self._user_info_failed:
-                        await asyncio.sleep(self._api_get_workers_details_interval)
+                        remaining = float(self._api_get_workers_details_interval)
+                        while remaining > 0:
+                            if self.is_time_for_shutdown() or self._shut_down:
+                                return
+                            await asyncio.sleep(min(1.0, remaining))
+                            remaining -= 1.0
                         continue
                     await self.api_get_workers_details()
                     if self.is_time_for_shutdown() or self._shut_down:

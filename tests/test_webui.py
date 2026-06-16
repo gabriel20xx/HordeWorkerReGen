@@ -3656,9 +3656,15 @@ async def test_api_get_workers_details_loop_skips_fetch_when_user_info_failed() 
     with patch("asyncio.sleep", side_effect=fake_sleep):
         await bound()
 
-    # The first iteration took the skip path: one sleep of the full interval, no fetch
-    assert sleep_calls[0] == 120, (
-        f"Expected skip-path sleep of 120 s, got {sleep_calls}"
+    # The first iteration took the skip path: multiple ≤1 s sleeps totalling the interval
+    assert sleep_calls, "Expected at least one sleep call on the skip path"
+    assert max(sleep_calls) <= 1.0, (
+        "Each skip-path sleep must be ≤ 1 s to allow prompt shutdown, "
+        f"got max={max(sleep_calls)} s"
+    )
+    assert sum(sleep_calls) == pytest.approx(float(mgr._api_get_workers_details_interval)), (
+        f"Skip-path total sleep must equal the interval ({mgr._api_get_workers_details_interval} s), "
+        f"got {sum(sleep_calls)} s"
     )
     # The fetch only ran after user-info recovered (second iteration)
     assert len(fetch_calls) == 1, (
@@ -3669,10 +3675,11 @@ async def test_api_get_workers_details_loop_skips_fetch_when_user_info_failed() 
 
 @pytest.mark.asyncio
 async def test_webui_status_shows_workers_list_after_horde_goes_offline() -> None:
-    """The /api/status endpoint must keep returning workers_list after Horde goes offline.
+    """The /api/status endpoint exposes the latest user_details dict as-is.
 
-    When internet goes down, _workers_details stays populated (not cleared), so the
-    web UI can continue rendering worker cards using the last known data.
+    When a push omits workers_list (e.g. during an outage), the server must
+    reflect that omission rather than carrying forward stale data.  The JS layer
+    is responsible for its own caching via localStorage.
     """
     webui = WorkerWebUI(port=0)
 
@@ -3705,6 +3712,9 @@ async def test_webui_status_shows_workers_list_after_horde_goes_offline() -> Non
         # validate here that the server at least exposes what it was last given.
         assert "worker_count" in ud, "/api/status must expose the latest user_details keys"
         assert ud["worker_count"] == 1
+        assert "workers_list" not in ud, (
+            "/api/status must not carry forward omitted keys; workers_list was not in the last push"
+        )
 
     finally:
         await webui.stop()
