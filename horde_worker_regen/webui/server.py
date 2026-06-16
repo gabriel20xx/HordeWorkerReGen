@@ -2,8 +2,11 @@
 
 import base64
 import io
+import json
 import math
+import os
 import re
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -50,8 +53,14 @@ _STATS_SNAPSHOT_INTERVAL = 10.0
 _MAX_STATS_SNAPSHOTS = 2160
 """Maximum number of statistics snapshots to keep (approx. 6 hours at 10-second intervals)."""
 
+_MAX_PERSISTED_ERRORS = 1000
+"""Maximum number of error rows to load from the database on startup (matches ProcessManager in-memory cap)."""
+
 _MAX_OCCURRENCES_PER_GROUP = 50
 """Maximum individual occurrences returned per error group in the /api/errors/grouped response."""
+
+_DB_PRUNE_INTERVAL = 3600.0
+"""Minimum seconds between automatic pruning of old data from the SQLite database."""
 
 _UNSET: Any = object()
 """Sentinel used to distinguish an explicitly-passed ``None`` from an omitted argument."""
@@ -108,24 +117,107 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "stats_output_frequency": {"type": int, "min": 5, "max": 3600},
     "purge_loras_on_download": {"type": bool},
     "remove_maintenance_on_init": {"type": bool},
+    "data_retention_days": {"type": int, "min": 1, "max": 3650},
 }
 
 
 class WorkerWebUI:
     """Web UI server for displaying worker status and progress."""
 
-    def __init__(self, port: int = 3000, update_interval: float = 1.0) -> None:
+    def __init__(
+        self,
+        port: int = 3000,
+        update_interval: float = 1.0,
+        db_path: str | None = None,
+        data_retention_days: int = 7,
+    ) -> None:
         """Initialize the web UI server.
 
         Args:
             port: The port to run the web server on (default: 3000)
             update_interval: How often to update status in seconds (default: 1.0)
+            db_path: Path to the directory containing SQLite database files, or a legacy
+                     single database file path. Existing directories are used directly;
+                     existing files and non-existent paths are treated as file paths and
+                     their parent directory is used (unless a trailing path separator
+                     explicitly indicates a non-existent directory). When ``None`` (the
+                     default) no data is persisted across restarts. Three separate
+                     databases are used:
+                     - webui_errors.db for errors log
+                     - webui_stats.db for statistics snapshots
+                     - webui_gallery.db for gallery images
+            data_retention_days: Number of days to retain persisted data.  Entries older than
+                     this threshold are pruned automatically.  Can also be set via the
+                     ``AIWORKER_DATA_RETENTION_DAYS`` environment variable.
         """
         self.port = port
         self.update_interval = update_interval
         self.app = web.Application()
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
+
+        # SQLite persistence --------------------------------------------------
+        # Determine database directory and individual database paths.
+        if db_path is not None:
+            # Resolve the database directory from db_path:
+            # - An existing directory → use it directly.
+            # - An existing file → use its parent directory.
+            # - A non-existent path → treat as a file path by default (use its
+            #   parent directory).  Only treat a non-existent path as a directory
+            #   if the caller explicitly signals it with a trailing path separator.
+            abs_db_path = os.path.abspath(db_path)
+            if os.path.isdir(abs_db_path):
+                db_dir = abs_db_path
+            elif os.path.exists(abs_db_path):
+                db_dir = os.path.dirname(abs_db_path) if os.path.isfile(abs_db_path) else abs_db_path
+            else:
+                # Non-existent path: default to file-path semantics (parent dir)
+                # unless the original path has a trailing separator, which explicitly
+                # indicates a directory.
+                if str(db_path).endswith(("/", os.sep)):
+                    db_dir = abs_db_path
+                else:
+                    db_dir = os.path.dirname(abs_db_path)
+            self._errors_db_path: str | None = os.path.join(db_dir, "webui_errors.db")
+            self._stats_db_path: str | None = os.path.join(db_dir, "webui_stats.db")
+            self._gallery_db_path: str | None = os.path.join(db_dir, "webui_gallery.db")
+        else:
+            self._errors_db_path = None
+            self._stats_db_path = None
+            self._gallery_db_path = None
+
+        # Allow the env var to override the constructor argument.
+        _env_days = os.getenv("AIWORKER_DATA_RETENTION_DAYS")
+        if _env_days is not None:
+            try:
+                _parsed = int(_env_days)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"AIWORKER_DATA_RETENTION_DAYS environment variable has an invalid value: '{_env_days}'. "
+                    "It must be a positive integer. Ignoring.",
+                )
+            else:
+                if _parsed < 1:
+                    logger.warning(
+                        f"AIWORKER_DATA_RETENTION_DAYS environment variable has an out-of-range value: {_parsed}. "
+                        "It must be >= 1. Ignoring.",
+                    )
+                elif _parsed > 3650:
+                    logger.warning(
+                        f"AIWORKER_DATA_RETENTION_DAYS environment variable has an out-of-range value: {_parsed}. "
+                        "It must be <= 3650. Ignoring.",
+                    )
+                else:
+                    data_retention_days = _parsed
+        self._data_retention_days: int = max(1, min(3650, int(data_retention_days)))
+        # Unix timestamp of the last database pruning run (0 = never pruned).
+        self._last_db_prune_time: float = 0.0
+        # Latest live error list received from the process manager this run.
+        self._live_errors_history: list[str] = []
+
+        if self._errors_db_path is not None:
+            self._init_db()
+            self._load_persisted_data()
 
         # Status data that will be updated by the worker
         self.status_data: dict[str, Any] = {
@@ -186,6 +278,11 @@ class WorkerWebUI:
             "max_time_per_job_per_model": {},
         }
 
+        # Merge persisted errors into live status_data now that status_data has
+        # been initialised (DB loading runs before this).
+        if self._errors_db_path is not None:
+            self._merge_persisted_into_status()
+
         # Gallery image data stored separately – NOT included in /api/status to avoid
         # sending large base64 payloads on every poll.  Served via /api/gallery instead.
         # Keyed by gallery_id (int) for O(1) lookup; insertion order is oldest-first.
@@ -194,9 +291,13 @@ class WorkerWebUI:
         self._next_gallery_id: int = 0
 
         # Ring buffer for time-series statistics snapshots served by /api/stats.
-        self._stats_snapshots: list[dict[str, float | int]] = []
+        self._stats_snapshots: list[dict[str, Any]] = []
         # Unix timestamp of the most recently recorded snapshot (0 = none yet).
         self._last_stats_snapshot_time: float = 0.0
+
+        # Re-populate gallery dict and stats from any data loaded from DB.
+        if self._errors_db_path is not None:
+            self._restore_persisted_collections()
 
         # Optional callback invoked when the UI requests a worker deletion.
         # Signature: async (worker_id: str) -> bool  (True = success, False = failure)
@@ -240,6 +341,294 @@ class WorkerWebUI:
         self._toggle_model_callback: Callable[[str, bool], None] | None = None
 
         self._setup_routes()
+
+    # ------------------------------------------------------------------
+    # SQLite persistence helpers
+    # ------------------------------------------------------------------
+
+    def _init_db(self) -> None:
+        """Create the persistence tables in separate SQLite databases if they do not exist."""
+        assert self._errors_db_path is not None
+        assert self._stats_db_path is not None
+        assert self._gallery_db_path is not None
+
+        try:
+            # Create the config directory if it doesn't exist.
+            db_dir = os.path.dirname(os.path.abspath(self._errors_db_path))
+            os.makedirs(db_dir, exist_ok=True)
+
+            # Errors database
+            with sqlite3.connect(self._errors_db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS errors_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        message TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    )
+                    """,
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_errors_log_created_at ON errors_log (created_at)",
+                )
+                conn.commit()
+
+            # Stats database
+            with sqlite3.connect(self._stats_db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS stats_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_json TEXT NOT NULL,
+                        timestamp REAL NOT NULL
+                    )
+                    """,
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_stats_timestamp ON stats_snapshots (timestamp)",
+                )
+                conn.commit()
+
+            # Gallery database
+            with sqlite3.connect(self._gallery_db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS gallery_images (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        gallery_id INTEGER NOT NULL,
+                        timestamp REAL NOT NULL,
+                        model TEXT,
+                        base64_data TEXT,
+                        thumbnail TEXT,
+                        is_nsfw INTEGER DEFAULT 0,
+                        is_csam INTEGER DEFAULT 0,
+                        extra_json TEXT
+                    )
+                    """,
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_gallery_timestamp ON gallery_images (timestamp)",
+                )
+                conn.commit()
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not initialise persistence databases: {exc}")
+
+    def _cutoff_timestamp(self) -> float:
+        """Return the Unix timestamp before which rows are considered expired."""
+        return time.time() - self._data_retention_days * 86400.0
+
+    def _load_persisted_data(self) -> None:
+        """Load persisted errors, gallery images, and stats snapshots from the databases.
+
+        Loaded data is stored in private attributes that are merged into the live
+        status/collection structures by :meth:`_merge_persisted_into_status` and
+        :meth:`_restore_persisted_collections` after :attr:`status_data` is created.
+        """
+        assert self._errors_db_path is not None
+        assert self._stats_db_path is not None
+        assert self._gallery_db_path is not None
+
+        cutoff = self._cutoff_timestamp()
+        self._persisted_errors: list[str] = []
+        self._persisted_gallery: list[dict[str, Any]] = []
+        self._persisted_stats: list[dict[str, Any]] = []
+        # Max gallery_id across ALL rows (not just within retention) so _next_gallery_id
+        # stays unique even when no in-retention rows are loaded at startup.
+        self._persisted_max_gallery_id: int = -1
+
+        # Load errors from errors database
+        try:
+            with sqlite3.connect(self._errors_db_path) as conn:
+                rows = conn.execute(
+                    "SELECT message FROM errors_log WHERE created_at >= ?"
+                    " ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (cutoff, _MAX_PERSISTED_ERRORS),
+                ).fetchall()
+                self._persisted_errors = [row[0] for row in rows]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load errors from '{self._errors_db_path}': {exc}")
+
+        # Load gallery from gallery database
+        try:
+            with sqlite3.connect(self._gallery_db_path) as conn:
+                # Determine the overall max gallery_id so _next_gallery_id stays unique
+                # even when no in-retention rows are loaded (e.g. worker was down longer
+                # than the retention window and all rows are expired but not yet pruned).
+                max_id_row = conn.execute("SELECT MAX(gallery_id) FROM gallery_images").fetchone()
+                if max_id_row and max_id_row[0] is not None:
+                    self._persisted_max_gallery_id = int(max_id_row[0])
+                rows = conn.execute(
+                    "SELECT gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json "
+                    "FROM gallery_images WHERE timestamp >= ? ORDER BY timestamp ASC, id ASC",
+                    (cutoff,),
+                ).fetchall()
+                for row in rows:
+                    entry: dict[str, Any] = {
+                        "gallery_id": row[0],
+                        "timestamp": row[1],
+                        "model": row[2],
+                        "base64": row[3],
+                        "is_nsfw": bool(row[5]),
+                        "is_csam": bool(row[6]),
+                    }
+                    if row[4] is not None:
+                        entry["thumbnail"] = row[4]
+                    if row[7]:
+                        try:
+                            entry.update(json.loads(row[7]))
+                        except (ValueError, TypeError):
+                            pass
+                    self._persisted_gallery.append(entry)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load gallery from '{self._gallery_db_path}': {exc}")
+
+        # Load stats from stats database
+        try:
+            with sqlite3.connect(self._stats_db_path) as conn:
+                rows = conn.execute(
+                    "SELECT snapshot_json FROM ("
+                    "SELECT id, snapshot_json, timestamp FROM stats_snapshots"
+                    " WHERE timestamp >= ? ORDER BY timestamp DESC, id DESC LIMIT ?"
+                    ") ORDER BY timestamp ASC, id ASC",
+                    (cutoff, _MAX_STATS_SNAPSHOTS),
+                ).fetchall()
+                for row in rows:
+                    try:
+                        decoded = json.loads(row[0])
+                        if isinstance(decoded, dict):
+                            self._persisted_stats.append(decoded)
+                    except (ValueError, TypeError):
+                        pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load stats from '{self._stats_db_path}': {exc}")
+
+    def _merge_persisted_into_status(self) -> None:
+        """Merge data loaded by :meth:`_load_persisted_data` into :attr:`status_data`."""
+        errors = getattr(self, "_persisted_errors", [])
+        if errors:
+            self.status_data["errors_history"] = list(errors)
+
+    @staticmethod
+    def _history_overlap_len(newer: list[str], older: list[str]) -> int:
+        """Return the largest suffix/prefix overlap length between two newest-first histories."""
+        max_overlap = min(len(newer), len(older))
+        for overlap in range(max_overlap, 0, -1):
+            if newer[-overlap:] == older[:overlap]:
+                return overlap
+        return 0
+
+    def _merge_errors_history(self, live_errors: list[str]) -> list[str]:
+        """Merge current-session errors with persisted history without duplicating overlap."""
+        persisted_errors = getattr(self, "_persisted_errors", [])
+        overlap = self._history_overlap_len(live_errors, persisted_errors)
+        return (list(live_errors) + persisted_errors[overlap:])[:_MAX_PERSISTED_ERRORS]
+
+    def _restore_persisted_collections(self) -> None:
+        """Populate :attr:`_gallery_dict` and :attr:`_stats_snapshots` from persisted data."""
+        gallery = getattr(self, "_persisted_gallery", [])
+        # Start from the overall DB max so _next_gallery_id is unique even when
+        # _persisted_gallery is empty (all rows expired but not yet pruned).
+        max_id: int = getattr(self, "_persisted_max_gallery_id", -1)
+        for entry in gallery:
+            gid = entry["gallery_id"]
+            self._gallery_dict[gid] = entry
+            if gid > max_id:
+                max_id = gid
+        if max_id >= 0:
+            self._next_gallery_id = max_id + 1
+        self.status_data["images_count"] = len(self._gallery_dict)
+
+        stats = getattr(self, "_persisted_stats", [])
+        if stats:
+            self._stats_snapshots = list(stats)
+            if self._stats_snapshots:
+                # Restore the last snapshot time so the interval guard works correctly.
+                last = self._stats_snapshots[-1]
+                self._last_stats_snapshot_time = self._safe_snapshot_time(last)
+
+    @staticmethod
+    def _safe_snapshot_time(snapshot: dict[str, Any]) -> float:
+        """Return a snapshot timestamp as float, falling back to 0.0 for malformed values."""
+        try:
+            return float(snapshot.get("t", 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _prune_old_db_data(self) -> None:
+        """Delete database rows older than the configured retention period."""
+        if self._errors_db_path is None:
+            return
+        assert self._stats_db_path is not None
+        assert self._gallery_db_path is not None
+        cutoff = self._cutoff_timestamp()
+        pruned = False
+        try:
+            # Prune errors database
+            with sqlite3.connect(self._errors_db_path) as conn:
+                conn.execute("DELETE FROM errors_log WHERE created_at < ?", (cutoff,))
+                conn.commit()
+
+            # Prune stats database
+            with sqlite3.connect(self._stats_db_path) as conn:
+                conn.execute("DELETE FROM stats_snapshots WHERE timestamp < ?", (cutoff,))
+                conn.commit()
+
+            # Prune gallery database
+            with sqlite3.connect(self._gallery_db_path) as conn:
+                conn.execute("DELETE FROM gallery_images WHERE timestamp < ?", (cutoff,))
+                conn.commit()
+
+            pruned = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not prune old data from persistence databases: {exc}")
+        finally:
+            self._last_db_prune_time = time.time()
+
+        if pruned:
+            self._refresh_in_memory_after_prune()
+
+    def _refresh_in_memory_after_prune(self) -> None:
+        """Refresh in-memory collections to match the pruned state of the databases.
+
+        Reloads persisted data from the (now-pruned) databases, rebuilds
+        :attr:`_gallery_dict` and :attr:`_stats_snapshots`, then re-merges
+        live session errors with the reloaded persisted history so that the
+        running UI reflects the new retention window immediately.
+        """
+        # Reload persisted data from the pruned databases.
+        self._load_persisted_data()
+
+        # Rebuild gallery dict (clear first so removed entries are not retained).
+        self._gallery_dict.clear()
+        max_id: int = getattr(self, "_persisted_max_gallery_id", -1)
+        for entry in getattr(self, "_persisted_gallery", []):
+            gid = entry["gallery_id"]
+            self._gallery_dict[gid] = entry
+            if gid > max_id:
+                max_id = gid
+        self.status_data["images_count"] = len(self._gallery_dict)
+        if max_id >= 0:
+            self._next_gallery_id = max_id + 1
+
+        # Rebuild stats snapshots.
+        stats = getattr(self, "_persisted_stats", [])
+        self._stats_snapshots = list(stats)
+        if self._stats_snapshots:
+            last = self._stats_snapshots[-1]
+            self._last_stats_snapshot_time = self._safe_snapshot_time(last)
+
+        # Re-merge errors history (live session errors + reloaded persisted history).
+        self.status_data["errors_history"] = self._merge_errors_history(self._live_errors_history)
+
+    def set_data_retention_days(self, days: int) -> None:
+        """Update the data retention period and immediately prune expired rows.
+
+        Args:
+            days: New retention period in days (must be >= 1).
+        """
+        self._data_retention_days = max(1, min(3650, int(days)))
+        self._prune_old_db_data()
 
     def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
         """Register (or clear) the async callback used to delete a worker via the Horde API.
@@ -3796,6 +4185,7 @@ class WorkerWebUI:
             stats_output_frequency:   ['Stats Frequency (s)',     'How often (in seconds) to print the status line to console.',       'Behavior',     'int',   5,    3600, false, null, 'AIWORKER_STATS_OUTPUT_FREQUENCY'],
             purge_loras_on_download:  ['Purge LoRAs on Download', 'Delete existing LoRA cache before downloading new LoRAs.',          'Behavior',     'bool',  null, null, false, null, 'AIWORKER_PURGE_LORAS_ON_DOWNLOAD'],
             remove_maintenance_on_init:['Remove Maintenance on Init','Clear maintenance mode automatically on startup.',               'Behavior',     'bool',  null, null, false, null, 'AIWORKER_REMOVE_MAINTENANCE_ON_INIT'],
+            data_retention_days:      ['Data Retention (days)',   'Number of days to keep errors, statistics, and gallery images in the database (1\u2013\u200a3650; default\u00a07).', 'Behavior', 'int', 1, 3650, false, null, 'AIWORKER_DATA_RETENTION_DAYS'],
         };
 
         var _settingsLoaded = false;
@@ -4627,6 +5017,22 @@ class WorkerWebUI:
         if len(self._stats_snapshots) > _MAX_STATS_SNAPSHOTS:
             self._stats_snapshots = self._stats_snapshots[-_MAX_STATS_SNAPSHOTS:]
 
+        # Persist to database.
+        if self._stats_db_path is not None:
+            try:
+                with sqlite3.connect(self._stats_db_path) as conn:
+                    conn.execute(
+                        "INSERT INTO stats_snapshots (snapshot_json, timestamp) VALUES (?, ?)",
+                        (json.dumps(snapshot), now),
+                    )
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not persist stats snapshot to database: {exc}")
+
+            # Periodically prune expired rows to keep the database from growing unboundedly.
+            if now - self._last_db_prune_time >= _DB_PRUNE_INTERVAL:
+                self._prune_old_db_data()
+
 
     async def _handle_errors(self, request: web.Request) -> web.Response:
         """Return a paginated slice of the error history.
@@ -5187,6 +5593,34 @@ class WorkerWebUI:
         self._gallery_dict[entry["gallery_id"]] = entry
         self.status_data["images_count"] = len(self._gallery_dict)
 
+        # Persist to database.
+        if self._gallery_db_path is not None:
+            _known_cols = {"gallery_id", "timestamp", "model", "base64", "thumbnail", "is_nsfw", "is_csam"}
+            extra = {k: v for k, v in entry.items() if k not in _known_cols}
+            try:
+                with sqlite3.connect(self._gallery_db_path) as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO gallery_images
+                            (gallery_id, timestamp, model, base64_data, thumbnail,
+                             is_nsfw, is_csam, extra_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            entry["gallery_id"],
+                            entry.get("timestamp", time.time()),
+                            entry.get("model"),
+                            entry.get("base64"),
+                            entry.get("thumbnail"),
+                            1 if entry.get("is_nsfw") else 0,
+                            1 if entry.get("is_csam") else 0,
+                            json.dumps(extra) if extra else None,
+                        ),
+                    )
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not persist gallery image to database: {exc}")
+
     def update_status(
         self,
         worker_name: str | None = None,
@@ -5383,7 +5817,29 @@ class WorkerWebUI:
         if faulted_jobs_history is not None:
             self.status_data["faulted_jobs_history"] = faulted_jobs_history
         if errors_history is not None:
-            self.status_data["errors_history"] = list(errors_history)
+            live_errors = list(errors_history)
+            # Persist any new errors that have been added since the last update.
+            if self._errors_db_path is not None:
+                overlap = self._history_overlap_len(live_errors, self._live_errors_history)
+                new_errors = live_errors[:-overlap] if overlap else live_errors
+                if new_errors:
+                    now = time.time()
+                    try:
+                        with sqlite3.connect(self._errors_db_path) as conn:
+                            conn.executemany(
+                                "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
+                                [(msg, now) for msg in reversed(new_errors)],
+                            )
+                            conn.commit()
+                        self._persisted_errors = (
+                            list(new_errors) + getattr(self, "_persisted_errors", [])
+                        )[:_MAX_PERSISTED_ERRORS]
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(f"Could not persist errors to database: {exc}")
+                self.status_data["errors_history"] = self._merge_errors_history(live_errors)
+            else:
+                self.status_data["errors_history"] = live_errors
+            self._live_errors_history = live_errors
         if user_details is not None:
             self.status_data["user_details"] = user_details
         if images_per_model is not None:
