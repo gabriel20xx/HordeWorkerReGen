@@ -3562,6 +3562,53 @@ def test_webui_db_persists_only_new_errors(tmp_path: pytest.TempPathFactory) -> 
     assert count == 2
 
 
+def test_webui_db_merges_capped_live_errors_with_persisted_history(tmp_path: pytest.TempPathFactory) -> None:
+    """Live errors should stay merged with persisted history even when the live list is capped."""
+    import sqlite3
+    import time
+
+    db_file = str(tmp_path / "persist.db")
+    webui_seed = WorkerWebUI(port=0, db_path=db_file)
+    now = time.time()
+    with sqlite3.connect(db_file) as conn:
+        conn.execute(
+            "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
+            ("seeded_error_old", now - 2),
+        )
+        conn.execute(
+            "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
+            ("seeded_error_new", now - 1),
+        )
+        conn.commit()
+
+    webui = WorkerWebUI(port=0, db_path=db_file)
+    webui.update_status(errors_history=[])
+    assert webui.status_data["errors_history"] == ["seeded_error_new", "seeded_error_old"]
+
+    webui.update_status(errors_history=["error_one"])
+    webui.update_status(errors_history=["error_two", "error_one"])
+    webui.update_status(errors_history=["error_three", "error_two"])
+
+    assert webui.status_data["errors_history"] == [
+        "error_three",
+        "error_two",
+        "error_one",
+        "seeded_error_new",
+        "seeded_error_old",
+    ]
+
+    with sqlite3.connect(db_file) as conn:
+        messages = [row[0] for row in conn.execute("SELECT message FROM errors_log ORDER BY id").fetchall()]
+
+    assert messages == [
+        "seeded_error_old",
+        "seeded_error_new",
+        "error_one",
+        "error_two",
+        "error_three",
+    ]
+
+
 def test_webui_db_persists_stats_snapshot(tmp_path: pytest.TempPathFactory) -> None:
     """_record_stats_snapshot() must insert a row into stats_snapshots."""
     import sqlite3
@@ -3727,6 +3774,39 @@ def test_webui_set_data_retention_days_updates_and_prunes(tmp_path: pytest.TempP
     assert count_after == 0
 
 
+def test_webui_data_retention_days_clamped_to_declared_max() -> None:
+    """data_retention_days should never exceed the documented 3650-day upper bound."""
+    webui = WorkerWebUI(port=0, data_retention_days=5000)
+    assert webui._data_retention_days == 3650
+
+    webui.set_data_retention_days(6000)
+    assert webui._data_retention_days == 3650
+
+
+def test_webui_db_prune_failure_still_updates_last_attempt_time(
+    tmp_path: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed prune attempts should still advance the prune interval guard."""
+    import sqlite3
+    import time
+
+    import horde_worker_regen.webui.server as server_module
+
+    db_file = str(tmp_path / "persist.db")
+    webui = WorkerWebUI(port=0, db_path=db_file)
+
+    def _raise_locked(*args: object, **kwargs: object) -> sqlite3.Connection:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(server_module.sqlite3, "connect", _raise_locked)
+
+    before = time.time()
+    webui._prune_old_db_data()
+
+    assert webui._last_db_prune_time >= before
+
+
 def test_webui_db_expired_errors_not_loaded(tmp_path: pytest.TempPathFactory) -> None:
     """Errors outside the retention window must not be loaded into errors_history on startup."""
     import sqlite3
@@ -3773,7 +3853,7 @@ def test_webui_no_db_path_no_persistence() -> None:
 
 
 def test_webui_data_retention_days_setting_in_spec() -> None:
-    """data_retention_days must appear in both the Python _SETTINGS_SPEC and the HTML."""
+    """data_retention_days must appear in the Python _SETTINGS_SPEC with the declared bounds."""
     from horde_worker_regen.webui.server import _SETTINGS_SPEC
 
     assert "data_retention_days" in _SETTINGS_SPEC

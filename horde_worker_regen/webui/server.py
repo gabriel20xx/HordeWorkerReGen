@@ -158,11 +158,11 @@ class WorkerWebUI:
                     data_retention_days = _parsed
             except (ValueError, TypeError):
                 pass
-        self._data_retention_days: int = max(1, data_retention_days)
+        self._data_retention_days: int = max(1, min(3650, int(data_retention_days)))
         # Unix timestamp of the last database pruning run (0 = never pruned).
         self._last_db_prune_time: float = 0.0
-        # Number of session errors persisted to the DB so far this run.
-        self._errors_db_persisted_len: int = 0
+        # Latest live error list received from the process manager this run.
+        self._live_errors_history: list[str] = []
 
         if self._db_path is not None:
             self._init_db()
@@ -414,6 +414,21 @@ class WorkerWebUI:
         if errors:
             self.status_data["errors_history"] = list(errors)
 
+    @staticmethod
+    def _history_overlap_len(newer: list[str], older: list[str]) -> int:
+        """Return the largest suffix/prefix overlap length between two newest-first histories."""
+        max_overlap = min(len(newer), len(older))
+        for overlap in range(max_overlap, 0, -1):
+            if newer[-overlap:] == older[:overlap]:
+                return overlap
+        return 0
+
+    def _merge_errors_history(self, live_errors: list[str]) -> list[str]:
+        """Merge current-session errors with persisted history without duplicating overlap."""
+        persisted_errors = getattr(self, "_persisted_errors", [])
+        overlap = self._history_overlap_len(live_errors, persisted_errors)
+        return list(live_errors) + persisted_errors[overlap:]
+
     def _restore_persisted_collections(self) -> None:
         """Populate :attr:`_gallery_dict` and :attr:`_stats_snapshots` from persisted data."""
         gallery = getattr(self, "_persisted_gallery", [])
@@ -446,9 +461,10 @@ class WorkerWebUI:
                 conn.execute("DELETE FROM gallery_images WHERE created_at < ?", (cutoff,))
                 conn.execute("DELETE FROM stats_snapshots WHERE timestamp < ?", (cutoff,))
                 conn.commit()
-            self._last_db_prune_time = time.time()
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not prune old data from persistence database '{self._db_path}': {exc}")
+        finally:
+            self._last_db_prune_time = time.time()
 
     def set_data_retention_days(self, days: int) -> None:
         """Update the data retention period and immediately prune expired rows.
@@ -456,7 +472,7 @@ class WorkerWebUI:
         Args:
             days: New retention period in days (must be >= 1).
         """
-        self._data_retention_days = max(1, int(days))
+        self._data_retention_days = max(1, min(3650, int(days)))
         self._prune_old_db_data()
 
     def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
@@ -5613,14 +5629,13 @@ class WorkerWebUI:
         if faulted_jobs_history is not None:
             self.status_data["faulted_jobs_history"] = faulted_jobs_history
         if errors_history is not None:
-            self.status_data["errors_history"] = list(errors_history)
+            live_errors = list(errors_history)
             # Persist any new errors that have been added since the last update.
             if self._db_path is not None:
-                new_count = max(0, len(errors_history) - self._errors_db_persisted_len)
-                if new_count > 0:
+                overlap = self._history_overlap_len(live_errors, self._live_errors_history)
+                new_errors = live_errors[:-overlap] if overlap else live_errors
+                if new_errors:
                     now = time.time()
-                    # errors_history is newest-first; the first new_count items are the new ones.
-                    new_errors = list(errors_history[:new_count])
                     try:
                         with sqlite3.connect(self._db_path) as conn:
                             conn.executemany(
@@ -5628,9 +5643,13 @@ class WorkerWebUI:
                                 [(msg, now) for msg in new_errors],
                             )
                             conn.commit()
+                        self._persisted_errors = list(new_errors) + getattr(self, "_persisted_errors", [])
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(f"Could not persist errors to database: {exc}")
-                self._errors_db_persisted_len = len(errors_history)
+                self.status_data["errors_history"] = self._merge_errors_history(live_errors)
+            else:
+                self.status_data["errors_history"] = live_errors
+            self._live_errors_history = live_errors
         if user_details is not None:
             self.status_data["user_details"] = user_details
         if images_per_model is not None:
