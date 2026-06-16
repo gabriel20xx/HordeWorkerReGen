@@ -502,6 +502,34 @@ class TestIdleHeartbeatTiming:
         assert proc._last_idle_heartbeat_time == send_time
 
 
+def test_start_calls_cleanup_before_execv_on_restart() -> None:
+    """start() must call _cleanup_shared_resources() before os.execv when restarting."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+    mock_manager.signal_handler = MagicMock()
+    mock_manager._main_loop = MagicMock(return_value=None)
+    mock_manager._restart_requested = True
+
+    call_order: list[str] = []
+    mock_manager._cleanup_shared_resources.side_effect = lambda: call_order.append("cleanup")
+
+    bound_start = HordeWorkerProcessManager.start.__get__(mock_manager, HordeWorkerProcessManager)
+
+    with (
+        patch("signal.signal"),
+        patch("asyncio.run"),
+        patch("os.execv", side_effect=lambda *_: call_order.append("execv")),
+        patch("horde_worker_regen.process_management.process_manager.logger"),
+    ):
+        bound_start()
+
+    mock_manager._cleanup_shared_resources.assert_called_once()
+    assert call_order == ["cleanup", "execv"], (
+        "_cleanup_shared_resources() must be called before os.execv()"
+    )
+
+
 def test_start_exits_cleanly_when_restart_exec_fails() -> None:
     """start() should log and exit cleanly when the restart execv call fails."""
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
