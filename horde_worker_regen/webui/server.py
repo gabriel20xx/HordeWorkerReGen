@@ -133,9 +133,12 @@ class WorkerWebUI:
         Args:
             port: The port to run the web server on (default: 3000)
             update_interval: How often to update status in seconds (default: 1.0)
-            db_path: Path to the SQLite database file used for persistent storage of errors,
-                     statistics, and gallery entries.  When ``None`` (the default) no data is
-                     persisted across restarts.
+            db_path: Path to the directory containing SQLite database files, or a legacy
+                     single database file path.  When ``None`` (the default) no data is
+                     persisted across restarts.  Three separate databases are used:
+                     - webui_errors.db for errors log
+                     - webui_stats.db for statistics snapshots
+                     - webui_gallery.db for gallery images
             data_retention_days: Number of days to retain persisted data.  Entries older than
                      this threshold are pruned automatically.  Can also be set via the
                      ``AIWORKER_DATA_RETENTION_DAYS`` environment variable.
@@ -147,8 +150,22 @@ class WorkerWebUI:
         self.site: web.TCPSite | None = None
 
         # SQLite persistence --------------------------------------------------
-        # Optional path to the database file; None means no persistence.
-        self._db_path: str | None = db_path
+        # Determine database directory and individual database paths.
+        if db_path is not None:
+            # If db_path looks like a file (ends with .db), use its directory.
+            # Otherwise treat it as a directory path.
+            if db_path.endswith(".db"):
+                db_dir = os.path.dirname(os.path.abspath(db_path))
+            else:
+                db_dir = os.path.abspath(db_path)
+            self._errors_db_path: str | None = os.path.join(db_dir, "webui_errors.db")
+            self._stats_db_path: str | None = os.path.join(db_dir, "webui_stats.db")
+            self._gallery_db_path: str | None = os.path.join(db_dir, "webui_gallery.db")
+        else:
+            self._errors_db_path = None
+            self._stats_db_path = None
+            self._gallery_db_path = None
+
         # Allow the env var to override the constructor argument.
         _env_days = os.getenv("AIWORKER_DATA_RETENTION_DAYS")
         if _env_days is not None:
@@ -164,7 +181,7 @@ class WorkerWebUI:
         # Latest live error list received from the process manager this run.
         self._live_errors_history: list[str] = []
 
-        if self._db_path is not None:
+        if self._errors_db_path is not None:
             self._init_db()
             self._load_persisted_data()
 
@@ -227,7 +244,7 @@ class WorkerWebUI:
 
         # Merge persisted errors/gallery/stats into the live status_data now
         # that status_data has been initialised (DB loading runs before this).
-        if self._db_path is not None:
+        if self._errors_db_path is not None:
             self._merge_persisted_into_status()
 
         # Gallery image data stored separately – NOT included in /api/status to avoid
@@ -243,7 +260,7 @@ class WorkerWebUI:
         self._last_stats_snapshot_time: float = 0.0
 
         # Re-populate gallery dict and stats from any data loaded from DB.
-        if self._db_path is not None:
+        if self._errors_db_path is not None:
             self._restore_persisted_collections()
 
         # Optional callback invoked when the UI requests a worker deletion.
@@ -294,11 +311,18 @@ class WorkerWebUI:
     # ------------------------------------------------------------------
 
     def _init_db(self) -> None:
-        """Create the persistence tables in the SQLite database if they do not exist."""
-        assert self._db_path is not None
+        """Create the persistence tables in separate SQLite databases if they do not exist."""
+        assert self._errors_db_path is not None
+        assert self._stats_db_path is not None
+        assert self._gallery_db_path is not None
+
         try:
-            os.makedirs(os.path.dirname(os.path.abspath(self._db_path)), exist_ok=True)
-            with sqlite3.connect(self._db_path) as conn:
+            # Create the config directory if it doesn't exist.
+            db_dir = os.path.dirname(os.path.abspath(self._errors_db_path))
+            os.makedirs(db_dir, exist_ok=True)
+
+            # Errors database
+            with sqlite3.connect(self._errors_db_path) as conn:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS errors_log (
@@ -311,6 +335,26 @@ class WorkerWebUI:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_errors_log_created_at ON errors_log (created_at)",
                 )
+                conn.commit()
+
+            # Stats database
+            with sqlite3.connect(self._stats_db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS stats_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_json TEXT NOT NULL,
+                        timestamp REAL NOT NULL
+                    )
+                    """,
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_stats_timestamp ON stats_snapshots (timestamp)",
+                )
+                conn.commit()
+
+            # Gallery database
+            with sqlite3.connect(self._gallery_db_path) as conn:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS gallery_images (
@@ -330,48 +374,45 @@ class WorkerWebUI:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_gallery_created_at ON gallery_images (created_at)",
                 )
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS stats_snapshots (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        snapshot_json TEXT NOT NULL,
-                        timestamp REAL NOT NULL
-                    )
-                    """,
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_stats_timestamp ON stats_snapshots (timestamp)",
-                )
                 conn.commit()
+
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"Could not initialise persistence database '{self._db_path}': {exc}")
+            logger.warning(f"Could not initialise persistence databases: {exc}")
 
     def _cutoff_timestamp(self) -> float:
         """Return the Unix timestamp before which rows are considered expired."""
         return time.time() - self._data_retention_days * 86400.0
 
     def _load_persisted_data(self) -> None:
-        """Load persisted errors, gallery images, and stats snapshots from the database.
+        """Load persisted errors, gallery images, and stats snapshots from the databases.
 
         Loaded data is stored in private attributes that are merged into the live
         status/collection structures by :meth:`_merge_persisted_into_status` and
         :meth:`_restore_persisted_collections` after :attr:`status_data` is created.
         """
-        assert self._db_path is not None
+        assert self._errors_db_path is not None
+        assert self._stats_db_path is not None
+        assert self._gallery_db_path is not None
+
         cutoff = self._cutoff_timestamp()
         self._persisted_errors: list[str] = []
         self._persisted_gallery: list[dict[str, Any]] = []
         self._persisted_stats: list[dict[str, float | int]] = []
+
+        # Load errors from errors database
         try:
-            with sqlite3.connect(self._db_path) as conn:
-                # Errors – newest first (DESC) so the history list matches in-memory order.
+            with sqlite3.connect(self._errors_db_path) as conn:
                 rows = conn.execute(
                     "SELECT message FROM errors_log WHERE created_at >= ? ORDER BY created_at DESC",
                     (cutoff,),
                 ).fetchall()
                 self._persisted_errors = [row[0] for row in rows]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load errors from '{self._errors_db_path}': {exc}")
 
-                # Gallery images – oldest first so gallery_id assignment is stable.
+        # Load gallery from gallery database
+        try:
+            with sqlite3.connect(self._gallery_db_path) as conn:
                 rows = conn.execute(
                     "SELECT gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json "
                     "FROM gallery_images WHERE created_at >= ? ORDER BY created_at ASC",
@@ -394,8 +435,12 @@ class WorkerWebUI:
                         except (ValueError, TypeError):
                             pass
                     self._persisted_gallery.append(entry)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load gallery from '{self._gallery_db_path}': {exc}")
 
-                # Stats snapshots – oldest first.
+        # Load stats from stats database
+        try:
+            with sqlite3.connect(self._stats_db_path) as conn:
                 rows = conn.execute(
                     "SELECT snapshot_json FROM stats_snapshots WHERE timestamp >= ? ORDER BY timestamp ASC",
                     (cutoff,),
@@ -406,7 +451,7 @@ class WorkerWebUI:
                     except (ValueError, TypeError):
                         pass
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"Could not load persisted data from '{self._db_path}': {exc}")
+            logger.warning(f"Could not load stats from '{self._stats_db_path}': {exc}")
 
     def _merge_persisted_into_status(self) -> None:
         """Merge data loaded by :meth:`_load_persisted_data` into :attr:`status_data`."""
@@ -452,17 +497,27 @@ class WorkerWebUI:
 
     def _prune_old_db_data(self) -> None:
         """Delete database rows older than the configured retention period."""
-        if self._db_path is None:
+        if self._errors_db_path is None:
             return
         cutoff = self._cutoff_timestamp()
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            # Prune errors database
+            with sqlite3.connect(self._errors_db_path) as conn:
                 conn.execute("DELETE FROM errors_log WHERE created_at < ?", (cutoff,))
-                conn.execute("DELETE FROM gallery_images WHERE created_at < ?", (cutoff,))
+                conn.commit()
+
+            # Prune stats database
+            with sqlite3.connect(self._stats_db_path) as conn:
                 conn.execute("DELETE FROM stats_snapshots WHERE timestamp < ?", (cutoff,))
                 conn.commit()
+
+            # Prune gallery database
+            with sqlite3.connect(self._gallery_db_path) as conn:
+                conn.execute("DELETE FROM gallery_images WHERE created_at < ?", (cutoff,))
+                conn.commit()
+
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"Could not prune old data from persistence database '{self._db_path}': {exc}")
+            logger.warning(f"Could not prune old data from persistence databases: {exc}")
         finally:
             self._last_db_prune_time = time.time()
 
@@ -4837,9 +4892,9 @@ class WorkerWebUI:
             self._stats_snapshots = self._stats_snapshots[-_MAX_STATS_SNAPSHOTS:]
 
         # Persist to database.
-        if self._db_path is not None:
+        if self._errors_db_path is not None:
             try:
-                with sqlite3.connect(self._db_path) as conn:
+                with sqlite3.connect(self._stats_db_path) as conn:
                     conn.execute(
                         "INSERT INTO stats_snapshots (snapshot_json, timestamp) VALUES (?, ?)",
                         (json.dumps(snapshot), now),
@@ -5413,11 +5468,11 @@ class WorkerWebUI:
         self.status_data["images_count"] = len(self._gallery_dict)
 
         # Persist to database.
-        if self._db_path is not None:
+        if self._errors_db_path is not None:
             _known_cols = {"gallery_id", "timestamp", "model", "base64", "thumbnail", "is_nsfw", "is_csam"}
             extra = {k: v for k, v in entry.items() if k not in _known_cols}
             try:
-                with sqlite3.connect(self._db_path) as conn:
+                with sqlite3.connect(self._gallery_db_path) as conn:
                     conn.execute(
                         """
                         INSERT INTO gallery_images
@@ -5631,13 +5686,13 @@ class WorkerWebUI:
         if errors_history is not None:
             live_errors = list(errors_history)
             # Persist any new errors that have been added since the last update.
-            if self._db_path is not None:
+            if self._errors_db_path is not None:
                 overlap = self._history_overlap_len(live_errors, self._live_errors_history)
                 new_errors = live_errors[:-overlap] if overlap else live_errors
                 if new_errors:
                     now = time.time()
                     try:
-                        with sqlite3.connect(self._db_path) as conn:
+                        with sqlite3.connect(self._errors_db_path) as conn:
                             conn.executemany(
                                 "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
                                 [(msg, now) for msg in new_errors],
