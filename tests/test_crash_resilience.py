@@ -5176,6 +5176,31 @@ class TestResultSubmittingStuckRecovery:
     # submit_single_generation tests
     # -------------------------------------------------------------------------
 
+    def test_remove_awaiting_request_ignores_missing_set_entry(self) -> None:
+        """Cleanup should ignore missing requests for set-like containers."""
+        from horde_worker_regen.process_management.process_manager import _remove_awaiting_request
+
+        session = MagicMock()
+        session._awaiting_requests = {"other-request"}
+
+        _remove_awaiting_request(session, "missing-request")
+
+        assert session._awaiting_requests == {"other-request"}
+
+    def test_remove_awaiting_request_propagates_unexpected_attribute_error(self) -> None:
+        """Cleanup should not suppress unrelated AttributeError from equality checks."""
+        from horde_worker_regen.process_management.process_manager import _remove_awaiting_request
+
+        class _BrokenEq:
+            def __eq__(self, other: object) -> bool:
+                raise AttributeError("broken equality")
+
+        session = MagicMock()
+        session._awaiting_requests = [_BrokenEq()]
+
+        with pytest.raises(AttributeError, match="broken equality"):
+            _remove_awaiting_request(session, "missing-request")
+
     def test_state_reset_to_waiting_on_api_timeout(self) -> None:
         """Process state must be reset to WAITING_FOR_JOB when the API call times out."""
         import asyncio
