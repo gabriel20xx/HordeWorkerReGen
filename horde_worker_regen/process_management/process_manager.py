@@ -109,9 +109,6 @@ sslcontext = ssl.create_default_context()
 BYTES_TO_MEGABYTES = 1024 * 1024
 """Conversion factor from bytes to megabytes."""
 
-MAX_WEBUI_QUEUE_ITEMS = 10
-"""Maximum number of queued jobs to display in the web UI."""
-
 METRICS_CALCULATION_WINDOW_SECONDS = 3600
 """Rolling time window, in seconds, for calculating rate-based metrics such as kudos per hour and images per hour."""
 
@@ -7602,7 +7599,7 @@ class HordeWorkerProcessManager:
         # current_job, e.g. a MODEL_PRELOADING job that is pending inference but not yet
         # dispatched to an active worker).
         job_queue = []
-        for job in list(self.jobs_pending_inference)[:MAX_WEBUI_QUEUE_ITEMS]:  # Limit to first N
+        for job in self.jobs_pending_inference:
             # Skip jobs that are already in progress or shown as current_job
             if job not in self.jobs_in_progress and job != _current_job_obj:
                 job_queue.append(
@@ -7643,6 +7640,14 @@ class HordeWorkerProcessManager:
                 )
             ):
                 model_name = "CLIP / DeepDanbooru"
+            process_job_id = (
+                str(process_info.last_job_referenced.id_.root)[:8]
+                if (
+                    process_info.last_job_referenced is not None
+                    and process_info.last_job_referenced.id_ is not None
+                )
+                else None
+            )
 
             processes.append(
                 {
@@ -7654,6 +7659,7 @@ class HordeWorkerProcessManager:
                     "type": process_info.process_type.name,
                     "state": process_info.last_process_state.name,
                     "model": model_name,
+                    "job_id": process_job_id,
                     "progress": process_info.last_heartbeat_percent_complete,
                     "batch_size": process_info.batch_amount,
                 },

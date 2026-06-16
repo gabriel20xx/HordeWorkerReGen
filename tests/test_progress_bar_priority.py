@@ -565,6 +565,25 @@ def test_model_preloading_other_queued_jobs_still_shown() -> None:
     )
 
 
+def test_job_queue_includes_all_pre_inference_jobs() -> None:
+    """WebUI queue payload should not be capped below the actual queued job count."""
+    queued_jobs = [_make_mock_job(f"queued{i}") for i in range(12)]
+
+    kwargs = _invoke_update_webui_status(
+        jobs_pending_submit=[],
+        jobs_being_safety_checked=[],
+        jobs_pending_safety_check=[],
+        jobs_in_progress=[],
+        jobs_pending_inference=queued_jobs,
+        process_list=[],
+        return_full_kwargs=True,
+    )
+
+    job_queue = kwargs.get("job_queue", [])
+    assert len(job_queue) == 12, f"Expected all 12 queued jobs in webui payload, got {len(job_queue)}"
+    assert [entry["id"] for entry in job_queue] == [str(job.id_.root)[:8] for job in queued_jobs]
+
+
 def test_update_webui_status_excludes_ending_and_ended_processes_from_process_list() -> None:
     """WebUI process list/count should drop ending slots without compacting per-type IDs."""
     active_job = _make_mock_job("active1")
@@ -591,6 +610,7 @@ def test_update_webui_status_excludes_ending_and_ended_processes_from_process_li
     assert len(processes) == 1
     assert processes[0]["id"] == "inference-0"
     assert processes[0]["display_id"] == "Inference 0"
+    assert processes[0]["job_id"] == str(active_job.id_.root)[:8]
     assert processes[0]["state"] == "WAITING_FOR_JOB"
 
     # Keep per-type index stable by process_id even when lower slots are excluded.
