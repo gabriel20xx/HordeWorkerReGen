@@ -198,3 +198,17 @@ def test_load_env_vars_from_config_lora_cache_size_not_overwritten(
     assert os.environ.get("AIWORKER_LORA_CACHE_SIZE") == "99999", (
         "A pre-existing AIWORKER_LORA_CACHE_SIZE should not be overwritten"
     )
+
+
+def test_bridge_data_deprecated_lora_cache_size_remap() -> None:
+    """Test that deprecated lora_cache_size remaps to max_lora_cache_size and is removed from extras."""
+    bridge_data = reGenBridgeData.model_validate({"lora_cache_size": 10})
+    assert bridge_data.max_lora_cache_size == 10
+    assert bridge_data.model_extra is None or "lora_cache_size" not in bridge_data.model_extra
+
+
+def test_bridge_data_deprecated_lora_cache_size_dropped_when_both_keys_present() -> None:
+    """Test that deprecated lora_cache_size is dropped when max_lora_cache_size is also provided."""
+    bridge_data = reGenBridgeData.model_validate({"lora_cache_size": 10, "max_lora_cache_size": 12})
+    assert bridge_data.max_lora_cache_size == 12
+    assert bridge_data.model_extra is None or "lora_cache_size" not in bridge_data.model_extra
