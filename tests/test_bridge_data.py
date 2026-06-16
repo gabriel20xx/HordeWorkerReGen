@@ -227,7 +227,9 @@ def test_bridge_data_deprecated_lora_cache_size_does_not_warn_when_new_key_prese
     def _capture_warning(message: str, *args: object, **kwargs: object) -> None:
         warning_messages.append(message)
 
-    monkeypatch.setattr("horde_worker_regen.bridge_data.data_model.logger.warning", _capture_warning)
+    import horde_worker_regen.bridge_data.data_model as _data_model_module
+
+    monkeypatch.setattr(_data_model_module.logger, "warning", _capture_warning)
 
     bridge_data = reGenBridgeData.model_validate({"lora_cache_size": 10, "max_lora_cache_size": 12})
 
