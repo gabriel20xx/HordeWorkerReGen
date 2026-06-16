@@ -3477,7 +3477,6 @@ async def test_api_get_workers_details_preserves_last_known_state_when_all_fail(
     (empty) filtered results list, which wiped the web UI's worker cards whenever
     the Horde API was temporarily unreachable.
     """
-    import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
@@ -3515,7 +3514,6 @@ async def test_api_get_workers_details_preserves_last_known_state_when_all_fail(
 @pytest.mark.asyncio
 async def test_api_get_workers_details_updates_on_partial_success() -> None:
     """When at least one worker fetch succeeds, _workers_details is updated."""
-    import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
     from horde_sdk.ai_horde_api.apimodels import SingleWorkerDetailsResponse
@@ -3574,7 +3572,6 @@ async def test_api_get_workers_details_logs_debug_not_warning_when_user_info_fai
 
     This avoids WARNING spam in the logs when the internet / Horde is known to be down.
     """
-    import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
@@ -3616,7 +3613,6 @@ async def test_api_get_workers_details_loop_skips_fetch_when_user_info_failed() 
     connection attempts and warning spam.  After user-info recovers, the fetch runs
     again normally.
     """
-    import asyncio
     from unittest.mock import MagicMock, patch
 
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager

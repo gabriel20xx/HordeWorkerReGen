@@ -64,8 +64,10 @@ def main(
                             "The worker will start, but model list may be outdated.",
                         )
                         return horde_model_reference_manager
-                except Exception:
-                    pass
+                except Exception as cache_error:
+                    logger.debug(
+                        f"Failed to load cached model references: ({type(cache_error).__name__}) {cache_error}",
+                    )
                 logger.error("Retrying in 5 seconds...")
                 time.sleep(5)
 
