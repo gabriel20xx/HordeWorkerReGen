@@ -3303,14 +3303,14 @@ class HordeWorkerProcessManager:
                     message.process_state == HordeProcessState.UNLOADED_MODEL_FROM_RAM
                     and prior_process_state != HordeProcessState.UNLOADED_MODEL_FROM_RAM
                 ):
-                    logger.opt(ansi=True).info(
+                    logger.opt(colors=True).info(
                         "<fg #7b7d7d>" f"Process {message.process_id} cleared RAM: {message.info}" "</>",
                     )
                     self._process_map.on_model_ram_clear(process_id=message.process_id)
 
             if isinstance(message, HordeAuxModelStateChangeMessage):
                 if message.process_state == HordeProcessState.DOWNLOADING_AUX_MODEL:
-                    logger.opt(ansi=True).info(
+                    logger.opt(colors=True).info(
                         "<fg #7b7d7d>" f"Process {message.process_id} is downloading extra models (LoRas, etc.)" "</>",
                     )
                     self._process_map.on_last_job_reference_change(
@@ -3319,7 +3319,7 @@ class HordeWorkerProcessManager:
                     )
 
                 if message.process_state == HordeProcessState.DOWNLOAD_AUX_COMPLETE:
-                    logger.opt(ansi=True).info(
+                    logger.opt(colors=True).info(
                         "<fg #7b7d7d>"
                         f"Process {message.process_id} finished downloading extra models in {message.time_elapsed}"
                         "</>",
@@ -3376,10 +3376,10 @@ class HordeWorkerProcessManager:
                             if message.time_elapsed is not None:
                                 loaded_message += f"Loading took {message.time_elapsed:.2f} seconds."
 
-                            logger.opt(ansi=True).info(f"<fg #7b7d7d>{loaded_message}</>")
+                            logger.opt(colors=True).info(f"<fg #7b7d7d>{loaded_message}</>")
 
                 else:
-                    logger.opt(ansi=True).info(
+                    logger.opt(colors=True).info(
                         "<fg #7b7d7d>" f"Process {message.process_id} unloaded model {message.horde_model_name}" "</>",
                     )
 
@@ -3438,7 +3438,7 @@ class HordeWorkerProcessManager:
                             f"took {round(message.time_elapsed, 2)} seconds but faulted: {message.info}."
                             "</>"
                         )
-                        logger.opt(ansi=True).warning(inference_finished_string)
+                        logger.opt(colors=True).warning(inference_finished_string)
                     else:
                         inference_finished_string = (
                             "\0<fg #da9dff>"
@@ -3448,7 +3448,7 @@ class HordeWorkerProcessManager:
                             f"and reported {message.faults_count} faults."
                             "</>"
                         )
-                        logger.opt(ansi=True).info(inference_finished_string)
+                        logger.opt(colors=True).info(inference_finished_string)
 
                 else:
                     logger.info(f"Inference finished for job {message.sdk_api_job_info.id_}")
@@ -3544,7 +3544,7 @@ class HordeWorkerProcessManager:
                     embedded_count = sum(1 for s in message.saved_images if s.metadata_embedded)
 
                     image_word = "image" if len(message.saved_images) == 1 else "images"
-                    logger.opt(ansi=True).info(
+                    logger.opt(colors=True).info(
                         "<b><fg #FF69B4>"
                         f"Saved {len(message.saved_images)} {image_word} to disk for job {str(message.job_id)[:8]} "
                         f"(metadata embedded {embedded_count}/{len(message.saved_images)})"
@@ -3712,7 +3712,7 @@ class HordeWorkerProcessManager:
             # seconds.  Skipping here prevents the worker from cycling indefinitely through a
             # model that cannot be loaded on this machine.
             if self._is_model_in_preload_cooldown(job.model):
-                logger.opt(ansi=True).debug(
+                logger.opt(colors=True).debug(
                     "<fg #7b7d7d>"
                     f"Skipping preload of {job.model!r}: model is in preload cooldown"
                     "</>",
@@ -3768,7 +3768,7 @@ class HordeWorkerProcessManager:
                 very_fast_disk_mode_enabled and max_concurrent_inference_processes_reached
             ):
                 if not self._preload_delay_notified:
-                    logger.opt(ansi=True).info(
+                    logger.opt(colors=True).info(
                         "<fg #7b7d7d>"
                         f"Already preloading {num_preloading_processes} models, waiting for one to finish before "
                         f"preloading {job.model}"
@@ -4068,7 +4068,7 @@ class HordeWorkerProcessManager:
 
         color_format_string = "<fg #f0beff>{message}</>"
 
-        logger.opt(ansi=True).info(
+        logger.opt(colors=True).info(
             color_format_string.format(
                 message=f"Starting inference for job {str(next_job.id_)[:8]} "
                 f"on process {process_with_model.process_id}",
@@ -4079,13 +4079,13 @@ class HordeWorkerProcessManager:
         if next_job.model is None:
             raise ValueError(f"next_job.model is None ({next_job})")
 
-        logger.opt(ansi=True).info(
+        logger.opt(colors=True).info(
             color_format_string.format(
                 message=f"  Model: {next_job.model}",
             ),
         )
         if next_job.source_image is not None:
-            logger.opt(ansi=True).info(
+            logger.opt(colors=True).info(
                 color_format_string.format(
                     message="  Using source image",
                 ),
@@ -4117,13 +4117,13 @@ class HordeWorkerProcessManager:
             extra_info += f"Workflow: {next_job.payload.workflow}"
 
         if extra_info:
-            logger.opt(ansi=True).info(
+            logger.opt(colors=True).info(
                 color_format_string.format(
                     message=f"  {extra_info}",
                 ),
             )
 
-        logger.opt(ansi=True).info(
+        logger.opt(colors=True).info(
             color_format_string.format(
                 message=f"  {next_job.payload.width}x{next_job.payload.height} for "
                 f"{next_job.payload.ddim_steps} steps "
@@ -5060,7 +5060,7 @@ class HordeWorkerProcessManager:
             if batch_size == 1:
                 # Single job - show the one job ID
                 job_id_short = str(successful_submits[0].job_id)[:8]
-                logger.opt(ansi=True).success(
+                logger.opt(colors=True).success(
                     f"<b>Submitted generation {job_id_short} (model: "
                     f"<u>{model_name}</u>) "
                     f"for {total_kudos:,.2f} kudos. "
@@ -5071,7 +5071,7 @@ class HordeWorkerProcessManager:
             else:
                 # Batch job - show all job IDs and combined stats
                 job_ids_short = ", ".join(str(job.job_id)[:8] for job in successful_submits)
-                logger.opt(ansi=True).success(
+                logger.opt(colors=True).success(
                     f"<b>Submitted {batch_size} generations [{job_ids_short}] (model: "
                     f"<u>{model_name}</u>) "
                     f"for {total_kudos:,.2f} kudos. "
@@ -5812,7 +5812,7 @@ class HordeWorkerProcessManager:
         """Print the information about maintenance mode to the user."""
 
         def warning_function_no_format(x):  # noqa: ANN001, ANN202
-            return logger.opt(ansi=True, raw=True).warning(
+            return logger.opt(colors=True, raw=True).warning(
                 "<fg #f1c40f>" + x + "</>\n",
             )
 
@@ -5935,7 +5935,7 @@ class HordeWorkerProcessManager:
                 self._triggered_max_pending_megapixelsteps = True
                 self._triggered_max_pending_megapixelsteps_time = time.time()
                 if seconds_to_wait > 2:
-                    logger.opt(ansi=True).info(
+                    logger.opt(colors=True).info(
                         f"<fg #7dcea0><i>Pausing job pops for {round(seconds_to_wait, 2)} seconds "
                         "so some long running jobs can make some progress.</i></>",
                     )
@@ -6216,7 +6216,7 @@ class HordeWorkerProcessManager:
             )
             > 0
         )
-        logger.opt(ansi=True).info(
+        logger.opt(colors=True).info(
             "<b><fg #a200ff>"
             f"Popped job {job_pop_response.id_} "
             f"({self.get_single_job_effective_megapixelsteps(job_pop_response)} eMPS) "
@@ -6365,10 +6365,10 @@ class HordeWorkerProcessManager:
         Args:
             kudos_info_string (str): The kudos information string to log.
         """
-        log_function = logger.opt(ansi=True).info
+        log_function = logger.opt(colors=True).info
 
         if self.bridge_data.limited_console_messages:
-            log_function = logger.opt(ansi=True).success
+            log_function = logger.opt(colors=True).success
 
         # Combine kudos info and total accumulated into one line
         combined_msg_parts = []
@@ -6708,7 +6708,7 @@ class HordeWorkerProcessManager:
                                     if (
                                         time.time() - self._batch_wait_log_time > 10
                                     ) and self.bridge_data.max_threads > 1:
-                                        logger.opt(ansi=True).info(
+                                        logger.opt(colors=True).info(
                                             "<fg #7b7d7d>"
                                             f"<i>Blocking further inference due to {single_inf_reason}.</i>"
                                             "</>",
@@ -6727,7 +6727,7 @@ class HordeWorkerProcessManager:
                                     )
                                 ):
                                     if time.time() - self._batch_wait_log_time > 10:
-                                        logger.opt(ansi=True).info(
+                                        logger.opt(colors=True).info(
                                             "<fg #7b7d7d>"
                                             f"<i>Blocking starting batch job {next_job_and_process.next_job.id_} "
                                             "because a thread is already busy with a heavy model/workflow or batch job"
@@ -6920,10 +6920,10 @@ class HordeWorkerProcessManager:
         if cur_time - self._last_status_message_time > self._status_message_frequency:
             AIWORKER_LIMITED_CONSOLE_MESSAGES = os.getenv("AIWORKER_LIMITED_CONSOLE_MESSAGES", False)
 
-            logging_function = logger.opt(ansi=True).info
+            logging_function = logger.opt(colors=True).info
 
             if AIWORKER_LIMITED_CONSOLE_MESSAGES:
-                logging_function = logger.opt(ansi=True).success
+                logging_function = logger.opt(colors=True).success
 
             process_info_strings = self._process_map.get_process_info_strings()
 
@@ -7198,9 +7198,9 @@ class HordeWorkerProcessManager:
                     )
 
             if self._shutting_down:
-                logger.opt(ansi=True).warning("<red>" + "=" * 80 + "</>")
-                logger.opt(ansi=True).warning("<red>SHUTTING DOWN - Finishing current jobs...</>")
-                logger.opt(ansi=True).warning("<red>" + "=" * 80 + "</>")
+                logger.opt(colors=True).warning("<red>" + "=" * 80 + "</>")
+                logger.opt(colors=True).warning("<red>SHUTTING DOWN - Finishing current jobs...</>")
+                logger.opt(colors=True).warning("<red>" + "=" * 80 + "</>")
                 self._status_message_frequency = 5.0
 
             self._last_status_message_time = cur_time

@@ -42,7 +42,7 @@ def get_dependency_versions(requirements_file_path: str | Path) -> dict[str, str
     dependencies = {}
     for req in requirements:
         for dep in TRACKED_DEPENDENCIES:
-            if req.startswith(dep):
+            if req.startswith(dep) and (len(req) <= len(dep) or not req[len(dep)].isalnum() and req[len(dep)] not in ("_", "-")):
                 if "==" in req:
                     version = req.split("==")[1].strip()
                 elif "~=" in req:

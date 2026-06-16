@@ -60,8 +60,9 @@ def check_dependency_versions(
     """
     for dep in main_deps:
         if dep == "torch":
+            other_torch_version = other_deps.get(dep, "N/A")
             logger.warning(
-                f"Skipping torch version check (main: {main_deps[dep]}, {other_name}: {other_deps[dep]})",
+                f"Skipping torch version check (main: {main_deps[dep]}, {other_name}: {other_torch_version})",
             )
             continue
 
@@ -72,8 +73,9 @@ def check_dependency_versions(
 
     for dep in other_deps:
         if dep == "torch":
+            main_torch_version = main_deps.get(dep, "N/A")
             logger.warning(
-                f"Skipping torch version check (main: {main_deps[dep]}, {other_name}: {other_deps[dep]})",
+                f"Skipping torch version check (main: {main_torch_version}, {other_name}: {other_deps[dep]})",
             )
             continue
 
