@@ -3732,10 +3732,10 @@ def test_webui_db_loads_gallery_on_startup(tmp_path: pathlib.Path) -> None:
         conn.execute(
             """
             INSERT INTO gallery_images
-                (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (42, now, "sdxl", None, None, 0, 0, None, now - 30 * 86400),
+            (42, now, "sdxl", None, None, 0, 0, None),
         )
         conn.commit()
 
@@ -3821,12 +3821,12 @@ def test_webui_db_prune_removes_old_data(tmp_path: pathlib.Path) -> None:
     
     with sqlite3.connect(gallery_db) as conn:
         conn.execute(
-            "INSERT INTO gallery_images (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (1, old_ts, "m", None, None, 0, 0, None, recent_ts),
+            "INSERT INTO gallery_images (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, old_ts, "m", None, None, 0, 0, None),
         )
         conn.execute(
-            "INSERT INTO gallery_images (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (2, recent_ts, "m", None, None, 0, 0, None, old_ts),
+            "INSERT INTO gallery_images (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (2, recent_ts, "m", None, None, 0, 0, None),
         )
         conn.commit()
     

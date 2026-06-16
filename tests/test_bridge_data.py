@@ -150,6 +150,61 @@ def test_bridge_data_auto_restart_on_idle_env_var_too_large(monkeypatch: pytest.
     assert bridge_data.auto_restart_on_idle_minutes == 60
 
 
+def test_bridge_data_data_retention_days_default() -> None:
+    """Test that data_retention_days defaults to 7."""
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.data_retention_days == 7
+
+
+def test_bridge_data_data_retention_days_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that AIWORKER_DATA_RETENTION_DAYS overrides data_retention_days."""
+    monkeypatch.setenv("AIWORKER_DATA_RETENTION_DAYS", "30")
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.data_retention_days == 30
+
+
+def test_bridge_data_data_retention_days_env_var_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a non-integer AIWORKER_DATA_RETENTION_DAYS value is ignored."""
+    monkeypatch.setenv("AIWORKER_DATA_RETENTION_DAYS", "not_a_number")
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.data_retention_days == 7
+
+
+def test_bridge_data_data_retention_days_env_var_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that AIWORKER_DATA_RETENTION_DAYS=0 (out of range) is ignored."""
+    monkeypatch.setenv("AIWORKER_DATA_RETENTION_DAYS", "0")
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.data_retention_days == 7
+
+
+def test_bridge_data_data_retention_days_env_var_negative(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a negative AIWORKER_DATA_RETENTION_DAYS value is ignored."""
+    monkeypatch.setenv("AIWORKER_DATA_RETENTION_DAYS", "-1")
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.data_retention_days == 7
+
+
+def test_bridge_data_data_retention_days_env_var_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that an out-of-range AIWORKER_DATA_RETENTION_DAYS value (> 3650) is ignored."""
+    monkeypatch.setenv("AIWORKER_DATA_RETENTION_DAYS", "3651")
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.data_retention_days == 7
+
+
+def test_bridge_data_data_retention_days_env_var_boundary_min(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that AIWORKER_DATA_RETENTION_DAYS=1 (minimum valid) is accepted."""
+    monkeypatch.setenv("AIWORKER_DATA_RETENTION_DAYS", "1")
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.data_retention_days == 1
+
+
+def test_bridge_data_data_retention_days_env_var_boundary_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that AIWORKER_DATA_RETENTION_DAYS=3650 (maximum valid) is accepted."""
+    monkeypatch.setenv("AIWORKER_DATA_RETENTION_DAYS", "3650")
+    bridge_data = reGenBridgeData.model_validate({})
+    assert bridge_data.data_retention_days == 3650
+
+
 def test_bridge_data_to_dot_env_file() -> None:
     """Test that the bridge data can be written to a .env file."""
     bridge_data = reGenBridgeData.model_validate({})

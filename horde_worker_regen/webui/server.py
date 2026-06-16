@@ -379,8 +379,7 @@ class WorkerWebUI:
                         thumbnail TEXT,
                         is_nsfw INTEGER DEFAULT 0,
                         is_csam INTEGER DEFAULT 0,
-                        extra_json TEXT,
-                        created_at REAL NOT NULL
+                        extra_json TEXT
                     )
                     """,
                 )
@@ -455,8 +454,11 @@ class WorkerWebUI:
         try:
             with sqlite3.connect(self._stats_db_path) as conn:
                 rows = conn.execute(
-                    "SELECT snapshot_json FROM stats_snapshots WHERE timestamp >= ? ORDER BY timestamp ASC",
-                    (cutoff,),
+                    "SELECT snapshot_json FROM ("
+                    "SELECT id, snapshot_json, timestamp FROM stats_snapshots"
+                    " WHERE timestamp >= ? ORDER BY timestamp DESC, id DESC LIMIT ?"
+                    ") ORDER BY timestamp ASC, id ASC",
+                    (cutoff, _MAX_STATS_SNAPSHOTS),
                 ).fetchall()
                 for row in rows:
                     try:
@@ -5529,8 +5531,8 @@ class WorkerWebUI:
                         """
                         INSERT INTO gallery_images
                             (gallery_id, timestamp, model, base64_data, thumbnail,
-                             is_nsfw, is_csam, extra_json, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             is_nsfw, is_csam, extra_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             entry["gallery_id"],
@@ -5541,7 +5543,6 @@ class WorkerWebUI:
                             1 if entry.get("is_nsfw") else 0,
                             1 if entry.get("is_csam") else 0,
                             json.dumps(extra) if extra else None,
-                            time.time(),
                         ),
                     )
                     conn.commit()
