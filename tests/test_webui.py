@@ -3791,7 +3791,7 @@ def test_webui_db_next_gallery_id_restored_from_expired_rows(tmp_path: pathlib.P
     assert webui2._next_gallery_id == 100, "_next_gallery_id must be MAX(gallery_id)+1 from DB"
 
 
-
+def test_webui_db_restores_stats_snapshots(tmp_path: pathlib.Path) -> None:
     """A fresh WorkerWebUI with an existing DB should restore stats_snapshots."""
     import json
     import sqlite3
