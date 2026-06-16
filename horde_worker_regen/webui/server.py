@@ -24,7 +24,7 @@ except ImportError:
         "Install the 'Pillow' package to enable thumbnail generation in the web UI.",
     )
 
-_THUMBNAIL_MAX_PX = 256
+_THUMBNAIL_MAX_PX = 384
 """Maximum pixel dimension (width or height) for gallery thumbnails."""
 
 # Patterns for variable data stripped when normalising error messages for grouping.
@@ -5152,7 +5152,7 @@ class WorkerWebUI:
                 with io.BytesIO(raw) as img_bytes, _PILImage.open(img_bytes) as img:
                     img.thumbnail((_THUMBNAIL_MAX_PX, _THUMBNAIL_MAX_PX), _PILImage.LANCZOS)
                     with io.BytesIO() as buf:
-                        img.convert("RGB").save(buf, format="JPEG", quality=75)
+                        img.convert("RGB").save(buf, format="JPEG", quality=85)
                         entry["thumbnail"] = base64.b64encode(buf.getvalue()).decode("utf-8")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate gallery thumbnail: {}", exc)
