@@ -4497,13 +4497,17 @@ class WorkerWebUI:
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Handle status API request.
 
-        Returns all status fields **except** ``last_image_base64`` and the full
-        ``errors_history`` list so that large payloads are not included in every
-        poll.  Clients should use ``last_image_submission_timestamp`` to detect
-        new images (fetch via ``/api/last_image``) and ``errors_count`` to detect
-        new errors (fetch the relevant page via ``/api/errors``).
+        Returns all status fields **except** last-image payload fields and the
+        full ``errors_history`` list so that large payloads are not included in
+        every poll. Clients should use ``last_image_submission_timestamp`` to
+        detect new images (fetch via ``/api/last_image``) and ``errors_count``
+        to detect new errors (fetch the relevant page via ``/api/errors``).
         """
-        payload = {k: v for k, v in self.status_data.items() if k not in ("last_image_base64", "errors_history")}
+        payload = {
+            k: v
+            for k, v in self.status_data.items()
+            if k not in ("last_image_base64", "last_image_model", "last_image_safety", "errors_history")
+        }
         payload["errors_count"] = len(self.status_data["errors_history"])
         return web.json_response(payload)
 

@@ -711,7 +711,7 @@ async def test_webui_gallery_image_endpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_webui_status_excludes_images_and_last_image_endpoint() -> None:
-    """Test that /api/status omits last_image_base64 and /api/last_image serves it."""
+    """Test that /api/status omits last-image payloads and /api/last_image serves them."""
     webui = WorkerWebUI(port=0)
 
     try:
@@ -723,21 +723,27 @@ async def test_webui_status_excludes_images_and_last_image_endpoint() -> None:
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         )
         test_timestamp = 1704067200.0
+        test_model = "stable_diffusion_xl"
+        test_safety = [{"is_nsfw": True, "is_csam": False}]
         webui.update_status(
             last_image_base64=[test_b64],
             last_image_submission_timestamp=test_timestamp,
+            last_image_model=test_model,
+            last_image_safety=test_safety,
         )
 
-        # /api/status must NOT include the image payload
+        # /api/status must NOT include the last-image payload
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/status",
         ) as response:
             assert response.status == 200
             status = await response.json()
         assert "last_image_base64" not in status, "/api/status must not expose last_image_base64"
+        assert "last_image_model" not in status, "/api/status must not expose last_image_model"
+        assert "last_image_safety" not in status, "/api/status must not expose last_image_safety"
         assert status["last_image_submission_timestamp"] == test_timestamp
 
-        # /api/last_image must return the full image list and timestamp
+        # /api/last_image must return the full last-image payload
         async with aiohttp.ClientSession() as session, session.get(
             f"http://localhost:{actual_port}/api/last_image",
         ) as response:
@@ -746,6 +752,8 @@ async def test_webui_status_excludes_images_and_last_image_endpoint() -> None:
         assert "last_image_base64" in img_data
         assert img_data["last_image_base64"] == [test_b64]
         assert img_data["last_image_submission_timestamp"] == test_timestamp
+        assert img_data["last_image_model"] == test_model
+        assert img_data["last_image_safety"] == test_safety
     finally:
         await webui.stop()
 

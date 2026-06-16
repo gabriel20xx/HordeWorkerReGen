@@ -3612,35 +3612,29 @@ class HordeWorkerProcessManager:
                             if completed_job_info.sdk_api_job_info
                             else ""
                         ) or ""
-                        self._last_image_safety = [
-                            {
-                                "is_nsfw": message.safety_evaluations[i].is_nsfw
-                                if i < len(message.safety_evaluations)
-                                else False,
-                                "is_csam": message.safety_evaluations[i].is_csam
-                                if i < len(message.safety_evaluations)
-                                else False,
-                            }
-                            for i in range(len(images_base64))
-                        ]
+                        image_safety = None
+                        if len(images_base64) == len(message.safety_evaluations):
+                            image_safety = [
+                                {
+                                    "is_nsfw": safety_evaluation.is_nsfw,
+                                    "is_csam": safety_evaluation.is_csam,
+                                }
+                                for safety_evaluation in message.safety_evaluations
+                            ]
+                        self._last_image_safety = image_safety or []
                         # Add each image to the WebUI gallery
                         for img_idx, img_b64 in enumerate(images_base64):
-                            safety_eval = (
-                                message.safety_evaluations[img_idx]
-                                if img_idx < len(message.safety_evaluations)
-                                else None
-                            )
-                            self.webui.add_gallery_image(
-                                {
-                                    "base64": img_b64,
-                                    "timestamp": completed_job_info.inference_completed_timestamp,
-                                    "model": completed_job_info.sdk_api_job_info.model
-                                    if completed_job_info.sdk_api_job_info
-                                    else None,
-                                    "is_nsfw": safety_eval.is_nsfw if safety_eval is not None else False,
-                                    "is_csam": safety_eval.is_csam if safety_eval is not None else False,
-                                },
-                            )
+                            gallery_image = {
+                                "base64": img_b64,
+                                "timestamp": completed_job_info.inference_completed_timestamp,
+                                "model": completed_job_info.sdk_api_job_info.model
+                                if completed_job_info.sdk_api_job_info
+                                else None,
+                            }
+                            if image_safety is not None:
+                                gallery_image["is_nsfw"] = image_safety[img_idx]["is_nsfw"]
+                                gallery_image["is_csam"] = image_safety[img_idx]["is_csam"]
+                            self.webui.add_gallery_image(gallery_image)
                     except (FileNotFoundError, OSError) as e:
                         logger.warning(f"Failed to read saved images for webui preview: {e}")
                         # Don't fallback to job_image_results to avoid showing censored placeholders
