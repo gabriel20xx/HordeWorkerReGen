@@ -134,8 +134,12 @@ class WorkerWebUI:
             port: The port to run the web server on (default: 3000)
             update_interval: How often to update status in seconds (default: 1.0)
             db_path: Path to the directory containing SQLite database files, or a legacy
-                     single database file path.  When ``None`` (the default) no data is
-                     persisted across restarts.  Three separate databases are used:
+                     single database file path. Existing directories are used directly;
+                     existing files and non-existent paths are treated as file paths and
+                     their parent directory is used (unless a trailing path separator
+                     explicitly indicates a non-existent directory). When ``None`` (the
+                     default) no data is persisted across restarts. Three separate
+                     databases are used:
                      - webui_errors.db for errors log
                      - webui_stats.db for statistics snapshots
                      - webui_gallery.db for gallery images
@@ -524,7 +528,15 @@ class WorkerWebUI:
             if self._stats_snapshots:
                 # Restore the last snapshot time so the interval guard works correctly.
                 last = self._stats_snapshots[-1]
-                self._last_stats_snapshot_time = float(last.get("t", 0))
+                self._last_stats_snapshot_time = self._safe_snapshot_time(last)
+
+    @staticmethod
+    def _safe_snapshot_time(snapshot: dict[str, Any]) -> float:
+        """Return a snapshot timestamp as float, falling back to 0.0 for malformed values."""
+        try:
+            return float(snapshot.get("t", 0))
+        except (TypeError, ValueError):
+            return 0.0
 
     def _prune_old_db_data(self) -> None:
         """Delete database rows older than the configured retention period."""
@@ -584,7 +596,7 @@ class WorkerWebUI:
         self._stats_snapshots = list(stats)
         if self._stats_snapshots:
             last = self._stats_snapshots[-1]
-            self._last_stats_snapshot_time = float(last.get("t", 0))
+            self._last_stats_snapshot_time = self._safe_snapshot_time(last)
 
         # Re-merge errors history (live session errors + reloaded persisted history).
         self.status_data["errors_history"] = self._merge_errors_history(self._live_errors_history)

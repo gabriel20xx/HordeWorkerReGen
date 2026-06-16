@@ -3799,6 +3799,31 @@ def test_webui_db_ignores_non_dict_stats_snapshots(tmp_path: pathlib.Path) -> No
     assert webui2._last_stats_snapshot_time == 123.0
 
 
+def test_webui_db_malformed_stats_timestamp_does_not_crash(tmp_path: pathlib.Path) -> None:
+    """Malformed snapshot `t` values should not crash startup restore or prune refresh."""
+    import sqlite3
+    import time
+
+    db_dir = str(tmp_path)
+    stats_db = str(tmp_path / "webui_stats.db")
+
+    webui = WorkerWebUI(port=0, db_path=db_dir)
+    now = time.time()
+    with sqlite3.connect(stats_db) as conn:
+        conn.execute(
+            "INSERT INTO stats_snapshots (timestamp, snapshot_json) VALUES (?, ?)",
+            (now, '{"t": "bad-value", "jobs_completed": 7}'),
+        )
+        conn.commit()
+
+    webui_reload = WorkerWebUI(port=0, db_path=db_dir)
+    assert webui_reload._stats_snapshots == [{"t": "bad-value", "jobs_completed": 7}]
+    assert webui_reload._last_stats_snapshot_time == 0.0
+
+    webui._refresh_in_memory_after_prune()
+    assert webui._last_stats_snapshot_time == 0.0
+
+
 def test_webui_db_prune_removes_old_data(tmp_path: pathlib.Path) -> None:
     """_prune_old_db_data() must delete rows older than the retention window."""
     import sqlite3
