@@ -8058,6 +8058,58 @@ class HordeWorkerProcessManager:
     _restart_requested = False
     """If true, restart the current Python process after shutdown completes."""
 
+    def _cleanup_shared_resources(self) -> None:
+        """Explicitly release named POSIX semaphores before os.execv replaces the process.
+
+        ``os.execv`` replaces the current process image without running Python's atexit
+        handlers or ``__del__`` / ``util.Finalize`` callbacks.  Semaphores created with
+        the ``spawn`` multiprocessing context have named POSIX backing files in
+        ``/dev/shm``; without an explicit cleanup these names remain registered in the
+        shared resource-tracker subprocess, which then warns at shutdown:
+
+            resource_tracker: There appear to be N leaked semaphore objects to clean up
+
+        This method calls ``SemLock._cleanup(name)`` (``sem_unlink`` +
+        ``resource_tracker.unregister``) on each named semaphore / lock owned by this
+        process-manager instance, cancels the queue feeder thread, and closes any open
+        pipe connections so the process-map entries are properly released.
+        """
+        from multiprocessing.synchronize import SemLock
+
+        def _try_cleanup_sem(sem_or_lock: Any) -> None:
+            try:
+                name = sem_or_lock._semlock.name
+                if name is not None:
+                    SemLock._cleanup(name)
+            except Exception:
+                pass
+
+        _try_cleanup_sem(self._inference_semaphore)
+        _try_cleanup_sem(self._vae_decode_semaphore)
+        _try_cleanup_sem(self._aux_model_lock)
+        _try_cleanup_sem(self._disk_lock)
+
+        # The process message queue also holds named semaphores (_sem, _rlock, _wlock)
+        # when the spawn start method is active.  Cancel the feeder thread first so the
+        # queue does not block, then clean up the internal lock objects.
+        q = self._process_message_queue
+        try:
+            q.cancel_join_thread()
+            q.close()
+        except Exception:
+            pass
+        for _attr in ("_sem", "_rlock", "_wlock"):
+            inner = getattr(q, _attr, None)
+            if inner is not None:
+                _try_cleanup_sem(inner)
+
+        # Close the parent-side pipe connections so child processes see EOF.
+        for _process_info in self._process_map.values():
+            try:
+                _process_info.pipe_connection.close()
+            except Exception:
+                pass
+
     def start(self) -> None:
         """Start the process manager."""
         import signal
@@ -8066,6 +8118,7 @@ class HordeWorkerProcessManager:
         asyncio.run(self._main_loop())
         if self._restart_requested:
             logger.warning("Restarting worker program...")
+            self._cleanup_shared_resources()
             try:
                 os.execv(sys.executable, [sys.executable, *sys.argv])
             except OSError as exc:
