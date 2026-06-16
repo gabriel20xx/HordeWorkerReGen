@@ -109,9 +109,6 @@ sslcontext = ssl.create_default_context()
 BYTES_TO_MEGABYTES = 1024 * 1024
 """Conversion factor from bytes to megabytes."""
 
-MAX_WEBUI_QUEUE_ITEMS = 10
-"""Maximum number of queued jobs to display in the web UI."""
-
 METRICS_CALCULATION_WINDOW_SECONDS = 3600
 """Rolling time window, in seconds, for calculating rate-based metrics such as kudos per hour and images per hour."""
 
@@ -2018,6 +2015,10 @@ class HordeWorkerProcessManager:
         """The last generated images in base64 format for webui preview (supports batch jobs)."""
         self._last_image_job_timestamp: float = 0.0
         """Timestamp when the last preview image was set, to prevent older jobs from overwriting newer ones."""
+        self._last_image_model: str = ""
+        """Model name used for the last preview image."""
+        self._last_image_safety: list[dict] = []
+        """Per-image safety flags (is_nsfw, is_csam) for the last preview images."""
         self._console_logs: list[str] = []
         """Recent console logs for webui display."""
         self._log_handler_id: int | None = None
@@ -3608,24 +3609,34 @@ class HordeWorkerProcessManager:
                                 images_base64.append(base64.b64encode(image_data).decode("utf-8"))
                         self._last_image_base64 = images_base64
                         self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                        self._last_image_model = (
+                            completed_job_info.sdk_api_job_info.model
+                            if completed_job_info.sdk_api_job_info
+                            else ""
+                        ) or ""
+                        image_safety = None
+                        if len(images_base64) == len(message.safety_evaluations):
+                            image_safety = [
+                                {
+                                    "is_nsfw": safety_evaluation.is_nsfw,
+                                    "is_csam": safety_evaluation.is_csam,
+                                }
+                                for safety_evaluation in message.safety_evaluations
+                            ]
+                        self._last_image_safety = image_safety or []
                         # Add each image to the WebUI gallery
                         for img_idx, img_b64 in enumerate(images_base64):
-                            safety_eval = (
-                                message.safety_evaluations[img_idx]
-                                if img_idx < len(message.safety_evaluations)
-                                else None
-                            )
-                            self.webui.add_gallery_image(
-                                {
-                                    "base64": img_b64,
-                                    "timestamp": completed_job_info.inference_completed_timestamp,
-                                    "model": completed_job_info.sdk_api_job_info.model
-                                    if completed_job_info.sdk_api_job_info
-                                    else None,
-                                    "is_nsfw": safety_eval.is_nsfw if safety_eval is not None else False,
-                                    "is_csam": safety_eval.is_csam if safety_eval is not None else False,
-                                },
-                            )
+                            gallery_image = {
+                                "base64": img_b64,
+                                "timestamp": completed_job_info.inference_completed_timestamp,
+                                "model": completed_job_info.sdk_api_job_info.model
+                                if completed_job_info.sdk_api_job_info
+                                else None,
+                            }
+                            if image_safety is not None:
+                                gallery_image["is_nsfw"] = image_safety[img_idx]["is_nsfw"]
+                                gallery_image["is_csam"] = image_safety[img_idx]["is_csam"]
+                            self.webui.add_gallery_image(gallery_image)
                     except (FileNotFoundError, OSError) as e:
                         logger.warning(f"Failed to read saved images for webui preview: {e}")
                         # Don't fallback to job_image_results to avoid showing censored placeholders
@@ -6513,6 +6524,10 @@ class HordeWorkerProcessManager:
             return
 
         semaphore = asyncio.Semaphore(5)
+        # Log connection errors at DEBUG when user-info is also failing (internet/Horde is
+        # already known to be down).  Use WARNING only when user-info itself was last
+        # successful so the operator can distinguish real problems from expected offline noise.
+        conn_log_level = "DEBUG" if self._user_info_failed else "WARNING"
 
         async def _fetch_one(worker_id: str) -> dict[str, Any] | None:
             async with semaphore:
@@ -6543,11 +6558,16 @@ class HordeWorkerProcessManager:
                         "kudos_rewards": response.kudos_rewards,
                     }
                 except Exception as e:  # noqa: BLE001
-                    logger.warning(f"Failed to get details for worker {worker_id}: {e}")
+                    logger.log(conn_log_level, f"Failed to get details for worker {worker_id}: {e}")
                     return None
 
         results = await asyncio.gather(*(_fetch_one(str(wid)) for wid in worker_ids))
-        self._workers_details = [w for w in results if w is not None]
+        fetched = [w for w in results if w is not None]
+        # Only overwrite the cached list when at least one fetch succeeded.  If all fetches
+        # fail (e.g. internet / Horde is down) we keep the last known state so that the web
+        # UI continues to display worker cards rather than showing an empty list.
+        if fetched:
+            self._workers_details = fetched
 
     async def _delete_worker(self, worker_id: str) -> bool:
         """Delete a worker from the Horde via the API.
@@ -6594,6 +6614,19 @@ class HordeWorkerProcessManager:
                     worker_ids = getattr(self.user_info, "worker_ids", None)
                     if worker_ids is None:
                         await asyncio.sleep(1)
+                        continue
+                    # Skip the fetch when user-info is already failing (internet / Horde is
+                    # down).  Worker details would also fail, so avoid the extra noise and
+                    # wait for user-info to recover before retrying.  Sleep in 1-second
+                    # increments so a pending shutdown is not delayed by the full interval.
+                    if self._user_info_failed:
+                        remaining = float(self._api_get_workers_details_interval)
+                        while remaining > 0:
+                            if self.is_time_for_shutdown() or self._shut_down:
+                                return
+                            step = min(1.0, remaining)
+                            await asyncio.sleep(step)
+                            remaining -= step
                         continue
                     await self.api_get_workers_details()
                     if self.is_time_for_shutdown() or self._shut_down:
@@ -7607,7 +7640,7 @@ class HordeWorkerProcessManager:
         # current_job, e.g. a MODEL_PRELOADING job that is pending inference but not yet
         # dispatched to an active worker).
         job_queue = []
-        for job in list(self.jobs_pending_inference)[:MAX_WEBUI_QUEUE_ITEMS]:  # Limit to first N
+        for job in list(self.jobs_pending_inference):
             # Skip jobs that are already in progress or shown as current_job
             if job not in self.jobs_in_progress and job != _current_job_obj:
                 job_queue.append(
@@ -7648,6 +7681,14 @@ class HordeWorkerProcessManager:
                 )
             ):
                 model_name = "CLIP / DeepDanbooru"
+            process_job_id = (
+                str(process_info.last_job_referenced.id_.root)[:8]
+                if (
+                    process_info.last_job_referenced is not None
+                    and process_info.last_job_referenced.id_ is not None
+                )
+                else None
+            )
 
             processes.append(
                 {
@@ -7659,6 +7700,7 @@ class HordeWorkerProcessManager:
                     "type": process_info.process_type.name,
                     "state": process_info.last_process_state.name,
                     "model": model_name,
+                    "job_id": process_job_id,
                     "progress": process_info.last_heartbeat_percent_complete,
                     "batch_size": process_info.batch_amount,
                 },
@@ -7914,6 +7956,8 @@ class HordeWorkerProcessManager:
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
             last_image_submission_timestamp=self._last_image_job_timestamp,
+            last_image_model=self._last_image_model,
+            last_image_safety=self._last_image_safety,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
             errors_history=(
@@ -8057,6 +8101,60 @@ class HordeWorkerProcessManager:
     _restart_requested = False
     """If true, restart the current Python process after shutdown completes."""
 
+    def _cleanup_shared_resources(self) -> None:
+        """Explicitly release named POSIX semaphores before os.execv replaces the process.
+
+        ``os.execv`` replaces the current process image without running Python's atexit
+        handlers or ``__del__`` / ``util.Finalize`` callbacks.  Semaphores created with
+        the ``spawn`` multiprocessing context have named POSIX backing files in
+        ``/dev/shm``; without an explicit cleanup these names remain registered in the
+        shared resource-tracker subprocess, which then warns at shutdown:
+
+            resource_tracker: There appear to be N leaked semaphore objects to clean up
+
+        This method calls ``SemLock._cleanup(name)`` (``sem_unlink`` +
+        ``resource_tracker.unregister``) on each named semaphore / lock owned by this
+        process-manager instance, prevents the implicit ``join_thread()`` call on the
+        queue feeder thread at process exit (which would otherwise block), and closes any
+        open pipe connections so the process-map entries are properly released.
+        """
+        from multiprocessing.synchronize import SemLock
+
+        def _try_cleanup_sem(sem_or_lock: Any) -> None:
+            try:
+                name = sem_or_lock._semlock.name
+                if name is not None:
+                    SemLock._cleanup(name)
+            except Exception as exc:
+                logger.debug("Failed to clean up semaphore %r: %s", sem_or_lock, exc)
+
+        _try_cleanup_sem(self._inference_semaphore)
+        _try_cleanup_sem(self._vae_decode_semaphore)
+        _try_cleanup_sem(self._aux_model_lock)
+        _try_cleanup_sem(self._disk_lock)
+
+        # The process message queue also holds named semaphores (_sem, _rlock, _wlock)
+        # when the spawn start method is active.  Calling cancel_join_thread() prevents
+        # the implicit join_thread() at process exit from blocking; it does not stop or
+        # cancel the feeder thread itself.
+        q = self._process_message_queue
+        try:
+            q.cancel_join_thread()
+            q.close()
+        except Exception:
+            pass
+        for _attr in ("_sem", "_rlock", "_wlock"):
+            inner = getattr(q, _attr, None)
+            if inner is not None:
+                _try_cleanup_sem(inner)
+
+        # Close the parent-side pipe connections so child processes see EOF.
+        for _process_info in self._process_map.values():
+            try:
+                _process_info.pipe_connection.close()
+            except Exception:
+                pass
+
     def start(self) -> None:
         """Start the process manager."""
         import signal
@@ -8065,6 +8163,7 @@ class HordeWorkerProcessManager:
         asyncio.run(self._main_loop())
         if self._restart_requested:
             logger.warning("Restarting worker program...")
+            self._cleanup_shared_resources()
             try:
                 os.execv(sys.executable, [sys.executable, *sys.argv])
             except OSError as exc:

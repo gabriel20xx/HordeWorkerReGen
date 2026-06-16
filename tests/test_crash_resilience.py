@@ -502,6 +502,34 @@ class TestIdleHeartbeatTiming:
         assert proc._last_idle_heartbeat_time == send_time
 
 
+def test_start_calls_cleanup_before_execv_on_restart() -> None:
+    """start() must call _cleanup_shared_resources() before os.execv when restarting."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+    mock_manager.signal_handler = MagicMock()
+    mock_manager._main_loop = MagicMock(return_value=None)
+    mock_manager._restart_requested = True
+
+    call_order: list[str] = []
+    mock_manager._cleanup_shared_resources.side_effect = lambda: call_order.append("cleanup")
+
+    bound_start = HordeWorkerProcessManager.start.__get__(mock_manager, HordeWorkerProcessManager)
+
+    with (
+        patch("signal.signal"),
+        patch("asyncio.run"),
+        patch("os.execv", side_effect=lambda *_: call_order.append("execv")),
+        patch("horde_worker_regen.process_management.process_manager.logger"),
+    ):
+        bound_start()
+
+    mock_manager._cleanup_shared_resources.assert_called_once()
+    assert call_order == ["cleanup", "execv"], (
+        "_cleanup_shared_resources() must be called before os.execv()"
+    )
+
+
 def test_start_exits_cleanly_when_restart_exec_fails() -> None:
     """start() should log and exit cleanly when the restart execv call fails."""
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
@@ -1221,6 +1249,102 @@ class TestReceiveAndHandleProcessMessagesResilience(_ReceiveLoopHarnessMixin):
         mock_manager = self._run_receive(msg, process_info)
 
         mock_manager._process_map.on_model_ram_clear.assert_not_called()
+
+
+class TestSavedImagePreviewSafetyAlignment:
+    """Tests that saved-image previews only expose safety metadata when alignment is reliable."""
+
+    def test_saved_image_preview_clears_safety_when_saved_images_count_mismatches(self, tmp_path) -> None:
+        """Saved-image preview safety must be cleared when disk saves don't align with safety results."""
+        import queue as queue_mod
+        import types
+
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        from horde_worker_regen.process_management.messages import (
+            HordeImageResult,
+            HordeSafetyEvaluation,
+            HordeSafetyResultMessage,
+            HordeSavedImageInfo,
+        )
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        saved_path = tmp_path / "saved.png"
+        saved_bytes = b"preview-image"
+        saved_path.write_bytes(saved_bytes)
+
+        job_id = "12345678-1234-1234-1234-1234567890ab"
+        completed_job_info = MagicMock()
+        completed_job_info.sdk_api_job_info.id_ = job_id
+        completed_job_info.sdk_api_job_info.model = "stable_diffusion_xl"
+        completed_job_info.job_image_results = [
+            HordeImageResult(image_base64="img-a"),
+            HordeImageResult(image_base64="img-b"),
+        ]
+        completed_job_info.state = GENERATION_STATE.ok
+        completed_job_info.censored = False
+        completed_job_info.inference_completed_timestamp = 100.0
+
+        message = HordeSafetyResultMessage(
+            process_id=0,
+            process_launch_identifier=1,
+            info="saved images",
+            time_elapsed=0.1,
+            job_id=job_id,
+            safety_evaluations=[
+                HordeSafetyEvaluation(
+                    is_nsfw=False,
+                    is_csam=False,
+                    replacement_image_base64=None,
+                ),
+                HordeSafetyEvaluation(
+                    is_nsfw=True,
+                    is_csam=False,
+                    replacement_image_base64=None,
+                ),
+            ],
+            saved_images=[HordeSavedImageInfo(path=str(saved_path), metadata_embedded=True)],
+        )
+
+        process_info = MagicMock()
+        process_info.process_launch_identifier = 1
+        process_info.last_process_state = HordeProcessState.SAFETY_EVALUATING
+
+        process_map = MagicMock()
+        process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
+        process_map.__getitem__ = MagicMock(side_effect=lambda key: process_info)
+
+        q = queue_mod.Queue()
+        q.put(message)
+
+        mock_manager = MagicMock()
+        mock_manager._process_message_queue = q
+        mock_manager._process_map = process_map
+        mock_manager._in_deadlock = False
+        mock_manager._in_queue_deadlock = False
+        mock_manager.jobs_being_safety_checked = [completed_job_info]
+        mock_manager.job_faults = {job_id: []}
+        mock_manager.webui = MagicMock()
+        mock_manager._last_image_job_timestamp = 0.0
+        mock_manager._last_image_base64 = []
+        mock_manager._last_image_model = ""
+        mock_manager._last_image_safety = [{"is_nsfw": True, "is_csam": True}]
+        mock_manager.jobs_pending_submit = []
+        mock_manager._move_pending_process_timings_to_completed_job = MagicMock()
+
+        bound = types.MethodType(HordeWorkerProcessManager.receive_and_handle_process_messages, mock_manager)
+        bound()
+
+        assert mock_manager._last_image_base64 == ["cHJldmlldy1pbWFnZQ=="]
+        assert mock_manager._last_image_model == "stable_diffusion_xl"
+        assert mock_manager._last_image_safety == []
+        mock_manager.webui.add_gallery_image.assert_called_once_with(
+            {
+                "base64": "cHJldmlldy1pbWFnZQ==",
+                "timestamp": 100.0,
+                "model": "stable_diffusion_xl",
+            },
+        )
 
 
 class TestIsStuckOnInference:
