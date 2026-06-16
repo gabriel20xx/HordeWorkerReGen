@@ -150,8 +150,9 @@ def test_bridge_data_auto_restart_on_idle_env_var_too_large(monkeypatch: pytest.
     assert bridge_data.auto_restart_on_idle_minutes == 60
 
 
-def test_bridge_data_data_retention_days_default() -> None:
+def test_bridge_data_data_retention_days_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that data_retention_days defaults to 7."""
+    monkeypatch.delenv("AIWORKER_DATA_RETENTION_DAYS", raising=False)
     bridge_data = reGenBridgeData.model_validate({})
     assert bridge_data.data_retention_days == 7
 

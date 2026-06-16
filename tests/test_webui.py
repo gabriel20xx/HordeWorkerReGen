@@ -10,6 +10,12 @@ from loguru import logger
 from horde_worker_regen.webui.server import WorkerWebUI
 
 
+@pytest.fixture(autouse=True)
+def _clear_data_retention_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep tests hermetic by clearing AIWORKER_DATA_RETENTION_DAYS unless explicitly set."""
+    monkeypatch.delenv("AIWORKER_DATA_RETENTION_DAYS", raising=False)
+
+
 def test_webui_creation() -> None:
     """Test that WorkerWebUI can be instantiated."""
     webui = WorkerWebUI(port=0)  # Let OS assign a port
@@ -3671,6 +3677,37 @@ def test_webui_db_merges_capped_live_errors_with_persisted_history(tmp_path: pat
         "error_two",
         "error_three",
     ]
+
+
+def test_webui_db_caps_in_memory_persisted_errors_after_update(tmp_path: pathlib.Path) -> None:
+    """In-memory persisted errors should be capped immediately after prepending new errors."""
+    import time
+
+    from horde_worker_regen.webui.server import _MAX_PERSISTED_ERRORS
+
+    webui, _errors_db, _stats_db, _gallery_db = _make_db_webui(tmp_path)
+    webui._last_db_prune_time = time.time()
+    webui._persisted_errors = [f"old_{i}" for i in range(_MAX_PERSISTED_ERRORS)]
+    webui.update_status(errors_history=["new_error"])
+
+    assert len(webui._persisted_errors) == _MAX_PERSISTED_ERRORS
+    assert webui._persisted_errors[0] == "new_error"
+    assert webui._persisted_errors[-1] == f"old_{_MAX_PERSISTED_ERRORS - 2}"
+
+
+def test_webui_db_caps_merged_errors_history_to_memory_limit(tmp_path: pathlib.Path) -> None:
+    """Merged errors_history should remain capped to the existing memory-safety limit."""
+    from horde_worker_regen.webui.server import _MAX_PERSISTED_ERRORS
+
+    webui, _errors_db, _stats_db, _gallery_db = _make_db_webui(tmp_path)
+    live_errors = [f"live_{i}" for i in range(_MAX_PERSISTED_ERRORS)]
+    webui._live_errors_history = list(live_errors)
+    webui._persisted_errors = [f"persisted_{i}" for i in range(_MAX_PERSISTED_ERRORS)]
+
+    webui.update_status(errors_history=live_errors)
+
+    assert len(webui.status_data["errors_history"]) == _MAX_PERSISTED_ERRORS
+    assert webui.status_data["errors_history"] == live_errors
 
 
 def test_webui_db_persists_stats_snapshot(tmp_path: pathlib.Path) -> None:

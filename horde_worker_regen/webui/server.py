@@ -522,7 +522,7 @@ class WorkerWebUI:
         """Merge current-session errors with persisted history without duplicating overlap."""
         persisted_errors = getattr(self, "_persisted_errors", [])
         overlap = self._history_overlap_len(live_errors, persisted_errors)
-        return list(live_errors) + persisted_errors[overlap:]
+        return (list(live_errors) + persisted_errors[overlap:])[:_MAX_PERSISTED_ERRORS]
 
     def _restore_persisted_collections(self) -> None:
         """Populate :attr:`_gallery_dict` and :attr:`_stats_snapshots` from persisted data."""
@@ -5831,7 +5831,9 @@ class WorkerWebUI:
                                 [(msg, now) for msg in reversed(new_errors)],
                             )
                             conn.commit()
-                        self._persisted_errors = list(new_errors) + getattr(self, "_persisted_errors", [])
+                        self._persisted_errors = (
+                            list(new_errors) + getattr(self, "_persisted_errors", [])
+                        )[:_MAX_PERSISTED_ERRORS]
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(f"Could not persist errors to database: {exc}")
                 self.status_data["errors_history"] = self._merge_errors_history(live_errors)
