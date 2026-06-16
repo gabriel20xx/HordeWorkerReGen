@@ -2,6 +2,13 @@
 
 BRIDGE_CONFIG_FILENAME = "bridgeData.yaml"
 
+WEBUI_MODEL_STATE_FILENAME = "webui_model_state.json"
+"""File used to persist the WebUI enabled/disabled model selections across restarts.
+
+The path can be overridden with the ``AIWORKER_WEBUI_MODEL_STATE_FILE`` environment variable.
+By default the file is written to the current working directory.
+"""
+
 VERSION_META_REMOTE_URL = (
     "https://raw.githubusercontent.com/Haidra-Org/horde-worker-reGen/main/horde_worker_regen/_version_meta.json"
 )
