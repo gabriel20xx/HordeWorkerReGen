@@ -132,6 +132,27 @@ docker run -it --device=/dev/kfd --device=/dev/dri --group-add video horde-worke
 - The entrypoint script (`entrypoint.sh`) automatically detects the GPU environment (CUDA or ROCm) and sets up accordingly.
 - If `bridgeData.yaml` exists in the container, it will be used for configuration. Otherwise, environment variables will be used.
 - By default, the container will attempt to update the repository from GitHub on startup. Set `AUTO_UPDATE=false` to disable this behavior if running in an environment without internet access.
+- If no `models_to_load` are configured, the worker will start with **all available models enabled** by default. You can then use the WebUI settings page to disable individual models.
+
+### Persisting WebUI model enable/disable state across restarts
+
+The worker saves which models you have enabled or disabled via the WebUI to a small SQLite database (`config/webui_model_state.db`) in its working directory.  To keep these settings when the container is recreated, mount the file (or its parent directory) as a Docker volume:
+
+```yaml
+volumes:
+  - ${AIWORKER_CACHE_HOME:-../models/}:/horde-worker-reGen/models/
+  - ${AIWORKER_BRIDGE_DATA_LOCATION:-../bridgeData.yaml}:/horde-worker-reGen/bridgeData.yaml:ro
+  - ${AIWORKER_LOGS_DIR:-../logs/}:/horde-worker-reGen/logs/
+  - ../config/:/horde-worker-reGen/config/  # persist model on/off state
+```
+
+You can also point to a different path with the `AIWORKER_WEBUI_MODEL_STATE_FILE` environment variable:
+
+```
+AIWORKER_WEBUI_MODEL_STATE_FILE=/some/persistent/path/webui_model_state.db
+```
+
+> **Note**: Environment variable overrides (`AIWORKER_MODELS_TO_LOAD`, `AIWORKER_MODELS_TO_SKIP`) always take precedence over the state file.  Models excluded by those variables will not be affected by the WebUI state.
 
 ### Setting config by environment variables
 

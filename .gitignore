@@ -22,6 +22,11 @@ micromamba.tar.bz2
 info/
 library/
 
+# Runtime state files (written by the worker, not committed)
+webui_model_state.json
+webui_model_state.db
+config/webui_model_state.db
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -184,3 +189,8 @@ hf_transformers/*
 horde_model_reference/*
 custom_models.json
 .abort
+
+# WebUI model state persistence (runtime-generated; must not be committed)
+config/webui_model_state.db
+webui_model_state.db
+webui_model_state.json

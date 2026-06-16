@@ -1782,27 +1782,171 @@ def test_end_inference_processes_does_not_skip_scale_down_with_pending_queue() -
 
 
 def test_end_inference_processes_ignores_already_ending_slots_for_scale_down() -> None:
-    """Scale-down should not repeatedly target slots already in PROCESS_ENDING."""
+    """Scale-down should not re-target a slot that is already being ended."""
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
     manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
     manager._shutting_down = False
-    manager._max_inference_processes = 1
+    manager._max_inference_processes = 2
     manager._max_active_models_override = None
     manager.jobs_pending_inference = []
     manager.jobs_in_progress = []
     manager.get_processes_with_model_for_queued_job = MagicMock(return_value=[])
     manager._end_inference_process = MagicMock()
 
+    process_to_kill = MagicMock()
     process_map = MagicMock()
-    process_map.num_loaded_inference_processes.return_value = 1
-    # Deliberately set num_inference_processes > max so that if the code accidentally
-    # uses num_inference_processes() instead of num_loaded_inference_processes() it
-    # would NOT return early and would call _end_inference_process, failing the assertion.
-    process_map.num_inference_processes.return_value = 2
-    process_map._get_first_inference_process_to_kill.return_value = MagicMock()
+    process_map.num_loaded_inference_processes.return_value = 3
+    process_map._get_first_inference_process_to_kill.return_value = process_to_kill
     manager._process_map = process_map
 
+    # First call kills one process.
     manager.end_inference_processes()
+    manager._end_inference_process.assert_called_once_with(process_to_kill)
 
+    # Simulate the killed slot now being in PROCESS_ENDING state — kill-selection
+    # returns None because no eligible process remains.
+    process_map._get_first_inference_process_to_kill.return_value = None
+    manager._end_inference_process.reset_mock()
+
+    # Second call should not try to end another process.
+    manager.end_inference_processes()
     manager._end_inference_process.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# WebUI model state file persistence tests
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_manager_for_model_state() -> "HordeWorkerProcessManager":
+    """Return a minimal HordeWorkerProcessManager instance with model-state attrs."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+    manager._all_models_configured = ["Model A", "Model B", "Model C"]
+    manager._runtime_disabled_models = set()
+    manager.bridge_data = SimpleNamespace(
+        image_models_to_load=["Model A", "Model B", "Model C"],
+    )
+    return manager
+
+
+def _write_model_state_db(path: str, disabled_models: list) -> None:
+    """Write a model-state SQLite database with the given disabled models list."""
+    import sqlite3
+
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS disabled_models (model_name TEXT PRIMARY KEY)")
+        conn.executemany("INSERT INTO disabled_models (model_name) VALUES (?)", [(m,) for m in disabled_models])
+        conn.commit()
+
+
+def _read_model_state_db(path: str) -> list:
+    """Return the sorted list of disabled model names from a model-state SQLite database."""
+    import sqlite3
+
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute("SELECT model_name FROM disabled_models ORDER BY model_name").fetchall()
+    return [row[0] for row in rows]
+
+
+def test_load_model_state_file_no_file(tmp_path) -> None:
+    """When no state database exists all models remain enabled (default)."""
+    manager = _make_minimal_manager_for_model_state()
+    state_file = str(tmp_path / "webui_model_state.db")
+
+    with patch.dict(os.environ, {"AIWORKER_WEBUI_MODEL_STATE_FILE": state_file}):
+        manager._load_model_state_file()
+
+    assert manager._runtime_disabled_models == set()
+    assert manager.bridge_data.image_models_to_load == ["Model A", "Model B", "Model C"]
+
+
+def test_load_model_state_file_restores_disabled(tmp_path) -> None:
+    """Models listed as disabled in the state database are disabled on load."""
+    state_file = str(tmp_path / "webui_model_state.db")
+    _write_model_state_db(state_file, ["Model A", "Model C"])
+
+    manager = _make_minimal_manager_for_model_state()
+
+    with patch.dict(os.environ, {"AIWORKER_WEBUI_MODEL_STATE_FILE": state_file}):
+        manager._load_model_state_file()
+
+    assert manager._runtime_disabled_models == {"Model A", "Model C"}
+    assert manager.bridge_data.image_models_to_load == ["Model B"]
+
+
+def test_load_model_state_file_env_var_override(tmp_path) -> None:
+    """Models absent from _all_models_configured (e.g. removed by env var) are not re-disabled."""
+    state_file = str(tmp_path / "webui_model_state.db")
+    # State database tries to disable Model D, but that model was removed by an env var.
+    _write_model_state_db(state_file, ["Model A", "Model D"])
+
+    manager = _make_minimal_manager_for_model_state()
+    # Model D was removed from the configured list by an env-var override.
+    manager._all_models_configured = ["Model A", "Model B", "Model C"]
+
+    with patch.dict(os.environ, {"AIWORKER_WEBUI_MODEL_STATE_FILE": state_file}):
+        manager._load_model_state_file()
+
+    # Model D ignored; Model A disabled as requested.
+    assert manager._runtime_disabled_models == {"Model A"}
+    assert "Model D" not in manager.bridge_data.image_models_to_load
+    assert "Model B" in manager.bridge_data.image_models_to_load
+    assert "Model C" in manager.bridge_data.image_models_to_load
+
+
+def test_save_model_state_file(tmp_path) -> None:
+    """_save_model_state_file writes the current disabled set to the database."""
+    manager = _make_minimal_manager_for_model_state()
+    manager._runtime_disabled_models = {"Model B"}
+
+    state_file = str(tmp_path / "webui_model_state.db")
+    with patch.dict(os.environ, {"AIWORKER_WEBUI_MODEL_STATE_FILE": state_file}):
+        manager._save_model_state_file()
+
+    assert _read_model_state_db(state_file) == ["Model B"]
+
+
+def test_toggle_model_persists_state(tmp_path) -> None:
+    """Toggling a model via _toggle_model saves the new state to the database."""
+    manager = _make_minimal_manager_for_model_state()
+    state_file = str(tmp_path / "webui_model_state.db")
+
+    with patch.dict(os.environ, {"AIWORKER_WEBUI_MODEL_STATE_FILE": state_file}):
+        manager._toggle_model("Model A", False)
+        assert _read_model_state_db(state_file) == ["Model A"]
+
+        manager._toggle_model("Model A", True)
+        assert _read_model_state_db(state_file) == []
+
+
+def test_refresh_model_state_saves_file(tmp_path) -> None:
+    """_refresh_model_configuration_state_after_reload saves the reconciled state."""
+    manager = _make_minimal_manager_for_model_state()
+    manager._runtime_disabled_models = {"Model A", "Removed Model"}
+    manager.bridge_data = SimpleNamespace(
+        image_models_to_load=["Model A", "Model B"],
+    )
+
+    state_file = str(tmp_path / "webui_model_state.db")
+    with patch.dict(os.environ, {"AIWORKER_WEBUI_MODEL_STATE_FILE": state_file}):
+        manager._refresh_model_configuration_state_after_reload()
+
+    # "Removed Model" was not in image_models_to_load so it is dropped.
+    assert manager._runtime_disabled_models == {"Model A"}
+    assert _read_model_state_db(state_file) == ["Model A"]
+
+
+def test_load_model_state_file_all_enabled_by_default(tmp_path) -> None:
+    """With an empty disabled_models table, all models remain enabled."""
+    state_file = str(tmp_path / "webui_model_state.db")
+    _write_model_state_db(state_file, [])
+
+    manager = _make_minimal_manager_for_model_state()
+    with patch.dict(os.environ, {"AIWORKER_WEBUI_MODEL_STATE_FILE": state_file}):
+        manager._load_model_state_file()
+
+    assert manager._runtime_disabled_models == set()
+    assert manager.bridge_data.image_models_to_load == ["Model A", "Model B", "Model C"]

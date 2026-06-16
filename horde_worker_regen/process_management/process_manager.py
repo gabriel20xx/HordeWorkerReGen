@@ -11,6 +11,7 @@ import os
 import queue
 import random
 import re
+import sqlite3
 import ssl
 import sys
 import time
@@ -70,6 +71,7 @@ from horde_worker_regen.consts import (
     KNOWN_SLOW_WORKFLOWS,
     MAX_SOURCE_IMAGE_RETRIES,
     VRAM_HEAVY_MODELS,
+    WEBUI_MODEL_STATE_FILENAME,
 )
 from horde_worker_regen.logger_config import create_level_format_function
 from horde_worker_regen.process_management._aliased_types import ProcessQueue
@@ -1792,6 +1794,12 @@ class HordeWorkerProcessManager:
         self._all_models_configured: list[str] = list(bridge_data.image_models_to_load)
         self._runtime_disabled_models: set[str] = set()
 
+        # Restore any model enable/disable choices the user made via the WebUI in a
+        # previous session.  This must run after _all_models_configured is set so
+        # that env-variable overrides (models absent from the configured list) are
+        # automatically respected.
+        self._load_model_state_file()
+
         self.horde_model_reference_manager = horde_model_reference_manager
 
         # Initialize HTTP client session as None - will be set in _main_loop
@@ -2241,11 +2249,90 @@ class HordeWorkerProcessManager:
         setattr(self.bridge_data, key, value)
         logger.info(f"Runtime setting '{key}' changed to {value!r} via web UI")
 
+    def _get_model_state_file_path(self) -> str:
+        """Return the path to the WebUI model state database.
+
+        The location can be customised with the ``AIWORKER_WEBUI_MODEL_STATE_FILE``
+        environment variable.  When not set the database is placed at
+        ``config/webui_model_state.db`` relative to the current working directory
+        (i.e. ``/horde-worker-reGen/config/webui_model_state.db`` inside Docker).
+        """
+        return os.getenv("AIWORKER_WEBUI_MODEL_STATE_FILE") or WEBUI_MODEL_STATE_FILENAME
+
+    def _load_model_state_file(self) -> None:
+        """Load the persisted WebUI model state from the SQLite database and apply it.
+
+        Models listed as disabled in the database are added to
+        ``_runtime_disabled_models`` and removed from
+        ``bridge_data.image_models_to_load``, **but only when they are already
+        present in ``_all_models_configured``**.  Any model that was removed
+        from the configured list by an environment variable or config change is
+        silently ignored, so environment-variable overrides always take
+        precedence.
+
+        If the database does not exist (e.g., first run) all models remain
+        enabled, which is the intended default behaviour.
+        """
+        state_path = self._get_model_state_file_path()
+        if not os.path.exists(state_path):
+            return
+
+        try:
+            with sqlite3.connect(state_path) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS disabled_models (model_name TEXT PRIMARY KEY)",
+                )
+                rows = conn.execute("SELECT model_name FROM disabled_models").fetchall()
+            disabled = [row[0] for row in rows if isinstance(row[0], str)]
+        except Exception as exc:
+            logger.warning(f"Could not read WebUI model state database '{state_path}': {exc}")
+            return
+
+        configured_set = set(self._all_models_configured)
+        applied: list[str] = []
+        for model in disabled:
+            if model not in configured_set:
+                # Model was removed by env-var / config — honour that override.
+                continue
+            self._runtime_disabled_models.add(model)
+            if model in self.bridge_data.image_models_to_load:
+                self.bridge_data.image_models_to_load.remove(model)
+            applied.append(model)
+
+        if applied:
+            logger.info(
+                f"WebUI model state restored from '{state_path}': "
+                f"{len(applied)} model(s) disabled: {applied}",
+            )
+
+    def _save_model_state_file(self) -> None:
+        """Persist the current WebUI model disabled state to the SQLite database.
+
+        The database records only which models are currently disabled so that the
+        selection survives a container restart.
+        """
+        state_path = self._get_model_state_file_path()
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(state_path)), exist_ok=True)
+            with sqlite3.connect(state_path) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS disabled_models (model_name TEXT PRIMARY KEY)",
+                )
+                conn.execute("DELETE FROM disabled_models")
+                conn.executemany(
+                    "INSERT INTO disabled_models (model_name) VALUES (?)",
+                    [(name,) for name in sorted(self._runtime_disabled_models)],
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning(f"Could not save WebUI model state to '{state_path}': {exc}")
+
     def _toggle_model(self, model_name: str, enabled: bool) -> None:
         """Toggle a model's enabled state for job pops at runtime.
 
         When a model is disabled it is removed from ``bridge_data.image_models_to_load``
         so it will not be included in future job pop requests.  Re-enabling adds it back.
+        The new state is persisted to the WebUI model state file so it survives restarts.
 
         Args:
             model_name: The model name to toggle.
@@ -2262,6 +2349,8 @@ class HordeWorkerProcessManager:
                 self.bridge_data.image_models_to_load.remove(model_name)
             logger.info(f"Model '{model_name}' disabled via web UI")
 
+        self._save_model_state_file()
+
     def _refresh_model_configuration_state_after_reload(self) -> None:
         """Reconcile model UI/runtime state after bridge-data reload."""
         configured_models = list(self.bridge_data.image_models_to_load)
@@ -2271,6 +2360,7 @@ class HordeWorkerProcessManager:
         self.bridge_data.image_models_to_load = [
             model for model in configured_models if model not in self._runtime_disabled_models
         ]
+        self._save_model_state_file()
 
     def _get_settings_snapshot(self) -> dict[str, object]:
         """Return a flat dict of the current values of all runtime-configurable settings.

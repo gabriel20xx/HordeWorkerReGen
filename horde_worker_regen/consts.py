@@ -2,6 +2,13 @@
 
 BRIDGE_CONFIG_FILENAME = "bridgeData.yaml"
 
+#: SQLite database used to persist the WebUI enabled/disabled model selections across restarts.
+#:
+#: The path can be overridden with the ``AIWORKER_WEBUI_MODEL_STATE_FILE`` environment variable.
+#: By default the file is written to ``config/webui_model_state.db`` relative to the current working
+#: directory (i.e. ``/horde-worker-reGen/config/webui_model_state.db`` inside Docker).
+WEBUI_MODEL_STATE_FILENAME = "config/webui_model_state.db"
+
 VERSION_META_REMOTE_URL = (
     "https://raw.githubusercontent.com/Haidra-Org/horde-worker-reGen/main/horde_worker_regen/_version_meta.json"
 )
