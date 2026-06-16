@@ -184,10 +184,24 @@ class WorkerWebUI:
         if _env_days is not None:
             try:
                 _parsed = int(_env_days)
-                if 1 <= _parsed <= 3650:
-                    data_retention_days = _parsed
             except (ValueError, TypeError):
-                pass
+                logger.warning(
+                    f"AIWORKER_DATA_RETENTION_DAYS environment variable has an invalid value: '{_env_days}'. "
+                    "It must be a positive integer. Ignoring.",
+                )
+            else:
+                if _parsed < 1:
+                    logger.warning(
+                        f"AIWORKER_DATA_RETENTION_DAYS environment variable has an out-of-range value: {_parsed}. "
+                        "It must be >= 1. Ignoring.",
+                    )
+                elif _parsed > 3650:
+                    logger.warning(
+                        f"AIWORKER_DATA_RETENTION_DAYS environment variable has an out-of-range value: {_parsed}. "
+                        "It must be <= 3650. Ignoring.",
+                    )
+                else:
+                    data_retention_days = _parsed
         self._data_retention_days: int = max(1, min(3650, int(data_retention_days)))
         # Unix timestamp of the last database pruning run (0 = never pruned).
         self._last_db_prune_time: float = 0.0

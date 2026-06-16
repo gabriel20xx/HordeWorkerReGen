@@ -5,6 +5,7 @@ import pathlib
 
 import aiohttp
 import pytest
+from loguru import logger
 
 from horde_worker_regen.webui.server import WorkerWebUI
 
@@ -3890,6 +3891,32 @@ def test_webui_data_retention_days_clamped_to_declared_max() -> None:
 
     webui.set_data_retention_days(6000)
     assert webui._data_retention_days == 3650
+
+
+@pytest.mark.parametrize(
+    ("env_value", "expected_message"),
+    [
+        ("not_a_number", "AIWORKER_DATA_RETENTION_DAYS environment variable has an invalid value"),
+        ("0", "AIWORKER_DATA_RETENTION_DAYS environment variable has an out-of-range value: 0"),
+        ("3651", "AIWORKER_DATA_RETENTION_DAYS environment variable has an out-of-range value: 3651"),
+    ],
+)
+def test_webui_invalid_data_retention_env_var_logs_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str,
+    expected_message: str,
+) -> None:
+    """Invalid AIWORKER_DATA_RETENTION_DAYS overrides should log a warning and fall back."""
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, format="{message}")
+    monkeypatch.setenv("AIWORKER_DATA_RETENTION_DAYS", env_value)
+    try:
+        webui = WorkerWebUI(port=0, data_retention_days=7)
+    finally:
+        logger.remove(sink_id)
+
+    assert webui._data_retention_days == 7
+    assert any(expected_message in message for message in messages)
 
 
 def test_webui_db_prune_failure_still_updates_last_attempt_time(
