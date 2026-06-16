@@ -178,7 +178,7 @@ if sys.version_info[:2] == (3, 10):
 
 
 def _remove_awaiting_request(session: "AIHordeAPIAsyncClientSession | None", request: object) -> None:
-    """Remove a stuck request from the SDK session's ``_awaiting_requests`` list.
+    """Remove a stuck request from the SDK session's ``_awaiting_requests`` container.
 
     The SDK's ``GenericAsyncHordeAPISession.submit_request`` has no ``try/finally``,
     so when the coroutine is cancelled (e.g. by ``asyncio.wait_for`` on timeout) or
@@ -189,12 +189,15 @@ def _remove_awaiting_request(session: "AIHordeAPIAsyncClientSession | None", req
     """
     if session is None:
         return
-    awaiting: list | None = getattr(session, "_awaiting_requests", None)
+    awaiting = getattr(session, "_awaiting_requests", None)
     if awaiting is None:
         return
+    remove = getattr(awaiting, "remove", None)
+    if not callable(remove):
+        return
     try:
-        awaiting.remove(request)
-    except (ValueError, AttributeError):
+        remove(request)
+    except (ValueError, KeyError):
         pass
 
 
@@ -4604,10 +4607,10 @@ class HordeWorkerProcessManager:
                     ),
                     timeout=10 + 1,
                 )
-            except _async_client_exceptions:
-                logger.error(f"Job {new_submit.job_id} submission timed out")
-                # asyncio.wait_for cancels submit_request on timeout, leaving the request
-                # stuck in _awaiting_requests.  Remove it to suppress exit warnings.
+            except _async_client_exceptions as e:
+                logger.error(f"Job {new_submit.job_id} submission failed with {type(e).__name__}: {e}")
+                # asyncio.wait_for can cancel submit_request, and other client/OS failures can
+                # abort it before the SDK removes the request from _awaiting_requests.
                 _remove_awaiting_request(self.horde_client_session, submit_job_request)
                 new_submit.retry()
                 return new_submit
