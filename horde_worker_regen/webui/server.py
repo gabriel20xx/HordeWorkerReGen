@@ -291,7 +291,7 @@ class WorkerWebUI:
         self._next_gallery_id: int = 0
 
         # Ring buffer for time-series statistics snapshots served by /api/stats.
-        self._stats_snapshots: list[dict[str, float | int]] = []
+        self._stats_snapshots: list[dict[str, Any]] = []
         # Unix timestamp of the most recently recorded snapshot (0 = none yet).
         self._last_stats_snapshot_time: float = 0.0
 
@@ -432,7 +432,7 @@ class WorkerWebUI:
         cutoff = self._cutoff_timestamp()
         self._persisted_errors: list[str] = []
         self._persisted_gallery: list[dict[str, Any]] = []
-        self._persisted_stats: list[dict[str, float | int]] = []
+        self._persisted_stats: list[dict[str, Any]] = []
         # Max gallery_id across ALL rows (not just within retention) so _next_gallery_id
         # stays unique even when no in-retention rows are loaded at startup.
         self._persisted_max_gallery_id: int = -1
