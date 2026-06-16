@@ -5293,6 +5293,82 @@ class TestResultSubmittingStuckRecovery:
 
         assert proc_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
 
+    def test_retry_success_records_reward_and_kudos_rate(self) -> None:
+        """A retried submit must store the eventual successful reward values."""
+        import asyncio
+        import io
+
+        from horde_sdk.ai_horde_api import GENERATION_STATE
+
+        from horde_worker_regen.process_management.process_manager import (
+            HordeWorkerProcessManager,
+            JobSubmitState,
+            PendingSubmitJob,
+        )
+
+        manager, proc_info = self._make_submit_manager(0)
+        base_submit = self._make_new_submit(proc_info)
+        base_submit.completed_job_info.state = GENERATION_STATE.ok
+        image_result = MagicMock()
+        image_result.image_base64 = "ignored"
+        image_result.generation_faults = []
+        base_submit.completed_job_info.job_image_results = [image_result]
+        base_submit.completed_job_info.time_to_generate = 4.0
+        base_submit.completed_job_info.censored = False
+        base_submit.completed_job_info.sdk_api_job_info.model = "test-model"
+        base_submit.completed_job_info.sdk_api_job_info.ids = ["job-1"]
+        base_submit.completed_job_info.sdk_api_job_info.r2_uploads = ["https://example.com/upload"]
+        new_submit = PendingSubmitJob.model_construct(
+            completed_job_info=base_submit.completed_job_info,
+            gen_iter=0,
+            state=JobSubmitState.PENDING,
+            kudos_reward=0,
+            kudos_per_second=0.0,
+        )
+        manager.bridge_data.api_key = "test-key"
+        manager.base64_image_to_stream_buffer.return_value = io.BytesIO(b"image-bytes")
+        manager.kudos_generated_this_session = 0
+        manager.kudos_events = []
+        manager.image_events = []
+        manager._images_per_model = {}
+        manager._num_job_slowdowns = 0
+        manager._num_jobs_faulted = 0
+        manager._job_pop_timestamps_lock = asyncio.Lock()
+        manager.job_pop_timestamps = {}
+
+        class _UploadResponse:
+            status = 200
+
+            async def __aenter__(self) -> "_UploadResponse":
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+                return None
+
+        manager._aiohttp_client_session.put.return_value = _UploadResponse()
+
+        async def _fail_then_succeed(*args, **kwargs) -> object:  # noqa: ANN002, ANN003
+            if not hasattr(_fail_then_succeed, "called"):
+                _fail_then_succeed.called = True
+                raise asyncio.TimeoutError
+
+            response = MagicMock()
+            response.reward = 12
+            return response
+
+        manager.horde_client_session.submit_request.side_effect = _fail_then_succeed
+
+        bound = HordeWorkerProcessManager.submit_single_generation.__get__(manager, HordeWorkerProcessManager)
+
+        first_attempt = asyncio.run(bound(new_submit))
+        assert first_attempt.is_finished is False
+
+        second_attempt = asyncio.run(bound(first_attempt))
+        assert second_attempt.is_finished is True
+        assert second_attempt.is_faulted is False
+        assert second_attempt.kudos_reward == 12
+        assert second_attempt.kudos_per_second == 3.0
+
     def test_manager_state_change_buffers_waiting_timing(self) -> None:
         """Manager-initiated WAITING_FOR_JOB transitions must buffer elapsed time."""
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
