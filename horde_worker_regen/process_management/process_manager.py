@@ -8071,8 +8071,9 @@ class HordeWorkerProcessManager:
 
         This method calls ``SemLock._cleanup(name)`` (``sem_unlink`` +
         ``resource_tracker.unregister``) on each named semaphore / lock owned by this
-        process-manager instance, cancels the queue feeder thread, and closes any open
-        pipe connections so the process-map entries are properly released.
+        process-manager instance, prevents the implicit ``join_thread()`` call on the
+        queue feeder thread at process exit (which would otherwise block), and closes any
+        open pipe connections so the process-map entries are properly released.
         """
         from multiprocessing.synchronize import SemLock
 
@@ -8081,8 +8082,8 @@ class HordeWorkerProcessManager:
                 name = sem_or_lock._semlock.name
                 if name is not None:
                     SemLock._cleanup(name)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to clean up semaphore %r: %s", sem_or_lock, exc)
 
         _try_cleanup_sem(self._inference_semaphore)
         _try_cleanup_sem(self._vae_decode_semaphore)
@@ -8090,8 +8091,9 @@ class HordeWorkerProcessManager:
         _try_cleanup_sem(self._disk_lock)
 
         # The process message queue also holds named semaphores (_sem, _rlock, _wlock)
-        # when the spawn start method is active.  Cancel the feeder thread first so the
-        # queue does not block, then clean up the internal lock objects.
+        # when the spawn start method is active.  Calling cancel_join_thread() prevents
+        # the implicit join_thread() at process exit from blocking; it does not stop or
+        # cancel the feeder thread itself.
         q = self._process_message_queue
         try:
             q.cancel_join_thread()
