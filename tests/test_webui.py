@@ -3589,10 +3589,7 @@ def test_webui_db_persists_only_new_errors(tmp_path: pathlib.Path) -> None:
     with sqlite3.connect(errors_db) as conn:
         count = conn.execute("SELECT COUNT(*) FROM errors_log").fetchone()[0]
 
-    # Total 3 rows: 1 (first update) + 1 (new on second) wait, both from first update=1, new on second=1
-    # Actually first update inserts 2 - 0 = 2 errors? No: first call has len=1, _errors_db_persisted_len=0
-    # so new_count = 1 - 0 = 1 → inserts "error_a"
-    # Second call has len=2, _errors_db_persisted_len=1 → new_count = 2 - 1 = 1 → inserts "error_b"
+    # First call inserts 1 new error ("error_a"); second call inserts 1 new error ("error_b").
     assert count == 2
 
 

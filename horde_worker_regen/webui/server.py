@@ -418,7 +418,7 @@ class WorkerWebUI:
             with sqlite3.connect(self._gallery_db_path) as conn:
                 rows = conn.execute(
                     "SELECT gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json "
-                    "FROM gallery_images WHERE timestamp >= ? ORDER BY timestamp ASC",
+                    "FROM gallery_images WHERE timestamp >= ? ORDER BY timestamp ASC, id ASC",
                     (cutoff,),
                 ).fetchall()
                 for row in rows:
@@ -504,6 +504,8 @@ class WorkerWebUI:
         """Delete database rows older than the configured retention period."""
         if self._errors_db_path is None:
             return
+        assert self._stats_db_path is not None
+        assert self._gallery_db_path is not None
         cutoff = self._cutoff_timestamp()
         pruned = False
         try:
@@ -4932,7 +4934,7 @@ class WorkerWebUI:
             self._stats_snapshots = self._stats_snapshots[-_MAX_STATS_SNAPSHOTS:]
 
         # Persist to database.
-        if self._errors_db_path is not None:
+        if self._stats_db_path is not None:
             try:
                 with sqlite3.connect(self._stats_db_path) as conn:
                     conn.execute(
@@ -5508,7 +5510,7 @@ class WorkerWebUI:
         self.status_data["images_count"] = len(self._gallery_dict)
 
         # Persist to database.
-        if self._errors_db_path is not None:
+        if self._gallery_db_path is not None:
             _known_cols = {"gallery_id", "timestamp", "model", "base64", "thumbnail", "is_nsfw", "is_csam"}
             extra = {k: v for k, v in entry.items() if k not in _known_cols}
             try:

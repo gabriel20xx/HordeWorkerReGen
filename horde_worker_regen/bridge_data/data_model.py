@@ -143,7 +143,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
     When set, this overrides the startup-derived value (max_threads + queue_size).
     """
 
-    data_retention_days: int = Field(default=7, ge=1, le=3650)
+    data_retention_days: int = Field(default=7, ge=1, le=3650, validate_default=True)
     """Number of days to retain errors, statistics snapshots, and gallery entries in the SQLite database.
 
     Can also be configured via the AIWORKER_DATA_RETENTION_DAYS environment variable.
