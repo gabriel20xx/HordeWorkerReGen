@@ -2018,6 +2018,10 @@ class HordeWorkerProcessManager:
         """The last generated images in base64 format for webui preview (supports batch jobs)."""
         self._last_image_job_timestamp: float = 0.0
         """Timestamp when the last preview image was set, to prevent older jobs from overwriting newer ones."""
+        self._last_image_model: str = ""
+        """Model name used for the last preview image."""
+        self._last_image_safety: list[dict] = []
+        """Per-image safety flags (is_nsfw, is_csam) for the last preview images."""
         self._console_logs: list[str] = []
         """Recent console logs for webui display."""
         self._log_handler_id: int | None = None
@@ -3603,6 +3607,22 @@ class HordeWorkerProcessManager:
                                 images_base64.append(base64.b64encode(image_data).decode("utf-8"))
                         self._last_image_base64 = images_base64
                         self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                        self._last_image_model = (
+                            completed_job_info.sdk_api_job_info.model
+                            if completed_job_info.sdk_api_job_info
+                            else ""
+                        ) or ""
+                        self._last_image_safety = [
+                            {
+                                "is_nsfw": message.safety_evaluations[i].is_nsfw
+                                if i < len(message.safety_evaluations)
+                                else False,
+                                "is_csam": message.safety_evaluations[i].is_csam
+                                if i < len(message.safety_evaluations)
+                                else False,
+                            }
+                            for i in range(len(images_base64))
+                        ]
                         # Add each image to the WebUI gallery
                         for img_idx, img_b64 in enumerate(images_base64):
                             safety_eval = (
@@ -7909,6 +7929,8 @@ class HordeWorkerProcessManager:
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
             last_image_submission_timestamp=self._last_image_job_timestamp,
+            last_image_model=self._last_image_model,
+            last_image_safety=self._last_image_safety,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
             errors_history=(

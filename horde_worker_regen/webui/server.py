@@ -168,6 +168,8 @@ class WorkerWebUI:
             "user_kudos_total": 0.0,
             "last_image_base64": [],
             "last_image_submission_timestamp": 0.0,
+            "last_image_model": "",
+            "last_image_safety": [],
             "console_logs": [],
             "faulted_jobs_history": [],
             "errors_history": [],
@@ -1109,7 +1111,7 @@ class WorkerWebUI:
                             <div id="overview-current-job" class="centered-empty-container"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128444; Last Result</span><span id="overview-image-time" style="margin-left:auto;font-size:0.75rem;color:#94a3b8;"></span></div>
+                            <div class="card-header"><span class="card-title">&#128444; Last Result</span><span id="overview-image-model" style="margin-left:auto;font-size:0.75rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%;text-align:right;"></span><span id="overview-image-time" style="margin-left:6px;font-size:0.75rem;color:#94a3b8;flex-shrink:0;white-space:nowrap;"></span></div>
                             <div id="overview-image-container" class="last-image-container"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
                         </div>
                     </div>
@@ -2491,7 +2493,7 @@ class WorkerWebUI:
             // from the beginning is not reliable. The timestamp changes whenever new images arrive.
             return rawB64.length + ':' + (timestamp || 0);
         }
-        function renderLastImages(rawB64, oic, timestamp) {
+        function renderLastImages(rawB64, oic, timestamp, model, safety) {
             const key = _getImageKey(rawB64, timestamp);
             if (key === _lastRenderedImageKey) return;
             _lastRenderedImageKey = key;
@@ -2499,11 +2501,22 @@ class WorkerWebUI:
             // Capture the render token so async image-load callbacks can detect whether a
             // newer renderLastImages() call has already superseded this one.
             const renderToken = key;
+            const modelEl = document.getElementById('overview-image-model');
+            function makeFlagBadges(idx) {
+                if (!safety || idx >= safety.length) return '';
+                const s = safety[idx];
+                if (!s) return '';
+                const isNsfw = s.is_nsfw === true, isCsam = s.is_csam === true;
+                if (!isNsfw && !isCsam) return '';
+                return '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>';
+            }
             if (!rawB64 || rawB64.length === 0) {
                 oic.removeAttribute('style');
                 oic.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div>';
+                if (modelEl) modelEl.textContent = '';
                 return;
             }
+            if (modelEl) modelEl.textContent = (model && typeof model === 'string') ? model : '';
             const previewB64 = rawB64.slice(0, 4);
             const count = previewB64.length;
             const srcs = previewB64.map(function(b) { return 'data:image/png;base64,' + b; });
@@ -2515,13 +2528,18 @@ class WorkerWebUI:
             }
             if (count === 1) {
                 oic.removeAttribute('style');
-                oic.innerHTML = '<img src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" />';
+                const badges0 = makeFlagBadges(0);
+                if (badges0) {
+                    oic.innerHTML = '<div style="position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;">' + badges0 + '<img src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" /></div>';
+                } else {
+                    oic.innerHTML = '<img src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" />';
+                }
                 attachClicks();
                 return;
             }
             function makeItem(s, i, spanFull) {
                 var span = spanFull ? ' style="grid-column:1/-1;"' : '';
-                return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" /></div>';
+                return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" />' + makeFlagBadges(i) + '</div>';
             }
             var imgDims = new Array(count).fill(null), loadedCount = 0;
             function renderGrid() {
@@ -2638,7 +2656,7 @@ class WorkerWebUI:
                             : (Number.isFinite(_lastFetchedImageTimestamp) ? _lastFetchedImageTimestamp : 0);
                     }
                     _lastFetchedImageTimestamp = ts;
-                    renderLastImages(imgData.last_image_base64, document.getElementById('overview-image-container'), ts);
+                    renderLastImages(imgData.last_image_base64, document.getElementById('overview-image-container'), ts, imgData.last_image_model || null, imgData.last_image_safety || null);
                 })
                 .catch(function(err) {
                     if (err.name === 'AbortError') return;
@@ -2828,7 +2846,7 @@ class WorkerWebUI:
                             fetchLastImage(data.last_image_submission_timestamp);
                         } else {
                             _lastFetchedImageTimestamp = data.last_image_submission_timestamp;
-                            renderLastImages([], document.getElementById('overview-image-container'), 0);
+                            renderLastImages([], document.getElementById('overview-image-container'), 0, null, null);
                         }
                     }
                     const qd = document.getElementById('job-queue');
@@ -4501,6 +4519,8 @@ class WorkerWebUI:
             {
                 "last_image_base64": self.status_data["last_image_base64"],
                 "last_image_submission_timestamp": self.status_data["last_image_submission_timestamp"],
+                "last_image_model": self.status_data["last_image_model"],
+                "last_image_safety": self.status_data["last_image_safety"],
             },
         )
 
@@ -5198,6 +5218,8 @@ class WorkerWebUI:
         user_kudos_total: float | None = None,
         last_image_base64: list[str] | None = None,
         last_image_submission_timestamp: float | None = None,
+        last_image_model: str | None = None,
+        last_image_safety: list[dict] | None = None,
         console_logs: list[str] | None = None,
         faulted_jobs_history: list[dict[str, Any]] | None = None,
         errors_history: list[str] | None = None,
@@ -5252,6 +5274,8 @@ class WorkerWebUI:
             user_kudos_total: Total kudos accumulated by the user
             last_image_base64: List of base64 encoded last generated images (supports batch jobs)
             last_image_submission_timestamp: Timestamp when the last image was submitted
+            last_image_model: Model name used to generate the last image
+            last_image_safety: Per-image safety flags (is_nsfw, is_csam) for the last images
             console_logs: Recent console log messages
             faulted_jobs_history: List of faulted jobs with details
             errors_history: List of recent error messages
@@ -5342,6 +5366,10 @@ class WorkerWebUI:
             self.status_data["last_image_base64"] = list(last_image_base64)
         if last_image_submission_timestamp is not None:
             self.status_data["last_image_submission_timestamp"] = last_image_submission_timestamp
+        if last_image_model is not None:
+            self.status_data["last_image_model"] = last_image_model
+        if last_image_safety is not None:
+            self.status_data["last_image_safety"] = list(last_image_safety)
         if console_logs is not None:
             self.status_data["console_logs"] = console_logs
         if faulted_jobs_history is not None:
