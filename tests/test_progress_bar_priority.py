@@ -12,6 +12,7 @@ accumulated total.
 
 import asyncio
 import os
+from collections import deque
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -567,7 +568,7 @@ def test_model_preloading_other_queued_jobs_still_shown() -> None:
 
 def test_job_queue_includes_all_pre_inference_jobs() -> None:
     """WebUI queue payload should not be capped below the actual queued job count."""
-    queued_jobs = [_make_mock_job(f"queued{i}") for i in range(12)]
+    queued_jobs = deque(_make_mock_job(f"queued{i}") for i in range(12))
 
     kwargs = _invoke_update_webui_status(
         jobs_pending_submit=[],

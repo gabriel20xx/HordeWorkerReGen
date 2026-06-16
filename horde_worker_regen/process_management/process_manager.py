@@ -7599,7 +7599,7 @@ class HordeWorkerProcessManager:
         # current_job, e.g. a MODEL_PRELOADING job that is pending inference but not yet
         # dispatched to an active worker).
         job_queue = []
-        for job in self.jobs_pending_inference:
+        for job in list(self.jobs_pending_inference):
             # Skip jobs that are already in progress or shown as current_job
             if job not in self.jobs_in_progress and job != _current_job_obj:
                 job_queue.append(
