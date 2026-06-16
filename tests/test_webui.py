@@ -3437,6 +3437,10 @@ async def test_webui_models_section_html() -> None:
         assert 'class="model-pill enabled" data-model="' in html
         assert "addEventListener('click'" in html
         assert 'aria-pressed="true"' in html
+        # Pending-retry guard: a blocked fetchModels() call must be retried once the
+        # in-flight fetch completes so the models section is never permanently invisible.
+        assert "_modelsFetchPending" in html
+        assert "if (_modelsFetchPending)" in html
     finally:
         await webui.stop()
 

@@ -4043,14 +4043,19 @@ class WorkerWebUI:
         }
 
         var _modelsFetchInProgress = false;
+        var _modelsFetchPending = false;
         function fetchModels() {
-            if (_modelsFetchInProgress) return;
+            if (_modelsFetchInProgress) { _modelsFetchPending = true; return; }
             _modelsFetchInProgress = true;
+            _modelsFetchPending = false;
             fetch('/api/models')
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(data) { renderModelsSection(data.enabled || [], data.disabled || []); })
                 .catch(function() { /* silently skip models section if unavailable */ })
-                .finally(function() { _modelsFetchInProgress = false; });
+                .finally(function() {
+                    _modelsFetchInProgress = false;
+                    if (_modelsFetchPending) { _modelsFetchPending = false; fetchModels(); }
+                });
         }
         function _renderApiRefSection(body, settings) {
             var existing = document.getElementById('api-ref-section');
