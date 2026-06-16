@@ -1,6 +1,7 @@
 """Simple test to verify the web UI server can be created and started."""
 
 import asyncio
+import pathlib
 
 import aiohttp
 import pytest
@@ -3468,7 +3469,7 @@ def test_webui_reset_session_start_time_resets_uptime() -> None:
 # SQLite persistence tests
 # ---------------------------------------------------------------------------
 
-def _make_db_webui(tmp_path: "pytest.TempPathFactory", **kwargs: object) -> tuple["WorkerWebUI", str, str, str]:
+def _make_db_webui(tmp_path: pathlib.Path, **kwargs: object) -> tuple["WorkerWebUI", str, str, str]:
     """Helper that creates a WorkerWebUI backed by temporary databases.
     
     Returns:
@@ -3482,7 +3483,7 @@ def _make_db_webui(tmp_path: "pytest.TempPathFactory", **kwargs: object) -> tupl
     return webui, errors_db, stats_db, gallery_db
 
 
-def test_webui_db_init_creates_tables(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_init_creates_tables(tmp_path: pathlib.Path) -> None:
     """_init_db() must create the errors_log, gallery_images, and stats_snapshots tables in separate databases."""
     import sqlite3
 
@@ -3513,7 +3514,7 @@ def test_webui_db_init_creates_tables(tmp_path: pytest.TempPathFactory) -> None:
     assert "stats_snapshots" not in tables
 
 
-def test_webui_db_persists_gallery_image(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_persists_gallery_image(tmp_path: pathlib.Path) -> None:
     """add_gallery_image() must insert a row into gallery_images."""
     import sqlite3
 
@@ -3530,7 +3531,7 @@ def test_webui_db_persists_gallery_image(tmp_path: pytest.TempPathFactory) -> No
     assert rows[0][2] == 1  # is_nsfw=True stored as 1
 
 
-def test_webui_db_persists_multiple_gallery_images(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_persists_multiple_gallery_images(tmp_path: pathlib.Path) -> None:
     """Multiple add_gallery_image() calls each insert a separate row."""
     import sqlite3
 
@@ -3546,7 +3547,7 @@ def test_webui_db_persists_multiple_gallery_images(tmp_path: pytest.TempPathFact
     assert count == 3
 
 
-def test_webui_db_persists_errors(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_persists_errors(tmp_path: pathlib.Path) -> None:
     """update_status(errors_history=…) must persist new errors to errors_log."""
     import sqlite3
 
@@ -3563,7 +3564,7 @@ def test_webui_db_persists_errors(tmp_path: pytest.TempPathFactory) -> None:
     assert len(messages) == 2
 
 
-def test_webui_db_persists_only_new_errors(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_persists_only_new_errors(tmp_path: pathlib.Path) -> None:
     """Only the newly prepended errors should be inserted on subsequent calls."""
     import sqlite3
 
@@ -3584,7 +3585,7 @@ def test_webui_db_persists_only_new_errors(tmp_path: pytest.TempPathFactory) -> 
     assert count == 2
 
 
-def test_webui_db_merges_capped_live_errors_with_persisted_history(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_merges_capped_live_errors_with_persisted_history(tmp_path: pathlib.Path) -> None:
     """Live errors should stay merged with persisted history even when the live list is capped."""
     import sqlite3
     import time
@@ -3637,7 +3638,7 @@ def test_webui_db_merges_capped_live_errors_with_persisted_history(tmp_path: pyt
     ]
 
 
-def test_webui_db_persists_stats_snapshot(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_persists_stats_snapshot(tmp_path: pathlib.Path) -> None:
     """_record_stats_snapshot() must insert a row into stats_snapshots."""
     import sqlite3
     import time
@@ -3657,7 +3658,7 @@ def test_webui_db_persists_stats_snapshot(tmp_path: pytest.TempPathFactory) -> N
     assert snap["t"] == pytest.approx(time.time(), abs=5)
 
 
-def test_webui_db_loads_errors_on_startup(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_loads_errors_on_startup(tmp_path: pathlib.Path) -> None:
     """A fresh WorkerWebUI with an existing DB should pre-populate errors_history."""
     import sqlite3
     import time
@@ -3680,7 +3681,7 @@ def test_webui_db_loads_errors_on_startup(tmp_path: pytest.TempPathFactory) -> N
     assert "seeded_error" in webui2.status_data["errors_history"]
 
 
-def test_webui_db_loads_gallery_on_startup(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_loads_gallery_on_startup(tmp_path: pathlib.Path) -> None:
     """A fresh WorkerWebUI with an existing DB should restore gallery_dict."""
     import sqlite3
     import time
@@ -3709,7 +3710,7 @@ def test_webui_db_loads_gallery_on_startup(tmp_path: pytest.TempPathFactory) -> 
     assert webui2.status_data["images_count"] == 1
 
 
-def test_webui_db_loads_stats_on_startup(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_loads_stats_on_startup(tmp_path: pathlib.Path) -> None:
     """A fresh WorkerWebUI with an existing DB should restore stats_snapshots."""
     import json
     import sqlite3
@@ -3735,7 +3736,7 @@ def test_webui_db_loads_stats_on_startup(tmp_path: pytest.TempPathFactory) -> No
     assert webui2._stats_snapshots[0]["cpu"] == pytest.approx(12.3)
 
 
-def test_webui_db_prune_removes_old_data(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_prune_removes_old_data(tmp_path: pathlib.Path) -> None:
     """_prune_old_db_data() must delete rows older than the retention window."""
     import sqlite3
     import time
@@ -3788,7 +3789,7 @@ def test_webui_db_prune_removes_old_data(tmp_path: pytest.TempPathFactory) -> No
     assert stats_count == 1
 
 
-def test_webui_set_data_retention_days_updates_and_prunes(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_set_data_retention_days_updates_and_prunes(tmp_path: pathlib.Path) -> None:
     """set_data_retention_days() updates the retention period and prunes expired data."""
     import sqlite3
     import time
@@ -3830,7 +3831,7 @@ def test_webui_data_retention_days_clamped_to_declared_max() -> None:
 
 
 def test_webui_db_prune_failure_still_updates_last_attempt_time(
-    tmp_path: pytest.TempPathFactory,
+    tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Failed prune attempts should still advance the prune interval guard."""
@@ -3853,7 +3854,7 @@ def test_webui_db_prune_failure_still_updates_last_attempt_time(
     assert webui._last_db_prune_time >= before
 
 
-def test_webui_db_expired_errors_not_loaded(tmp_path: pytest.TempPathFactory) -> None:
+def test_webui_db_expired_errors_not_loaded(tmp_path: pathlib.Path) -> None:
     """Errors outside the retention window must not be loaded into errors_history on startup."""
     import sqlite3
     import time

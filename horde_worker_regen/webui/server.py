@@ -500,6 +500,7 @@ class WorkerWebUI:
         if self._errors_db_path is None:
             return
         cutoff = self._cutoff_timestamp()
+        pruned = False
         try:
             # Prune errors database
             with sqlite3.connect(self._errors_db_path) as conn:
@@ -516,10 +517,44 @@ class WorkerWebUI:
                 conn.execute("DELETE FROM gallery_images WHERE created_at < ?", (cutoff,))
                 conn.commit()
 
+            pruned = True
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not prune old data from persistence databases: {exc}")
         finally:
             self._last_db_prune_time = time.time()
+
+        if pruned:
+            self._refresh_in_memory_after_prune()
+
+    def _refresh_in_memory_after_prune(self) -> None:
+        """Refresh in-memory collections to match the pruned state of the databases.
+
+        Reloads persisted data from the (now-pruned) databases, rebuilds
+        :attr:`_gallery_dict` and :attr:`_stats_snapshots`, then re-merges
+        live session errors with the reloaded persisted history so that the
+        running UI reflects the new retention window immediately.
+        """
+        # Reload persisted data from the pruned databases.
+        self._load_persisted_data()
+
+        # Rebuild gallery dict (clear first so removed entries are not retained).
+        self._gallery_dict.clear()
+        for entry in getattr(self, "_persisted_gallery", []):
+            gid = entry["gallery_id"]
+            self._gallery_dict[gid] = entry
+        self.status_data["images_count"] = len(self._gallery_dict)
+        if self._gallery_dict:
+            self._next_gallery_id = max(self._gallery_dict) + 1
+
+        # Rebuild stats snapshots.
+        stats = getattr(self, "_persisted_stats", [])
+        self._stats_snapshots = list(stats)
+        if self._stats_snapshots:
+            last = self._stats_snapshots[-1]
+            self._last_stats_snapshot_time = float(last.get("t", 0))
+
+        # Re-merge errors history (live session errors + reloaded persisted history).
+        self.status_data["errors_history"] = self._merge_errors_history(self._live_errors_history)
 
     def set_data_retention_days(self, days: int) -> None:
         """Update the data retention period and immediately prune expired rows.
