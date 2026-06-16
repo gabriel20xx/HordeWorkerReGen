@@ -2015,6 +2015,10 @@ class HordeWorkerProcessManager:
         """The last generated images in base64 format for webui preview (supports batch jobs)."""
         self._last_image_job_timestamp: float = 0.0
         """Timestamp when the last preview image was set, to prevent older jobs from overwriting newer ones."""
+        self._last_image_model: str = ""
+        """Model name used for the last preview image."""
+        self._last_image_safety: list[dict] = []
+        """Per-image safety flags (is_nsfw, is_csam) for the last preview images."""
         self._console_logs: list[str] = []
         """Recent console logs for webui display."""
         self._log_handler_id: int | None = None
@@ -3600,24 +3604,34 @@ class HordeWorkerProcessManager:
                                 images_base64.append(base64.b64encode(image_data).decode("utf-8"))
                         self._last_image_base64 = images_base64
                         self._last_image_job_timestamp = completed_job_info.inference_completed_timestamp
+                        self._last_image_model = (
+                            completed_job_info.sdk_api_job_info.model
+                            if completed_job_info.sdk_api_job_info
+                            else ""
+                        ) or ""
+                        image_safety = None
+                        if len(images_base64) == len(message.safety_evaluations):
+                            image_safety = [
+                                {
+                                    "is_nsfw": safety_evaluation.is_nsfw,
+                                    "is_csam": safety_evaluation.is_csam,
+                                }
+                                for safety_evaluation in message.safety_evaluations
+                            ]
+                        self._last_image_safety = image_safety or []
                         # Add each image to the WebUI gallery
                         for img_idx, img_b64 in enumerate(images_base64):
-                            safety_eval = (
-                                message.safety_evaluations[img_idx]
-                                if img_idx < len(message.safety_evaluations)
-                                else None
-                            )
-                            self.webui.add_gallery_image(
-                                {
-                                    "base64": img_b64,
-                                    "timestamp": completed_job_info.inference_completed_timestamp,
-                                    "model": completed_job_info.sdk_api_job_info.model
-                                    if completed_job_info.sdk_api_job_info
-                                    else None,
-                                    "is_nsfw": safety_eval.is_nsfw if safety_eval is not None else False,
-                                    "is_csam": safety_eval.is_csam if safety_eval is not None else False,
-                                },
-                            )
+                            gallery_image = {
+                                "base64": img_b64,
+                                "timestamp": completed_job_info.inference_completed_timestamp,
+                                "model": completed_job_info.sdk_api_job_info.model
+                                if completed_job_info.sdk_api_job_info
+                                else None,
+                            }
+                            if image_safety is not None:
+                                gallery_image["is_nsfw"] = image_safety[img_idx]["is_nsfw"]
+                                gallery_image["is_csam"] = image_safety[img_idx]["is_csam"]
+                            self.webui.add_gallery_image(gallery_image)
                     except (FileNotFoundError, OSError) as e:
                         logger.warning(f"Failed to read saved images for webui preview: {e}")
                         # Don't fallback to job_image_results to avoid showing censored placeholders
@@ -7915,6 +7929,8 @@ class HordeWorkerProcessManager:
             user_kudos_total=user_kudos_total,
             last_image_base64=self._last_image_base64,
             last_image_submission_timestamp=self._last_image_job_timestamp,
+            last_image_model=self._last_image_model,
+            last_image_safety=self._last_image_safety,
             console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
             errors_history=(
