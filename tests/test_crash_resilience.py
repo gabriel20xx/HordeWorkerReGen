@@ -612,6 +612,7 @@ class TestCheckAutoRestartOnIdle:
         *,
         threshold_minutes: int = 60,
         elapsed_seconds: float = 0.0,
+        elapsed_no_jobs_seconds: float = 0.0,
         shutting_down: bool = False,
         job_pops_paused: bool = False,
         active_jobs: bool = False,
@@ -624,6 +625,9 @@ class TestCheckAutoRestartOnIdle:
         mock_manager._shutting_down = shutting_down
         mock_manager.bridge_data.auto_restart_on_idle_minutes = threshold_minutes
         mock_manager._last_job_submitted_time = time.time() - elapsed_seconds
+        mock_manager._last_pop_no_jobs_available_time = (
+            0.0 if elapsed_no_jobs_seconds <= 0.0 else time.time() - elapsed_no_jobs_seconds
+        )
         mock_manager._restart_requested = False
         mock_manager._job_pops_paused = job_pops_paused
         mock_manager._last_job_pop_time = time.time()
@@ -712,6 +716,21 @@ class TestCheckAutoRestartOnIdle:
         from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
         mgr = self._make_manager(threshold_minutes=1, elapsed_seconds=60)
+        bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
+        bound()
+        assert mgr._restart_requested is True
+        mgr._shutdown.assert_called_once()
+        assert mgr._last_job_pop_time == 0.0
+
+    def test_triggers_restart_when_last_no_jobs_pop_timeout_exceeded(self) -> None:
+        """Restart should trigger when continuous no-jobs pop duration exceeds threshold."""
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = self._make_manager(
+            threshold_minutes=1,
+            elapsed_seconds=1,  # last submit is recent
+            elapsed_no_jobs_seconds=61,
+        )
         bound = HordeWorkerProcessManager._check_auto_restart_on_idle.__get__(mgr, HordeWorkerProcessManager)
         bound()
         assert mgr._restart_requested is True

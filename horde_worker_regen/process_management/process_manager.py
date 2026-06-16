@@ -7980,7 +7980,15 @@ class HordeWorkerProcessManager:
         # Don't restart while the user has intentionally paused job pops.
         if self._job_pops_paused:
             return
-        elapsed_seconds = time.time() - self._last_job_submitted_time
+        now = time.time()
+        elapsed_since_last_submit = now - self._last_job_submitted_time
+        # Also consider how long the API has continuously reported "no jobs available".
+        # This guards against edge-cases where last-submit tracking can be refreshed
+        # without actual productive work, which would otherwise suppress idle restart.
+        elapsed_since_last_no_jobs_pop = 0.0
+        if self._last_pop_no_jobs_available_time > 0.0:
+            elapsed_since_last_no_jobs_pop = now - self._last_pop_no_jobs_available_time
+        elapsed_seconds = max(elapsed_since_last_submit, elapsed_since_last_no_jobs_pop)
         threshold_seconds = threshold_minutes * 60
         if elapsed_seconds >= threshold_seconds:
             logger.warning(
