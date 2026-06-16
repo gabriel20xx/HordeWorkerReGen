@@ -178,6 +178,31 @@ _async_client_exceptions: tuple[type[Exception], ...] = (TimeoutError, aiohttp.c
 if sys.version_info[:2] == (3, 10):
     _async_client_exceptions = (asyncio.exceptions.TimeoutError, aiohttp.client_exceptions.ClientError, OSError)
 
+
+def _remove_awaiting_request(session: "AIHordeAPIAsyncClientSession | None", request: object) -> None:
+    """Remove a stuck request from the SDK session's ``_awaiting_requests`` container.
+
+    The SDK's ``GenericAsyncHordeAPISession.submit_request`` has no ``try/finally``,
+    so when the coroutine is cancelled (e.g. by ``asyncio.wait_for`` on timeout) or
+    raises an unexpected exception, the request is left in ``_awaiting_requests``.
+    This causes spurious warnings when the session context manager exits on shutdown.
+    Call this helper from every ``except`` branch that follows a ``submit_request``
+    call that might have been interrupted before it could remove the request itself.
+    """
+    if session is None:
+        return
+    awaiting = getattr(session, "_awaiting_requests", None)
+    if awaiting is None:
+        return
+    remove = getattr(awaiting, "remove", None)
+    if not callable(remove):
+        return
+    try:
+        remove(request)
+    except (ValueError, KeyError):
+        pass
+
+
 _excludes_for_job_dump = {
     "job_image_results": True,
     "sdk_api_job_info": {
@@ -4672,14 +4697,19 @@ class HordeWorkerProcessManager:
                     ),
                     timeout=10 + 1,
                 )
-            except _async_client_exceptions:
-                logger.error(f"Job {new_submit.job_id} submission timed out")
+            except _async_client_exceptions as e:
+                logger.error(f"Job {new_submit.job_id} submission failed with {type(e).__name__}: {e}")
+                # asyncio.wait_for can cancel submit_request, and other client/OS failures can
+                # abort it before the SDK removes the request from _awaiting_requests.
+                _remove_awaiting_request(self.horde_client_session, submit_job_request)
                 new_submit.retry()
                 return new_submit
             except asyncio.CancelledError:
+                _remove_awaiting_request(self.horde_client_session, submit_job_request)
                 raise
             except Exception as e:
                 logger.error(f"Failed to submit job {new_submit.job_id}: {e}")
+                _remove_awaiting_request(self.horde_client_session, submit_job_request)
                 new_submit.retry()
                 return new_submit
 
@@ -8070,7 +8100,15 @@ class HordeWorkerProcessManager:
         # Don't restart while the user has intentionally paused job pops.
         if self._job_pops_paused:
             return
-        elapsed_seconds = time.time() - self._last_job_submitted_time
+        now = time.time()
+        elapsed_since_last_submit = now - self._last_job_submitted_time
+        # Also consider how long the API has continuously reported "no jobs available".
+        # This guards against edge-cases where last-submit tracking can be refreshed
+        # without actual productive work, which would otherwise suppress idle restart.
+        elapsed_since_last_no_jobs_pop = 0.0
+        if self._last_pop_no_jobs_available_time > 0.0:
+            elapsed_since_last_no_jobs_pop = now - self._last_pop_no_jobs_available_time
+        elapsed_seconds = max(elapsed_since_last_submit, elapsed_since_last_no_jobs_pop)
         threshold_seconds = threshold_minutes * 60
         if elapsed_seconds >= threshold_seconds:
             logger.warning(
