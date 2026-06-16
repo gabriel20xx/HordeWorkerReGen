@@ -3518,7 +3518,7 @@ async def test_api_get_workers_details_updates_on_partial_success() -> None:
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
-    from horde_sdk.ai_horde_api.apimodels.workers._workers import SingleWorkerDetailsResponse
+    from horde_sdk.ai_horde_api.apimodels import SingleWorkerDetailsResponse
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
     mgr = MagicMock()
@@ -3689,7 +3689,7 @@ async def test_webui_status_shows_workers_list_after_horde_goes_offline() -> Non
         user_details={"worker_count": 1, "workers_list": worker_data},
     )
 
-    # Second push: Horde offline — caller omits workers_list (preserving the previous push)
+    # Second push: Horde offline — caller omits workers_list; omitted keys are not carried forward
     webui.update_status(
         user_details={"worker_count": 1},
     )
@@ -3705,7 +3705,7 @@ async def test_webui_status_shows_workers_list_after_horde_goes_offline() -> Non
             assert response.status == 200
             status = await response.json()
 
-        # The second push did not include workers_list, so the previous value should persist
+        # The second push did not include workers_list, so it must be absent in the server response
         ud = status.get("user_details", {})
         # The most recent push wins for the whole user_details dict — workers_list is absent
         # because the caller didn't include it.  The JS layer uses localStorage as a cache;

@@ -6608,8 +6608,9 @@ class HordeWorkerProcessManager:
                         while remaining > 0:
                             if self.is_time_for_shutdown() or self._shut_down:
                                 return
-                            await asyncio.sleep(min(1.0, remaining))
-                            remaining -= 1.0
+                            step = min(1.0, remaining)
+                            await asyncio.sleep(step)
+                            remaining -= step
                         continue
                     await self.api_get_workers_details()
                     if self.is_time_for_shutdown() or self._shut_down:
