@@ -3756,7 +3756,42 @@ def test_webui_db_loads_gallery_on_startup(tmp_path: pathlib.Path) -> None:
     assert webui2.status_data["images_count"] == 1
 
 
-def test_webui_db_loads_stats_on_startup(tmp_path: pathlib.Path) -> None:
+def test_webui_db_next_gallery_id_restored_from_expired_rows(tmp_path: pathlib.Path) -> None:
+    """_next_gallery_id is restored from MAX(gallery_id) even when all DB rows are expired.
+
+    When the worker has been down longer than the retention window, all gallery rows
+    fall outside the cutoff and _persisted_gallery ends up empty.  Without reading
+    MAX(gallery_id) from the full table, _next_gallery_id would stay at 0 and new
+    images would reuse IDs that still exist in the DB (before the first prune runs).
+    """
+    import sqlite3
+    import time
+
+    db_dir = str(tmp_path)
+    gallery_db = str(tmp_path / "webui_gallery.db")
+
+    # Initialise the DB schema via a seed instance.
+    WorkerWebUI(port=0, db_path=db_dir)
+
+    # Insert gallery rows with timestamps far in the past (well outside any retention).
+    old_ts = time.time() - 400 * 86400  # 400 days ago
+    with sqlite3.connect(gallery_db) as conn:
+        conn.execute(
+            "INSERT INTO gallery_images"
+            " (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (99, old_ts, "old_model", None, None, 0, 0, None),
+        )
+        conn.commit()
+
+    # Fresh instance: all rows are expired so _persisted_gallery is empty, but
+    # _next_gallery_id must still reflect the existing max gallery_id (99).
+    webui2 = WorkerWebUI(port=0, db_path=db_dir)
+    assert webui2._gallery_dict == {}, "expired rows should not be loaded into memory"
+    assert webui2._next_gallery_id == 100, "_next_gallery_id must be MAX(gallery_id)+1 from DB"
+
+
+
     """A fresh WorkerWebUI with an existing DB should restore stats_snapshots."""
     import json
     import sqlite3

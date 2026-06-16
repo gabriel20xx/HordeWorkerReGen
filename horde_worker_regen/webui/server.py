@@ -433,6 +433,9 @@ class WorkerWebUI:
         self._persisted_errors: list[str] = []
         self._persisted_gallery: list[dict[str, Any]] = []
         self._persisted_stats: list[dict[str, float | int]] = []
+        # Max gallery_id across ALL rows (not just within retention) so _next_gallery_id
+        # stays unique even when no in-retention rows are loaded at startup.
+        self._persisted_max_gallery_id: int = -1
 
         # Load errors from errors database
         try:
@@ -449,6 +452,12 @@ class WorkerWebUI:
         # Load gallery from gallery database
         try:
             with sqlite3.connect(self._gallery_db_path) as conn:
+                # Determine the overall max gallery_id so _next_gallery_id stays unique
+                # even when no in-retention rows are loaded (e.g. worker was down longer
+                # than the retention window and all rows are expired but not yet pruned).
+                max_id_row = conn.execute("SELECT MAX(gallery_id) FROM gallery_images").fetchone()
+                if max_id_row and max_id_row[0] is not None:
+                    self._persisted_max_gallery_id = int(max_id_row[0])
                 rows = conn.execute(
                     "SELECT gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json "
                     "FROM gallery_images WHERE timestamp >= ? ORDER BY timestamp ASC, id ASC",
@@ -518,15 +527,17 @@ class WorkerWebUI:
     def _restore_persisted_collections(self) -> None:
         """Populate :attr:`_gallery_dict` and :attr:`_stats_snapshots` from persisted data."""
         gallery = getattr(self, "_persisted_gallery", [])
-        if gallery:
-            max_id = -1
-            for entry in gallery:
-                gid = entry["gallery_id"]
-                self._gallery_dict[gid] = entry
-                if gid > max_id:
-                    max_id = gid
+        # Start from the overall DB max so _next_gallery_id is unique even when
+        # _persisted_gallery is empty (all rows expired but not yet pruned).
+        max_id: int = getattr(self, "_persisted_max_gallery_id", -1)
+        for entry in gallery:
+            gid = entry["gallery_id"]
+            self._gallery_dict[gid] = entry
+            if gid > max_id:
+                max_id = gid
+        if max_id >= 0:
             self._next_gallery_id = max_id + 1
-            self.status_data["images_count"] = len(self._gallery_dict)
+        self.status_data["images_count"] = len(self._gallery_dict)
 
         stats = getattr(self, "_persisted_stats", [])
         if stats:
@@ -590,12 +601,15 @@ class WorkerWebUI:
 
         # Rebuild gallery dict (clear first so removed entries are not retained).
         self._gallery_dict.clear()
+        max_id: int = getattr(self, "_persisted_max_gallery_id", -1)
         for entry in getattr(self, "_persisted_gallery", []):
             gid = entry["gallery_id"]
             self._gallery_dict[gid] = entry
+            if gid > max_id:
+                max_id = gid
         self.status_data["images_count"] = len(self._gallery_dict)
-        if self._gallery_dict:
-            self._next_gallery_id = max(self._gallery_dict) + 1
+        if max_id >= 0:
+            self._next_gallery_id = max_id + 1
 
         # Rebuild stats snapshots.
         stats = getattr(self, "_persisted_stats", [])
