@@ -22,6 +22,11 @@ micromamba.tar.bz2
 info/
 library/
 
+# Runtime state files (written by the worker, not committed)
+webui_model_state.json
+webui_model_state.db
+config/webui_model_state.db
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

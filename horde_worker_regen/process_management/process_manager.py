@@ -11,6 +11,7 @@ import os
 import queue
 import random
 import re
+import sqlite3
 import ssl
 import sys
 import time
@@ -2224,18 +2225,19 @@ class HordeWorkerProcessManager:
         logger.info(f"Runtime setting '{key}' changed to {value!r} via web UI")
 
     def _get_model_state_file_path(self) -> str:
-        """Return the path to the WebUI model state file.
+        """Return the path to the WebUI model state database.
 
         The location can be customised with the ``AIWORKER_WEBUI_MODEL_STATE_FILE``
-        environment variable.  When not set the file is placed in the current
-        working directory under the default name.
+        environment variable.  When not set the database is placed at
+        ``config/webui_model_state.db`` relative to the current working directory
+        (i.e. ``/horde-worker-reGen/config/webui_model_state.db`` inside Docker).
         """
         return os.getenv("AIWORKER_WEBUI_MODEL_STATE_FILE", WEBUI_MODEL_STATE_FILENAME)
 
     def _load_model_state_file(self) -> None:
-        """Load the persisted WebUI model state and apply it to the runtime state.
+        """Load the persisted WebUI model state from the SQLite database and apply it.
 
-        Models listed as disabled in the state file are added to
+        Models listed as disabled in the database are added to
         ``_runtime_disabled_models`` and removed from
         ``bridge_data.image_models_to_load``, **but only when they are already
         present in ``_all_models_configured``**.  Any model that was removed
@@ -2243,7 +2245,7 @@ class HordeWorkerProcessManager:
         silently ignored, so environment-variable overrides always take
         precedence.
 
-        If the state file does not exist (e.g., first run) all models remain
+        If the database does not exist (e.g., first run) all models remain
         enabled, which is the intended default behaviour.
         """
         state_path = self._get_model_state_file_path()
@@ -2251,16 +2253,14 @@ class HordeWorkerProcessManager:
             return
 
         try:
-            with open(state_path, encoding="utf-8") as fh:
-                state = json.load(fh)
-            disabled = state.get("disabled_models", [])
-            if not isinstance(disabled, list):
-                logger.warning(
-                    f"WebUI model state file '{state_path}' has an unexpected format; ignoring.",
+            with sqlite3.connect(state_path) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS disabled_models (model_name TEXT PRIMARY KEY)",
                 )
-                return
+                rows = conn.execute("SELECT model_name FROM disabled_models").fetchall()
+            disabled = [row[0] for row in rows if isinstance(row[0], str)]
         except Exception as exc:
-            logger.warning(f"Could not read WebUI model state file '{state_path}': {exc}")
+            logger.warning(f"Could not read WebUI model state database '{state_path}': {exc}")
             return
 
         configured_set = set(self._all_models_configured)
@@ -2281,19 +2281,24 @@ class HordeWorkerProcessManager:
             )
 
     def _save_model_state_file(self) -> None:
-        """Persist the current WebUI model disabled state to disk.
+        """Persist the current WebUI model disabled state to the SQLite database.
 
-        The file records only which models are currently disabled so that the
-        selection survives a container restart.  It is written atomically via a
-        temporary file to avoid corruption on unexpected exits.
+        The database records only which models are currently disabled so that the
+        selection survives a container restart.
         """
         state_path = self._get_model_state_file_path()
-        state = {"disabled_models": sorted(self._runtime_disabled_models)}
-        tmp_path = state_path + ".tmp"
         try:
-            with open(tmp_path, "w", encoding="utf-8") as fh:
-                json.dump(state, fh, indent=2)
-            os.replace(tmp_path, state_path)
+            os.makedirs(os.path.dirname(os.path.abspath(state_path)), exist_ok=True)
+            with sqlite3.connect(state_path) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS disabled_models (model_name TEXT PRIMARY KEY)",
+                )
+                conn.execute("DELETE FROM disabled_models")
+                conn.executemany(
+                    "INSERT INTO disabled_models (model_name) VALUES (?)",
+                    [(name,) for name in sorted(self._runtime_disabled_models)],
+                )
+                conn.commit()
         except Exception as exc:
             logger.warning(f"Could not save WebUI model state to '{state_path}': {exc}")
 

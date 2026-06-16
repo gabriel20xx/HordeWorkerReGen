@@ -233,7 +233,9 @@ class BridgeDataLoader:
 
         # Track whether any explicit model selection was provided so we can apply
         # the "load all models" default when nothing was configured.
-        user_configured_models = bool(bridge_data.image_models_to_load) or bridge_data.meta_load_instructions is not None
+        # Use model_fields_set so that an explicitly configured empty list (models_to_load: [])
+        # is not treated as "not configured".
+        user_configured_models = "image_models_to_load" in bridge_data.model_fields_set or bridge_data.meta_load_instructions is not None
 
         resolved_models = None
         if bridge_data.meta_load_instructions is not None:

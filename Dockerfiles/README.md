@@ -136,20 +136,20 @@ docker run -it --device=/dev/kfd --device=/dev/dri --group-add video horde-worke
 
 ### Persisting WebUI model enable/disable state across restarts
 
-The worker saves which models you have enabled or disabled via the WebUI to a small JSON file (`webui_model_state.json`) in its working directory.  To keep these settings when the container is recreated, mount the file (or its parent directory) as a Docker volume:
+The worker saves which models you have enabled or disabled via the WebUI to a small SQLite database (`config/webui_model_state.db`) in its working directory.  To keep these settings when the container is recreated, mount the file (or its parent directory) as a Docker volume:
 
 ```yaml
 volumes:
   - ${AIWORKER_CACHE_HOME:-../models/}:/horde-worker-reGen/models/
   - ${AIWORKER_BRIDGE_DATA_LOCATION:-../bridgeData.yaml}:/horde-worker-reGen/bridgeData.yaml:ro
   - ${AIWORKER_LOGS_DIR:-../logs/}:/horde-worker-reGen/logs/
-  - ../webui_model_state.json:/horde-worker-reGen/webui_model_state.json  # persist model on/off state
+  - ../config/:/horde-worker-reGen/config/  # persist model on/off state
 ```
 
 You can also point to a different path with the `AIWORKER_WEBUI_MODEL_STATE_FILE` environment variable:
 
 ```
-AIWORKER_WEBUI_MODEL_STATE_FILE=/some/persistent/path/webui_model_state.json
+AIWORKER_WEBUI_MODEL_STATE_FILE=/some/persistent/path/webui_model_state.db
 ```
 
 > **Note**: Environment variable overrides (`AIWORKER_MODELS_TO_LOAD`, `AIWORKER_MODELS_TO_SKIP`) always take precedence over the state file.  Models excluded by those variables will not be affected by the WebUI state.
