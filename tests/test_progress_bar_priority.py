@@ -1781,12 +1781,45 @@ def test_end_inference_processes_does_not_skip_scale_down_with_pending_queue() -
     manager._end_inference_process.assert_called_once_with(process_to_kill)
 
 
+def test_end_inference_processes_ignores_already_ending_slots_for_scale_down() -> None:
+    """Scale-down should not re-target a slot that is already being ended."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    manager = HordeWorkerProcessManager.__new__(HordeWorkerProcessManager)
+    manager._shutting_down = False
+    manager._max_inference_processes = 2
+    manager._max_active_models_override = None
+    manager.jobs_pending_inference = []
+    manager.jobs_in_progress = []
+    manager.get_processes_with_model_for_queued_job = MagicMock(return_value=[])
+    manager._end_inference_process = MagicMock()
+
+    process_to_kill = MagicMock()
+    process_map = MagicMock()
+    process_map.num_loaded_inference_processes.return_value = 3
+    process_map._get_first_inference_process_to_kill.return_value = process_to_kill
+    manager._process_map = process_map
+
+    # First call kills one process.
+    manager.end_inference_processes()
+    manager._end_inference_process.assert_called_once_with(process_to_kill)
+
+    # Simulate the killed slot now being in PROCESS_ENDING state — kill-selection
+    # returns None because no eligible process remains.
+    process_map._get_first_inference_process_to_kill.return_value = None
+    manager._end_inference_process.reset_mock()
+
+    # Second call should not try to end another process.
+    manager.end_inference_processes()
+    manager._end_inference_process.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # WebUI model state file persistence tests
 # ---------------------------------------------------------------------------
 
 
-def _make_minimal_manager_for_model_state():  # type: ignore[return]
+def _make_minimal_manager_for_model_state() -> "HordeWorkerProcessManager":
     """Return a minimal HordeWorkerProcessManager instance with model-state attrs."""
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 

@@ -189,3 +189,8 @@ hf_transformers/*
 horde_model_reference/*
 custom_models.json
 .abort
+
+# WebUI model state persistence (runtime-generated; must not be committed)
+config/webui_model_state.db
+webui_model_state.db
+webui_model_state.json

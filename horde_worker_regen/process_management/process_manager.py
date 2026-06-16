@@ -2232,7 +2232,7 @@ class HordeWorkerProcessManager:
         ``config/webui_model_state.db`` relative to the current working directory
         (i.e. ``/horde-worker-reGen/config/webui_model_state.db`` inside Docker).
         """
-        return os.getenv("AIWORKER_WEBUI_MODEL_STATE_FILE", WEBUI_MODEL_STATE_FILENAME)
+        return os.getenv("AIWORKER_WEBUI_MODEL_STATE_FILE") or WEBUI_MODEL_STATE_FILENAME
 
     def _load_model_state_file(self) -> None:
         """Load the persisted WebUI model state from the SQLite database and apply it.
