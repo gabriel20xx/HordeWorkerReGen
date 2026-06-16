@@ -3514,6 +3514,17 @@ def test_webui_db_init_creates_tables(tmp_path: pathlib.Path) -> None:
     assert "stats_snapshots" not in tables
 
 
+def test_webui_db_path_file_without_db_suffix_uses_parent_directory(tmp_path: pathlib.Path) -> None:
+    """db_path file inputs without .db suffix should still resolve to the parent directory."""
+    db_file = tmp_path / "state.sqlite"
+    webui = WorkerWebUI(port=0, db_path=str(db_file))
+
+    assert webui._errors_db_path == str(tmp_path / "webui_errors.db")
+    assert webui._stats_db_path == str(tmp_path / "webui_stats.db")
+    assert webui._gallery_db_path == str(tmp_path / "webui_gallery.db")
+    assert not db_file.is_dir()
+
+
 def test_webui_db_persists_gallery_image(tmp_path: pathlib.Path) -> None:
     """add_gallery_image() must insert a row into gallery_images."""
     import sqlite3
@@ -3745,6 +3756,32 @@ def test_webui_db_loads_stats_on_startup(tmp_path: pathlib.Path) -> None:
     webui2 = WorkerWebUI(port=0, db_path=db_dir)
     assert len(webui2._stats_snapshots) == 1
     assert webui2._stats_snapshots[0]["cpu"] == pytest.approx(12.3)
+
+
+def test_webui_db_ignores_non_dict_stats_snapshots(tmp_path: pathlib.Path) -> None:
+    """Stats rows with valid non-object JSON should be ignored during load."""
+    import sqlite3
+    import time
+
+    db_dir = str(tmp_path)
+    stats_db = str(tmp_path / "webui_stats.db")
+
+    WorkerWebUI(port=0, db_path=db_dir)
+    now = time.time()
+    with sqlite3.connect(stats_db) as conn:
+        conn.execute(
+            "INSERT INTO stats_snapshots (timestamp, snapshot_json) VALUES (?, ?)",
+            (now, "[]"),
+        )
+        conn.execute(
+            "INSERT INTO stats_snapshots (timestamp, snapshot_json) VALUES (?, ?)",
+            (now + 1, '{"t": 123.0, "jobs_completed": 7}'),
+        )
+        conn.commit()
+
+    webui2 = WorkerWebUI(port=0, db_path=db_dir)
+    assert webui2._stats_snapshots == [{"t": 123.0, "jobs_completed": 7}]
+    assert webui2._last_stats_snapshot_time == 123.0
 
 
 def test_webui_db_prune_removes_old_data(tmp_path: pathlib.Path) -> None:

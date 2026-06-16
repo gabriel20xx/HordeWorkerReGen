@@ -152,12 +152,15 @@ class WorkerWebUI:
         # SQLite persistence --------------------------------------------------
         # Determine database directory and individual database paths.
         if db_path is not None:
-            # If db_path looks like a file (ends with .db), use its directory.
-            # Otherwise treat it as a directory path.
-            if db_path.endswith(".db"):
-                db_dir = os.path.dirname(os.path.abspath(db_path))
+            # If db_path points to a file (including legacy non-.db names), use its
+            # parent directory. Otherwise treat it as a directory path.
+            abs_db_path = os.path.abspath(db_path)
+            if os.path.isdir(abs_db_path):
+                db_dir = abs_db_path
+            elif os.path.exists(abs_db_path):
+                db_dir = os.path.dirname(abs_db_path) if os.path.isfile(abs_db_path) else abs_db_path
             else:
-                db_dir = os.path.abspath(db_path)
+                db_dir = os.path.dirname(abs_db_path) if os.path.splitext(abs_db_path)[1] else abs_db_path
             self._errors_db_path: str | None = os.path.join(db_dir, "webui_errors.db")
             self._stats_db_path: str | None = os.path.join(db_dir, "webui_stats.db")
             self._gallery_db_path: str | None = os.path.join(db_dir, "webui_gallery.db")
@@ -242,8 +245,8 @@ class WorkerWebUI:
             "max_time_per_job_per_model": {},
         }
 
-        # Merge persisted errors/gallery/stats into the live status_data now
-        # that status_data has been initialised (DB loading runs before this).
+        # Merge persisted errors into live status_data now that status_data has
+        # been initialised (DB loading runs before this).
         if self._errors_db_path is not None:
             self._merge_persisted_into_status()
 
@@ -447,7 +450,9 @@ class WorkerWebUI:
                 ).fetchall()
                 for row in rows:
                     try:
-                        self._persisted_stats.append(json.loads(row[0]))
+                        decoded = json.loads(row[0])
+                        if isinstance(decoded, dict):
+                            self._persisted_stats.append(decoded)
                     except (ValueError, TypeError):
                         pass
         except Exception as exc:  # noqa: BLE001
