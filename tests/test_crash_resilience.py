@@ -5296,6 +5296,9 @@ class TestResultSubmittingStuckRecovery:
     def test_retry_success_records_reward_and_kudos_rate(self) -> None:
         """A retried submit must store the eventual successful reward values."""
         import asyncio
+        import io
+
+        from horde_sdk.ai_horde_api import GENERATION_STATE
 
         from horde_worker_regen.process_management.process_manager import (
             HordeWorkerProcessManager,
@@ -5305,6 +5308,7 @@ class TestResultSubmittingStuckRecovery:
 
         manager, proc_info = self._make_submit_manager(0)
         base_submit = self._make_new_submit(proc_info)
+        base_submit.completed_job_info.state = GENERATION_STATE.ok
         image_result = MagicMock()
         image_result.image_base64 = "ignored"
         image_result.generation_faults = []
@@ -5322,7 +5326,7 @@ class TestResultSubmittingStuckRecovery:
             kudos_per_second=0.0,
         )
         manager.bridge_data.api_key = "test-key"
-        manager.base64_image_to_stream_buffer.return_value = __import__("io").BytesIO(b"image-bytes")
+        manager.base64_image_to_stream_buffer.return_value = io.BytesIO(b"image-bytes")
         manager.kudos_generated_this_session = 0
         manager.kudos_events = []
         manager.image_events = []
