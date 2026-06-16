@@ -3525,6 +3525,23 @@ def test_webui_db_path_file_without_db_suffix_uses_parent_directory(tmp_path: pa
     assert not db_file.is_dir()
 
 
+def test_webui_db_path_no_extension_uses_parent_directory(tmp_path: pathlib.Path) -> None:
+    """A non-existent db_path with no file extension must be treated as a file path (use parent dir).
+
+    Without this guard a path like ``/some/dir/state`` (valid for the model-state
+    SQLite file used by ProcessManager) would be treated as a directory, causing a
+    directory to be created at that path and later sqlite3.connect() to fail.
+    """
+    db_file = tmp_path / "state"  # no extension, non-existent
+    webui = WorkerWebUI(port=0, db_path=str(db_file))
+
+    assert webui._errors_db_path == str(tmp_path / "webui_errors.db")
+    assert webui._stats_db_path == str(tmp_path / "webui_stats.db")
+    assert webui._gallery_db_path == str(tmp_path / "webui_gallery.db")
+    # The path must NOT have been created as a directory.
+    assert not db_file.is_dir()
+
+
 def test_webui_db_persists_gallery_image(tmp_path: pathlib.Path) -> None:
     """add_gallery_image() must insert a row into gallery_images."""
     import sqlite3

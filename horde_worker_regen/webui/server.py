@@ -152,15 +152,25 @@ class WorkerWebUI:
         # SQLite persistence --------------------------------------------------
         # Determine database directory and individual database paths.
         if db_path is not None:
-            # If db_path points to a file (including legacy non-.db names), use its
-            # parent directory. Otherwise treat it as a directory path.
+            # Resolve the database directory from db_path:
+            # - An existing directory → use it directly.
+            # - An existing file → use its parent directory.
+            # - A non-existent path → treat as a file path by default (use its
+            #   parent directory).  Only treat a non-existent path as a directory
+            #   if the caller explicitly signals it with a trailing path separator.
             abs_db_path = os.path.abspath(db_path)
             if os.path.isdir(abs_db_path):
                 db_dir = abs_db_path
             elif os.path.exists(abs_db_path):
                 db_dir = os.path.dirname(abs_db_path) if os.path.isfile(abs_db_path) else abs_db_path
             else:
-                db_dir = os.path.dirname(abs_db_path) if os.path.splitext(abs_db_path)[1] else abs_db_path
+                # Non-existent path: default to file-path semantics (parent dir)
+                # unless the original path has a trailing separator, which explicitly
+                # indicates a directory.
+                if str(db_path).endswith(("/", os.sep)):
+                    db_dir = abs_db_path
+                else:
+                    db_dir = os.path.dirname(abs_db_path)
             self._errors_db_path: str | None = os.path.join(db_dir, "webui_errors.db")
             self._stats_db_path: str | None = os.path.join(db_dir, "webui_stats.db")
             self._gallery_db_path: str | None = os.path.join(db_dir, "webui_gallery.db")
