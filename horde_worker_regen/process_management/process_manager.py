@@ -2035,6 +2035,8 @@ class HordeWorkerProcessManager:
             self.webui = WorkerWebUI(
                 port=self.bridge_data.webui_port,
                 update_interval=self.bridge_data.webui_update_interval,
+                db_path=self._get_model_state_file_path(),
+                data_retention_days=self.bridge_data.data_retention_days,
             )
             self.webui.set_delete_worker_callback(self._delete_worker)
             self.webui.set_job_pops_paused_callback(self.set_job_pops_paused)
@@ -2248,6 +2250,9 @@ class HordeWorkerProcessManager:
             raise ValueError(f"Unknown bridge_data field: '{key}'")
         setattr(self.bridge_data, key, value)
         logger.info(f"Runtime setting '{key}' changed to {value!r} via web UI")
+        # Propagate data_retention_days to the webui so the database is pruned immediately.
+        if key == "data_retention_days" and self.webui is not None:
+            self.webui.set_data_retention_days(int(value))
 
     def _get_model_state_file_path(self) -> str:
         """Return the path to the WebUI model state database.

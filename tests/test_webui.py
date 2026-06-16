@@ -3464,6 +3464,325 @@ def test_webui_reset_session_start_time_resets_uptime() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# SQLite persistence tests
+# ---------------------------------------------------------------------------
+
+def _make_db_webui(tmp_path: "pytest.TempPathFactory", **kwargs: object) -> tuple["WorkerWebUI", str]:
+    """Helper that creates a WorkerWebUI backed by a temporary database."""
+    db_file = str(tmp_path / "test_webui.db")
+    webui = WorkerWebUI(port=0, db_path=db_file, **kwargs)  # type: ignore[arg-type]
+    return webui, db_file
+
+
+def test_webui_db_init_creates_tables(tmp_path: pytest.TempPathFactory) -> None:
+    """_init_db() must create the errors_log, gallery_images, and stats_snapshots tables."""
+    import sqlite3
+
+    webui, db_file = _make_db_webui(tmp_path)
+    assert webui._db_path == db_file
+
+    with sqlite3.connect(db_file) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+
+    assert "errors_log" in tables
+    assert "gallery_images" in tables
+    assert "stats_snapshots" in tables
+    assert "disabled_models" not in tables  # that table belongs to process_manager, not webui
+
+
+def test_webui_db_persists_gallery_image(tmp_path: pytest.TempPathFactory) -> None:
+    """add_gallery_image() must insert a row into gallery_images."""
+    import sqlite3
+
+    webui, db_file = _make_db_webui(tmp_path)
+
+    webui.add_gallery_image({"base64": None, "timestamp": 1_700_000_000.0, "model": "sdxl", "is_nsfw": True})
+
+    with sqlite3.connect(db_file) as conn:
+        rows = conn.execute("SELECT gallery_id, model, is_nsfw FROM gallery_images").fetchall()
+
+    assert len(rows) == 1
+    assert rows[0][0] == 0  # first gallery_id
+    assert rows[0][1] == "sdxl"
+    assert rows[0][2] == 1  # is_nsfw=True stored as 1
+
+
+def test_webui_db_persists_multiple_gallery_images(tmp_path: pytest.TempPathFactory) -> None:
+    """Multiple add_gallery_image() calls each insert a separate row."""
+    import sqlite3
+
+    webui, db_file = _make_db_webui(tmp_path)
+
+    webui.add_gallery_image({"base64": None, "timestamp": 1.0, "model": "a"})
+    webui.add_gallery_image({"base64": None, "timestamp": 2.0, "model": "b"})
+    webui.add_gallery_image({"base64": None, "timestamp": 3.0, "model": "c"})
+
+    with sqlite3.connect(db_file) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM gallery_images").fetchone()[0]
+
+    assert count == 3
+
+
+def test_webui_db_persists_errors(tmp_path: pytest.TempPathFactory) -> None:
+    """update_status(errors_history=…) must persist new errors to errors_log."""
+    import sqlite3
+
+    webui, db_file = _make_db_webui(tmp_path)
+
+    webui.update_status(errors_history=["error_b", "error_a"])
+
+    with sqlite3.connect(db_file) as conn:
+        rows = conn.execute("SELECT message FROM errors_log ORDER BY id").fetchall()
+
+    messages = [r[0] for r in rows]
+    assert "error_b" in messages
+    assert "error_a" in messages
+    assert len(messages) == 2
+
+
+def test_webui_db_persists_only_new_errors(tmp_path: pytest.TempPathFactory) -> None:
+    """Only the newly prepended errors should be inserted on subsequent calls."""
+    import sqlite3
+
+    webui, db_file = _make_db_webui(tmp_path)
+
+    # First update: 1 error
+    webui.update_status(errors_history=["error_a"])
+    # Second update: 2 errors (error_b is new, prepended at front)
+    webui.update_status(errors_history=["error_b", "error_a"])
+
+    with sqlite3.connect(db_file) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM errors_log").fetchone()[0]
+
+    # Total 3 rows: 1 (first update) + 1 (new on second) wait, both from first update=1, new on second=1
+    # Actually first update inserts 2 - 0 = 2 errors? No: first call has len=1, _errors_db_persisted_len=0
+    # so new_count = 1 - 0 = 1 → inserts "error_a"
+    # Second call has len=2, _errors_db_persisted_len=1 → new_count = 2 - 1 = 1 → inserts "error_b"
+    assert count == 2
+
+
+def test_webui_db_persists_stats_snapshot(tmp_path: pytest.TempPathFactory) -> None:
+    """_record_stats_snapshot() must insert a row into stats_snapshots."""
+    import sqlite3
+    import time
+
+    webui, db_file = _make_db_webui(tmp_path)
+    # Force a snapshot by rewinding the last-snapshot time
+    webui._last_stats_snapshot_time = 0.0
+    webui._record_stats_snapshot()
+
+    with sqlite3.connect(db_file) as conn:
+        rows = conn.execute("SELECT snapshot_json FROM stats_snapshots").fetchall()
+
+    assert len(rows) == 1
+    import json
+    snap = json.loads(rows[0][0])
+    assert "t" in snap
+    assert snap["t"] == pytest.approx(time.time(), abs=5)
+
+
+def test_webui_db_loads_errors_on_startup(tmp_path: pytest.TempPathFactory) -> None:
+    """A fresh WorkerWebUI with an existing DB should pre-populate errors_history."""
+    import sqlite3
+    import time
+
+    db_file = str(tmp_path / "persist.db")
+
+    # Seed the DB manually
+    webui_seed = WorkerWebUI(port=0, db_path=db_file)
+    now = time.time()
+    with sqlite3.connect(db_file) as conn:
+        conn.execute(
+            "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
+            ("seeded_error", now),
+        )
+        conn.commit()
+
+    # New webui instance should load that error
+    webui2 = WorkerWebUI(port=0, db_path=db_file)
+    assert "seeded_error" in webui2.status_data["errors_history"]
+
+
+def test_webui_db_loads_gallery_on_startup(tmp_path: pytest.TempPathFactory) -> None:
+    """A fresh WorkerWebUI with an existing DB should restore gallery_dict."""
+    import sqlite3
+    import time
+
+    db_file = str(tmp_path / "persist.db")
+
+    # Write a gallery entry directly to the DB
+    webui_seed = WorkerWebUI(port=0, db_path=db_file)
+    now = time.time()
+    with sqlite3.connect(db_file) as conn:
+        conn.execute(
+            """
+            INSERT INTO gallery_images
+                (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (42, now, "sdxl", None, None, 0, 0, None, now),
+        )
+        conn.commit()
+
+    webui2 = WorkerWebUI(port=0, db_path=db_file)
+    assert 42 in webui2._gallery_dict
+    assert webui2._gallery_dict[42]["model"] == "sdxl"
+    assert webui2._next_gallery_id >= 43
+    assert webui2.status_data["images_count"] == 1
+
+
+def test_webui_db_loads_stats_on_startup(tmp_path: pytest.TempPathFactory) -> None:
+    """A fresh WorkerWebUI with an existing DB should restore stats_snapshots."""
+    import json
+    import sqlite3
+    import time
+
+    db_file = str(tmp_path / "persist.db")
+    webui_seed = WorkerWebUI(port=0, db_path=db_file)
+    now = time.time()
+    snapshot = {"t": now, "cpu": 12.3, "gpu": 45.6, "vram": 55.0, "system_vram": 55.0,
+                "ram": 30.0, "system_ram": 30.0, "worker_gpu": 0.0, "container_cpu": 0.0,
+                "iph": 2.0, "kph": 5.0, "jc": 10, "jf": 0, "jp": 12, "ks": 500.0}
+    with sqlite3.connect(db_file) as conn:
+        conn.execute(
+            "INSERT INTO stats_snapshots (snapshot_json, timestamp) VALUES (?, ?)",
+            (json.dumps(snapshot), now),
+        )
+        conn.commit()
+
+    webui2 = WorkerWebUI(port=0, db_path=db_file)
+    assert len(webui2._stats_snapshots) == 1
+    assert webui2._stats_snapshots[0]["cpu"] == pytest.approx(12.3)
+
+
+def test_webui_db_prune_removes_old_data(tmp_path: pytest.TempPathFactory) -> None:
+    """_prune_old_db_data() must delete rows older than the retention window."""
+    import sqlite3
+    import time
+
+    db_file = str(tmp_path / "persist.db")
+    webui = WorkerWebUI(port=0, db_path=db_file, data_retention_days=7)
+
+    now = time.time()
+    old_ts = now - 8 * 86400  # 8 days ago — should be pruned
+    recent_ts = now - 1 * 86400  # 1 day ago — should be kept
+
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("INSERT INTO errors_log (message, created_at) VALUES (?, ?)", ("old_err", old_ts))
+        conn.execute("INSERT INTO errors_log (message, created_at) VALUES (?, ?)", ("new_err", recent_ts))
+        conn.execute(
+            "INSERT INTO gallery_images (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, old_ts, "m", None, None, 0, 0, None, old_ts),
+        )
+        conn.execute(
+            "INSERT INTO gallery_images (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (2, recent_ts, "m", None, None, 0, 0, None, recent_ts),
+        )
+        conn.execute("INSERT INTO stats_snapshots (snapshot_json, timestamp) VALUES (?, ?)", ('{}', old_ts))
+        conn.execute("INSERT INTO stats_snapshots (snapshot_json, timestamp) VALUES (?, ?)", ('{}', recent_ts))
+        conn.commit()
+
+    webui._prune_old_db_data()
+
+    with sqlite3.connect(db_file) as conn:
+        err_msgs = [r[0] for r in conn.execute("SELECT message FROM errors_log").fetchall()]
+        gallery_ids = [r[0] for r in conn.execute("SELECT gallery_id FROM gallery_images").fetchall()]
+        stats_count = conn.execute("SELECT COUNT(*) FROM stats_snapshots").fetchone()[0]
+
+    assert "old_err" not in err_msgs
+    assert "new_err" in err_msgs
+    assert 1 not in gallery_ids
+    assert 2 in gallery_ids
+    assert stats_count == 1
+
+
+def test_webui_set_data_retention_days_updates_and_prunes(tmp_path: pytest.TempPathFactory) -> None:
+    """set_data_retention_days() updates the retention period and prunes expired data."""
+    import sqlite3
+    import time
+
+    db_file = str(tmp_path / "persist.db")
+    webui = WorkerWebUI(port=0, db_path=db_file, data_retention_days=30)
+
+    now = time.time()
+    # Insert an entry 10 days old — within 30-day retention, outside 7-day retention
+    with sqlite3.connect(db_file) as conn:
+        conn.execute(
+            "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
+            ("old_error", now - 10 * 86400),
+        )
+        conn.commit()
+
+    # Verify it's present under 30-day retention
+    with sqlite3.connect(db_file) as conn:
+        count_before = conn.execute("SELECT COUNT(*) FROM errors_log").fetchone()[0]
+    assert count_before == 1
+
+    # Tighten retention to 7 days — should prune the 10-day-old entry
+    webui.set_data_retention_days(7)
+
+    with sqlite3.connect(db_file) as conn:
+        count_after = conn.execute("SELECT COUNT(*) FROM errors_log").fetchone()[0]
+    assert count_after == 0
+
+
+def test_webui_db_expired_errors_not_loaded(tmp_path: pytest.TempPathFactory) -> None:
+    """Errors outside the retention window must not be loaded into errors_history on startup."""
+    import sqlite3
+    import time
+
+    db_file = str(tmp_path / "persist.db")
+    webui_seed = WorkerWebUI(port=0, db_path=db_file, data_retention_days=7)
+    now = time.time()
+
+    with sqlite3.connect(db_file) as conn:
+        # Old error — outside retention window
+        conn.execute(
+            "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
+            ("expired_error", now - 8 * 86400),
+        )
+        # Recent error — within retention window
+        conn.execute(
+            "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
+            ("recent_error", now - 1 * 86400),
+        )
+        conn.commit()
+
+    webui2 = WorkerWebUI(port=0, db_path=db_file, data_retention_days=7)
+    assert "expired_error" not in webui2.status_data["errors_history"]
+    assert "recent_error" in webui2.status_data["errors_history"]
+
+
+def test_webui_no_db_path_no_persistence() -> None:
+    """WorkerWebUI without a db_path must work normally without any DB operations."""
+    webui = WorkerWebUI(port=0)
+    assert webui._db_path is None
+
+    # These should all be no-ops (no exceptions raised)
+    webui.add_gallery_image({"base64": None, "timestamp": 1.0, "model": "sdxl"})
+    webui.update_status(errors_history=["err1", "err2"])
+    webui._last_stats_snapshot_time = 0.0
+    webui._record_stats_snapshot()
+    webui.set_data_retention_days(3)  # no-op without DB
+
+    # Gallery and errors should still work in memory
+    assert len(webui._gallery_dict) == 1
+    assert webui.status_data["errors_history"] == ["err1", "err2"]
+    assert len(webui._stats_snapshots) >= 1
+
+
+def test_webui_data_retention_days_setting_in_spec() -> None:
+    """data_retention_days must appear in both the Python _SETTINGS_SPEC and the HTML."""
+    from horde_worker_regen.webui.server import _SETTINGS_SPEC
+
+    assert "data_retention_days" in _SETTINGS_SPEC
+    spec = _SETTINGS_SPEC["data_retention_days"]
+    assert spec["type"] is int
+    assert spec["min"] == 1
+    assert spec["max"] == 3650
+
+
 if __name__ == "__main__":
     test_webui_creation()
     print("✓ WebUI creation test passed")

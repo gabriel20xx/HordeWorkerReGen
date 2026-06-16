@@ -143,6 +143,12 @@ class reGenBridgeData(CombinedHordeBridgeData):
     When set, this overrides the startup-derived value (max_threads + queue_size).
     """
 
+    data_retention_days: int = Field(default=7, ge=1, le=3650)
+    """Number of days to retain errors, statistics snapshots, and gallery entries in the SQLite database.
+
+    Can also be configured via the AIWORKER_DATA_RETENTION_DAYS environment variable.
+    """
+
     @model_validator(mode="before")
     @classmethod
     def handle_deprecated_fields(cls, values: Any) -> Any:
@@ -294,6 +300,39 @@ class reGenBridgeData(CombinedHordeBridgeData):
             logger.info(
                 f"AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable is set to {parsed}. "
                 "This overrides the value for `auto_restart_on_idle_minutes` in the config file.",
+            )
+            return parsed
+        return value
+
+    @field_validator("data_retention_days", mode="after")
+    @classmethod
+    def validate_data_retention_days(cls, value: int) -> int:
+        """Apply the environment variable override for the `data_retention_days` field."""
+        env_val = os.getenv("AIWORKER_DATA_RETENTION_DAYS")
+        if env_val is not None:
+            try:
+                parsed = int(env_val)
+            except ValueError:
+                logger.warning(
+                    f"AIWORKER_DATA_RETENTION_DAYS environment variable has an invalid value: '{env_val}'. "
+                    "It must be a positive integer. Ignoring.",
+                )
+                return value
+            if parsed < 1:
+                logger.warning(
+                    f"AIWORKER_DATA_RETENTION_DAYS environment variable has an out-of-range value: {parsed}. "
+                    "It must be >= 1. Ignoring.",
+                )
+                return value
+            if parsed > 3650:
+                logger.warning(
+                    f"AIWORKER_DATA_RETENTION_DAYS environment variable has an out-of-range value: {parsed}. "
+                    "It must be <= 3650. Ignoring.",
+                )
+                return value
+            logger.info(
+                f"AIWORKER_DATA_RETENTION_DAYS environment variable is set to {parsed}. "
+                "This overrides the value for `data_retention_days` in the config file.",
             )
             return parsed
         return value
