@@ -3472,7 +3472,7 @@ def test_webui_reset_session_start_time_resets_uptime() -> None:
 
 def _make_db_webui(tmp_path: pathlib.Path, **kwargs: object) -> tuple["WorkerWebUI", str, str, str]:
     """Helper that creates a WorkerWebUI backed by temporary databases.
-    
+
     Returns:
         Tuple of (webui, errors_db_path, stats_db_path, gallery_db_path).
     """

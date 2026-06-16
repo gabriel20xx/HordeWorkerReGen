@@ -53,6 +53,9 @@ _STATS_SNAPSHOT_INTERVAL = 10.0
 _MAX_STATS_SNAPSHOTS = 2160
 """Maximum number of statistics snapshots to keep (approx. 6 hours at 10-second intervals)."""
 
+_MAX_PERSISTED_ERRORS = 1000
+"""Maximum number of error rows to load from the database on startup (matches ProcessManager in-memory cap)."""
+
 _MAX_OCCURRENCES_PER_GROUP = 50
 """Maximum individual occurrences returned per error group in the /api/errors/grouped response."""
 
@@ -433,8 +436,9 @@ class WorkerWebUI:
         try:
             with sqlite3.connect(self._errors_db_path) as conn:
                 rows = conn.execute(
-                    "SELECT message FROM errors_log WHERE created_at >= ? ORDER BY created_at DESC, id DESC",
-                    (cutoff,),
+                    "SELECT message FROM errors_log WHERE created_at >= ?"
+                    " ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (cutoff, _MAX_PERSISTED_ERRORS),
                 ).fetchall()
                 self._persisted_errors = [row[0] for row in rows]
         except Exception as exc:  # noqa: BLE001
