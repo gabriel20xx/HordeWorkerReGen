@@ -4792,7 +4792,7 @@ class HordeWorkerProcessManager:
                 self._images_per_model[model_name] = (
                     self._images_per_model.get(model_name, 0) + new_submit.batch_count
                 )
-            new_submit.succeed(new_submit.kudos_reward, new_submit.kudos_per_second)
+            new_submit.succeed(job_submit_response.reward, kudos_per_second)
 
             # Update state to WAITING_FOR_JOB for the process that handled this job (reuse process_id from above)
             if handling_process_id is not None:
