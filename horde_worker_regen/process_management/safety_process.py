@@ -455,14 +455,14 @@ class HordeSafetyProcess(HordeProcess):
 
                 if output_path is not None:
                     if metadata is not None:
-                        logger.opt(ansi=True).info(
+                        logger.opt(colors=True).info(
                             "<b><fg #FF69B4>"
                             f"Saved 1 image + embedded metadata to disk for job {message.job_id}"
                             "</></>",
                         )
                         saved_images.append(HordeSavedImageInfo(path=output_path, metadata_embedded=True))
                     else:
-                        logger.opt(ansi=True).info(
+                        logger.opt(colors=True).info(
                             "<b><fg #FF69B4>"
                             f"Saved 1 image to disk (no metadata) for job {message.job_id}"
                             "</></>",
