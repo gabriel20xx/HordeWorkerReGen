@@ -149,12 +149,13 @@ class reGenBridgeData(CombinedHordeBridgeData):
         """Remap deprecated/renamed field keys before validation."""
         if isinstance(values, dict) and "lora_cache_size" in values:
             values = values.copy()
-            logger.warning(
-                "The `lora_cache_size` parameter is deprecated. Please rename it to `max_lora_cache_size` "
-                "in your bridge data file.",
-            )
             lora_cache_size = values.pop("lora_cache_size")
-            values.setdefault("max_lora_cache_size", lora_cache_size)
+            if "max_lora_cache_size" not in values:
+                logger.warning(
+                    "The `lora_cache_size` parameter is deprecated. Please rename it to `max_lora_cache_size` "
+                    "in your bridge data file.",
+                )
+                values["max_lora_cache_size"] = lora_cache_size
         return values
 
     @model_validator(mode="after")
