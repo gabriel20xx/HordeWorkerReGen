@@ -2866,6 +2866,7 @@ class WorkerWebUI:
                     if (data.processes.length > 0) {
                         pd.innerHTML = data.processes.map(proc => {
                             let sl = [];
+                            if (proc.job_id) sl.push('Job: '+escapeHtml(proc.job_id));
                             if (proc.model) sl.push('Model: '+escapeHtml(proc.model));
                             if (proc.progress!=null&&proc.progress!==undefined) sl.push('Progress: '+escapeHtml(proc.progress)+'%');
                             return '<div class="process-item"><div class="process-id-row"><span class="process-id">'+escapeHtml(proc.display_id || proc.id)+'</span><span class="process-state-badge">'+escapeHtml(proc.state)+'</span><span class="process-type-badge">'+escapeHtml(proc.type)+'</span></div><div class="process-detail-text">'+(sl.length>0?sl.join(' | '):'Idle')+'</div></div>';
