@@ -2486,15 +2486,18 @@ class WorkerWebUI:
                 totalEl.textContent = _currentJobStartTime ? '\u23F1 ' + formatElapsed(_currentJobStartTime) : '';
             }
         }, 1000);
-        function _getImageKey(rawB64, timestamp) {
+        function _getImageKey(rawB64, timestamp, model, safety) {
             if (!rawB64 || rawB64.length === 0) return 'empty';
-            // Use count + submission timestamp as the change-detection key.
+            // Use count + submission timestamp + model + safety flags as the change-detection key.
             // The first bytes of a PNG base64 string are always a fixed header, so sampling
             // from the beginning is not reliable. The timestamp changes whenever new images arrive.
-            return rawB64.length + ':' + (timestamp || 0);
+            // model and safety are included so that badge/model-name updates with identical
+            // image count/timestamp are not incorrectly skipped.
+            const safetyKey = safety ? safety.map(function(s) { return (s && s.is_nsfw ? 'n' : '-') + (s && s.is_csam ? 'c' : '-'); }).join(',') : '';
+            return rawB64.length + ':' + (timestamp || 0) + ':' + (model || '') + ':' + safetyKey;
         }
         function renderLastImages(rawB64, oic, timestamp, model, safety) {
-            const key = _getImageKey(rawB64, timestamp);
+            const key = _getImageKey(rawB64, timestamp, model, safety);
             if (key === _lastRenderedImageKey) return;
             _lastRenderedImageKey = key;
             oic.classList.remove('loading');
