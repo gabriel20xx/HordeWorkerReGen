@@ -372,7 +372,7 @@ class WorkerWebUI:
                     """,
                 )
                 conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_gallery_created_at ON gallery_images (created_at)",
+                    "CREATE INDEX IF NOT EXISTS idx_gallery_timestamp ON gallery_images (timestamp)",
                 )
                 conn.commit()
 
@@ -403,7 +403,7 @@ class WorkerWebUI:
         try:
             with sqlite3.connect(self._errors_db_path) as conn:
                 rows = conn.execute(
-                    "SELECT message FROM errors_log WHERE created_at >= ? ORDER BY created_at DESC",
+                    "SELECT message FROM errors_log WHERE created_at >= ? ORDER BY created_at DESC, id DESC",
                     (cutoff,),
                 ).fetchall()
                 self._persisted_errors = [row[0] for row in rows]
@@ -415,7 +415,7 @@ class WorkerWebUI:
             with sqlite3.connect(self._gallery_db_path) as conn:
                 rows = conn.execute(
                     "SELECT gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json "
-                    "FROM gallery_images WHERE created_at >= ? ORDER BY created_at ASC",
+                    "FROM gallery_images WHERE timestamp >= ? ORDER BY timestamp ASC",
                     (cutoff,),
                 ).fetchall()
                 for row in rows:
@@ -514,7 +514,7 @@ class WorkerWebUI:
 
             # Prune gallery database
             with sqlite3.connect(self._gallery_db_path) as conn:
-                conn.execute("DELETE FROM gallery_images WHERE created_at < ?", (cutoff,))
+                conn.execute("DELETE FROM gallery_images WHERE timestamp < ?", (cutoff,))
                 conn.commit()
 
             pruned = True
@@ -5730,7 +5730,7 @@ class WorkerWebUI:
                         with sqlite3.connect(self._errors_db_path) as conn:
                             conn.executemany(
                                 "INSERT INTO errors_log (message, created_at) VALUES (?, ?)",
-                                [(msg, now) for msg in new_errors],
+                                [(msg, now) for msg in reversed(new_errors)],
                             )
                             conn.commit()
                         self._persisted_errors = list(new_errors) + getattr(self, "_persisted_errors", [])

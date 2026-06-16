@@ -3681,6 +3681,17 @@ def test_webui_db_loads_errors_on_startup(tmp_path: pathlib.Path) -> None:
     assert "seeded_error" in webui2.status_data["errors_history"]
 
 
+def test_webui_db_loads_same_timestamp_errors_in_newest_first_order(tmp_path: pathlib.Path) -> None:
+    """Persisted errors with identical timestamps should still load in newest-first order."""
+    db_dir = str(tmp_path)
+
+    webui = WorkerWebUI(port=0, db_path=db_dir)
+    webui.update_status(errors_history=["error_c", "error_b", "error_a"])
+
+    webui2 = WorkerWebUI(port=0, db_path=db_dir)
+    assert webui2.status_data["errors_history"][:3] == ["error_c", "error_b", "error_a"]
+
+
 def test_webui_db_loads_gallery_on_startup(tmp_path: pathlib.Path) -> None:
     """A fresh WorkerWebUI with an existing DB should restore gallery_dict."""
     import sqlite3
@@ -3699,7 +3710,7 @@ def test_webui_db_loads_gallery_on_startup(tmp_path: pathlib.Path) -> None:
                 (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (42, now, "sdxl", None, None, 0, 0, None, now),
+            (42, now, "sdxl", None, None, 0, 0, None, now - 30 * 86400),
         )
         conn.commit()
 
@@ -3760,11 +3771,11 @@ def test_webui_db_prune_removes_old_data(tmp_path: pathlib.Path) -> None:
     with sqlite3.connect(gallery_db) as conn:
         conn.execute(
             "INSERT INTO gallery_images (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (1, old_ts, "m", None, None, 0, 0, None, old_ts),
+            (1, old_ts, "m", None, None, 0, 0, None, recent_ts),
         )
         conn.execute(
             "INSERT INTO gallery_images (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (2, recent_ts, "m", None, None, 0, 0, None, recent_ts),
+            (2, recent_ts, "m", None, None, 0, 0, None, old_ts),
         )
         conn.commit()
     
@@ -3890,12 +3901,12 @@ def test_webui_no_db_path_no_persistence() -> None:
     assert webui._stats_db_path is None
     assert webui._gallery_db_path is None
 
-    # These should all be no-ops (no exceptions raised)
+    # These should all work without any DB operations or prune attempts.
     webui.add_gallery_image({"base64": None, "timestamp": 1.0, "model": "sdxl"})
     webui.update_status(errors_history=["err1", "err2"])
     webui._last_stats_snapshot_time = 0.0
     webui._record_stats_snapshot()
-    webui.set_data_retention_days(3)  # no-op without DB
+    webui.set_data_retention_days(3)
 
     # Gallery and errors should still work in memory
     assert len(webui._gallery_dict) == 1
