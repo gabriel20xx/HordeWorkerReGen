@@ -6519,6 +6519,10 @@ class HordeWorkerProcessManager:
             return
 
         semaphore = asyncio.Semaphore(5)
+        # Log connection errors at DEBUG when user-info is also failing (internet/Horde is
+        # already known to be down).  Use WARNING only when user-info itself was last
+        # successful so the operator can distinguish real problems from expected offline noise.
+        conn_log_level = "DEBUG" if self._user_info_failed else "WARNING"
 
         async def _fetch_one(worker_id: str) -> dict[str, Any] | None:
             async with semaphore:
@@ -6549,11 +6553,16 @@ class HordeWorkerProcessManager:
                         "kudos_rewards": response.kudos_rewards,
                     }
                 except Exception as e:  # noqa: BLE001
-                    logger.warning(f"Failed to get details for worker {worker_id}: {e}")
+                    logger.log(conn_log_level, f"Failed to get details for worker {worker_id}: {e}")
                     return None
 
         results = await asyncio.gather(*(_fetch_one(str(wid)) for wid in worker_ids))
-        self._workers_details = [w for w in results if w is not None]
+        fetched = [w for w in results if w is not None]
+        # Only overwrite the cached list when at least one fetch succeeded.  If all fetches
+        # fail (e.g. internet / Horde is down) we keep the last known state so that the web
+        # UI continues to display worker cards rather than showing an empty list.
+        if fetched:
+            self._workers_details = fetched
 
     async def _delete_worker(self, worker_id: str) -> bool:
         """Delete a worker from the Horde via the API.
@@ -6600,6 +6609,19 @@ class HordeWorkerProcessManager:
                     worker_ids = getattr(self.user_info, "worker_ids", None)
                     if worker_ids is None:
                         await asyncio.sleep(1)
+                        continue
+                    # Skip the fetch when user-info is already failing (internet / Horde is
+                    # down).  Worker details would also fail, so avoid the extra noise and
+                    # wait for user-info to recover before retrying.  Sleep in 1-second
+                    # increments so a pending shutdown is not delayed by the full interval.
+                    if self._user_info_failed:
+                        remaining = float(self._api_get_workers_details_interval)
+                        while remaining > 0:
+                            if self.is_time_for_shutdown() or self._shut_down:
+                                return
+                            step = min(1.0, remaining)
+                            await asyncio.sleep(step)
+                            remaining -= step
                         continue
                     await self.api_get_workers_details()
                     if self.is_time_for_shutdown() or self._shut_down:
