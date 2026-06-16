@@ -231,6 +231,10 @@ class BridgeDataLoader:
         """
         load_resolver = ImageModelLoadResolver(horde_model_reference_manager)
 
+        # Track whether any explicit model selection was provided so we can apply
+        # the "load all models" default when nothing was configured.
+        user_configured_models = bool(bridge_data.image_models_to_load) or bridge_data.meta_load_instructions is not None
+
         resolved_models = None
         if bridge_data.meta_load_instructions is not None:
             resolved_models = load_resolver.resolve_meta_instructions(
@@ -267,6 +271,21 @@ class BridgeDataLoader:
             logger.debug(
                 f"Resolved {total_resolved_models} models, but only {used_models} "
                 "are available in the model reference manager.",
+            )
+
+        # If no models ended up configured (because the user didn't specify any), fall
+        # back to loading all available models so the worker starts in a useful state.
+        # The WebUI model enable/disable controls can then be used to narrow down the
+        # active set after startup.  If the user did configure an explicit list that
+        # happened to resolve to nothing, that is left unchanged (it's their config).
+        if not bridge_data.image_models_to_load and not user_configured_models:
+            all_models: set[str] = load_resolver.remove_large_models(set(known_models))
+            if bridge_data.image_models_to_skip:
+                all_models -= set(bridge_data.image_models_to_skip)
+            bridge_data.image_models_to_load = sorted(all_models)
+            logger.info(
+                f"No models_to_load configured — defaulting to all {len(bridge_data.image_models_to_load)} "
+                "available models.  Use the WebUI settings page to enable/disable individual models.",
             )
 
         return bridge_data.image_models_to_load

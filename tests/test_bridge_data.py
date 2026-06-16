@@ -198,3 +198,82 @@ def test_load_env_vars_from_config_lora_cache_size_not_overwritten(
     assert os.environ.get("AIWORKER_LORA_CACHE_SIZE") == "99999", (
         "A pre-existing AIWORKER_LORA_CACHE_SIZE should not be overwritten"
     )
+
+
+def test_resolve_meta_instructions_defaults_to_all_when_no_models_configured() -> None:
+    """When no models_to_load are configured, _resolve_meta_instructions defaults to all known models."""
+    from unittest.mock import MagicMock, patch
+
+    from horde_worker_regen.bridge_data.load_config import BridgeDataLoader
+
+    bridge_data = reGenBridgeData.model_validate({})
+    # Confirm no models were configured
+    assert bridge_data.image_models_to_load == []
+    assert bridge_data.meta_load_instructions is None
+
+    mock_ref_manager = MagicMock()
+    known_models = {"Model A", "Model B", "Model C"}
+
+    with patch(
+        "horde_worker_regen.bridge_data.load_config.ImageModelLoadResolver"
+    ) as MockResolver:
+        instance = MockResolver.return_value
+        instance.resolve_all_model_names.return_value = known_models
+        instance.remove_large_models.side_effect = lambda models: models
+        instance.resolve_meta_instructions.return_value = None
+
+        result = BridgeDataLoader._resolve_meta_instructions(bridge_data, mock_ref_manager)
+
+    assert set(result) == known_models, "Should default to all known models"
+
+
+def test_resolve_meta_instructions_respects_skip_in_default() -> None:
+    """When defaulting to all models, image_models_to_skip is still applied."""
+    from unittest.mock import MagicMock, patch
+
+    from horde_worker_regen.bridge_data.load_config import BridgeDataLoader
+
+    bridge_data = reGenBridgeData.model_validate({"models_to_skip": ["Model B"]})
+    assert bridge_data.image_models_to_load == []
+
+    mock_ref_manager = MagicMock()
+    known_models = {"Model A", "Model B", "Model C"}
+
+    with patch(
+        "horde_worker_regen.bridge_data.load_config.ImageModelLoadResolver"
+    ) as MockResolver:
+        instance = MockResolver.return_value
+        instance.resolve_all_model_names.return_value = known_models
+        instance.remove_large_models.side_effect = lambda models: models
+        instance.resolve_meta_instructions.return_value = None
+
+        result = BridgeDataLoader._resolve_meta_instructions(bridge_data, mock_ref_manager)
+
+    assert "Model B" not in result, "Skipped model should not be in default set"
+    assert {"Model A", "Model C"} == set(result)
+
+
+def test_resolve_meta_instructions_does_not_override_explicit_empty_config() -> None:
+    """When models_to_load is explicitly set but resolves to nothing, do not default to all models."""
+    from unittest.mock import MagicMock, patch
+
+    from horde_worker_regen.bridge_data.load_config import BridgeDataLoader
+
+    bridge_data = reGenBridgeData.model_validate({"models_to_load": ["NonExistentModel"]})
+    assert bridge_data.image_models_to_load == ["NonExistentModel"]
+
+    mock_ref_manager = MagicMock()
+    known_models = {"Model A", "Model B"}
+
+    with patch(
+        "horde_worker_regen.bridge_data.load_config.ImageModelLoadResolver"
+    ) as MockResolver:
+        instance = MockResolver.return_value
+        instance.resolve_all_model_names.return_value = known_models
+        instance.remove_large_models.side_effect = lambda models: models
+        instance.resolve_meta_instructions.return_value = None
+
+        result = BridgeDataLoader._resolve_meta_instructions(bridge_data, mock_ref_manager)
+
+    # The user asked for a specific (invalid) model — we should NOT fall back to all models
+    assert result == [], "Explicit (but invalid) model list should not be replaced with default"
