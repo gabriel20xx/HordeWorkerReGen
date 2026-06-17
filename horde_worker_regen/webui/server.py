@@ -999,7 +999,7 @@ class WorkerWebUI:
         [data-theme="dark"] .limit-auto-btn { background: #1e293b; color: #94a3b8; }
         [data-theme="dark"] .limit-auto-btn:hover { background: #2d3f55; }
         [data-theme="dark"] .limit-auto-btn.active { background: var(--success); color: #fff; }
-        .theme-toggle, .limit-set-btn, .limit-auto-btn, .console-pause-btn, .console-copy-btn, .job-pops-pause-btn, .errors-view-btn, .pagination-controls button, .image-overlay-close, .worker-delete-btn, .stats-window-btn, .settings-page-btn, .setting-apply-btn, .confirm-modal-btn {
+        .theme-toggle, .limit-set-btn, .limit-auto-btn, .console-pause-btn, .console-copy-btn, .job-pops-pause-btn, .errors-view-btn, .pagination-controls button, .image-overlay-close, .worker-delete-btn, .stats-window-btn, .horde-window-btn, .settings-page-btn, .setting-apply-btn, .confirm-modal-btn {
             height: var(--action-btn-height);
             box-sizing: border-box;
             display: inline-flex;
@@ -1295,6 +1295,17 @@ class WorkerWebUI:
         #stats-model-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
         @media (max-width: 600px) { #stats-model-time-row { grid-template-columns: 1fr; } }
 
+        /* ---- Horde Network page ---- */
+        .horde-window-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 3px 11px; font-size: 0.78rem; font-weight: 600; cursor: pointer; color: var(--text-muted); transition: background 0.15s, color 0.15s, border-color 0.15s; }
+        .horde-window-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .horde-window-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+        .horde-status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+        .horde-mode-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 12px; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.5px; border: 1px solid transparent; }
+        .horde-mode-badge.ok { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
+        .horde-mode-badge.warning { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+        [data-theme="dark"] .horde-mode-badge.ok { background: #064e3b; color: #6ee7b7; border-color: #065f46; }
+        [data-theme="dark"] .horde-mode-badge.warning { background: #451a03; color: #fcd34d; border-color: #92400e; }
+
         /* ---- Settings page ---- */
         .settings-header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
         .settings-page-btn { padding: 6px 11px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; cursor: pointer; border: 1px solid transparent; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; }
@@ -1467,6 +1478,9 @@ class WorkerWebUI:
             <button class="nav-item" onclick="showPage('user', this)" id="nav-user">
                 <span class="nav-icon">&#128100;</span> User
             </button>
+            <button class="nav-item" onclick="showPage('horde', this)" id="nav-horde">
+                <span class="nav-icon">&#127760;</span> Horde
+            </button>
             <button class="nav-item" onclick="showPage('logs', this)" id="nav-logs">
                 <span class="nav-icon">&#128203;</span> Logs
             </button>
@@ -1630,6 +1644,63 @@ class WorkerWebUI:
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#9881; Workers</span><span class="section-count" id="user-workers-count">0</span></div>
                         <div id="user-workers-list"><div class="empty-state"><span class="empty-state-icon">&#9881;</span>No worker data yet</div></div>
+                    </div>
+                </div>
+
+                <!-- HORDE NETWORK PAGE -->
+                <div class="page" id="page-horde">
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="section-title">&#127760; Horde Network</span>
+                            <div class="horde-status-row">
+                                <span class="horde-mode-badge ok" id="horde-mode-maintenance" style="display:none;">&#9888; Maintenance</span>
+                                <span class="horde-mode-badge ok" id="horde-mode-invite" style="display:none;">&#128274; Invite Only</span>
+                                <div class="stats-window-group">
+                                    <button class="horde-window-btn active" id="horde-win-30m" onclick="setHordeWindow(1800, this)">30m</button>
+                                    <button class="horde-window-btn" id="horde-win-2h" onclick="setHordeWindow(7200, this)">2h</button>
+                                    <button class="horde-window-btn" id="horde-win-6h" onclick="setHordeWindow(21600, this)">6h</button>
+                                    <button class="horde-window-btn" id="horde-win-all" onclick="setHordeWindow(null, this)">All</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="grid-4">
+                            <div class="stat-card"><div class="stat-card-label">Workers Online</div><div class="stat-card-value accent" id="horde-stat-workers">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Threads Active</div><div class="stat-card-value accent" id="horde-stat-threads">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Queued Requests</div><div class="stat-card-value" id="horde-stat-queued-req">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Queued Megapixelsteps</div><div class="stat-card-value" id="horde-stat-queued-mps">-</div></div>
+                        </div>
+                        <div class="grid-4" style="margin-top:var(--page-spacing);">
+                            <div class="stat-card"><div class="stat-card-label">Past Min. Megapixelsteps</div><div class="stat-card-value success" id="horde-stat-past-min-mps">-</div></div>
+                        </div>
+                        <div id="horde-fetch-error" style="display:none; color:var(--error); font-size:0.85rem; margin-top:8px; padding:8px 12px; background:#fff5f5; border:1px solid #fecaca; border-radius:6px;">Failed to fetch Horde Network data. Will retry automatically.</div>
+                    </div>
+                    <div class="section">
+                        <div class="grid-2">
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-legend">
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#6366f1;"></span>Workers</span>
+                                    <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#a78bfa;"></span>Threads</span>
+                                </div>
+                                <div class="chart-label">Workers &amp; Threads</div>
+                                <div class="chart-container-md"><canvas id="horde-chart-workers-threads" aria-label="Workers and threads over time"></canvas></div>
+                            </div>
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">Queued Requests</div>
+                                <div class="chart-container-md"><canvas id="horde-chart-queued-req" aria-label="Queued requests over time"></canvas></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="grid-2">
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">Queued Megapixelsteps</div>
+                                <div class="chart-container-md"><canvas id="horde-chart-queued-mps" aria-label="Queued megapixelsteps over time"></canvas></div>
+                            </div>
+                            <div class="card" style="padding:14px 16px;">
+                                <div class="chart-label">Past Minute Megapixelsteps</div>
+                                <div class="chart-container-md"><canvas id="horde-chart-past-min-mps" aria-label="Past minute megapixelsteps over time"></canvas></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1961,6 +2032,7 @@ class WorkerWebUI:
             if (pageId === 'stats') {
                 fetchStats(true);
             }
+            if (pageId === 'horde') { startHordeFetching(); } else { stopHordeFetching(); }
             if (pageId === 'settings') {
                 fetchSettings();
             }
@@ -4186,6 +4258,177 @@ class WorkerWebUI:
         window.addEventListener('resize', function() {
             if (_statsData && document.getElementById('page-stats').classList.contains('active')) {
                 renderStatsPage(_statsData);
+            }
+        });
+
+        // ========================================================
+        // HORDE NETWORK PAGE
+        // ========================================================
+        let _hordeSnapshots = [];
+        let _hordeWindowSecs = 1800;
+        let _hordeFetchTimer = null;
+        let _hordeAbortCtrl = null;
+        let _hordeModesAbortCtrl = null;
+        let _hordeModes = null;
+        let _hordeLastModeFetch = 0;
+        const _HORDE_POLL_MS = 1000;
+        const _HORDE_MODE_REFRESH_MS = 300000;
+        const _HORDE_MAX_SNAPS = 10800; // 3 hours at 1s intervals
+        const _HORDE_CLIENT_AGENT = 'horde-worker-regen:0:unknown';
+
+        function startHordeFetching() {
+            if (_hordeFetchTimer !== null) return; // already running
+            fetchHordeData();
+            fetchHordeModes();
+            _hordeFetchTimer = setInterval(function() {
+                fetchHordeData();
+                var now = Date.now();
+                if (now - _hordeLastModeFetch >= _HORDE_MODE_REFRESH_MS) {
+                    fetchHordeModes();
+                }
+            }, _HORDE_POLL_MS);
+        }
+
+        function stopHordeFetching() {
+            if (_hordeFetchTimer !== null) {
+                clearInterval(_hordeFetchTimer);
+                _hordeFetchTimer = null;
+            }
+            if (_hordeAbortCtrl) { _hordeAbortCtrl.abort(); _hordeAbortCtrl = null; }
+            if (_hordeModesAbortCtrl) { _hordeModesAbortCtrl.abort(); _hordeModesAbortCtrl = null; }
+        }
+
+        function fetchHordeData() {
+            if (_hordeAbortCtrl) _hordeAbortCtrl.abort();
+            _hordeAbortCtrl = new AbortController();
+            var ctrl = _hordeAbortCtrl;
+            fetch('https://aihorde.net/api/v2/status/performance', {
+                signal: ctrl.signal,
+                headers: { 'Client-Agent': _HORDE_CLIENT_AGENT }
+            })
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(data) {
+                    if (ctrl !== _hordeAbortCtrl) return;
+                    _hordeAbortCtrl = null;
+                    var snap = {
+                        t: Math.floor(Date.now() / 1000),
+                        workers: data.worker_count || 0,
+                        threads: data.thread_count || 0,
+                        queued_req: data.queued_requests || 0,
+                        queued_mps: data.queued_megapixelsteps || 0,
+                        past_min_mps: data.past_minute_megapixelsteps || 0
+                    };
+                    _hordeSnapshots.push(snap);
+                    if (_hordeSnapshots.length > _HORDE_MAX_SNAPS) {
+                        _hordeSnapshots = _hordeSnapshots.slice(_hordeSnapshots.length - _HORDE_MAX_SNAPS);
+                    }
+                    var errEl = document.getElementById('horde-fetch-error');
+                    if (errEl) errEl.style.display = 'none';
+                    renderHordePage();
+                })
+                .catch(function(err) {
+                    if (err.name === 'AbortError') return;
+                    console.error('Failed to fetch Horde performance data:', err);
+                    var errEl = document.getElementById('horde-fetch-error');
+                    if (errEl) errEl.style.display = '';
+                });
+        }
+
+        function fetchHordeModes() {
+            if (_hordeModesAbortCtrl) _hordeModesAbortCtrl.abort();
+            _hordeModesAbortCtrl = new AbortController();
+            var ctrl = _hordeModesAbortCtrl;
+            _hordeLastModeFetch = Date.now();
+            fetch('https://aihorde.net/api/v2/status/modes', {
+                signal: ctrl.signal,
+                headers: { 'Client-Agent': _HORDE_CLIENT_AGENT }
+            })
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(data) {
+                    if (ctrl !== _hordeModesAbortCtrl) return;
+                    _hordeModesAbortCtrl = null;
+                    _hordeModes = data;
+                    renderHordeModeBadges();
+                })
+                .catch(function(err) {
+                    if (err.name === 'AbortError') return;
+                    console.error('Failed to fetch Horde modes:', err);
+                });
+        }
+
+        function renderHordeModeBadges() {
+            if (!_hordeModes) return;
+            var maintEl = document.getElementById('horde-mode-maintenance');
+            var inviteEl = document.getElementById('horde-mode-invite');
+            if (maintEl) {
+                if (_hordeModes.maintenance_mode) {
+                    maintEl.style.display = '';
+                    maintEl.className = 'horde-mode-badge warning';
+                    maintEl.textContent = '⚠ Maintenance';
+                } else {
+                    maintEl.style.display = 'none';
+                }
+            }
+            if (inviteEl) {
+                if (_hordeModes.invite_only_mode) {
+                    inviteEl.style.display = '';
+                    inviteEl.className = 'horde-mode-badge warning';
+                    inviteEl.textContent = '🔒 Invite Only';
+                } else {
+                    inviteEl.style.display = 'none';
+                }
+            }
+        }
+
+        function _getHordeWindowedSnapshots() {
+            if (!_hordeSnapshots || _hordeSnapshots.length === 0) return [];
+            if (_hordeWindowSecs === null) return _hordeSnapshots;
+            var cutoff = _hordeSnapshots[_hordeSnapshots.length - 1].t - _hordeWindowSecs;
+            return _hordeSnapshots.filter(function(s) { return s.t >= cutoff; });
+        }
+
+        function setHordeWindow(secs, btn) {
+            _hordeWindowSecs = secs;
+            document.querySelectorAll('.horde-window-btn').forEach(function(b) { b.classList.remove('active'); });
+            if (btn) btn.classList.add('active');
+            renderHordePage();
+        }
+
+        function renderHordePage() {
+            var snaps = _getHordeWindowedSnapshots();
+            var last = snaps.length > 0 ? snaps[snaps.length - 1] : null;
+
+            function fmt(v, dec) {
+                if (v === null || v === undefined) return '-';
+                return v.toLocaleString(undefined, { maximumFractionDigits: dec !== undefined ? dec : 0 });
+            }
+
+            var el = function(id) { return document.getElementById(id); };
+            if (el('horde-stat-workers'))    el('horde-stat-workers').textContent    = last ? fmt(last.workers)      : '-';
+            if (el('horde-stat-threads'))    el('horde-stat-threads').textContent    = last ? fmt(last.threads)      : '-';
+            if (el('horde-stat-queued-req')) el('horde-stat-queued-req').textContent = last ? fmt(last.queued_req)   : '-';
+            if (el('horde-stat-queued-mps')) el('horde-stat-queued-mps').textContent = last ? fmt(last.queued_mps, 2) : '-';
+            if (el('horde-stat-past-min-mps')) el('horde-stat-past-min-mps').textContent = last ? fmt(last.past_min_mps, 2) : '-';
+
+            drawMultiLineChart('horde-chart-workers-threads', [
+                { points: snaps.map(function(s) { return { t: s.t, v: s.workers }; }), color: '#6366f1' },
+                { points: snaps.map(function(s) { return { t: s.t, v: s.threads }; }), color: '#a78bfa' }
+            ], {});
+            drawLineChart('horde-chart-queued-req',
+                snaps.map(function(s) { return { t: s.t, v: s.queued_req }; }),
+                { color: '#f59e0b' });
+            drawLineChart('horde-chart-queued-mps',
+                snaps.map(function(s) { return { t: s.t, v: s.queued_mps }; }),
+                { color: '#10b981' });
+            drawLineChart('horde-chart-past-min-mps',
+                snaps.map(function(s) { return { t: s.t, v: s.past_min_mps }; }),
+                { color: '#3b82f6' });
+        }
+
+        // Redraw Horde charts on window resize when horde page is active
+        window.addEventListener('resize', function() {
+            if (_hordeSnapshots.length > 0 && document.getElementById('page-horde') && document.getElementById('page-horde').classList.contains('active')) {
+                renderHordePage();
             }
         });
 

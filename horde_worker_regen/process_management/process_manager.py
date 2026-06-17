@@ -3628,6 +3628,7 @@ class HordeWorkerProcessManager:
                             ]
                         self._last_image_safety = image_safety or []
                         # Add each image to the WebUI gallery
+                        payload = completed_job_info.sdk_api_job_info.payload if completed_job_info.sdk_api_job_info else None
                         for img_idx, img_b64 in enumerate(images_base64):
                             gallery_image = {
                                 "base64": img_b64,
@@ -3639,6 +3640,15 @@ class HordeWorkerProcessManager:
                             if image_safety is not None:
                                 gallery_image["is_nsfw"] = image_safety[img_idx]["is_nsfw"]
                                 gallery_image["is_csam"] = image_safety[img_idx]["is_csam"]
+                            if payload is not None:
+                                if payload.ddim_steps is not None:
+                                    gallery_image["inference_steps"] = payload.ddim_steps
+                                if payload.width is not None:
+                                    gallery_image["width"] = payload.width
+                                if payload.height is not None:
+                                    gallery_image["height"] = payload.height
+                            if completed_job_info.time_to_generate is not None:
+                                gallery_image["time_to_generate"] = completed_job_info.time_to_generate
                             self.webui.add_gallery_image(gallery_image)
                     except (FileNotFoundError, OSError) as e:
                         logger.warning(f"Failed to read saved images for webui preview: {e}")

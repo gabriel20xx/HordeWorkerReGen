@@ -168,20 +168,20 @@ def start_inference_process(
         logger.critical(f"Failed to initialise hordelib: {type(e).__name__} {e}")
         sys.exit(1)
 
-        from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
+    from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
-        worker_process = HordeInferenceProcess(
-            process_id=process_id,
-            process_message_queue=process_message_queue,
-            pipe_connection=pipe_connection,
-            inference_semaphore=inference_semaphore,
-            disk_lock=disk_lock,
-            aux_model_lock=aux_model_lock,
-            vae_decode_semaphore=vae_decode_semaphore,
-            process_launch_identifier=process_launch_identifier,
-        )
+    worker_process = HordeInferenceProcess(
+        process_id=process_id,
+        process_message_queue=process_message_queue,
+        pipe_connection=pipe_connection,
+        inference_semaphore=inference_semaphore,
+        disk_lock=disk_lock,
+        aux_model_lock=aux_model_lock,
+        vae_decode_semaphore=vae_decode_semaphore,
+        process_launch_identifier=process_launch_identifier,
+    )
 
-        worker_process.main_loop()
+    worker_process.main_loop()
 
 
 def start_safety_process(
