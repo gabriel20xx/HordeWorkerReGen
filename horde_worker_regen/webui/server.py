@@ -4264,17 +4264,17 @@ class WorkerWebUI:
         // ========================================================
         // HORDE NETWORK PAGE
         // ========================================================
-        let _hordeSnapshots = [];
-        let _hordeWindowSecs = 1800;
-        let _hordeFetchTimer = null;
-        let _hordeAbortCtrl = null;
-        let _hordeModesAbortCtrl = null;
-        let _hordeModes = null;
-        let _hordeLastModeFetch = 0;
-        const _HORDE_POLL_MS = 1000;
-        const _HORDE_MODE_REFRESH_MS = 300000;
-        const _HORDE_MAX_SNAPS = 10800; // 3 hours at 1s intervals
-        const _HORDE_CLIENT_AGENT = 'horde-worker-regen:0:unknown';
+        var _hordeSnapshots = [];
+        var _hordeWindowSecs = 1800;
+        var _hordeFetchTimer = null;
+        var _hordeAbortCtrl = null;
+        var _hordeModesAbortCtrl = null;
+        var _hordeModes = null;
+        var _hordeLastModeFetch = 0;
+        var _HORDE_POLL_MS = 1000;
+        var _HORDE_MODE_REFRESH_MS = 300000;
+        var _HORDE_MAX_SNAPS = 10800; // 3 hours at 1s intervals
+        var _HORDE_CLIENT_AGENT = 'horde-worker-regen:0:unknown';
 
         function startHordeFetching() {
             if (_hordeFetchTimer !== null) return; // already running
@@ -4290,7 +4290,7 @@ class WorkerWebUI:
         }
 
         function stopHordeFetching() {
-            if (_hordeFetchTimer !== null) {
+            if (_hordeFetchTimer) {
                 clearInterval(_hordeFetchTimer);
                 _hordeFetchTimer = null;
             }
