@@ -298,8 +298,8 @@ class reGenBridgeData(CombinedHordeBridgeData):
                 )
                 return value
             logger.info(
-                f"AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable is set to {parsed}. "
-                "This overrides the value for `auto_restart_on_idle_minutes` in the config file.",
+                f"Config `auto_restart_on_idle_minutes` set by environment variable "
+                f"`AIWORKER_AUTO_RESTART_IDLE_MINUTES` (value: {parsed}).",
             )
             return parsed
         return value
@@ -331,8 +331,8 @@ class reGenBridgeData(CombinedHordeBridgeData):
                 )
                 return value
             logger.info(
-                f"AIWORKER_DATA_RETENTION_DAYS environment variable is set to {parsed}. "
-                "This overrides the value for `data_retention_days` in the config file.",
+                f"Config `data_retention_days` set by environment variable "
+                f"`AIWORKER_DATA_RETENTION_DAYS` (value: {parsed}).",
             )
             return parsed
         return value
@@ -344,8 +344,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
         AIWORKER_DREAMER_WORKER_NAME = os.getenv("AIWORKER_DREAMER_WORKER_NAME")
         if AIWORKER_DREAMER_WORKER_NAME:
             logger.warning(
-                "AIWORKER_DREAMER_WORKER_NAME environment variable is set. This will override the value for "
-                "`dreamer_worker_name` in the config file.",
+                "Config `dreamer_worker_name` set by environment variable `AIWORKER_DREAMER_WORKER_NAME`.",
             )
             return AIWORKER_DREAMER_WORKER_NAME
 

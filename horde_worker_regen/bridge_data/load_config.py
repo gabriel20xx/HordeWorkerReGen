@@ -164,9 +164,8 @@ class BridgeDataLoader:
             if field_info.alias is not None and field_name in config:
                 config[field_info.alias] = config.pop(field_name)
                 logger.warning(
-                    f"Config `{field_name}` was set by an environment variable. "
-                    f"However, it is an aliased field in the config file. "
-                    f"Renaming to `{field_info.alias}`.",
+                    f"Config `{field_name}` set by environment variable `{AIWORKER_REGEN_PREFIX}{field_name.upper()}`. "
+                    f"However, it is an aliased field — renaming to `{field_info.alias}`.",
                 )
 
         # Load the config
@@ -175,10 +174,10 @@ class BridgeDataLoader:
         for set_field in bridge_data.model_fields_set:
             if bridge_data.model_extra is not None and set_field in bridge_data.model_extra:
                 logger.warning(
-                    f"Config `{set_field}` was set by an environment variable. "
-                    f"However, it is not a valid field in the config file.",
+                    f"Config `{set_field}` set by environment variable `{AIWORKER_REGEN_PREFIX}{set_field.upper()}`. "
+                    f"However, it is not a valid config field.",
                 )
-            logger.info(f"Config `{set_field}` was set by an environment variable.")
+            logger.info(f"Config `{set_field}` set by environment variable `{AIWORKER_REGEN_PREFIX}{set_field.upper()}`.")
 
         if horde_model_reference_manager is not None:
             bridge_data.image_models_to_load = BridgeDataLoader._resolve_meta_instructions(
