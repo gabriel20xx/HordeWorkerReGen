@@ -1025,6 +1025,9 @@ class ProcessMap(dict[int, HordeProcessInfo]):
             if p.is_process_busy():
                 continue
 
+            if p.last_process_state in (HordeProcessState.PROCESS_ENDING, HordeProcessState.PROCESS_ENDED):
+                continue
+
             return p
 
         return None
@@ -8715,11 +8718,13 @@ class HordeWorkerProcessManager:
                 # since processes should complete initialization even when no jobs are available.
                 # Use a startup timeout that is at least process_timeout so expensive child-process
                 # initialization (imports/model manager setup) isn't misclassified as a stuck preload.
+                # Skip during shutdown: end_inference_processes() will kill stuck-starting processes,
+                # and _replace_inference_process would spawn a new one we immediately don't want.
                 process_starting_timeout = max(
                     self.bridge_data.process_timeout,
                     self.bridge_data.preload_timeout,
                 )
-                if self._check_and_replace_process(
+                if not self._shutting_down and self._check_and_replace_process(
                     process_info,
                     process_starting_timeout,
                     HordeProcessState.PROCESS_STARTING,
