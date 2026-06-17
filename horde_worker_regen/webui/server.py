@@ -1156,6 +1156,14 @@ class WorkerWebUI:
         .theme-toggle:hover { background: rgba(255,255,255,0.08); }
         .topbar .theme-toggle { background: none; border: 1px solid #e2e8f0; color: #475569; width: 100%; }
         .topbar .theme-toggle:hover { background: #f1f5f9; }
+        .nsfw-blur-btn { background: none; border: 1px solid #e2e8f0; color: #475569; font-size: 0.78rem; font-weight: 600; cursor: pointer; padding: 5px 10px; border-radius: 4px; white-space: nowrap; flex-shrink: 0; transition: background 0.15s; }
+        .nsfw-blur-btn:hover { background: #f1f5f9; }
+        .nsfw-blur-btn.active { background: #fef9c3; border-color: #ca8a04; color: #854d0e; }
+        [data-theme="dark"] .nsfw-blur-btn { border-color: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .nsfw-blur-btn:hover { background: #2d3f55; }
+        [data-theme="dark"] .nsfw-blur-btn.active { background: #422006; border-color: #d97706; color: #fcd34d; }
+        body.blur-nsfw .image-grid-item[data-nsfw="1"] img { filter: blur(14px); }
+        body.blur-nsfw img[data-nsfw="1"] { filter: blur(14px); }
 
         /* ---- Topbar resource pills with bars ---- */
         .topbar-resources { display: flex; align-items: center; align-self: center; gap: 8px; flex-wrap: wrap; }
@@ -1536,6 +1544,7 @@ class WorkerWebUI:
                     <button onclick="setJobPopsPause(null)">Indefinitely</button>
                 </div>
                 </div>
+                <button class="nsfw-blur-btn" id="nsfw-blur-btn" onclick="toggleNsfwBlur()" title="Toggle blur on NSFW images">Blur NSFW</button>
                 <button class="theme-toggle" onclick="toggleTheme()" id="topbar-theme-toggle" aria-label="Toggle theme">&#127769;</button>
             </div>
         </div>
@@ -1562,7 +1571,7 @@ class WorkerWebUI:
                             <div id="overview-current-job" class="centered-empty-container"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128444; Last Result</span><span id="overview-image-model" style="margin-left:auto;font-size:0.75rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%;text-align:right;"></span><span id="overview-image-time" style="margin-left:6px;font-size:0.75rem;color:#94a3b8;flex-shrink:0;white-space:nowrap;"></span></div>
+                            <div class="card-header"><span class="card-title">&#128444; Last Result</span><span id="overview-image-model" style="flex:1;font-size:0.75rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;padding:0 8px;"></span><span id="overview-image-time" style="margin-left:6px;font-size:0.75rem;color:#94a3b8;flex-shrink:0;white-space:nowrap;"></span></div>
                             <div id="overview-image-container" class="last-image-container"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
                         </div>
                     </div>
@@ -2032,7 +2041,7 @@ class WorkerWebUI:
             if (pageId === 'stats') {
                 fetchStats(true);
             }
-            if (pageId === 'horde') { startHordeFetching(); } else { stopHordeFetching(); }
+            if (pageId === 'horde') { renderHordePage(); }
             if (pageId === 'settings') {
                 fetchSettings();
             }
@@ -2059,6 +2068,7 @@ class WorkerWebUI:
                 history.replaceState({page: 'overview'}, '', '#overview');
             }
         })();
+        startHordeFetching(); // pre-fetch so data is ready before user visits the Horde page
         function initTheme() {
             const saved = localStorage.getItem('horde-theme') || 'light';
             document.documentElement.setAttribute('data-theme', saved);
@@ -2075,7 +2085,20 @@ class WorkerWebUI:
             document.getElementById('topbar-theme-toggle').innerHTML = icon;
             document.getElementById('mobile-theme-toggle').innerHTML = icon;
         }
+        function initNsfwBlur() {
+            var enabled = localStorage.getItem('horde-blur-nsfw') === '1';
+            if (enabled) document.body.classList.add('blur-nsfw');
+            var btn = document.getElementById('nsfw-blur-btn');
+            if (btn) btn.classList.toggle('active', enabled);
+        }
+        function toggleNsfwBlur() {
+            var enabled = document.body.classList.toggle('blur-nsfw');
+            try { localStorage.setItem('horde-blur-nsfw', enabled ? '1' : '0'); } catch(e) {}
+            var btn = document.getElementById('nsfw-blur-btn');
+            if (btn) btn.classList.toggle('active', enabled);
+        }
         initTheme();
+        initNsfwBlur();
         let overlayImages = [], overlayIndex = -1;
         // When non-null, holds the stable gallery_id values for the current overlay page
         // so images can be fetched lazily via /api/gallery/image.
@@ -3041,17 +3064,20 @@ class WorkerWebUI:
             if (count === 1) {
                 oic.removeAttribute('style');
                 const badges0 = makeFlagBadges(0);
+                const isNsfw0 = safety && safety[0] && safety[0].is_nsfw === true;
+                const nsfwAttr0 = isNsfw0 ? ' data-nsfw="1"' : '';
                 if (badges0) {
-                    oic.innerHTML = '<div style="position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;">' + badges0 + '<img src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" /></div>';
+                    oic.innerHTML = '<div style="position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;"' + nsfwAttr0 + '>' + badges0 + '<img src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" /></div>';
                 } else {
-                    oic.innerHTML = '<img src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" />';
+                    oic.innerHTML = '<img' + nsfwAttr0 + ' src="' + srcs[0] + '" class="single-image" alt="Last generated image" data-fullsize="' + srcs[0] + '" data-idx="0" />';
                 }
                 attachClicks();
                 return;
             }
             function makeItem(s, i, spanFull) {
                 var span = spanFull ? ' style="grid-column:1/-1;"' : '';
-                return '<div class="image-grid-item"' + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" />' + makeFlagBadges(i) + '</div>';
+                var nsfwAttr = (safety && safety[i] && safety[i].is_nsfw === true) ? ' data-nsfw="1"' : '';
+                return '<div class="image-grid-item"' + nsfwAttr + span + '><img src="' + s + '" alt="Generated image ' + (i + 1) + '" data-fullsize="' + s + '" data-idx="' + i + '" />' + makeFlagBadges(i) + '</div>';
             }
             var imgDims = new Array(count).fill(null), loadedCount = 0;
             function renderGrid() {
@@ -4271,7 +4297,7 @@ class WorkerWebUI:
         var _hordeModesAbortCtrl = null;
         var _hordeModes = null;
         var _hordeLastModeFetch = 0;
-        var _HORDE_POLL_MS = 1000;
+        var _HORDE_POLL_MS = 30000;
         var _HORDE_MODE_REFRESH_MS = 300000;
         var _HORDE_MAX_SNAPS = 10800; // 3 hours at 1s intervals
         var _HORDE_CLIENT_AGENT = 'horde-worker-regen:0:unknown';

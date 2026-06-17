@@ -2145,6 +2145,9 @@ class HordeWorkerProcessManager:
             if self._last_pop_no_jobs_available_time > 0.0:
                 self._time_spent_no_jobs_available += time.time() - self._last_pop_no_jobs_available_time
                 self._last_pop_no_jobs_available_time = 0.0
+            # Unload models from processes that are already idle so VRAM/RAM
+            # is freed immediately without waiting for queued jobs to drain.
+            self._unload_idle_inference_models()
         else:
             logger.info("Job pops resumed by web UI")
             # Restart the idle timer immediately if the queue is already empty
@@ -4294,11 +4297,13 @@ class HordeWorkerProcessManager:
         ``can_accept_job()`` covers WAITING_FOR_JOB, MODEL_PRELOADED,
         MODEL_LOADED, INFERENCE_COMPLETE, and ALCHEMY_COMPLETE — i.e. every
         process that is holding a model in RAM/VRAM but is not actively
-        running inference — so this reclaims the maximum amount of memory.
+        running inference — so this reclaims the maximum amount of memory
+        without interrupting in-flight jobs.
 
-        Called by the main control loop while job pops are paused *and* there
-        is no remaining work queued or in progress, to avoid forcing a model
-        reload on processes that will be needed shortly.
+        Called immediately when job pops are paused and on every main-loop tick
+        while paused, so processes that finish a job mid-pause are unloaded as
+        soon as they return to an idle state.  The guards inside
+        :meth:`unload_from_ram` make repeated calls safe (no duplicate sends).
         """
         for process_info in self._process_map.get_inference_processes():
             if process_info.can_accept_job() and process_info.loaded_horde_model_name is not None:
@@ -6679,14 +6684,11 @@ class HordeWorkerProcessManager:
                         async with self._jobs_safety_check_lock:
                             self.start_evaluate_safety()
 
-                    if (
-                        self._job_pops_paused
-                        and len(self.jobs_pending_inference) == 0
-                        and len(self.jobs_in_progress) == 0
-                        and len(self.jobs_pending_safety_check) == 0
-                        and len(self.jobs_being_safety_checked) == 0
-                        and len(self.jobs_pending_submit) == 0
-                    ):
+                    if self._job_pops_paused:
+                        # Unload any process that becomes idle while paused, even if
+                        # other processes are still finishing their current job.
+                        # _unload_idle_inference_models guards against touching active
+                        # processes via can_accept_job(), so this is safe to call every tick.
                         self._unload_idle_inference_models()
 
                     free_process_or_model_loaded = (
