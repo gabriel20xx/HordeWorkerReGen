@@ -1066,6 +1066,28 @@ class WorkerWebUI:
         [data-theme="dark"] .gallery-filter-bar label { color: #94a3b8; }
         [data-theme="dark"] .gallery-filter-bar select { background: #1e293b; border-color: #334155; color: #e2e8f0; }
         @media (max-width: 768px) { .gallery-filter-bar { flex-direction: column; align-items: stretch; margin-left: 0; width: 100%; } .gallery-filter-bar select { max-width: 100%; width: 100%; } }
+        .gallery-view-toggle { display: flex; gap: 4px; flex-shrink: 0; }
+        .gallery-view-btn { background: transparent; border: 1px solid var(--border,#e2e8f0); border-radius: 5px; padding: 4px 9px; font-size: 0.8rem; cursor: pointer; color: var(--text-muted,#64748b); transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1; }
+        .gallery-view-btn.active { background: var(--accent,#6366f1); color: #fff; border-color: var(--accent,#6366f1); }
+        .gallery-view-btn:hover:not(.active) { border-color: var(--accent,#6366f1); color: var(--accent,#6366f1); }
+        [data-theme="dark"] .gallery-view-btn { border-color: #2d3f55; color: #94a3b8; }
+        /* Gallery list-view styles */
+        .gallery-list { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+        .gallery-list-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #f8fafc; cursor: pointer; transition: background 0.15s; }
+        .gallery-list-item:hover { background: #f1f5f9; }
+        .gallery-list-thumb { position: relative; width: 72px; height: 72px; flex-shrink: 0; border-radius: 6px; overflow: hidden; background: #e2e8f0; display: flex; align-items: center; justify-content: center; }
+        .gallery-list-thumb img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; display: block; }
+        .gallery-list-meta { flex: 1; min-width: 0; }
+        .gallery-list-model { font-size: 0.84rem; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .gallery-list-ts { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+        .gallery-list-badges { display: flex; gap: 4px; margin-top: 4px; }
+        .gallery-list-item.loading .gallery-list-thumb { background: linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 50%,#f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
+        [data-theme="dark"] .gallery-list-item { border-color: #2d3f55; background: #151e2e; }
+        [data-theme="dark"] .gallery-list-item:hover { background: #1e293b; }
+        [data-theme="dark"] .gallery-list-model { color: #e2e8f0; }
+        [data-theme="dark"] .gallery-list-ts { color: #94a3b8; }
+        [data-theme="dark"] .gallery-list-thumb { background: #1e293b; }
+        [data-theme="dark"] .gallery-list-item.loading .gallery-list-thumb { background: linear-gradient(90deg,#1e293b 25%,#2d3f55 50%,#1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 400px; overflow: hidden; }
         .last-image-container.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
@@ -1596,6 +1618,10 @@ class WorkerWebUI:
                     <div class="section">
                         <div class="section-header gallery-page-header">
                             <span class="section-title">&#128444; Gallery</span>
+                            <div class="gallery-view-toggle">
+                                <button class="gallery-view-btn active" id="gallery-view-grid" onclick="setGalleryView('grid')" title="Grid view">&#9783;</button>
+                                <button class="gallery-view-btn" id="gallery-view-list" onclick="setGalleryView('list')" title="List view">&#9776;</button>
+                            </div>
                             <div class="gallery-filter-bar">
                                 <label for="gallery-model-filter">Filter by model:</label>
                                 <select id="gallery-model-filter" onchange="galleryChangeModelFilter(this.value)">
@@ -1915,6 +1941,8 @@ class WorkerWebUI:
         }
         const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'stats', 'logs', 'settings']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
+        var galleryViewMode = (function() { try { return localStorage.getItem('horde-gallery-view') || 'grid'; } catch(e) { return 'grid'; } })();
+        var _galleryCurrentPageImages = null; // cached for view-mode switch without re-fetch
         let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); var parsed = s ? JSON.parse(s) : []; return Array.isArray(parsed) ? parsed : []; } catch(e) { return []; } })();
         let currentWorkerName = '';
         // Event delegation: handle delete-button clicks on the workers list container.
@@ -2016,7 +2044,7 @@ class WorkerWebUI:
                 populateGalleryModelFilter();
                 populateGallerySafetyFilter();
                 const gridEl = document.getElementById('gallery-grid');
-                const gridEmpty = !gridEl || !gridEl.querySelector('.image-grid-item');
+                const gridEmpty = !gridEl || !gridEl.querySelector('.image-grid-item,.gallery-list-item');
                 if (gridEmpty) {
                     // First visit (or after page-size change cleared the grid): full fetch.
                     fetchGalleryPage(galleryCurrentPage);
@@ -2041,7 +2069,13 @@ class WorkerWebUI:
             if (pageId === 'stats') {
                 fetchStats(true);
             }
-            if (pageId === 'horde') { renderHordePage(); }
+            if (pageId === 'horde') {
+                renderHordePage();
+                // Trigger an immediate fetch when navigating here if there are no snapshots
+                // yet or the most recent one is older than the poll interval.
+                var _hordeLastTs = _hordeSnapshots.length > 0 ? _hordeSnapshots[_hordeSnapshots.length - 1].t : 0;
+                if (Date.now() / 1000 - _hordeLastTs > 30) fetchHordeData();
+            }
             if (pageId === 'settings') {
                 fetchSettings();
             }
@@ -2099,6 +2133,13 @@ class WorkerWebUI:
         }
         initTheme();
         initNsfwBlur();
+        (function() {
+            // Restore saved gallery view mode on load
+            var savedView = galleryViewMode;
+            document.querySelectorAll('.gallery-view-btn').forEach(function(b) { b.classList.remove('active'); });
+            var btn = document.getElementById('gallery-view-' + savedView);
+            if (btn) btn.classList.add('active');
+        })();
         let overlayImages = [], overlayIndex = -1;
         // When non-null, holds the stable gallery_id values for the current overlay page
         // so images can be fetched lazily via /api/gallery/image.
@@ -2262,8 +2303,13 @@ class WorkerWebUI:
                 return ord >= minOrder;
             });
             const atb = isScrolledToBottom(cl, SCROLL_TOLERANCE_PX);
+            var _LEVEL_COLORS = {WARNING:'#f59e0b',ERROR:'#ef4444',CRITICAL:'#dc2626',SUCCESS:'#23d18b',DEBUG:'#94a3b8',TRACE:'#64748b'};
             if (visible.length > 0) {
-                cl.innerHTML = visible.map(function(log) { return '<div style="white-space: pre-wrap; word-break: break-word;">'+ansiToHtml(log)+'</div>'; }).join('');
+                cl.innerHTML = visible.map(function(log) {
+                    var lvl = _getLogLevel(log);
+                    var baseColor = _LEVEL_COLORS[lvl] || '#cccccc';
+                    return '<div style="white-space: pre-wrap; word-break: break-word; color:'+baseColor+';">'+ansiToHtml(log)+'</div>';
+                }).join('');
             } else {
                 cl.innerHTML = '<div style="text-align:center;color:#475569;padding:18px;">No logs available</div>';
             }
@@ -2634,6 +2680,7 @@ class WorkerWebUI:
         }
         function renderGalleryPageSkeleton(images, total, page, totalPages) {
             galleryTotalImages = total; galleryCurrentPage = page; galleryTotalPages = totalPages;
+            _galleryCurrentPageImages = images; // cache for view-mode switch
             const grid = document.getElementById('gallery-grid'), empty = document.getElementById('gallery-empty'),
                   pi = document.getElementById('gallery-page-info'), pb = document.getElementById('gallery-prev'),
                   nb = document.getElementById('gallery-next'), pag = document.getElementById('gallery-pagination');
@@ -2643,29 +2690,35 @@ class WorkerWebUI:
                 pag.style.display = 'none'; return;
             }
             empty.style.display = 'none'; grid.style.display = '';
-            updateGalleryColumns();
-            // Use stable gallery_id values (assigned at insertion time) rather than
-            // positional indices, so the overlay remains correct even when new images
-            // arrive after the page was rendered.
+            const isList = galleryViewMode === 'list';
+            grid.className = isList ? 'gallery-list' : 'image-grid';
+            if (!isList) updateGalleryColumns();
             _currentPageGalleryIds = images.map(img => img.gallery_id);
-            // Render placeholder items with a shimmer animation; images are filled in
-            // one by one by loadGalleryThumbnailsOneByOne once the skeleton is shown.
-            // For thumbnails already in the client-side cache, skip the shimmer and
-            // show the image immediately.
             grid.innerHTML = images.map((img, idx) => {
                 const galleryId = img.gallery_id;
                 const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
-                const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
                 const isNsfw = img.is_nsfw === true, isCsam = img.is_csam === true;
-                const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
+                const nsfwAttr = isNsfw ? ' data-nsfw="1"' : '', csamAttr = isCsam ? ' data-csam="1"' : '';
                 const cachedSrc = _galleryThumbnailCache.get(galleryId);
-                // Only use the cached value when it is a well-formed image data URL to
-                // guard against any unexpected cache content reaching innerHTML.
-                if (cachedSrc && (cachedSrc.startsWith('data:image/jpeg;base64,') || cachedSrc.startsWith('data:image/png;base64,'))) {
-                    return '<div class="image-grid-item" data-gallery-id="'+galleryId+'"'+(isNsfw ? ' data-nsfw="1"' : '')+(isCsam ? ' data-csam="1"' : '')+'><img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />'+
+                const validCache = cachedSrc && (cachedSrc.startsWith('data:image/jpeg;base64,') || cachedSrc.startsWith('data:image/png;base64,'));
+                if (isList) {
+                    const flagBadges = (isNsfw || isCsam) ? '<div class="gallery-list-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
+                    const imgHtml = validCache ? '<img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />' : '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />';
+                    return '<div class="gallery-list-item'+(validCache ? '' : ' loading')+'"'+nsfwAttr+csamAttr+' data-gallery-id="'+galleryId+'">' +
+                        '<div class="gallery-list-thumb">'+imgHtml+'</div>' +
+                        '<div class="gallery-list-meta">' +
+                        (model ? '<div class="gallery-list-model">'+model+'</div>' : '') +
+                        (ts ? '<div class="gallery-list-ts">'+ts+'</div>' : '') +
+                        flagBadges +
+                        '</div></div>';
+                }
+                const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
+                const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
+                if (validCache) {
+                    return '<div class="image-grid-item" data-gallery-id="'+galleryId+'"'+nsfwAttr+csamAttr+'><img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />'+
                         flagBadges+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
                 }
-                return '<div class="image-grid-item loading" data-gallery-id="'+galleryId+'"'+(isNsfw ? ' data-nsfw="1"' : '')+(isCsam ? ' data-csam="1"' : '')+'><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+
+                return '<div class="image-grid-item loading" data-gallery-id="'+galleryId+'"'+nsfwAttr+csamAttr+'><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+
                     flagBadges+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '')+'</div>';
             }).join('');
             grid.querySelectorAll('img[data-gallery-id]').forEach(img => {
@@ -2679,6 +2732,17 @@ class WorkerWebUI:
             pi.textContent = 'Page '+page+' of '+tp;
             pb.disabled = page <= 1; nb.disabled = page >= tp;
             pag.style.display = 'flex';
+        }
+        function setGalleryView(mode) {
+            galleryViewMode = mode;
+            try { localStorage.setItem('horde-gallery-view', mode); } catch(e) {}
+            document.querySelectorAll('.gallery-view-btn').forEach(function(b) { b.classList.remove('active'); });
+            var btn = document.getElementById('gallery-view-' + mode);
+            if (btn) btn.classList.add('active');
+            if (_galleryCurrentPageImages) {
+                renderGalleryPageSkeleton(_galleryCurrentPageImages, galleryTotalImages, galleryCurrentPage, galleryTotalPages);
+                loadGalleryThumbnailsOneByOne(_currentPageGalleryIds);
+            }
         }
         function loadGalleryThumbnailsOneByOne(galleryIds) {
             // Increment the batch ID so any stale responses from a previous page are discarded.
@@ -2700,7 +2764,7 @@ class WorkerWebUI:
                     .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                     .then(data => {
                         if (batchId !== _galleryThumbnailBatchId) return;
-                        const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                        const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
                         const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
                         const thumbSrc = buildThumbnailDataUrl(data);
                         // Only cache actual JPEG thumbnails (Pillow-generated, small).
@@ -2716,7 +2780,7 @@ class WorkerWebUI:
                         if (err.name === 'AbortError') return;
                         console.error('Thumbnail load error for id '+galleryId+':', err);
                         // On error, stop the shimmer so the tile doesn't spin forever.
-                        const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                        const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
                         if (container) container.classList.remove('loading');
                     })
                     .finally(() => { loadNext(i + 1); });
@@ -2772,6 +2836,7 @@ class WorkerWebUI:
                 .then(data => {
                     galleryFetchInProgress = false;
                     galleryCurrentPage = 1; galleryTotalImages = data.total; galleryTotalPages = data.total_pages;
+                    _galleryCurrentPageImages = data.images;
                     const grid = document.getElementById('gallery-grid'),
                           pi = document.getElementById('gallery-page-info'), pb = document.getElementById('gallery-prev'),
                           nb = document.getElementById('gallery-next'), pag = document.getElementById('gallery-pagination'),
@@ -2784,10 +2849,12 @@ class WorkerWebUI:
                         pag.style.display = 'none'; return;
                     }
                     empty.style.display = 'none'; grid.style.display = '';
-                    updateGalleryColumns();
+                    const isList = galleryViewMode === 'list';
+                    grid.className = isList ? 'gallery-list' : 'image-grid';
+                    if (!isList) updateGalleryColumns();
                     const fetchedIds = data.images.map(img => img.gallery_id);
                     const fetchedSet = new Set(fetchedIds);
-                    const existingItems = Array.from(grid.querySelectorAll('.image-grid-item[data-gallery-id]'));
+                    const existingItems = Array.from(grid.querySelectorAll('[data-gallery-id]'));
                     const existingSet = new Set(existingItems.map(el => parseInt(el.getAttribute('data-gallery-id'), 10)));
                     // Remove tiles that have been pushed off the current page by new arrivals.
                     existingItems.forEach(el => { if (!fetchedSet.has(parseInt(el.getAttribute('data-gallery-id'), 10))) el.remove(); });
@@ -2797,9 +2864,6 @@ class WorkerWebUI:
                         const ie = grid.querySelector('img[data-gallery-id="'+img.gallery_id+'"]');
                         if (ie) ie.setAttribute('data-idx', idx);
                     });
-                    // Prepend skeleton tiles for new images, then load only their thumbnails.
-                    // Build newImages with the index from data.images (which matches fetchedIds 1:1)
-                    // to avoid repeated indexOf scans when setting data-idx on each tile.
                     const newImages = data.images.reduce((acc, img, idx) => {
                         if (!existingSet.has(img.gallery_id)) acc.push({ img, idx });
                         return acc;
@@ -2809,21 +2873,29 @@ class WorkerWebUI:
                         newImages.forEach(({ img, idx }) => {
                             const galleryId = img.gallery_id;
                             const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
-                            const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
                             const isNsfw = img.is_nsfw === true, isCsam = img.is_csam === true;
-                            const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                             const div = document.createElement('div');
-                            div.className = 'image-grid-item loading';
-                            div.setAttribute('data-gallery-id', galleryId);
-                            if (isNsfw) div.setAttribute('data-nsfw', '1');
-                            if (isCsam) div.setAttribute('data-csam', '1');
-                            div.innerHTML = '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+flagBadges+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '');
+                            if (isList) {
+                                const flagBadges = (isNsfw || isCsam) ? '<div class="gallery-list-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
+                                div.className = 'gallery-list-item loading';
+                                div.setAttribute('data-gallery-id', galleryId);
+                                if (isNsfw) div.setAttribute('data-nsfw', '1');
+                                if (isCsam) div.setAttribute('data-csam', '1');
+                                div.innerHTML = '<div class="gallery-list-thumb"><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" /></div>' +
+                                    '<div class="gallery-list-meta">'+(model ? '<div class="gallery-list-model">'+model+'</div>' : '')+(ts ? '<div class="gallery-list-ts">'+ts+'</div>' : '')+flagBadges+'</div>';
+                            } else {
+                                const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
+                                const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
+                                div.className = 'image-grid-item loading';
+                                div.setAttribute('data-gallery-id', galleryId);
+                                if (isNsfw) div.setAttribute('data-nsfw', '1');
+                                if (isCsam) div.setAttribute('data-csam', '1');
+                                div.innerHTML = '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />'+flagBadges+(cap ? '<div class="image-timestamp">'+cap+'</div>' : '');
+                            }
                             div.querySelector('img').onclick = function() { openGalleryImageOverlay(parseInt(this.getAttribute('data-gallery-id')||'0',10), _currentPageGalleryIds, parseInt(this.getAttribute('data-idx')||'0',10)); };
                             frag.appendChild(div);
                         });
                         grid.insertBefore(frag, grid.firstChild);
-                        // Abort previous batch and start a new one so incremental thumbnail fetches
-                        // are cancelled if the user navigates away or a full page reload is triggered.
                         if (_galleryBatchAbort) _galleryBatchAbort.abort();
                         const incrAbort = new AbortController();
                         _galleryBatchAbort = incrAbort;
@@ -2832,17 +2904,16 @@ class WorkerWebUI:
                             fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true', { signal: incrAbort.signal })
                                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                                 .then(d => {
-                                    const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                                    const c = grid.querySelector('[data-gallery-id="'+galleryId+'"]');
                                     const ie = c ? c.querySelector('img') : null;
                                     const src = d.thumbnail ? 'data:image/jpeg;base64,'+d.thumbnail : (d.base64 ? 'data:image/png;base64,'+d.base64 : null);
-                                    // Only cache actual JPEG thumbnails; skip full-res PNG fallback.
                                     if (d.thumbnail && src) { _cacheThumbnail(galleryId, src); }
                                     if (src && ie) { ie.src = src; ie.style.display = ''; }
                                     if (c) c.classList.remove('loading');
                                 })
                                 .catch(err => {
                                     if (err.name === 'AbortError') return;
-                                    const c = grid.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"]');
+                                    const c = grid.querySelector('[data-gallery-id="'+galleryId+'"]');
                                     if (c) c.classList.remove('loading');
                                 });
                         });
@@ -5070,6 +5141,26 @@ class WorkerWebUI:
             }
         }
         async function initializeUpdates() {
+            // Fetch the last image immediately so the overview container shows it
+            // before the first /api/status poll returns (~1 s later).
+            fetch('/api/last_image')
+                .then(function(r) { return r.json(); })
+                .then(function(imgData) {
+                    // Only render if the status poll has not already fetched newer data.
+                    if (_lastFetchedImageTimestamp !== null) return;
+                    var ts = imgData && imgData.last_image_submission_timestamp;
+                    if (typeof ts !== 'number') ts = Number(ts);
+                    if (!Number.isFinite(ts)) ts = 0;
+                    _lastFetchedImageTimestamp = ts;
+                    renderLastImages(
+                        imgData.last_image_base64 || [],
+                        document.getElementById('overview-image-container'),
+                        ts,
+                        imgData.last_image_model || null,
+                        imgData.last_image_safety || null
+                    );
+                })
+                .catch(function() {});
             try {
                 const config = await (await fetchWithTimeout('/api/config', CONFIG_FETCH_TIMEOUT_MS)).json();
                 updateIntervalMs = config.update_interval_ms || DEFAULT_UPDATE_INTERVAL_MS;

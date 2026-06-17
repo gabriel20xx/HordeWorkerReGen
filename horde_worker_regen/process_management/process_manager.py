@@ -6684,11 +6684,14 @@ class HordeWorkerProcessManager:
                         async with self._jobs_safety_check_lock:
                             self.start_evaluate_safety()
 
-                    if self._job_pops_paused:
-                        # Unload any process that becomes idle while paused, even if
-                        # other processes are still finishing their current job.
-                        # _unload_idle_inference_models guards against touching active
-                        # processes via can_accept_job(), so this is safe to call every tick.
+                    if (
+                        self._job_pops_paused
+                        and len(self.jobs_pending_inference) == 0
+                        and len(self.jobs_in_progress) == 0
+                        and len(self.jobs_pending_safety_check) == 0
+                        and len(self.jobs_being_safety_checked) == 0
+                        and len(self.jobs_pending_submit) == 0
+                    ):
                         self._unload_idle_inference_models()
 
                     free_process_or_model_loaded = (
