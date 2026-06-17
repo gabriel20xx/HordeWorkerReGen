@@ -215,9 +215,12 @@ class WorkerWebUI:
         # Latest live error list received from the process manager this run.
         self._live_errors_history: list[str] = []
 
+        self._session_baseline: dict[str, Any] = {}
+
         if self._errors_db_path is not None:
             self._init_db()
             self._load_persisted_data()
+            self._load_session_baseline()
 
         # Status data that will be updated by the worker
         self.status_data: dict[str, Any] = {
@@ -387,6 +390,20 @@ class WorkerWebUI:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_stats_timestamp ON stats_snapshots (timestamp)",
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_overview (
+                        id INTEGER PRIMARY KEY CHECK (id = 1),
+                        jobs_popped INTEGER NOT NULL DEFAULT 0,
+                        jobs_completed INTEGER NOT NULL DEFAULT 0,
+                        jobs_faulted INTEGER NOT NULL DEFAULT 0,
+                        processes_recovered INTEGER NOT NULL DEFAULT 0,
+                        kudos_earned REAL NOT NULL DEFAULT 0.0,
+                        time_without_jobs REAL NOT NULL DEFAULT 0.0,
+                        updated_at REAL NOT NULL DEFAULT 0.0
+                    )
+                    """,
+                )
                 conn.commit()
 
             # Gallery database
@@ -503,11 +520,42 @@ class WorkerWebUI:
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not load stats from '{self._stats_db_path}': {exc}")
 
+    def _load_session_baseline(self) -> None:
+        """Load persisted session overview counters as the baseline for this run.
+
+        Called once at startup so cumulative counters (jobs_completed, kudos_earned, etc.)
+        carry forward across worker restarts.  Not called during prune refresh to avoid
+        overwriting the in-session accumulated baseline.
+        """
+        if self._stats_db_path is None:
+            return
+        try:
+            with sqlite3.connect(self._stats_db_path) as conn:
+                row = conn.execute(
+                    "SELECT jobs_popped, jobs_completed, jobs_faulted, processes_recovered, "
+                    "kudos_earned, time_without_jobs FROM session_overview WHERE id = 1",
+                ).fetchone()
+                if row:
+                    self._session_baseline = {
+                        "jobs_popped": int(row[0]),
+                        "jobs_completed": int(row[1]),
+                        "jobs_faulted": int(row[2]),
+                        "processes_recovered": int(row[3]),
+                        "kudos_earned_session": float(row[4]),
+                        "time_without_jobs": float(row[5]),
+                    }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load session overview from '{self._stats_db_path}': {exc}")
+
     def _merge_persisted_into_status(self) -> None:
         """Merge data loaded by :meth:`_load_persisted_data` into :attr:`status_data`."""
         errors = getattr(self, "_persisted_errors", [])
         if errors:
             self.status_data["errors_history"] = list(errors)
+
+        for key, value in self._session_baseline.items():
+            if value:
+                self.status_data[key] = value
 
     @staticmethod
     def _history_overlap_len(newer: list[str], older: list[str]) -> int:
@@ -1483,7 +1531,7 @@ class WorkerWebUI:
                 <!-- OVERVIEW PAGE -->
                 <div class="page active" id="page-overview">
                     <div class="grid-4">
-                        <div class="stat-card"><div class="stat-card-label">Kudos This Session</div><div class="stat-card-value success" id="user-kudos-session">0</div></div>
+                        <div class="stat-card"><div class="stat-card-label">Kudos Earned</div><div class="stat-card-value success" id="user-kudos-session">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="images-per-hour">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value accent" id="jobs-popped">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="jobs-completed">0</div></div>
@@ -5025,6 +5073,21 @@ class WorkerWebUI:
                         "INSERT INTO stats_snapshots (snapshot_json, timestamp) VALUES (?, ?)",
                         (json.dumps(snapshot), now),
                     )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO session_overview "
+                        "(id, jobs_popped, jobs_completed, jobs_faulted, processes_recovered, "
+                        "kudos_earned, time_without_jobs, updated_at) "
+                        "VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            snapshot["jp"],
+                            snapshot["jc"],
+                            snapshot["jf"],
+                            int(sd.get("processes_recovered", 0)),
+                            snapshot["ks"],
+                            float(sd.get("time_without_jobs", 0.0)),
+                            now,
+                        ),
+                    )
                     conn.commit()
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Could not persist stats snapshot to database: {exc}")
@@ -5736,20 +5799,21 @@ class WorkerWebUI:
             self.status_data["worker_name"] = worker_name
         if horde_username is not None:
             self.status_data["horde_username"] = horde_username
+        _b = self._session_baseline
         if jobs_popped is not None:
-            self.status_data["jobs_popped"] = jobs_popped
+            self.status_data["jobs_popped"] = _b.get("jobs_popped", 0) + jobs_popped
         if jobs_queued is not None:
             self.status_data["jobs_queued"] = jobs_queued
         if time_without_jobs is not None:
-            self.status_data["time_without_jobs"] = time_without_jobs
+            self.status_data["time_without_jobs"] = _b.get("time_without_jobs", 0.0) + time_without_jobs
         if jobs_completed is not None:
-            self.status_data["jobs_completed"] = jobs_completed
+            self.status_data["jobs_completed"] = _b.get("jobs_completed", 0) + jobs_completed
         if jobs_faulted is not None:
-            self.status_data["jobs_faulted"] = jobs_faulted
+            self.status_data["jobs_faulted"] = _b.get("jobs_faulted", 0) + jobs_faulted
         if processes_recovered is not None:
-            self.status_data["processes_recovered"] = processes_recovered
+            self.status_data["processes_recovered"] = _b.get("processes_recovered", 0) + processes_recovered
         if kudos_earned_session is not None:
-            self.status_data["kudos_earned_session"] = kudos_earned_session
+            self.status_data["kudos_earned_session"] = _b.get("kudos_earned_session", 0.0) + kudos_earned_session
         if kudos_per_hour is not None:
             self.status_data["kudos_per_hour"] = kudos_per_hour
         if images_per_hour is not None:
