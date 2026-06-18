@@ -124,7 +124,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
 
     purge_loras_on_download: bool = Field(default=False)
 
-    remove_maintenance_on_init: bool = Field(default=False)
+    remove_maintenance_on_init: bool = Field(default=True)
     """Automatically remove this worker from maintenance mode.
 
     When enabled, maintenance is cleared on startup AND continuously while the worker is running:

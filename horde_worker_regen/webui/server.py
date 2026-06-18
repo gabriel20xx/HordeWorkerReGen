@@ -183,10 +183,12 @@ class WorkerWebUI:
             self._errors_db_path: str | None = os.path.join(db_dir, "webui_errors.db")
             self._stats_db_path: str | None = os.path.join(db_dir, "webui_stats.db")
             self._gallery_db_path: str | None = os.path.join(db_dir, "webui_gallery.db")
+            self._runtime_settings_path: str | None = os.path.join(db_dir, "webui_settings.json")
         else:
             self._errors_db_path = None
             self._stats_db_path = None
             self._gallery_db_path = None
+            self._runtime_settings_path = None
 
         # Allow the env var to override the constructor argument.
         _env_days = os.getenv("AIWORKER_DATA_RETENTION_DAYS")
@@ -218,11 +220,13 @@ class WorkerWebUI:
         self._live_errors_history: list[str] = []
 
         self._session_baseline: dict[str, Any] = {}
+        self._persisted_settings: dict[str, Any] = {}
 
         if self._errors_db_path is not None:
             self._init_db()
             self._load_persisted_data()
             self._load_session_baseline()
+        self._load_persisted_settings()
 
         # Status data that will be updated by the worker
         self.status_data: dict[str, Any] = {
@@ -322,6 +326,10 @@ class WorkerWebUI:
         # Signature: (paused: bool, pause_until: float | None) -> None
         self._set_job_pops_paused_callback: Callable[[bool, float | None], None] | None = None
 
+        # Optional callback invoked when the UI requests maintenance mode to be cleared.
+        # Signature: () -> None
+        self._clear_maintenance_mode_callback: Callable[[], None] | None = None
+
         # Optional callback invoked when the UI requests a change to the max queue size.
         # Signature: (max_queue_size: int) -> None
         self._set_max_queue_size_callback: Callable[[int], None] | None = None
@@ -412,10 +420,17 @@ class WorkerWebUI:
                         processes_recovered INTEGER NOT NULL DEFAULT 0,
                         kudos_earned REAL NOT NULL DEFAULT 0.0,
                         time_without_jobs REAL NOT NULL DEFAULT 0.0,
-                        updated_at REAL NOT NULL DEFAULT 0.0
+                        updated_at REAL NOT NULL DEFAULT 0.0,
+                        reset_baseline_json TEXT NOT NULL DEFAULT '{}'
                     )
                     """,
                 )
+                try:
+                    conn.execute(
+                        "ALTER TABLE session_overview ADD COLUMN reset_baseline_json TEXT NOT NULL DEFAULT '{}'",
+                    )
+                except Exception:
+                    pass  # column already exists on existing databases
                 conn.commit()
 
             # Gallery database
@@ -556,8 +571,41 @@ class WorkerWebUI:
                         "kudos_earned_session": float(row[4]),
                         "time_without_jobs": float(row[5]),
                     }
+                try:
+                    rb_row = conn.execute(
+                        "SELECT reset_baseline_json FROM session_overview WHERE id = 1",
+                    ).fetchone()
+                    if rb_row and rb_row[0]:
+                        rb = json.loads(rb_row[0])
+                        if rb:
+                            self.status_data["stats_reset_baseline"] = rb
+                except Exception:
+                    pass
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not load session overview from '{self._stats_db_path}': {exc}")
+
+    def _load_persisted_settings(self) -> None:
+        """Load runtime setting overrides saved by the web UI from disk."""
+        if self._runtime_settings_path is None:
+            return
+        try:
+            if os.path.exists(self._runtime_settings_path):
+                with open(self._runtime_settings_path) as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    self._persisted_settings = data
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load persisted settings from '{self._runtime_settings_path}': {exc}")
+
+    def _save_persisted_settings(self) -> None:
+        """Write runtime setting overrides to disk so they survive restarts."""
+        if self._runtime_settings_path is None:
+            return
+        try:
+            with open(self._runtime_settings_path, "w") as f:
+                json.dump(self._persisted_settings, f)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not save persisted settings to '{self._runtime_settings_path}': {exc}")
 
     def _merge_persisted_into_status(self) -> None:
         """Merge data loaded by :meth:`_load_persisted_data` into :attr:`status_data`."""
@@ -711,6 +759,15 @@ class WorkerWebUI:
         """
         self._set_job_pops_paused_callback = callback
 
+    def set_clear_maintenance_mode_callback(self, callback: Callable[[], None] | None) -> None:
+        """Register (or clear) the callback used to clear maintenance mode from the UI.
+
+        Args:
+            callback: A callable that takes no arguments and clears the worker's
+                      maintenance mode on the Horde.  Pass ``None`` to unregister.
+        """
+        self._clear_maintenance_mode_callback = callback
+
     def set_max_queue_size_callback(self, callback: Callable[[int], None] | None) -> None:
         """Register (or clear) the callback used to change the maximum job queue size at runtime.
 
@@ -755,6 +812,12 @@ class WorkerWebUI:
                       the new validated value.  Pass ``None`` to unregister.
         """
         self._set_setting_callback = callback
+        if callback is not None and self._persisted_settings:
+            for key, value in self._persisted_settings.items():
+                try:
+                    callback(key, value)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"Could not apply persisted setting '{key}={value!r}' at startup: {exc}")
 
     def set_restart_program_callback(self, callback: Callable[[], None] | None) -> None:
         """Register (or clear) the callback invoked when the UI requests a program restart.
@@ -811,6 +874,7 @@ class WorkerWebUI:
         self.app.router.add_get("/health", self._handle_health)
         self.app.router.add_delete("/api/worker/{worker_id}", self._handle_delete_worker)
         self.app.router.add_post("/api/job_pops/pause", self._handle_set_job_pops_paused)
+        self.app.router.add_post("/api/maintenance/clear", self._handle_clear_maintenance_mode)
         self.app.router.add_get("/api/settings", self._handle_get_settings)
         self.app.router.add_post("/api/settings", self._handle_set_setting)
         self.app.router.add_get("/api/models", self._handle_get_models)
@@ -1063,6 +1127,10 @@ class WorkerWebUI:
         [data-theme="dark"] .job-pops-pause-menu { background: #1e293b; border-color: #334155; }
         [data-theme="dark"] .job-pops-pause-menu button { color: #94a3b8; }
         [data-theme="dark"] .job-pops-pause-menu button:hover { background: #263348; }
+        .clear-maintenance-btn { display: none; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; white-space: nowrap; }
+        .clear-maintenance-btn:hover { background: #fde68a; }
+        [data-theme="dark"] .clear-maintenance-btn { background: #451a03; color: #fbbf24; border-color: #92400e; }
+        [data-theme="dark"] .clear-maintenance-btn:hover { background: #78350f; }
 
         /* ---- Gallery ---- */
         .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; width: 100%; }
@@ -1581,6 +1649,7 @@ class WorkerWebUI:
             <div class="topbar-meta">
                 <span id="worker-status-badge"></span>
                 <span class="topbar-uptime">&#9201; <span id="uptime">--</span></span>
+                <button class="clear-maintenance-btn" id="clear-maintenance-btn" onclick="clearMaintenanceMode()" title="Remove worker from maintenance mode">Remove Maintenance</button>
                 <div class="job-pops-pause-wrap">
                 <button class="job-pops-pause-btn" id="job-pops-pause-btn" onclick="handleJobPopsPauseBtn(event)" title="Pause or resume accepting new jobs from the Horde" aria-pressed="false">Pause Jobs</button>
                 <div class="job-pops-pause-menu" id="job-pops-pause-menu" style="display:none;" role="menu">
@@ -1599,14 +1668,15 @@ class WorkerWebUI:
             <div id="content" style="display: none;">
                 <!-- OVERVIEW PAGE -->
                 <div class="page active" id="page-overview">
-                    <div class="section-header" style="justify-content:flex-end;padding-bottom:0;margin-bottom:6px;">
-                        <button class="nsfw-blur-btn" id="overview-reset-btn" onclick="resetOverviewStats()" title="Reset session statistics">&#8635; Reset Stats</button>
+                    <div class="section-header" style="padding-bottom:0;margin-bottom:6px;">
+                        <span class="section-title">&#127968; Overview</span>
+                        <button class="nsfw-blur-btn" id="overview-reset-btn" onclick="resetOverviewStats()" title="Reset session statistics" style="margin-left:auto;">&#8635; Reset Stats</button>
                     </div>
                     <div class="grid-4">
                         <div class="stat-card"><div class="stat-card-label">Kudos Earned</div><div class="stat-card-value success" id="user-kudos-session">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="images-per-hour">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value accent" id="jobs-popped">0</div></div>
-                        <div class="stat-card"><div class="stat-card-label">Jobs Completed</div><div class="stat-card-value success" id="jobs-completed">0</div></div>
+                        <div class="stat-card"><div class="stat-card-label">Jobs Submitted</div><div class="stat-card-value success" id="jobs-completed">0</div></div>
                     </div>
                     <div class="grid-4">
                         <div class="stat-card"><div class="stat-card-label">Total Time without Jobs</div><div class="stat-card-value warning" id="time-without-jobs">0h 0m 0s</div></div>
@@ -2447,6 +2517,23 @@ class WorkerWebUI:
                     ? '<span class="status-badge status-paused" style="font-size:0.68rem;padding:2px 7px;">Paused' + remTxt + '</span>'
                     : '<span class="status-badge status-active" style="font-size:0.68rem;padding:2px 7px;">Active</span>');
             if (!_jobPopsPauseInFlight) _updatePauseBtn(isPaused, _jobPopsPauseUntil);
+            const maintBtn = document.getElementById('clear-maintenance-btn');
+            if (maintBtn) maintBtn.style.display = maint ? '' : 'none';
+        }
+        let _clearMaintenanceInFlight = false;
+        function clearMaintenanceMode() {
+            if (_clearMaintenanceInFlight) return;
+            _clearMaintenanceInFlight = true;
+            const btn = document.getElementById('clear-maintenance-btn');
+            if (btn) btn.disabled = true;
+            fetch('/api/maintenance/clear', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) console.error('Error clearing maintenance:', data.error);
+                    else _updateStatusBadges(false, null, null);
+                })
+                .catch(err => { console.error('Error clearing maintenance mode:', err); })
+                .finally(() => { _clearMaintenanceInFlight = false; if (btn) btn.disabled = false; });
         }
         setInterval(function() {
             if (_lastJobPopsPaused && _jobPopsPauseUntil !== null) {
@@ -5356,6 +5443,24 @@ class WorkerWebUI:
         self.status_data["job_pops_pause_until"] = pause_until
         return web.json_response({"job_pops_paused": paused, "job_pops_pause_until": pause_until})
 
+    async def _handle_clear_maintenance_mode(self, request: web.Request) -> web.Response:
+        """Handle a request to clear the worker's maintenance mode.
+
+        Returns 503 if no callback is registered and 200 with
+        ``{"maintenance_mode": false}`` on success.
+        """
+        if self._clear_maintenance_mode_callback is None:
+            return web.json_response({"error": "Clear maintenance mode is not available"}, status=503)
+
+        try:
+            self._clear_maintenance_mode_callback()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Error clearing maintenance mode: {exc}")
+            return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
+
+        self.status_data["maintenance_mode"] = False
+        return web.json_response({"maintenance_mode": False})
+
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Handle status API request.
 
@@ -5496,8 +5601,8 @@ class WorkerWebUI:
                     conn.execute(
                         "INSERT OR REPLACE INTO session_overview "
                         "(id, jobs_popped, jobs_completed, jobs_faulted, processes_recovered, "
-                        "kudos_earned, time_without_jobs, updated_at) "
-                        "VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
+                        "kudos_earned, time_without_jobs, updated_at, reset_baseline_json) "
+                        "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             snapshot["jp"],
                             snapshot["jc"],
@@ -5506,6 +5611,7 @@ class WorkerWebUI:
                             snapshot["ks"],
                             float(sd.get("time_without_jobs", 0.0)),
                             now,
+                            json.dumps(sd.get("stats_reset_baseline") or {}),
                         ),
                     )
                     conn.commit()
@@ -5965,6 +6071,8 @@ class WorkerWebUI:
             return web.json_response({"error": f"Internal error: {type(exc).__name__}"}, status=500)
 
         self._settings_data[key] = value
+        self._persisted_settings[key] = value
+        self._save_persisted_settings()
         return web.json_response({"key": key, "value": value})
 
     async def _handle_get_models(self, request: web.Request) -> web.Response:
@@ -6048,6 +6156,16 @@ class WorkerWebUI:
             "time_without_jobs": float(self.status_data.get("time_without_jobs", 0.0)),
         }
         self.status_data["stats_reset_baseline"] = rb
+        if self._stats_db_path is not None:
+            try:
+                with sqlite3.connect(self._stats_db_path) as conn:
+                    conn.execute(
+                        "UPDATE session_overview SET reset_baseline_json = ? WHERE id = 1",
+                        (json.dumps(rb),),
+                    )
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not persist reset baseline: {exc}")
         return web.json_response({"reset": True})
 
     async def _handle_horde_snapshots(self, request: web.Request) -> web.Response:

@@ -697,15 +697,22 @@ class ProcessMap(dict[int, HordeProcessInfo]):
     def on_model_ram_clear(
         self,
         process_id: int,
+        clear_job_reference: bool = False,
     ) -> None:
         """Update the model load state for the given process ID.
 
         Args:
             process_id (int): The ID of the process to update.
+            clear_job_reference: If True, also clear ``last_job_referenced``.  This should
+                only be done for manager-initiated unloads where the process is being
+                explicitly taken off a job.  Process-initiated unloads (part of the
+                inference-failure recovery cycle) should leave the reference intact so that
+                the orphan-job detector does not prematurely fault the retry.
         """
         self[process_id].loaded_horde_model_name = None
         self[process_id].loaded_horde_model_baseline = None
-        self[process_id].last_job_referenced = None
+        if clear_job_reference:
+            self[process_id].last_job_referenced = None
         self[process_id].recently_unloaded_from_ram = True
         self[process_id].last_received_timestamp = time.time()
 
@@ -3442,18 +3449,15 @@ class HordeWorkerProcessManager:
 
                 self._restart_idle_timer_if_queue_empty()
 
-                self.total_num_completed_jobs += 1
                 if self.bridge_data.unload_models_from_vram_often:
                     self.unload_models_from_vram(process_with_model=self._process_map[message.process_id])
 
                 if message.time_elapsed is not None:
                     if message.state == GENERATION_STATE.faulted:
                         inference_finished_string = (
-                            "\0<fg #da9dff>"
                             f"Inference for job {str(message.sdk_api_job_info.id_)[:8]} "
                             f"<u>({message.sdk_api_job_info.model})</u> on process {message.process_id} "
                             f"took {round(message.time_elapsed, 2)} seconds but faulted: {message.info}."
-                            "</>"
                         )
                         logger.opt(colors=True).warning(inference_finished_string)
                     else:
@@ -4394,7 +4398,7 @@ class HordeWorkerProcessManager:
                 ),
             )
         logger.debug(f"Clearing process {process_id} of model {process_info.loaded_horde_model_name}")
-        self._process_map.on_model_ram_clear(process_id=process_id)
+        self._process_map.on_model_ram_clear(process_id=process_id, clear_job_reference=True)
 
     def get_next_n_models(self, n: int) -> list[str]:
         """Get the next n models that will be used in the job deque.
@@ -4841,6 +4845,7 @@ class HordeWorkerProcessManager:
                 kudos_per_second_for_batch = kudos_per_second * new_submit.batch_count
                 if kudos_per_second_for_batch < 0.4:
                     self._num_job_slowdowns += 1
+                self.total_num_completed_jobs += 1
             else:
                 self._num_jobs_faulted += 1
 
@@ -5596,7 +5601,7 @@ class HordeWorkerProcessManager:
                 if faulted_job not in self.jobs_pending_inference:
                     self.jobs_pending_inference.append(faulted_job)
                     self._invalidate_megapixelsteps_cache()
-                    logger.success(f"✓ Job {faulted_job.id_} successfully re-queued for retry")
+                    logger.info(f"Job {faulted_job.id_} successfully re-queued for retry")
                 else:
                     logger.debug(f"Job {faulted_job.id_} already in jobs_pending_inference, not re-queuing")
 
