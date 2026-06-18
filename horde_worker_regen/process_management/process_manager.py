@@ -1293,7 +1293,7 @@ class PendingJob(BaseModel):
     """Base class for all PendingJobs async tasks."""
 
     state: JobSubmitState = JobSubmitState.PENDING
-    _max_consecutive_failed_job_submits: int = 10
+    max_submit_retries: int = 10
     _consecutive_failed_job_submits: int = 0
 
     @property
@@ -1309,12 +1309,12 @@ class PendingJob(BaseModel):
     @property
     def retry_attempts_string(self) -> str:
         """Return a string containing the number of consecutive failed job submits and the maximum allowed."""
-        return f"{self._consecutive_failed_job_submits}/{self._max_consecutive_failed_job_submits}"
+        return f"{self._consecutive_failed_job_submits}/{self.max_submit_retries}"
 
     def retry(self) -> None:
         """Mark the job as needing to be retried. Fault the job if it has been retried too many times."""
         self._consecutive_failed_job_submits += 1
-        if self._consecutive_failed_job_submits > self._max_consecutive_failed_job_submits:
+        if self._consecutive_failed_job_submits > self.max_submit_retries:
             self.state = JobSubmitState.FAULTED
 
     def succeed(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
@@ -1445,6 +1445,7 @@ class HordeWorkerProcessManager:
 
     # Constants for job retry logic
     MAX_JOB_RETRIES = 1  # Number of retries for faulted jobs
+    MAX_SUBMIT_RETRIES = 10  # Number of times a job submission can be retried before being marked failed
 
     # Constants for preload-stuck cooldown logic.
     # When a model causes MODEL_PRELOADING to hang this many times within
@@ -2265,6 +2266,14 @@ class HordeWorkerProcessManager:
         Raises:
             ValueError: If *key* is not a recognised ``bridge_data`` attribute.
         """
+        if key == "max_job_retries":
+            self.MAX_JOB_RETRIES = int(value)  # type: ignore[assignment]
+            logger.info(f"Runtime setting 'max_job_retries' changed to {value!r} via web UI")
+            return
+        if key == "max_submit_retries":
+            self.MAX_SUBMIT_RETRIES = int(value)  # type: ignore[assignment]
+            logger.info(f"Runtime setting 'max_submit_retries' changed to {value!r} via web UI")
+            return
         if not hasattr(self.bridge_data, key):
             raise ValueError(f"Unknown bridge_data field: '{key}'")
         setattr(self.bridge_data, key, value)
@@ -2397,6 +2406,12 @@ class HordeWorkerProcessManager:
 
         result: dict[str, object] = {}
         for field_name in _SETTINGS_SPEC:
+            if field_name == "max_job_retries":
+                result[field_name] = self.MAX_JOB_RETRIES
+                continue
+            if field_name == "max_submit_retries":
+                result[field_name] = self.MAX_SUBMIT_RETRIES
+                continue
             try:
                 result[field_name] = getattr(self.bridge_data, field_name)
             except AttributeError:
@@ -3659,6 +3674,10 @@ class HordeWorkerProcessManager:
                                     gallery_image["width"] = payload.width
                                 if payload.height is not None:
                                     gallery_image["height"] = payload.height
+                                if payload.prompt is not None:
+                                    _parts = payload.prompt.split("###", 1)
+                                    gallery_image["positive_prompt"] = _parts[0].strip()
+                                    gallery_image["negative_prompt"] = _parts[1].strip() if len(_parts) > 1 else ""
                             if completed_job_info.time_to_generate is not None:
                                 gallery_image["time_to_generate"] = completed_job_info.time_to_generate
                             self.webui.add_gallery_image(gallery_image)
@@ -5076,7 +5095,11 @@ class HordeWorkerProcessManager:
         if completed_job_info.job_image_results is not None:
             iterations = len(completed_job_info.job_image_results)
         for gen_iter in range(iterations):
-            new_submit = PendingSubmitJob(completed_job_info=completed_job_info, gen_iter=gen_iter)
+            new_submit = PendingSubmitJob(
+                completed_job_info=completed_job_info,
+                gen_iter=gen_iter,
+                max_submit_retries=self.MAX_SUBMIT_RETRIES,
+            )
             submit_tasks.append(asyncio.create_task(self.submit_single_generation(new_submit)))
         while len(submit_tasks) > 0:
             retry_submits: list[PendingSubmitJob] = []
@@ -5500,6 +5523,30 @@ class HordeWorkerProcessManager:
                 if job_id is not None:
                     self._job_orphan_since.pop(job_id, None)
                 continue
+
+            # Before applying the grace period, check whether a DEAD (but not yet replaced)
+            # process still has this job referenced. If so, replace that process immediately
+            # rather than waiting — this gives a more precise error message, triggers a proper
+            # process restart, and prevents the generic "orphaned" path from firing at all.
+            if not self._shutting_down:
+                dead_owner = next(
+                    (
+                        p
+                        for p in self._process_map.values()
+                        if not p.is_process_alive()
+                        and p.process_type == HordeProcessType.INFERENCE
+                        and p.last_process_state
+                        not in (HordeProcessState.PROCESS_ENDING, HordeProcessState.PROCESS_ENDED)
+                        and self._is_same_job(p.last_job_referenced, job)
+                    ),
+                    None,
+                )
+                if dead_owner is not None:
+                    if job_id is not None:
+                        self._job_orphan_since.pop(job_id, None)
+                    self._replace_inference_process(dead_owner)
+                    reaped = True
+                    continue
 
             # Orphaned: no live process is handling this in-progress job. Apply a grace period
             # before faulting so a job that was just dispatched (and whose process has not yet
@@ -7942,8 +7989,16 @@ class HordeWorkerProcessManager:
 
         # Calculate total resource usage
         total_ram_mb = sum(p.ram_usage_bytes for p in self._process_map.values()) / BYTES_TO_MEGABYTES
-        # Use max() for VRAM because each process reports the total GPU VRAM usage, not per-process usage
-        total_vram_mb = max((p.vram_usage_bytes for p in self._process_map.values()), default=0) / BYTES_TO_MEGABYTES
+        # Only report worker VRAM from processes that have a model loaded. After a model
+        # unloads, PyTorch keeps its VRAM cache warm so vram_usage_bytes stays high even
+        # though no model is actually loaded. When all models are unloaded the worker VRAM
+        # bar should show 0 to avoid misleading the user.
+        loaded_proc_vram = [
+            p.vram_usage_bytes
+            for p in self._process_map.values()
+            if p.loaded_horde_model_name is not None
+        ]
+        total_vram_mb = max(loaded_proc_vram, default=0) / BYTES_TO_MEGABYTES
 
         # Total system RAM capacity
         total_system_ram_mb = self.total_ram_bytes / BYTES_TO_MEGABYTES

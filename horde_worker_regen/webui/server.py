@@ -119,6 +119,8 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "stats_output_frequency": {"type": int, "min": 5, "max": 3600},
     "purge_loras_on_download": {"type": bool},
     "remove_maintenance_on_init": {"type": bool},
+    "max_job_retries": {"type": int, "min": 0, "max": 10},
+    "max_submit_retries": {"type": int, "min": 0, "max": 50},
     "data_retention_days": {"type": int, "min": 1, "max": 3650},
 }
 
@@ -1166,14 +1168,21 @@ class WorkerWebUI:
         .gallery-list-thumb { position: relative; width: 72px; height: 72px; flex-shrink: 0; border-radius: 6px; overflow: hidden; background: #e2e8f0; display: flex; align-items: center; justify-content: center; }
         .gallery-list-thumb img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; display: block; }
         .gallery-list-meta { flex: 1; min-width: 0; }
-        .gallery-list-model { font-size: 0.84rem; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .gallery-list-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+        .gallery-list-model { font-size: 0.84rem; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+        .gallery-list-steps { font-size: 0.72rem; color: #64748b; background: #e2e8f0; border-radius: 4px; padding: 1px 5px; white-space: nowrap; flex-shrink: 0; }
         .gallery-list-ts { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+        .gallery-list-prompt { font-size: 0.73rem; color: #475569; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .gallery-list-prompt.neg { color: #94a3b8; }
         .gallery-list-badges { display: flex; gap: 4px; margin-top: 4px; }
         .gallery-list-item.loading .gallery-list-thumb { background: linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 50%,#f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
         [data-theme="dark"] .gallery-list-item { border-color: #2d3f55; background: #151e2e; }
         [data-theme="dark"] .gallery-list-item:hover { background: #1e293b; }
         [data-theme="dark"] .gallery-list-model { color: #e2e8f0; }
+        [data-theme="dark"] .gallery-list-steps { background: #2d3f55; color: #64748b; }
         [data-theme="dark"] .gallery-list-ts { color: #94a3b8; }
+        [data-theme="dark"] .gallery-list-prompt { color: #94a3b8; }
+        [data-theme="dark"] .gallery-list-prompt.neg { color: #64748b; }
         [data-theme="dark"] .gallery-list-thumb { background: #1e293b; }
         [data-theme="dark"] .gallery-list-item.loading .gallery-list-thumb { background: linear-gradient(90deg,#1e293b 25%,#2d3f55 50%,#1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
 
@@ -2384,6 +2393,20 @@ class WorkerWebUI:
             const d = new Date(timestamp * 1000);
             return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
         }
+        function formatTimestampFull(timestamp) {
+            if (!timestamp || timestamp === 0) return '';
+            const d = new Date(timestamp * 1000);
+            if (isNaN(d.getTime())) return '';
+            const date = d.toLocaleDateString([], {year: 'numeric', month: 'short', day: 'numeric'});
+            const time = d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+            return date + ' · ' + time;
+        }
+        function truncatePrompt(s, maxLen) {
+            if (!s) return '';
+            s = s.trim();
+            if (s.length <= maxLen) return s;
+            return s.slice(0, maxLen).trimEnd() + '…';
+        }
         const SCROLL_TOLERANCE_PX = 1;
         let consolePaused = false;
         let _consoleLogs = [];
@@ -2822,13 +2845,20 @@ class WorkerWebUI:
                 const cachedSrc = _galleryThumbnailCache.get(galleryId);
                 const validCache = cachedSrc && (cachedSrc.startsWith('data:image/jpeg;base64,') || cachedSrc.startsWith('data:image/png;base64,'));
                 if (isList) {
+                    const tsLong = formatTimestampFull(img.timestamp);
+                    const steps = img.inference_steps ? img.inference_steps + ' steps' : '';
+                    const posPrompt = img.positive_prompt ? escapeHtml(truncatePrompt(img.positive_prompt, 90)) : '';
+                    const negPrompt = img.negative_prompt ? escapeHtml(truncatePrompt(img.negative_prompt, 90)) : '';
                     const flagBadges = (isNsfw || isCsam) ? '<div class="gallery-list-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                     const imgHtml = validCache ? '<img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />' : '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />';
+                    const row1 = (model || steps) ? '<div class="gallery-list-row1">'+(model ? '<span class="gallery-list-model">'+model+'</span>' : '')+(steps ? '<span class="gallery-list-steps">'+steps+'</span>' : '')+'</div>' : '';
                     return '<div class="gallery-list-item'+(validCache ? '' : ' loading')+'"'+nsfwAttr+csamAttr+' data-gallery-id="'+galleryId+'">' +
                         '<div class="gallery-list-thumb">'+imgHtml+'</div>' +
                         '<div class="gallery-list-meta">' +
-                        (model ? '<div class="gallery-list-model">'+model+'</div>' : '') +
-                        (ts ? '<div class="gallery-list-ts">'+ts+'</div>' : '') +
+                        row1 +
+                        (tsLong ? '<div class="gallery-list-ts">'+tsLong+'</div>' : '') +
+                        (posPrompt ? '<div class="gallery-list-prompt pos">'+posPrompt+'</div>' : '') +
+                        (negPrompt ? '<div class="gallery-list-prompt neg">'+negPrompt+'</div>' : '') +
                         flagBadges +
                         '</div></div>';
                 }
@@ -2992,17 +3022,22 @@ class WorkerWebUI:
                         const frag = document.createDocumentFragment();
                         newImages.forEach(({ img, idx }) => {
                             const galleryId = img.gallery_id;
-                            const ts = formatTimestamp(img.timestamp), model = img.model ? escapeHtml(img.model) : '';
+                            const model = img.model ? escapeHtml(img.model) : '';
                             const isNsfw = img.is_nsfw === true, isCsam = img.is_csam === true;
                             const div = document.createElement('div');
                             if (isList) {
+                                const tsLong = formatTimestampFull(img.timestamp);
+                                const steps = img.inference_steps ? img.inference_steps + ' steps' : '';
+                                const posPrompt = img.positive_prompt ? escapeHtml(truncatePrompt(img.positive_prompt, 90)) : '';
+                                const negPrompt = img.negative_prompt ? escapeHtml(truncatePrompt(img.negative_prompt, 90)) : '';
                                 const flagBadges = (isNsfw || isCsam) ? '<div class="gallery-list-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
+                                const row1 = (model || steps) ? '<div class="gallery-list-row1">'+(model ? '<span class="gallery-list-model">'+model+'</span>' : '')+(steps ? '<span class="gallery-list-steps">'+steps+'</span>' : '')+'</div>' : '';
                                 div.className = 'gallery-list-item loading';
                                 div.setAttribute('data-gallery-id', galleryId);
                                 if (isNsfw) div.setAttribute('data-nsfw', '1');
                                 if (isCsam) div.setAttribute('data-csam', '1');
                                 div.innerHTML = '<div class="gallery-list-thumb"><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" /></div>' +
-                                    '<div class="gallery-list-meta">'+(model ? '<div class="gallery-list-model">'+model+'</div>' : '')+(ts ? '<div class="gallery-list-ts">'+ts+'</div>' : '')+flagBadges+'</div>';
+                                    '<div class="gallery-list-meta">'+row1+(tsLong ? '<div class="gallery-list-ts">'+tsLong+'</div>' : '')+(posPrompt ? '<div class="gallery-list-prompt pos">'+posPrompt+'</div>' : '')+(negPrompt ? '<div class="gallery-list-prompt neg">'+negPrompt+'</div>' : '')+flagBadges+'</div>';
                             } else {
                                 const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
@@ -4508,16 +4543,23 @@ class WorkerWebUI:
 
         function startHordeFetching() {
             if (_hordeFetchTimer !== null) return; // already running
-            // Seed with server-accumulated history so charts show data from before the browser opened.
+            // _hordeSnapshots may already be pre-seeded via inline injection in the HTML.
+            // Fetch fresh server snapshots anyway to pick up any gap since the page was rendered,
+            // but only merge them — don't overwrite snapshots we already have.
             fetch('/api/horde-snapshots')
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.snapshots && data.snapshots.length > 0) {
-                        _hordeSnapshots = data.snapshots.slice();
-                        if (_hordeSnapshots.length > _HORDE_MAX_SNAPS) {
-                            _hordeSnapshots = _hordeSnapshots.slice(_hordeSnapshots.length - _HORDE_MAX_SNAPS);
+                        // Only use server snapshots if we don't already have newer data.
+                        var existingLastT = _hordeSnapshots.length > 0 ? _hordeSnapshots[_hordeSnapshots.length - 1].t : 0;
+                        var serverLastT = data.snapshots[data.snapshots.length - 1].t;
+                        if (serverLastT > existingLastT) {
+                            _hordeSnapshots = data.snapshots.slice();
+                            if (_hordeSnapshots.length > _HORDE_MAX_SNAPS) {
+                                _hordeSnapshots = _hordeSnapshots.slice(_hordeSnapshots.length - _HORDE_MAX_SNAPS);
+                            }
+                            renderHordePage();
                         }
-                        renderHordePage();
                     }
                 })
                 .catch(function() {});
@@ -4720,6 +4762,8 @@ class WorkerWebUI:
             stats_output_frequency:   ['Stats Frequency (s)',     'How often (in seconds) to print the status line to console.',       'Behavior',     'int',   5,    3600, false, null, 'AIWORKER_STATS_OUTPUT_FREQUENCY'],
             purge_loras_on_download:  ['Purge LoRAs on Download', 'Delete existing LoRA cache before downloading new LoRAs.',          'Behavior',     'bool',  null, null, false, null, 'AIWORKER_PURGE_LORAS_ON_DOWNLOAD'],
             remove_maintenance_on_init:['Auto-Remove Maintenance','Automatically clear maintenance mode — on startup AND continuously while running (re-clears it if maintenance is re-applied).', 'Behavior', 'bool', null, null, true, null, 'AIWORKER_REMOVE_MAINTENANCE_ON_INIT'],
+            max_job_retries:          ['Max Job Retries',         'Number of times a faulted job is retried before being permanently faulted (0 = no retries; default 1).', 'Behavior', 'int',  0,    10,   false, null, 'AIWORKER_MAX_JOB_RETRIES'],
+            max_submit_retries:       ['Max Submit Retries',      'Number of times a job submission can be retried before being marked as failed (default 10).', 'Behavior', 'int',  0,    50,   false, null, 'AIWORKER_MAX_SUBMIT_RETRIES'],
             data_retention_days:      ['Data Retention (days)',   'Number of days to keep errors, statistics, and gallery images in the database (1\u2013\u200a3650; default\u00a07).', 'Behavior', 'int', 1, 3650, false, null, 'AIWORKER_DATA_RETENTION_DAYS'],
         };
 
@@ -5333,6 +5377,13 @@ class WorkerWebUI:
 </body>
 </html>
         """
+        # Inject server-accumulated horde snapshots so they're available synchronously
+        # the moment the page loads — no separate /api/horde-snapshots round-trip needed.
+        snaps_json = json.dumps(self._horde_snapshots[-self._HORDE_MAX_SERVER_SNAPS:] if self._horde_snapshots else [])
+        html = html.replace(
+            "var _hordeSnapshots = [];",
+            f"var _hordeSnapshots = {snaps_json};",
+        )
         return web.Response(text=html, content_type="text/html")
 
     async def _handle_delete_worker(self, request: web.Request) -> web.Response:
