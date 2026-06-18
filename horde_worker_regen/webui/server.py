@@ -4632,7 +4632,7 @@ class WorkerWebUI:
             limited_console_messages: ['Limited Console Messages','Only log job submission and status messages to console.',            'Behavior',     'bool',  null, null, false, null, 'AIWORKER_LIMITED_CONSOLE_MESSAGES'],
             stats_output_frequency:   ['Stats Frequency (s)',     'How often (in seconds) to print the status line to console.',       'Behavior',     'int',   5,    3600, false, null, 'AIWORKER_STATS_OUTPUT_FREQUENCY'],
             purge_loras_on_download:  ['Purge LoRAs on Download', 'Delete existing LoRA cache before downloading new LoRAs.',          'Behavior',     'bool',  null, null, false, null, 'AIWORKER_PURGE_LORAS_ON_DOWNLOAD'],
-            remove_maintenance_on_init:['Auto-Remove Maintenance','Automatically clear maintenance mode — on startup AND continuously while running (re-clears it if maintenance is re-applied).', 'Behavior', 'bool', null, null, false, null, 'AIWORKER_REMOVE_MAINTENANCE_ON_INIT'],
+            remove_maintenance_on_init:['Auto-Remove Maintenance','Automatically clear maintenance mode — on startup AND continuously while running (re-clears it if maintenance is re-applied).', 'Behavior', 'bool', null, null, true, null, 'AIWORKER_REMOVE_MAINTENANCE_ON_INIT'],
             data_retention_days:      ['Data Retention (days)',   'Number of days to keep errors, statistics, and gallery images in the database (1\u2013\u200a3650; default\u00a07).', 'Behavior', 'int', 1, 3650, false, null, 'AIWORKER_DATA_RETENTION_DAYS'],
         };
 
