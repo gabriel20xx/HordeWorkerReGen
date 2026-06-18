@@ -867,6 +867,7 @@ class WorkerWebUI:
         self.app.router.add_get("/api/stats", self._handle_stats)
         self.app.router.add_get("/api/errors", self._handle_errors)
         self.app.router.add_get("/api/errors/grouped", self._handle_errors_grouped)
+        self.app.router.add_post("/api/errors/clear", self._handle_errors_clear)
         self.app.router.add_get("/api/last_image", self._handle_last_image)
         self.app.router.add_get("/api/gallery", self._handle_gallery)
         self.app.router.add_get("/api/gallery/models", self._handle_gallery_models)
@@ -1239,6 +1240,11 @@ class WorkerWebUI:
         .errors-view-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 3px 10px; font-size: 0.75rem; cursor: pointer; color: var(--text-muted); transition: background 0.15s, color 0.15s, border-color 0.15s; }
         .errors-view-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
         .errors-view-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+        .errors-clear-btn { background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; margin-left: 6px; }
+        .errors-clear-btn:hover { background: #fecaca; color: #dc2626; }
+        .errors-clear-btn:disabled { opacity: 0.5; cursor: default; }
+        [data-theme="dark"] .errors-clear-btn { background: #2d3f55; color: #94a3b8; }
+        [data-theme="dark"] .errors-clear-btn:hover { background: #7f1d1d; color: #fca5a5; }
 
         .pagination-controls { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
         .pagination-controls button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
@@ -1854,7 +1860,7 @@ class WorkerWebUI:
                         </div>
                     </div>
                     <div class="section">
-                        <div class="section-header"><span class="section-title">&#10060; Errors</span><span class="section-count" id="errors-count">0</span><div class="errors-view-toggle" style="margin-left:auto;"><button class="errors-view-btn active" id="errors-btn-grouped" onclick="setErrorsView('grouped')">Grouped</button><button class="errors-view-btn" id="errors-btn-all" onclick="setErrorsView('all')">All</button></div></div>
+                        <div class="section-header"><span class="section-title">&#10060; Errors</span><span class="section-count" id="errors-count">0</span><div class="errors-view-toggle" style="margin-left:auto;"><button class="errors-view-btn active" id="errors-btn-grouped" onclick="setErrorsView('grouped')">Grouped</button><button class="errors-view-btn" id="errors-btn-all" onclick="setErrorsView('all')">All</button></div><button class="errors-clear-btn" id="errors-clear-btn" onclick="clearErrors()" title="Clear all errors">&#128465; Clear</button></div>
                         <div class="card log-panel errors-outer">
                             <div id="errors-history" class="errors-list"><div class="empty-state"><span class="empty-state-icon">&#10003;</span>No errors</div></div>
                             <div class="pagination-controls" id="errors-pagination" style="display:none;">
@@ -2770,6 +2776,22 @@ class WorkerWebUI:
                 const newPage = Math.min(Math.max(1, errorsCurrentPage + delta), errorsTotalPages);
                 if (newPage !== errorsCurrentPage) fetchErrorsPage(newPage);
             }
+        }
+        function clearErrors() {
+            const btn = document.getElementById('errors-clear-btn');
+            if (btn) btn.disabled = true;
+            fetch('/api/errors/clear', { method: 'POST' })
+                .then(r => r.json())
+                .then(function() {
+                    errorsTotal = 0; errorsPageData = []; errorsCurrentPage = 1; errorsTotalPages = 1;
+                    errorsGroupedData = []; errorsGroupedCurrentPage = 1; errorsGroupedTotalPages = 1;
+                    renderErrorsPage();
+                    renderErrorsGroupedPage();
+                    const cnt = document.getElementById('errors-count');
+                    if (cnt) cnt.textContent = '0';
+                })
+                .catch(function(e) { console.error('Failed to clear errors:', e); })
+                .finally(function() { if (btn) btn.disabled = false; });
         }
         const GALLERY_DEFAULT_PAGE_SIZE = 96;
         let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
@@ -5783,6 +5805,12 @@ class WorkerWebUI:
                 "groups": page_groups,
             },
         )
+
+    async def _handle_errors_clear(self, request: web.Request) -> web.Response:
+        """Clear all accumulated error history."""
+        self.status_data["errors_history"] = []
+        self._live_errors_history = []
+        return web.json_response({"ok": True})
 
     async def _handle_gallery(self, request: web.Request) -> web.Response:
         """Return a paginated slice of the gallery image history.
