@@ -1988,6 +1988,11 @@ class HordeWorkerProcessManager:
         # Track per-process-slot restart timestamps for crash-loop rate limiting.
         self._process_restart_history: dict[int, deque[float]] = {}
 
+        # Track when an in-progress job was first observed orphaned (its handling process died,
+        # was replaced, or hung before completing). Maps job-id str → epoch time first seen
+        # orphaned, so _reap_orphaned_in_progress_jobs only faults after a short grace period.
+        self._job_orphan_since: dict[str, float] = {}
+
         # Track last worker config print time
         self._last_worker_config_print_time: float = 0.0
 
@@ -3959,16 +3964,6 @@ class HordeWorkerProcessManager:
                 except ValueError:
                     logger.debug(f"Job {job.id_} not found in jobs_in_progress.")
 
-        if process_with_model is None:
-            if (
-                self._preload_delay_notified
-                or self._horde_model_map.is_model_loading(next_job.model)
-                or information_only
-            ):
-                return None
-            handle_process_missing(next_job)
-            return None
-
         candidate_job_size = 25
 
         if self.bridge_data.high_performance_mode:
@@ -3999,6 +3994,37 @@ class HordeWorkerProcessManager:
                     return candidate_job, candidate_process_with_model
 
             return None
+
+        if process_with_model is None:
+            # The head-of-queue job's model is not loaded on any process yet — e.g. it is still
+            # waiting to be preloaded, its preload is delayed by the one-model-at-a-time
+            # serialization (see preload_models), or the process that was loading it died/was
+            # replaced. Before giving up (which would block the entire queue behind the head job
+            # and leave any already-preloaded process sitting idle), try to start another pending
+            # job whose model IS already on a process that can accept a job.
+            #
+            # Without this fallback, a single slow/stuck/missing head-of-queue model stalls all
+            # other ready work until that model finishes loading or its process is replaced (up to
+            # preload_timeout seconds). That presents exactly as the reported symptom: "models are
+            # loaded/preloaded but no inference starts for a while after startup", which then
+            # self-resolves once the head model recovers.
+            chosen_candidate_and_process = find_line_skip_candidate(require_small_non_lora_job=False)
+            if chosen_candidate_and_process is not None:
+                chosen_candidate, chosen_process = chosen_candidate_and_process
+                skipped_line = True
+                skipped_line_for = next_job
+                next_job = chosen_candidate
+                self._skipped_line_job = next_job
+                process_with_model = chosen_process
+            else:
+                if (
+                    self._preload_delay_notified
+                    or self._horde_model_map.is_model_loading(next_job.model)
+                    or information_only
+                ):
+                    return None
+                handle_process_missing(next_job)
+                return None
 
         if not process_with_model.can_accept_job():
             if (process_with_model.last_process_state == HordeProcessState.DOWNLOADING_AUX_MODEL) or (
@@ -5434,6 +5460,84 @@ class HordeWorkerProcessManager:
         phase_key = fault_phase if fault_phase is not None else "Unknown Phase"
         self._faulted_jobs_per_phase[phase_key] = self._faulted_jobs_per_phase.get(phase_key, 0) + 1
 
+    _ORPHANED_JOB_GRACE_SECONDS: float = 5.0
+    """Seconds an in-progress job must remain orphaned before _reap_orphaned_in_progress_jobs faults it."""
+
+    def _reap_orphaned_in_progress_jobs(self) -> bool:
+        """Fault in-progress jobs that no longer have a live process handling them.
+
+        A job stays in ``jobs_in_progress`` until its handling process reports a result. If that
+        process dies, is replaced, or hangs in ``PROCESS_ENDING`` — for example after it got stuck
+        in ``INFERENCE_STARTING`` / ``INFERENCE_PROCESSING`` before completing a single step,
+        which is most common shortly after program start — the job becomes orphaned: no live
+        process will ever complete it. An orphaned job permanently occupies an inference
+        concurrency slot (starving already-preloaded processes) and, during shutdown, keeps
+        :meth:`is_time_for_shutdown` ``False`` forever, so the worker hangs on
+        "Finishing current jobs...".
+
+        Faulting the orphan re-queues it for retry on a healthy process (or permanently faults it
+        once retries are exhausted), letting the queue drain and shutdown proceed. A short grace
+        period (``_ORPHANED_JOB_GRACE_SECONDS``) avoids false positives during the brief, normal
+        window between dispatch and the first process state update.
+
+        Returns:
+            True if at least one orphaned job was faulted.
+        """
+        now = time.time()
+        reaped = False
+        for job in list(self.jobs_in_progress):
+            job_id = str(job.id_) if job.id_ is not None else None
+            handled = any(
+                p.is_process_alive() and self._is_same_job(p.last_job_referenced, job)
+                for p in self._process_map.values()
+            )
+            if handled:
+                if job_id is not None:
+                    self._job_orphan_since.pop(job_id, None)
+                continue
+
+            # Orphaned: no live process is handling this in-progress job. Apply a grace period
+            # before faulting so a job that was just dispatched (and whose process has not yet
+            # reported INFERENCE_STARTING) is not faulted prematurely.
+            first_seen = self._job_orphan_since.setdefault(job_id, now) if job_id is not None else now
+            if (now - first_seen) < self._ORPHANED_JOB_GRACE_SECONDS:
+                continue
+
+            logger.error(
+                f"Job {job.id_} is in progress but no live process is handling it "
+                "(its process died, was replaced, or hung before completing a step). "
+                "Faulting it so the inference slot is freed and shutdown can complete.",
+            )
+            if job_id is not None:
+                self._job_orphan_since.pop(job_id, None)
+            if self._shutting_down:
+                # During shutdown there may be no healthy process left to run a re-queued job
+                # (end_inference_processes() is ending them), so a retry would never complete and
+                # would keep is_time_for_shutdown() False forever. Permanently fault instead so the
+                # job is reported to the API and the queue drains.
+                job_info = self.jobs_lookup.get(job)
+                if job_info is not None:
+                    job_info.retry_count = self.MAX_JOB_RETRIES
+                self.handle_job_fault(
+                    faulted_job=job,
+                    fault_info="orphaned during shutdown: no live process was handling the in-progress job",
+                    retry_skipped=True,
+                )
+            else:
+                self.handle_job_fault(
+                    faulted_job=job,
+                    fault_info="orphaned: no live process was handling the in-progress job",
+                )
+            reaped = True
+
+        # Prune orphan-tracking entries for jobs that are no longer in progress.
+        if self._job_orphan_since:
+            in_progress_ids = {str(j.id_) for j in self.jobs_in_progress if j.id_ is not None}
+            for stale_id in [k for k in self._job_orphan_since if k not in in_progress_ids]:
+                self._job_orphan_since.pop(stale_id, None)
+
+        return reaped
+
     def handle_job_fault(
         self,
         faulted_job: ImageGenerateJobPopResponse,
@@ -5809,6 +5913,14 @@ class HordeWorkerProcessManager:
     (in ``_process_control_loop``) or when a successful job pop is received.
     Also surfaced to the web UI as ``maintenance_mode``.
     """
+    _last_maintenance_removal_attempt: float = 0.0
+    """Epoch time of the last automatic ``remove_maintenance()`` attempt.
+
+    Used to throttle the continuous auto-removal (when ``remove_maintenance_on_init`` is enabled)
+    so the API is not hammered on every (frequent) maintenance-mode job-pop retry.
+    """
+    _MAINTENANCE_REMOVAL_RETRY_INTERVAL: float = 60.0
+    """Minimum seconds between automatic maintenance-removal attempts while in maintenance mode."""
     _last_pop_no_jobs_available: bool = False
     """Whether the last job pop attempt had a no jobs available response."""
     _last_pop_no_jobs_available_time: float = 0.0
@@ -6148,11 +6260,23 @@ class HordeWorkerProcessManager:
                         logger.warning(f"Failed to pop job (Maintenance Mode): {job_pop_response}")
                         self.print_maint_mode_messages()
                         self._last_pop_maintenance_mode = True
-                        try:
-                            self.remove_maintenance()
-                            logger.success("Maintenance mode automatically deactivated")
-                        except Exception:
-                            logger.error("Maintenance mode couldn't been deactivated automatically")
+                    # Automatically clear maintenance whenever it is detected (not only at
+                    # startup) while remove_maintenance_on_init is enabled, retrying periodically
+                    # so the worker recovers even if maintenance is re-applied while it is running.
+                    # Throttled by _MAINTENANCE_REMOVAL_RETRY_INTERVAL so the (frequent) error
+                    # job-pop retries do not hammer the API with removal requests.
+                    if self.bridge_data.remove_maintenance_on_init:
+                        now_maint = time.time()
+                        if (
+                            now_maint - self._last_maintenance_removal_attempt
+                            >= self._MAINTENANCE_REMOVAL_RETRY_INTERVAL
+                        ):
+                            self._last_maintenance_removal_attempt = now_maint
+                            try:
+                                self.remove_maintenance()
+                                logger.success("Maintenance mode automatically deactivated")
+                            except Exception:
+                                logger.error("Maintenance mode couldn't been deactivated automatically")
                 elif "we cannot accept workers serving" in job_pop_response.message.lower():
                     logger.warning(f"Failed to pop job (Unrecognized Model): {job_pop_response}")
                     logger.error(
@@ -7432,11 +7556,38 @@ class HordeWorkerProcessManager:
             return inference_progress
         return 0
 
+    @staticmethod
+    def _is_same_job(
+        a: "ImageGenerateJobPopResponse | None",
+        b: "ImageGenerateJobPopResponse | None",
+    ) -> bool:
+        """Return True if ``a`` and ``b`` refer to the same job, compared by stable ``id_``.
+
+        Full pydantic value-equality on ``ImageGenerateJobPopResponse`` is unreliable for this
+        purpose because the job object is mutated in place after it is dispatched (for example
+        source images are downloaded into it by ``_get_source_images``).  As a result the job
+        object stored in ``jobs_in_progress`` can differ *by value* from a process's
+        ``last_job_referenced`` even though they are the same logical job — which made the WebUI
+        fail to find the handling process and fall back to a generic ``"Processing"`` label
+        instead of the real state (e.g. ``INFERENCE_PROCESSING``).  The horde ``JobID`` is stable
+        across those mutations, so match on it.
+        """
+        if a is None or b is None:
+            return False
+        a_id = getattr(a, "id_", None)
+        b_id = getattr(b, "id_", None)
+        if a_id is not None and b_id is not None:
+            return a_id == b_id
+        return a is b
+
     def _build_current_job_dict(
         self,
         job: "ImageGenerateJobPopResponse",
         progress: int,
         state: str,
+        *,
+        state_elapsed_seconds: float | None = None,
+        job_elapsed_seconds: float | None = None,
     ) -> dict:
         """Build the current-job dictionary used by the WebUI status payload.
 
@@ -7444,6 +7595,11 @@ class HordeWorkerProcessManager:
             job: The job whose details should be shown.
             progress: Overall progress percentage (0-100).
             state: Human-readable state label (e.g. ``"MODEL_PRELOADING"``).
+            state_elapsed_seconds: Seconds elapsed since the handling process entered its current
+                state, measured server-side. Allows the WebUI timer to be accurate regardless of
+                when the page was loaded (it is not reset on page load). ``None`` when unknown.
+            job_elapsed_seconds: Seconds elapsed since the job was popped, measured server-side.
+                Drives the total-job timer in the WebUI. ``None`` when unknown.
 
         Returns:
             A JSON-serializable dictionary with job metadata.
@@ -7453,6 +7609,8 @@ class HordeWorkerProcessManager:
             "model": job.model,
             "progress": progress,
             "state": state,
+            "state_elapsed_seconds": state_elapsed_seconds,
+            "job_elapsed_seconds": job_elapsed_seconds,
             "is_complete": state == "INFERENCE_COMPLETE",
             "batch_size": job.payload.n_iter if job.payload else None,
             "steps": job.payload.ddim_steps if job.payload else None,
@@ -7537,6 +7695,10 @@ class HordeWorkerProcessManager:
         # resetting to 0% for the next generation.
         current_job = None
         _current_job_obj = None  # Job object being shown as current_job (to exclude from queue)
+        # Server-side reference time. Used to derive how long the handling process has been in its
+        # current state (state_entered_timestamp) and how long the job has been alive (time_popped)
+        # so the WebUI timers reflect real elapsed time instead of resetting on page load.
+        _now = time.time()
         if self.jobs_pending_submit:
             # Show a job that has passed safety check and is waiting to be submitted to the API.
             # Checked first so the progress bar stays at 100% until submission completes, even
@@ -7547,13 +7709,21 @@ class HordeWorkerProcessManager:
                 # Find the process that handled this job so we can show its most recent state.
                 # Default to a manager-centric label indicating that the job is queued for submission.
                 state = "RESULT_PENDING_SUBMIT"
+                state_elapsed = None
                 for process in self._process_map.values():
-                    if process.last_job_referenced == job:
+                    if self._is_same_job(process.last_job_referenced, job):
                         # Use the actual last process state name if available.
                         if process.last_process_state is not None:
                             state = process.last_process_state.name
+                        state_elapsed = _now - process.state_entered_timestamp
                         break
-                current_job = self._build_current_job_dict(job, 100, state)
+                current_job = self._build_current_job_dict(
+                    job,
+                    100,
+                    state,
+                    state_elapsed_seconds=state_elapsed,
+                    job_elapsed_seconds=_now - job_info.time_popped,
+                )
             except (IndexError, AttributeError):
                 # Pending submit list may have been modified, ignore and show no current job
                 pass
@@ -7563,6 +7733,7 @@ class HordeWorkerProcessManager:
                 job_info = self.jobs_being_safety_checked[0]
                 job = job_info.sdk_api_job_info
                 state = "SAFETY_EVALUATING"
+                state_elapsed = None
                 for process in self._process_map.values():
                     if process.last_process_state in (
                         HordeProcessState.SAFETY_STARTING,
@@ -7570,9 +7741,16 @@ class HordeWorkerProcessManager:
                         HordeProcessState.SAFETY_COMPLETE,
                     ):
                         state = process.last_process_state.name
+                        state_elapsed = _now - process.state_entered_timestamp
                         break
 
-                current_job = self._build_current_job_dict(job, 100, state)
+                current_job = self._build_current_job_dict(
+                    job,
+                    100,
+                    state,
+                    state_elapsed_seconds=state_elapsed,
+                    job_elapsed_seconds=_now - job_info.time_popped,
+                )
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
                 pass
@@ -7584,14 +7762,22 @@ class HordeWorkerProcessManager:
                 # Look up the actual process state for accurate display; fall back to
                 # INFERENCE_COMPLETE since the job has not yet entered safety evaluation.
                 state = "INFERENCE_COMPLETE"
+                state_elapsed = None
                 for process in self._process_map.values():
                     if (
-                        process.last_job_referenced == job
+                        self._is_same_job(process.last_job_referenced, job)
                         and process.last_process_state in self._WEBUI_POST_INFERENCE_STATES
                     ):
                         state = process.last_process_state.name
+                        state_elapsed = _now - process.state_entered_timestamp
                         break
-                current_job = self._build_current_job_dict(job, 100, state)
+                current_job = self._build_current_job_dict(
+                    job,
+                    100,
+                    state,
+                    state_elapsed_seconds=state_elapsed,
+                    job_elapsed_seconds=_now - job_info.time_popped,
+                )
             except (IndexError, AttributeError):
                 # Safety check list may have been modified, ignore and show no current job
                 pass
@@ -7599,13 +7785,18 @@ class HordeWorkerProcessManager:
             job = self.jobs_in_progress[0]
             job_info = self.jobs_lookup.get(job)
             if job_info:
-                # Find the process handling this job
+                # Find the process handling this job. Match by stable job id (see _is_same_job):
+                # the job object is mutated in place after dispatch, so value-equality against
+                # last_job_referenced can spuriously fail and leave the UI showing "Processing"
+                # instead of the real INFERENCE_PROCESSING/etc. state.
                 progress = None
                 state = None
+                state_elapsed = None
                 for process in self._process_map.values():
-                    if process.last_job_referenced == job:
+                    if self._is_same_job(process.last_job_referenced, job):
                         process_state = process.last_process_state
                         state = process_state.name if process_state else None
+                        state_elapsed = _now - process.state_entered_timestamp
                         # After inference completes pin progress at 100 % so the bar never
                         # goes backwards during post-processing, safety or submission.
                         if process_state in self._WEBUI_POST_INFERENCE_STATES:
@@ -7637,6 +7828,8 @@ class HordeWorkerProcessManager:
                     job,
                     progress if progress is not None else 0,
                     state or "Processing",
+                    state_elapsed_seconds=state_elapsed,
+                    job_elapsed_seconds=_now - job_info.time_popped,
                 )
         else:
             # No job is actively in inference yet, but a process may be preloading a model
@@ -7651,7 +7844,16 @@ class HordeWorkerProcessManager:
                     _current_job_obj = job
                     process_state = process.last_process_state
                     progress = self._calculate_granular_progress(process_state, None)
-                    current_job = self._build_current_job_dict(job, progress, process_state.name)
+                    _preload_job_info = self.jobs_lookup.get(job)
+                    current_job = self._build_current_job_dict(
+                        job,
+                        progress,
+                        process_state.name,
+                        state_elapsed_seconds=_now - process.state_entered_timestamp,
+                        job_elapsed_seconds=(
+                            _now - _preload_job_info.time_popped if _preload_job_info else None
+                        ),
+                    )
                     break
 
         # Get job queue (exclude jobs that are currently in progress or already shown as
@@ -8290,8 +8492,11 @@ class HordeWorkerProcessManager:
 
         def hard_shutdown() -> None:
             # Just in case the process manager gets stuck on shutdown.
-            # Cap the wait time to avoid unbounded hangs when many jobs are pending.
-            wait_seconds = min((len(self.jobs_pending_submit) * 4) + 2, 30)
+            # Cap the wait time to avoid unbounded hangs when many jobs are pending. The cap is
+            # user-configurable via force_restart_timeout (primarily for auto-restart-on-idle, so a
+            # stuck graceful shutdown does not delay the restart indefinitely).
+            force_timeout = getattr(self.bridge_data, "force_restart_timeout", 30)
+            wait_seconds = min((len(self.jobs_pending_submit) * 4) + 2, force_timeout)
             time.sleep(wait_seconds)
 
             if self._shut_down or not self._shutting_down:
@@ -8652,6 +8857,14 @@ class HordeWorkerProcessManager:
         )
 
         any_replaced = False
+        # Reap in-progress jobs whose handling process died/was replaced/hung before completing
+        # (e.g. stuck in INFERENCE_STARTING/INFERENCE_PROCESSING before the first step). This runs
+        # every cycle, including during shutdown, so an orphaned job cannot block the inference
+        # slot or keep is_time_for_shutdown() False forever. It is intentionally NOT counted as a
+        # process replacement (it does not spawn a subprocess), so it must not start the
+        # _recently_recovered cooldown.
+        if self._reap_orphaned_in_progress_jobs():
+            any_replaced = True
         # Tracks only actual subprocess replacements (via _replace_inference_process /
         # _check_and_replace_process).  Used exclusively for the _recently_recovered cooldown
         # so that a soft corrective action (e.g. resetting RESULT_SUBMITTING state) does not
@@ -8947,8 +9160,29 @@ class HordeWorkerProcessManager:
                     "seems to be stuck in UNLOADED_MODEL_FROM_RAM",
                 ),
             ]
+            # A MODEL_PRELOADED process that is merely waiting for a free inference concurrency
+            # slot is NOT stuck: as soon as an in-progress job finishes, start_inference() (which
+            # runs earlier in the same control-loop tick) dispatches a job to it and it leaves the
+            # MODEL_PRELOADED state. Replacing it in that situation would needlessly discard an
+            # already-loaded model and churn the slot back through PROCESS_STARTING →
+            # MODEL_PRELOADING, which is exactly the "jobs/processes stuck in MODEL_PRELOADED"
+            # behaviour we want to avoid. The destructive replacement is therefore only a genuine
+            # safety net for when a slot IS free but dispatch still never happens. Determine here
+            # whether the inference concurrency slots are currently saturated.
+            _processes_post_processing = (
+                self._process_map.num_busy_with_post_processing()
+                if self.post_process_job_overlap_allowed
+                else 0
+            )
+            inference_slots_full = len(self.jobs_in_progress) >= (
+                self.max_concurrent_inference_processes + _processes_post_processing
+            )
             for timeout, state, error_message in conditions:
                 for process_info in self._process_map.values():
+                    # Skip replacing a preloaded-but-idle process that is legitimately queued
+                    # behind saturated inference slots (see note above).
+                    if state == HordeProcessState.MODEL_PRELOADED and inference_slots_full:
+                        continue
                     # For MODEL_PRELOADING: read the model name *before* calling
                     # _check_and_replace_process because _replace_inference_process (called
                     # internally) clears loaded_horde_model_name via on_process_ending().

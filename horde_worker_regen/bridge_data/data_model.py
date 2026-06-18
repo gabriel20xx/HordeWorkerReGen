@@ -78,6 +78,16 @@ class reGenBridgeData(CombinedHordeBridgeData):
     Can also be configured via the AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable.
     """
 
+    force_restart_timeout: int = Field(default=30, ge=5, le=600, validate_default=True)
+    """Maximum seconds to wait for a graceful shutdown to finish before forcing it.
+
+    When the worker is restarting (most notably an auto-restart triggered by
+    `auto_restart_on_idle_minutes`) and the graceful shutdown does not complete within this many
+    seconds, the worker hard-kills its child processes and exits so the restart can proceed.
+    The default is 30 seconds. Can also be configured via the AIWORKER_FORCE_RESTART_TIMEOUT
+    environment variable.
+    """
+
     horde_model_stickiness: float = Field(default=0.0, le=1.0, ge=0.0, alias="model_stickiness")
     """
     A percent chance (expressed as a decimal between 0 and 1) that the currently loaded models will
@@ -115,6 +125,13 @@ class reGenBridgeData(CombinedHordeBridgeData):
     purge_loras_on_download: bool = Field(default=False)
 
     remove_maintenance_on_init: bool = Field(default=False)
+    """Automatically remove this worker from maintenance mode.
+
+    When enabled, maintenance is cleared on startup AND continuously while the worker is running:
+    whenever a job pop reports the worker is in maintenance mode, the worker automatically attempts
+    to clear it (throttled), so it recovers even if maintenance is re-applied mid-run. When
+    disabled, maintenance mode is left untouched.
+    """
 
     load_large_models: bool = Field(default=True)
 
@@ -300,6 +317,33 @@ class reGenBridgeData(CombinedHordeBridgeData):
             logger.info(
                 f"Config `auto_restart_on_idle_minutes` set by environment variable "
                 f"`AIWORKER_AUTO_RESTART_IDLE_MINUTES` (value: {parsed}).",
+            )
+            return parsed
+        return value
+
+    @field_validator("force_restart_timeout", mode="after")
+    @classmethod
+    def validate_force_restart_timeout(cls, value: int) -> int:
+        """Apply the environment variable override for the `force_restart_timeout` field."""
+        env_val = os.getenv("AIWORKER_FORCE_RESTART_TIMEOUT")
+        if env_val is not None:
+            try:
+                parsed = int(env_val)
+            except ValueError:
+                logger.warning(
+                    f"AIWORKER_FORCE_RESTART_TIMEOUT environment variable has an invalid value: '{env_val}'. "
+                    "It must be an integer between 5 and 600. Ignoring.",
+                )
+                return value
+            if parsed < 5 or parsed > 600:
+                logger.warning(
+                    f"AIWORKER_FORCE_RESTART_TIMEOUT environment variable has an out-of-range value: {parsed}. "
+                    "It must be between 5 and 600. Ignoring.",
+                )
+                return value
+            logger.info(
+                f"Config `force_restart_timeout` set by environment variable "
+                f"`AIWORKER_FORCE_RESTART_TIMEOUT` (value: {parsed}).",
             )
             return parsed
         return value

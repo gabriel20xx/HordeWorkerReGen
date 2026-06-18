@@ -1,5 +1,6 @@
 """Web server for the Horde Worker status UI."""
 
+import asyncio
 import base64
 import io
 import json
@@ -111,6 +112,7 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     # Behavior
     "minutes_allowed_without_jobs": {"type": int, "min": 0, "max": 3599},
     "auto_restart_on_idle_minutes": {"type": int, "min": 0, "max": 1440},
+    "force_restart_timeout": {"type": int, "min": 5, "max": 600},
     "suppress_speed_warnings": {"type": bool},
     "exit_on_unhandled_faults": {"type": bool},
     "limited_console_messages": {"type": bool},
@@ -279,6 +281,9 @@ class WorkerWebUI:
             "max_time_per_step_per_model": {},
             "avg_time_per_job_per_model": {},
             "max_time_per_job_per_model": {},
+            # Snapshot of cumulative counters taken when the user clicks "Reset Stats".
+            # JS subtracts these from the live values so the display reads from zero.
+            "stats_reset_baseline": {},
         }
 
         # Merge persisted errors into live status_data now that status_data has
@@ -297,6 +302,13 @@ class WorkerWebUI:
         self._stats_snapshots: list[dict[str, Any]] = []
         # Unix timestamp of the most recently recorded snapshot (0 = none yet).
         self._last_stats_snapshot_time: float = 0.0
+
+        # Server-side horde network performance snapshots (accumulated even when
+        # no browser is connected).  Served via /api/horde-snapshots so the JS
+        # can seed its chart with history going back to server startup.
+        self._horde_snapshots: list[dict[str, Any]] = []
+        # Background asyncio task handle for the horde polling loop.
+        self._horde_bg_task: asyncio.Task | None = None
 
         # Re-populate gallery dict and stats from any data loaded from DB.
         if self._errors_db_path is not None:
@@ -804,6 +816,8 @@ class WorkerWebUI:
         self.app.router.add_get("/api/models", self._handle_get_models)
         self.app.router.add_post("/api/models", self._handle_toggle_model)
         self.app.router.add_post("/api/restart", self._handle_restart_program)
+        self.app.router.add_post("/api/reset-stats", self._handle_reset_stats)
+        self.app.router.add_get("/api/horde-snapshots", self._handle_horde_snapshots)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
         """Handle config API request."""
@@ -826,8 +840,13 @@ class WorkerWebUI:
             --sidebar-width: 260px;
             --action-btn-height: 32px;
             --page-spacing: 14px;
-            --sidebar-bg: #1a1d2e;
-            --sidebar-hover: #2d3148;
+            /* Light mode: light sidebar that matches the light theme (was previously a fixed
+               dark sidebar regardless of theme). Dark mode overrides these below. */
+            --sidebar-bg: #ffffff;
+            --sidebar-hover: #eef2f7;
+            --sidebar-text: #64748b;
+            --sidebar-text-strong: #1e293b;
+            --sidebar-border: #e2e8f0;
             --accent: #6366f1;
             --accent-hover: #4f46e5;
             --success: #10b981;
@@ -863,25 +882,26 @@ class WorkerWebUI:
             z-index: 100;
             transition: transform 0.28s cubic-bezier(.4,0,.2,1);
             overflow-y: auto;
+            border-right: 1px solid var(--sidebar-border);
         }
-        .sidebar-logo { padding: 22px 20px 18px; border-bottom: 1px solid rgba(255,255,255,0.07); flex-shrink: 0; }
-        .sidebar-logo h1 { color: var(--text-light); font-size: 1.15rem; font-weight: 700; letter-spacing: 0.3px; }
-        .sidebar-logo p { color: var(--text-muted); font-size: 0.75rem; margin-top: 3px; }
+        .sidebar-logo { padding: 22px 20px 18px; border-bottom: 1px solid var(--sidebar-border); flex-shrink: 0; }
+        .sidebar-logo h1 { color: var(--sidebar-text-strong); font-size: 1.15rem; font-weight: 700; letter-spacing: 0.3px; }
+        .sidebar-logo p { color: var(--sidebar-text); font-size: 0.75rem; margin-top: 3px; }
         .sidebar-nav { flex: 1; padding: 12px 0; }
-        .nav-section-label { color: var(--text-muted); font-size: 0.67rem; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 10px 20px 4px; }
-        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 20px; color: var(--text-muted); font-size: 0.875rem; font-weight: 500; transition: background 0.15s, color 0.15s, border-color 0.15s; cursor: pointer; border-left: 3px solid transparent; user-select: none; background: none; border-top: none; border-right: none; border-bottom: none; width: 100%; text-align: left; }
-        .nav-item:hover { background: var(--sidebar-hover); color: var(--text-light); }
-        .nav-item.active { background: var(--sidebar-hover); color: var(--text-light); border-left-color: var(--accent); }
+        .nav-section-label { color: var(--sidebar-text); font-size: 0.67rem; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 10px 20px 4px; }
+        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 20px; color: var(--sidebar-text); font-size: 0.875rem; font-weight: 500; transition: background 0.15s, color 0.15s, border-color 0.15s; cursor: pointer; border-left: 3px solid transparent; user-select: none; background: none; border-top: none; border-right: none; border-bottom: none; width: 100%; text-align: left; }
+        .nav-item:hover { background: var(--sidebar-hover); color: var(--sidebar-text-strong); }
+        .nav-item.active { background: var(--sidebar-hover); color: var(--sidebar-text-strong); border-left-color: var(--accent); }
         .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
         .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 99; backdrop-filter: blur(1px); }
         .sidebar-overlay.active { display: block; }
 
         /* ---- Mobile navbar ---- */
-        .mobile-navbar { display: none; position: fixed; top: 0; left: 0; right: 0; height: 54px; background: var(--sidebar-bg); align-items: center; padding: 0 14px; z-index: 200; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
-        .hamburger-btn { background: none; border: none; color: var(--text-light); font-size: 1.3rem; cursor: pointer; padding: 6px; border-radius: 6px; line-height: 1; transition: background 0.15s; }
-        .hamburger-btn:hover { background: rgba(255,255,255,0.08); }
-        .mobile-title { color: var(--text-light); font-size: 0.95rem; font-weight: 600; flex: 1; }
-        .mobile-uptime { color: var(--text-muted); font-size: 0.7rem; font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0; }
+        .mobile-navbar { display: none; position: fixed; top: 0; left: 0; right: 0; height: 54px; background: var(--sidebar-bg); align-items: center; padding: 0 14px; z-index: 200; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); border-bottom: 1px solid var(--sidebar-border); }
+        .hamburger-btn { background: none; border: none; color: var(--sidebar-text-strong); font-size: 1.3rem; cursor: pointer; padding: 6px; border-radius: 6px; line-height: 1; transition: background 0.15s; }
+        .hamburger-btn:hover { background: var(--sidebar-hover); }
+        .mobile-title { color: var(--sidebar-text-strong); font-size: 0.95rem; font-weight: 600; flex: 1; }
+        .mobile-uptime { color: var(--sidebar-text); font-size: 0.7rem; font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0; }
 
         /* ---- Mobile resources sub-bar ---- */
         .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; background: #12162a; grid-template-columns: repeat(4, 1fr); padding: 3px 6px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); }
@@ -1186,6 +1206,10 @@ class WorkerWebUI:
         [data-theme="dark"] .nsfw-blur-btn.active { background: #422006; border-color: #d97706; color: #fcd34d; }
         body.blur-nsfw .image-grid-item[data-nsfw="1"] img { filter: blur(14px); }
         body.blur-nsfw img[data-nsfw="1"] { filter: blur(14px); }
+        /* Also blur images inside ANY element flagged data-nsfw (e.g. the single-image last-result
+           container wraps the img in a <div data-nsfw="1"> when an NSFW/CSAM badge is shown, so the
+           img itself has no data-nsfw attribute and the rules above would miss it). */
+        body.blur-nsfw [data-nsfw="1"] img { filter: blur(14px); }
 
         /* ---- Topbar resource pills with bars ---- */
         .topbar-resources { display: flex; align-items: center; align-self: center; gap: 8px; flex-wrap: wrap; }
@@ -1196,7 +1220,7 @@ class WorkerWebUI:
         .topbar-res-bar { height: 100%; border-radius: 2px; transition: width 0.4s ease, background-color 0.4s ease; position: absolute; left: 0; top: 0; }
         .topbar-res-bar-back { opacity: 0.4; }
         /* ---- Dark mode ---- */
-        [data-theme="dark"] { --main-bg: #0f172a; --card-bg: #1e293b; --border: #2d3f55; --sidebar-bg: #0d1117; --sidebar-hover: #161e2e; }
+        [data-theme="dark"] { --main-bg: #0f172a; --card-bg: #1e293b; --border: #2d3f55; --sidebar-bg: #0d1117; --sidebar-hover: #161e2e; --sidebar-text: #94a3b8; --sidebar-text-strong: #e2e8f0; --sidebar-border: rgba(255,255,255,0.07); }
         [data-theme="dark"] body { color: #cbd5e1; }
         [data-theme="dark"] .topbar { background: #1e293b; border-bottom-color: #2d3f55; }
         [data-theme="dark"] .topbar-worker-name { color: #f1f5f9; }
@@ -1575,6 +1599,9 @@ class WorkerWebUI:
             <div id="content" style="display: none;">
                 <!-- OVERVIEW PAGE -->
                 <div class="page active" id="page-overview">
+                    <div class="section-header" style="justify-content:flex-end;padding-bottom:0;margin-bottom:6px;">
+                        <button class="nsfw-blur-btn" id="overview-reset-btn" onclick="resetOverviewStats()" title="Reset session statistics">&#8635; Reset Stats</button>
+                    </div>
                     <div class="grid-4">
                         <div class="stat-card"><div class="stat-card-label">Kudos Earned</div><div class="stat-card-value success" id="user-kudos-session">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="images-per-hour">0</div></div>
@@ -2124,6 +2151,12 @@ class WorkerWebUI:
             if (enabled) document.body.classList.add('blur-nsfw');
             var btn = document.getElementById('nsfw-blur-btn');
             if (btn) btn.classList.toggle('active', enabled);
+        }
+        function resetOverviewStats() {
+            fetch('/api/reset-stats', {method: 'POST'})
+                .then(function(r) { return r.json(); })
+                .then(function() { updateStatus(); })
+                .catch(function(err) { console.error('Reset stats failed:', err); });
         }
         function toggleNsfwBlur() {
             var enabled = document.body.classList.toggle('blur-nsfw');
@@ -3309,14 +3342,16 @@ class WorkerWebUI:
                     const uptimeStr = formatUptime(data.uptime);
                     document.getElementById('uptime').textContent = uptimeStr;
                     document.getElementById('mobile-uptime').textContent = '\u23F1 ' + uptimeStr;
-                    document.getElementById('user-kudos-session').textContent = (data.kudos_earned_session || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+                    var _rb = data.stats_reset_baseline || {};
+                    function _subReset(val, key) { return Math.max(0, (val || 0) - (_rb[key] || 0)); }
+                    document.getElementById('user-kudos-session').textContent = _subReset(data.kudos_earned_session, 'kudos_earned_session').toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
-                    document.getElementById('jobs-popped').textContent = data.jobs_popped;
-                    document.getElementById('jobs-completed').textContent = data.jobs_completed;
-                    document.getElementById('jobs-faulted').textContent = data.jobs_faulted;
-                    document.getElementById('processes-recovered').textContent = data.processes_recovered;
+                    document.getElementById('jobs-popped').textContent = _subReset(data.jobs_popped, 'jobs_popped');
+                    document.getElementById('jobs-completed').textContent = _subReset(data.jobs_completed, 'jobs_completed');
+                    document.getElementById('jobs-faulted').textContent = _subReset(data.jobs_faulted, 'jobs_faulted');
+                    document.getElementById('processes-recovered').textContent = _subReset(data.processes_recovered, 'processes_recovered');
                     document.getElementById('jobs-queued').textContent = data.jobs_queued;
-                    document.getElementById('time-without-jobs').textContent = formatUptime(data.time_without_jobs || 0);
+                    document.getElementById('time-without-jobs').textContent = formatUptime(_subReset(data.time_without_jobs, 'time_without_jobs'));
                     const cpu = Math.min(100, Math.round(data.cpu_usage_percent));
                     const workerGpu = Math.min(100, Math.round(data.worker_gpu_percent || 0));
                     const sysGpuRaw = Math.min(100, Math.round(data.gpu_usage_percent || 0));
@@ -3411,15 +3446,25 @@ class WorkerWebUI:
                             pv = Math.max(_currentJobProgress, rawPv);
                         } else {
                             _currentJobId = jobId;
-                            _currentJobStartTime = Date.now();
                             pv = rawPv;
                         }
                         _currentJobProgress = pv;
-                        // Track when the state last changed so we can show elapsed time.
+                        // Drive the elapsed-time displays from the server's measured elapsed seconds
+                        // (state_elapsed_seconds / job_elapsed_seconds) so they reflect true elapsed
+                        // time and are NOT reset when the page is (re)loaded or navigated to.
+                        // Re-syncing every poll keeps them accurate; the 1s interval ticks between
+                        // polls. Fall back to client-side timing only when the server omits a value.
                         const newState = job.state || null;
-                        if (newState !== _currentJobState) {
-                            _currentJobState = newState;
+                        if (job.state_elapsed_seconds !== null && job.state_elapsed_seconds !== undefined) {
+                            _currentJobStateStartTime = Date.now() - Math.round(job.state_elapsed_seconds * 1000);
+                        } else if (newState !== _currentJobState || _currentJobStateStartTime === null) {
                             _currentJobStateStartTime = Date.now();
+                        }
+                        _currentJobState = newState;
+                        if (job.job_elapsed_seconds !== null && job.job_elapsed_seconds !== undefined) {
+                            _currentJobStartTime = Date.now() - Math.round(job.job_elapsed_seconds * 1000);
+                        } else if (_currentJobStartTime === null) {
+                            _currentJobStartTime = Date.now();
                         }
                         ojd.classList.remove('centered-empty-container');
                         ojd.innerHTML =
@@ -3660,16 +3705,17 @@ class WorkerWebUI:
             // These are only meaningful when the selected window contains at least
             // two snapshots; with a single snapshot, the counters are cumulative and
             // would overstate activity within the window.
-            // Jobs Faulted uses the session-total from the API rather than a windowed
-            // delta so that faults which occurred before the selected window are never
-            // silently hidden (e.g. a fault that happened 20 minutes ago would show 0
-            // under the default 15-minute window if a delta-only approach were used).
-            var imagesGenerated = 0, kudosEarned = 0, jobsPopped = 0;
-            var jobsFaulted = data.jobs_faulted !== undefined ? data.jobs_faulted : 0;
+            // Jobs Faulted is a windowed delta of the per-snapshot cumulative `jf`
+            // counter (recorded alongside jc/jp/ks), so it changes with the selected
+            // time-range exactly like Jobs Popped and Images Generated. For the
+            // "All time" window (_statsWindowSecs === null) every snapshot is included,
+            // so this reduces to the session total.
+            var imagesGenerated = 0, kudosEarned = 0, jobsPopped = 0, jobsFaulted = 0;
             if (snaps.length >= 2) {
                 imagesGenerated = Math.max(0, snaps[snaps.length - 1].jc - snaps[0].jc);
                 kudosEarned     = Math.max(0, snaps[snaps.length - 1].ks - snaps[0].ks);
                 jobsPopped      = Math.max(0, snaps[snaps.length - 1].jp - snaps[0].jp);
+                jobsFaulted     = Math.max(0, (snaps[snaps.length - 1].jf || 0) - (snaps[0].jf || 0));
             }
             var avgIph = _avgField(snaps, 'iph');
             var avgKph = _avgField(snaps, 'kph');
@@ -3680,7 +3726,7 @@ class WorkerWebUI:
             el('stats-avg-iph').textContent          = fmtVal(avgIph, 2);
             el('stats-avg-kph').textContent          = fmtVal(avgKph, 2);
             el('stats-jobs-popped').textContent      = noData ? '-' : jobsPopped.toLocaleString();
-            el('stats-jobs-faulted').textContent     = jobsFaulted.toLocaleString();
+            el('stats-jobs-faulted').textContent     = noData ? '-' : jobsFaulted.toLocaleString();
 
             // Per-model image count table (session totals, not windowed)
             var modelWrap = document.getElementById('stats-model-table-wrap');
@@ -4375,6 +4421,19 @@ class WorkerWebUI:
 
         function startHordeFetching() {
             if (_hordeFetchTimer !== null) return; // already running
+            // Seed with server-accumulated history so charts show data from before the browser opened.
+            fetch('/api/horde-snapshots')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.snapshots && data.snapshots.length > 0) {
+                        _hordeSnapshots = data.snapshots.slice();
+                        if (_hordeSnapshots.length > _HORDE_MAX_SNAPS) {
+                            _hordeSnapshots = _hordeSnapshots.slice(_hordeSnapshots.length - _HORDE_MAX_SNAPS);
+                        }
+                        renderHordePage();
+                    }
+                })
+                .catch(function() {});
             fetchHordeData();
             fetchHordeModes();
             _hordeFetchTimer = setInterval(function() {
@@ -4567,12 +4626,13 @@ class WorkerWebUI:
             inference_step_timeout:   ['Inference Step Timeout (s)','Max seconds allowed per inference step before detecting a stuck job.','Timeouts',  'int',   60,   1800, false, null, 'AIWORKER_INFERENCE_STEP_TIMEOUT'],
             minutes_allowed_without_jobs: ['Minutes Without Jobs','Minutes of idle time before the worker warns about no jobs.',       'Behavior',     'int',   0,    3599, false, null, 'AIWORKER_MINUTES_ALLOWED_WITHOUT_JOBS'],
             auto_restart_on_idle_minutes: ['Auto-Restart Idle (min)','Restart the worker automatically if no job has been submitted for this many minutes (0\u00a0=\u00a0disabled; default\u00a060).', 'Behavior', 'int', 0, 1440, false, null, 'AIWORKER_AUTO_RESTART_IDLE_MINUTES'],
+            force_restart_timeout:    ['Force Restart Timeout (s)','Seconds to wait for a graceful shutdown before forcing the restart/exit (kills child processes). Mainly applies to auto-restart-on-idle so a stuck shutdown cannot delay the restart.', 'Behavior', 'int', 5, 600, false, null, 'AIWORKER_FORCE_RESTART_TIMEOUT'],
             suppress_speed_warnings:  ['Suppress Speed Warnings', 'Do not print speed-related warning messages.',                      'Behavior',     'bool',  null, null, false, null, 'AIWORKER_SUPPRESS_SPEED_WARNINGS'],
             exit_on_unhandled_faults: ['Exit on Unhandled Faults','Exit the worker instead of recovering from an unhandled fault.',    'Behavior',     'bool',  null, null, false, null, 'AIWORKER_EXIT_ON_UNHANDLED_FAULTS'],
             limited_console_messages: ['Limited Console Messages','Only log job submission and status messages to console.',            'Behavior',     'bool',  null, null, false, null, 'AIWORKER_LIMITED_CONSOLE_MESSAGES'],
             stats_output_frequency:   ['Stats Frequency (s)',     'How often (in seconds) to print the status line to console.',       'Behavior',     'int',   5,    3600, false, null, 'AIWORKER_STATS_OUTPUT_FREQUENCY'],
             purge_loras_on_download:  ['Purge LoRAs on Download', 'Delete existing LoRA cache before downloading new LoRAs.',          'Behavior',     'bool',  null, null, false, null, 'AIWORKER_PURGE_LORAS_ON_DOWNLOAD'],
-            remove_maintenance_on_init:['Remove Maintenance on Init','Clear maintenance mode automatically on startup.',               'Behavior',     'bool',  null, null, false, null, 'AIWORKER_REMOVE_MAINTENANCE_ON_INIT'],
+            remove_maintenance_on_init:['Auto-Remove Maintenance','Automatically clear maintenance mode — on startup AND continuously while running (re-clears it if maintenance is re-applied).', 'Behavior', 'bool', null, null, false, null, 'AIWORKER_REMOVE_MAINTENANCE_ON_INIT'],
             data_retention_days:      ['Data Retention (days)',   'Number of days to keep errors, statistics, and gallery images in the database (1\u2013\u200a3650; default\u00a07).', 'Behavior', 'int', 1, 3650, false, null, 'AIWORKER_DATA_RETENTION_DAYS'],
         };
 
@@ -5977,6 +6037,56 @@ class WorkerWebUI:
 
         return web.json_response({"model": model, "enabled": enabled})
 
+    async def _handle_reset_stats(self, request: web.Request) -> web.Response:
+        """Reset session overview statistics (display reads from zero after this call)."""
+        rb = {
+            "jobs_popped": int(self.status_data.get("jobs_popped", 0)),
+            "jobs_completed": int(self.status_data.get("jobs_completed", 0)),
+            "jobs_faulted": int(self.status_data.get("jobs_faulted", 0)),
+            "processes_recovered": int(self.status_data.get("processes_recovered", 0)),
+            "kudos_earned_session": float(self.status_data.get("kudos_earned_session", 0.0)),
+            "time_without_jobs": float(self.status_data.get("time_without_jobs", 0.0)),
+        }
+        self.status_data["stats_reset_baseline"] = rb
+        return web.json_response({"reset": True})
+
+    async def _handle_horde_snapshots(self, request: web.Request) -> web.Response:
+        """Return server-accumulated horde network performance snapshots."""
+        return web.json_response({"snapshots": self._horde_snapshots})
+
+    _HORDE_POLL_INTERVAL: float = 30.0
+    _HORDE_MAX_SERVER_SNAPS: int = 360  # 3 hours at 30-second intervals
+
+    async def _poll_horde_network(self) -> None:
+        """Background task: poll aihorde.net every 30 s and accumulate performance snapshots."""
+        await asyncio.sleep(5)  # brief startup delay
+        async with aiohttp.ClientSession() as session:
+            while True:
+                try:
+                    async with session.get(
+                        "https://aihorde.net/api/v2/status/performance",
+                        headers={"Client-Agent": "horde-worker-regen:0:unknown"},
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            snap = {
+                                "t": int(time.time()),
+                                "workers": data.get("worker_count", 0),
+                                "threads": data.get("thread_count", 0),
+                                "queued_req": data.get("queued_requests", 0),
+                                "queued_mps": data.get("queued_megapixelsteps", 0),
+                                "past_min_mps": data.get("past_minute_megapixelsteps", 0),
+                            }
+                            self._horde_snapshots.append(snap)
+                            if len(self._horde_snapshots) > self._HORDE_MAX_SERVER_SNAPS:
+                                self._horde_snapshots = self._horde_snapshots[-self._HORDE_MAX_SERVER_SNAPS :]
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+                await asyncio.sleep(self._HORDE_POLL_INTERVAL)
+
     async def _handle_restart_program(self, request: web.Request) -> web.Response:
         """Handle a request to restart the worker program."""
         if self._restart_program_callback is None:
@@ -6313,12 +6423,20 @@ class WorkerWebUI:
             if self.site._server and self.site._server.sockets:
                 self.port = self.site._server.sockets[0].getsockname()[1]
             logger.info(f"Web UI started at http://0.0.0.0:{self.port}")
+            self._horde_bg_task = asyncio.create_task(self._poll_horde_network())
         except Exception as e:
             logger.error(f"Failed to start web UI server: {e}")
             raise
 
     async def stop(self) -> None:
         """Stop the web server."""
+        if self._horde_bg_task is not None:
+            self._horde_bg_task.cancel()
+            try:
+                await self._horde_bg_task
+            except asyncio.CancelledError:
+                pass
+            self._horde_bg_task = None
         try:
             if self.site:
                 await self.site.stop()
