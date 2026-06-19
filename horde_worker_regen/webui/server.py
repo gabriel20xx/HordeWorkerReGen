@@ -125,8 +125,12 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "max_submit_retries": {"type": int, "min": 0, "max": 50},
     "data_retention_days": {"type": int, "min": 1, "max": 3650},
     # Prompt filters
-    "positive_prompt_filters": {"type": list},
-    "negative_prompt_filters": {"type": list},
+    "positive_prompt_append": {"type": list},
+    "positive_prompt_remove": {"type": list},
+    "positive_prompt_replace": {"type": list},
+    "negative_prompt_append": {"type": list},
+    "negative_prompt_remove": {"type": list},
+    "negative_prompt_replace": {"type": list},
 }
 
 
@@ -1499,6 +1503,19 @@ class WorkerWebUI:
         .setting-textarea { width: 200px; min-height: 54px; max-height: 180px; padding: 5px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; resize: vertical; transition: border-color 0.15s; font-family: inherit; line-height: 1.5; }
         .setting-textarea:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .setting-textarea { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        .setting-replace-list { display: flex; flex-direction: column; gap: 5px; min-width: 280px; }
+        .replace-row { display: flex; align-items: center; gap: 5px; }
+        .replace-find, .replace-with { flex: 1; min-width: 0; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; font-family: inherit; height: var(--action-btn-height); box-sizing: border-box; }
+        .replace-find:focus, .replace-with:focus { outline: none; border-color: var(--accent); }
+        [data-theme="dark"] .replace-find, [data-theme="dark"] .replace-with { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        .replace-arrow { color: #94a3b8; font-size: 0.9rem; flex-shrink: 0; }
+        .replace-row-del { width: 22px; height: 22px; border: 1px solid #fca5a5; border-radius: 4px; background: transparent; color: #ef4444; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .replace-row-del:hover { background: #fef2f2; }
+        [data-theme="dark"] .replace-row-del { border-color: #7f1d1d; color: #f87171; }
+        [data-theme="dark"] .replace-row-del:hover { background: #450a0a; }
+        .replace-add-row { align-self: flex-start; padding: 3px 10px; border: 1px solid #cbd5e1; border-radius: 5px; background: transparent; color: #64748b; font-size: 0.8rem; cursor: pointer; margin-top: 1px; }
+        .replace-add-row:hover { border-color: var(--accent); color: var(--accent); }
+        [data-theme="dark"] .replace-add-row { border-color: #334155; color: #94a3b8; }
         .setting-number:disabled { opacity: 0.55; cursor: not-allowed; background: #e2e8f0; color: #64748b; }
         .setting-number:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .setting-number { background: #1e293b; border-color: #334155; color: #e2e8f0; }
@@ -1720,7 +1737,7 @@ class WorkerWebUI:
                             <div id="overview-current-job" class="centered-empty-container"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header"><span class="card-title">&#128444; Last Result</span><span id="overview-image-model" style="flex:1;font-size:0.75rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;padding:0 8px;"></span><span id="overview-image-time" style="margin-left:6px;font-size:0.75rem;color:#94a3b8;flex-shrink:0;white-space:nowrap;"></span></div>
+                            <div class="card-header" style="position:relative;"><span class="card-title">&#128444; Last Result</span><span id="overview-image-model" style="position:absolute;left:0;right:0;text-align:center;font-size:0.75rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none;padding:0 120px;"></span><span id="overview-image-time" style="margin-left:auto;font-size:0.75rem;color:#94a3b8;flex-shrink:0;white-space:nowrap;"></span></div>
                             <div id="overview-image-container" class="last-image-container"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
                         </div>
                     </div>
@@ -4830,8 +4847,12 @@ class WorkerWebUI:
             max_job_retries:          ['Max Job Retries',         'Number of times a faulted job is retried before being permanently faulted (0 = no retries; default 1).', 'Behavior', 'int',  0,    10,   false, null, 'AIWORKER_MAX_JOB_RETRIES'],
             max_submit_retries:       ['Max Submit Retries',      'Number of times a job submission can be retried before being marked as failed (default 10).', 'Behavior', 'int',  0,    50,   false, null, 'AIWORKER_MAX_SUBMIT_RETRIES'],
             data_retention_days:      ['Data Retention (days)',   'Number of days to keep errors, statistics, and gallery images in the database (1\u2013\u200a3650; default\u00a07).', 'Behavior', 'int', 1, 3650, false, null, 'AIWORKER_DATA_RETENTION_DAYS'],
-            positive_prompt_filters:  ['Positive Prompt Filters', 'Rules applied to every positive prompt before generation and gallery saving. One rule per line in find==>replace format. Leave the left side empty to append (==>text), leave the right side empty to remove (text==>), or fill both to replace. The original prompt is sent to Horde unchanged.', 'Prompt Filters', 'str_list', null, null, false, null, null],
-            negative_prompt_filters:  ['Negative Prompt Filters', 'Same as Positive Prompt Filters but applied to the negative prompt.', 'Prompt Filters', 'str_list', null, null, false, null, null],
+            positive_prompt_append:   ['Positive — Add', 'Strings to append to every positive prompt before generation and gallery saving. One entry per line. The original prompt is sent to Horde unchanged.', 'Prompt Filters', 'str_list', null, null, false, null, null],
+            positive_prompt_remove:   ['Positive — Remove', 'Strings to remove from every positive prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
+            positive_prompt_replace:  ['Positive — Replace', 'Text pairs to replace in every positive prompt. Enter the original text and the replacement for each pair.', 'Prompt Filters', 'str_replace_list', null, null, false, null, null],
+            negative_prompt_append:   ['Negative — Add', 'Strings to append to every negative prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
+            negative_prompt_remove:   ['Negative — Remove', 'Strings to remove from every negative prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
+            negative_prompt_replace:  ['Negative — Replace', 'Text pairs to replace in every negative prompt.', 'Prompt Filters', 'str_replace_list', null, null, false, null, null],
         };
 
         // Default values for each setting key — used by the per-row reset button.
@@ -4850,7 +4871,8 @@ class WorkerWebUI:
             stats_output_frequency: 30, purge_loras_on_download: false,
             remove_maintenance_on_init: true, max_job_retries: 1,
             max_submit_retries: 10, data_retention_days: 7,
-            positive_prompt_filters: [], negative_prompt_filters: [],
+            positive_prompt_append: [], positive_prompt_remove: [], positive_prompt_replace: [],
+            negative_prompt_append: [], negative_prompt_remove: [], negative_prompt_replace: [],
         };
 
         var _settingsLoaded = false;
@@ -4956,12 +4978,23 @@ class WorkerWebUI:
             var def = _SETTINGS_DEFAULTS[key];
             if (def === null) return;
             if (typeof def === 'boolean') {
-                var chk = document.querySelector('#srst-' + key + ' ~ label input, label:has(~ #srst-' + key + ') input');
-                // find the checkbox in the same setting-ctrl
                 var btn = document.getElementById('srst-' + key);
                 if (btn) {
                     var ctrl = btn.closest('.setting-ctrl');
                     if (ctrl) { var cb = ctrl.querySelector('input[type="checkbox"]'); if (cb) cb.checked = def; }
+                }
+                stageSettingChange(key, def);
+            } else if (Array.isArray(def)) {
+                var spec = _settingsSpec[key];
+                var specType = spec ? spec[3] : null;
+                if (specType === 'str_replace_list') {
+                    var container = document.getElementById('sinp-' + key);
+                    if (container) {
+                        container.querySelectorAll('.replace-row').forEach(function(r) { r.remove(); });
+                    }
+                } else {
+                    var ta = document.getElementById('sinp-' + key);
+                    if (ta) ta.value = '';
                 }
                 stageSettingChange(key, def);
             } else {
@@ -5184,10 +5217,31 @@ class WorkerWebUI:
                         html += '<button class="limit-auto-btn' + (isAutoA ? ' active' : '') + '" id="' + pfx + '-auto-btn" onclick="' + _autoFnNames[pfx] + '()" title="' + escapeHtml(_autoTitles[pfx]) + '" aria-pressed="' + (isAutoA ? 'true' : 'false') + '">Auto</button>';
                     } else if (type === 'str_list') {
                         var listVal = Array.isArray(val) ? val.join('\n') : '';
-                        var listPlaceholder = (key === 'positive_prompt_filters' || key === 'negative_prompt_filters')
-                            ? 'find==>replace  (remove: word==>,  append: ==>word)'
-                            : 'One entry per line…';
-                        html += '<textarea class="setting-textarea" id="sinp-' + escapeHtml(key) + '" rows="3" placeholder="' + escapeHtml(listPlaceholder) + '" aria-label="' + escapeHtml(label) + '" onchange="stageListSetting(\'' + escapeHtml(key) + '\')">' + escapeHtml(listVal) + '</textarea>';
+                        html += '<textarea class="setting-textarea" id="sinp-' + escapeHtml(key) + '" rows="3" placeholder="One entry per line…" aria-label="' + escapeHtml(label) + '" onchange="stageListSetting(\'' + escapeHtml(key) + '\')">' + escapeHtml(listVal) + '</textarea>';
+                        if (Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key)) {
+                            var listAtDef = _isAtDefault(key, val);
+                            html += '<button class="setting-reset-btn" id="srst-' + escapeHtml(key) + '" onclick="resetSettingToDefault(\'' + escapeHtml(key) + '\')" title="Reset to default (empty)" aria-label="Reset ' + escapeHtml(label) + ' to default"' + (listAtDef ? ' disabled' : '') + '>&#8635;</button>';
+                        }
+                    } else if (type === 'str_replace_list') {
+                        var replaceArr = Array.isArray(val) ? val : [];
+                        html += '<div class="setting-replace-list" id="sinp-' + escapeHtml(key) + '">';
+                        for (var ri = 0; ri < replaceArr.length; ri++) {
+                            var rparts = replaceArr[ri].split('==>', 2);
+                            var rfind = rparts[0] || '';
+                            var rwith = (rparts.length > 1) ? rparts[1] : '';
+                            html += '<div class="replace-row">'
+                                + '<input type="text" class="replace-find" placeholder="Find…" value="' + escapeHtml(rfind) + '" oninput="stageReplaceList(\'' + escapeHtml(key) + '\')" aria-label="Find text">'
+                                + '<span class="replace-arrow">→</span>'
+                                + '<input type="text" class="replace-with" placeholder="Replace with…" value="' + escapeHtml(rwith) + '" oninput="stageReplaceList(\'' + escapeHtml(key) + '\')" aria-label="Replace with">'
+                                + '<button class="replace-row-del" onclick="removeReplaceRow(this,\'' + escapeHtml(key) + '\')" title="Remove row" aria-label="Remove row">×</button>'
+                                + '</div>';
+                        }
+                        html += '<button class="replace-add-row" onclick="addReplaceRow(\'' + escapeHtml(key) + '\')">+ Add</button>';
+                        html += '</div>';
+                        if (Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key)) {
+                            var replAtDef = _isAtDefault(key, val);
+                            html += '<button class="setting-reset-btn" id="srst-' + escapeHtml(key) + '" onclick="resetSettingToDefault(\'' + escapeHtml(key) + '\')" title="Reset to default (empty)" aria-label="Reset ' + escapeHtml(label) + ' to default"' + (replAtDef ? ' disabled' : '') + '>&#8635;</button>';
+                        }
                     } else {
                         var numVal = (val !== null && val !== undefined) ? val : '';
                         var minAttr = (minV !== null) ? ' min="' + minV + '"' : '';
@@ -5378,6 +5432,41 @@ class WorkerWebUI:
             if (!el) return;
             var lines = el.value.split('\n').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
             stageSettingChange(key, lines);
+        }
+
+        function addReplaceRow(key) {
+            var container = document.getElementById('sinp-' + key);
+            if (!container) return;
+            var addBtn = container.querySelector('.replace-add-row');
+            var row = document.createElement('div');
+            row.className = 'replace-row';
+            row.innerHTML = '<input type="text" class="replace-find" placeholder="Find…" oninput="stageReplaceList(\'' + key + '\')" aria-label="Find text">'
+                + '<span class="replace-arrow">→</span>'
+                + '<input type="text" class="replace-with" placeholder="Replace with…" oninput="stageReplaceList(\'' + key + '\')" aria-label="Replace with">'
+                + '<button class="replace-row-del" onclick="removeReplaceRow(this,\'' + key + '\')" title="Remove row" aria-label="Remove row">\xd7</button>';
+            container.insertBefore(row, addBtn);
+            row.querySelector('.replace-find').focus();
+        }
+
+        function removeReplaceRow(btn, key) {
+            var row = btn.closest('.replace-row');
+            if (row) row.remove();
+            stageReplaceList(key);
+        }
+
+        function stageReplaceList(key) {
+            var container = document.getElementById('sinp-' + key);
+            if (!container) return;
+            var result = [];
+            container.querySelectorAll('.replace-row').forEach(function(row) {
+                var findEl = row.querySelector('.replace-find');
+                var withEl = row.querySelector('.replace-with');
+                if (!findEl || !withEl) return;
+                var f = findEl.value.trim();
+                var w = withEl.value.trim();
+                if (f || w) result.push(f + '==>' + w);
+            });
+            stageSettingChange(key, result);
         }
 
         async function applyPendingSettings() {

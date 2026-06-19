@@ -76,18 +76,31 @@ class reGenBridgeData(CombinedHordeBridgeData):
     The effective threshold is max(process_timeout, waiting_for_job_timeout). Default is 600s (10 min).
     """
 
-    positive_prompt_filters: list[str] = Field(default_factory=list)
-    """Transformation rules applied to every positive prompt before generation and gallery saving.
+    positive_prompt_append: list[str] = Field(default_factory=list)
+    """Strings appended to every positive prompt before generation and gallery saving.
+    Each entry is a literal string (e.g. ``masterpiece``).
     The original unmodified prompt is preserved in the Horde submission metadata.
-
-    Each rule is a line in ``find==>replace`` format:
-    - ``bad word==>``       — remove "bad word"
-    - ``==>masterpiece``   — append "masterpiece" to the prompt
-    - ``old style==>new``  — replace "old style" with "new"
     """
 
-    negative_prompt_filters: list[str] = Field(default_factory=list)
-    """Same as positive_prompt_filters but applied to negative prompts."""
+    positive_prompt_remove: list[str] = Field(default_factory=list)
+    """Strings removed from every positive prompt before generation and gallery saving.
+    Each entry is a literal string to strip out.
+    """
+
+    positive_prompt_replace: list[str] = Field(default_factory=list)
+    """Replacement rules for positive prompts in ``find==>replace`` format.
+    Each entry must contain ``==>`` (e.g. ``old style==>new style``).
+    The original unmodified prompt is preserved in the Horde submission metadata.
+    """
+
+    negative_prompt_append: list[str] = Field(default_factory=list)
+    """Strings appended to every negative prompt before generation and gallery saving."""
+
+    negative_prompt_remove: list[str] = Field(default_factory=list)
+    """Strings removed from every negative prompt before generation and gallery saving."""
+
+    negative_prompt_replace: list[str] = Field(default_factory=list)
+    """Replacement rules for negative prompts in ``find==>replace`` format."""
 
     minutes_allowed_without_jobs: int = Field(default=30, ge=0, lt=60 * 60)
 
