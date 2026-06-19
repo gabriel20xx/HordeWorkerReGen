@@ -5649,7 +5649,9 @@ class WorkerWebUI:
             var parts = sectionId.split('-');
             var type = parts[0];
             var op = parts.slice(1).join('-');
-            var key = type + '_prompt_' + op;
+            // Section IDs use 'add' for the append operation; map to the actual setting key suffix.
+            var op_key = op === 'add' ? 'append' : op;
+            var key = type + '_prompt_' + op_key;
             var container = document.getElementById('pfpills-' + sectionId);
             if (!container) return;
             var pills = container.querySelectorAll('.pf-pill');
