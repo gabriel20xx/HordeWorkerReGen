@@ -11,3 +11,4 @@ ruamel.yaml
 pydantic>=2.9.2
 typing_extensions
 loguru
+python-Levenshtein
