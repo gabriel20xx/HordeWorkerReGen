@@ -3422,7 +3422,12 @@ class HordeWorkerProcessManager:
                         f"Process {message.process_id} finished downloading extra models in {message.time_elapsed}"
                         "</>",
                     )
-                    if message.sdk_api_job_info not in self.jobs_lookup:
+                    _aux_job_key = (
+                        next((k for k in self.jobs_lookup if k.id_ == message.sdk_api_job_info.id_), None)
+                        if message.sdk_api_job_info is not None
+                        else None
+                    )
+                    if _aux_job_key is None:
                         if message.sdk_api_job_info is not None:
                             logger.warning(
                                 f"Job {message.sdk_api_job_info.id_} not found in jobs_lookup."
@@ -3434,7 +3439,7 @@ class HordeWorkerProcessManager:
                             )
                         logger.debug(f"Jobs lookup: {self.jobs_lookup}")
                     else:
-                        self.jobs_lookup[message.sdk_api_job_info].time_to_download_aux_models = message.time_elapsed
+                        self.jobs_lookup[_aux_job_key].time_to_download_aux_models = message.time_elapsed
 
             # If The model state has changed, update the model map
             if isinstance(message, HordeModelStateChangeMessage):
@@ -3485,32 +3490,40 @@ class HordeWorkerProcessManager:
             # - if its a faulted job, log an error and add it to the list of completed jobs to be sent to the API
             # - if its a completed job, add it to the list of jobs pending safety checks
             if isinstance(message, HordeInferenceResultMessage):
-                if message.sdk_api_job_info not in self.jobs_lookup:
+                # Use id_-based lookup: the subprocess may hold a filtered copy of the job
+                # (via model_copy) whose object identity/hash differs from the original stored
+                # in jobs_lookup and jobs_in_progress.
+                _msg_job_id = message.sdk_api_job_info.id_
+                _lookup_key = next((k for k in self.jobs_lookup if k.id_ == _msg_job_id), None)
+                if _lookup_key is None:
                     logger.error(
-                        f"Job {message.sdk_api_job_info.id_} not found in jobs_lookup. (Process {message.process_id})",
+                        f"Job {_msg_job_id} not found in jobs_lookup. (Process {message.process_id})",
                     )
-                    if message.sdk_api_job_info in self.jobs_in_progress:
+                    _ip_stale = next((j for j in self.jobs_in_progress if j.id_ == _msg_job_id), None)
+                    if _ip_stale is not None:
                         logger.error(
-                            f"Job {message.sdk_api_job_info.id_} found in jobs_in_progress. "
+                            f"Job {_msg_job_id} found in jobs_in_progress. "
                             f"(Process {message.process_id})",
                         )
-                        self.jobs_in_progress.remove(message.sdk_api_job_info)
-                    if message.sdk_api_job_info in self.jobs_pending_inference:
+                        self.jobs_in_progress.remove(_ip_stale)
+                    _pend_stale = next((j for j in self.jobs_pending_inference if j.id_ == _msg_job_id), None)
+                    if _pend_stale is not None:
                         logger.error(
-                            f"Job {message.sdk_api_job_info.id_} found in job_deque. (Process {message.process_id})",
+                            f"Job {_msg_job_id} found in job_deque. (Process {message.process_id})",
                         )
-                        self.jobs_pending_inference.remove(message.sdk_api_job_info)
+                        self.jobs_pending_inference.remove(_pend_stale)
                         self._invalidate_megapixelsteps_cache()
                         self._restart_idle_timer_if_queue_empty()
                     continue
 
-                job_info = self.jobs_lookup[message.sdk_api_job_info]
+                job_info = self.jobs_lookup[_lookup_key]
 
-                if message.sdk_api_job_info in self.jobs_in_progress:
-                    self.jobs_in_progress.remove(message.sdk_api_job_info)
+                _ip_match = next((j for j in self.jobs_in_progress if j.id_ == _msg_job_id), None)
+                if _ip_match is not None:
+                    self.jobs_in_progress.remove(_ip_match)
                 else:
                     logger.error(
-                        f"Job {message.sdk_api_job_info.id_} not found in jobs_in_progress. "
+                        f"Job {_msg_job_id} not found in jobs_in_progress. "
                         "Did it fault? "
                         f"(Process {message.process_id})",
                     )
@@ -5726,13 +5739,18 @@ class HordeWorkerProcessManager:
             fault_info (str | None, optional): A human-readable description of the fault reason. Defaults to None.
             retry_skipped (bool, optional): Whether the normal local retry path was intentionally bypassed.
         """
-        job_info = self.jobs_lookup.get(faulted_job)
+        # Resolve the canonical job object from jobs_lookup by id_ so that a filtered
+        # copy (created via model_copy for prompt filtering) is handled the same as the
+        # original — object equality / hash may differ between the two.
+        _faulted_id = faulted_job.id_
+        _canonical_key = next((k for k in self.jobs_lookup if k.id_ == _faulted_id), None)
+        job_info = self.jobs_lookup.get(_canonical_key) if _canonical_key is not None else None
 
         if job_info is None:
-            logger.error(f"Job {faulted_job.id_} not found in jobs_lookup")
+            logger.error(f"Job {_faulted_id} not found in jobs_lookup")
             # Record in history even when the job_info cannot be found so the fault is
             # still visible in the webui (fault_phase is unknown in this edge case).
-            job_id_str = str(faulted_job.id_)
+            job_id_str = str(_faulted_id)
             already_recorded = any(entry["job_id"] == job_id_str for entry in self._faulted_jobs_history)
             self._record_faulted_job_history(faulted_job)
             # Keep failed-model and inference-cooldown tracking aligned with history
@@ -5753,23 +5771,24 @@ class HordeWorkerProcessManager:
                 fault_detail = f": {fault_info}" if fault_info else ""
                 proc_id = process_info.process_id if process_info else "unknown"
                 logger.warning(
-                    f"Job {faulted_job.id_} faulted on process {proc_id}"
+                    f"Job {_faulted_id} faulted on process {proc_id}"
                     f"{fault_detail}, retrying (attempt {job_info.retry_count} of {self.MAX_JOB_RETRIES})",
                 )
 
-                # Remove from jobs_in_progress if present
-                if faulted_job in self.jobs_in_progress:
-                    logger.debug(f"Removing job {faulted_job.id_} from jobs_in_progress for retry")
-                    self.jobs_in_progress.remove(faulted_job)
+                # Remove from jobs_in_progress if present (use id_-based match)
+                _ip_retry = next((j for j in self.jobs_in_progress if j.id_ == _faulted_id), None)
+                if _ip_retry is not None:
+                    logger.debug(f"Removing job {_faulted_id} from jobs_in_progress for retry")
+                    self.jobs_in_progress.remove(_ip_retry)
 
-                # Re-queue the job for another attempt
-                # Check to avoid duplicates in case the job is still in the queue
-                if faulted_job not in self.jobs_pending_inference:
-                    self.jobs_pending_inference.append(faulted_job)
+                # Re-queue the canonical original for another attempt
+                _already_pending = any(j.id_ == _faulted_id for j in self.jobs_pending_inference)
+                if not _already_pending:
+                    self.jobs_pending_inference.append(_canonical_key)
                     self._invalidate_megapixelsteps_cache()
-                    logger.info(f"Job {faulted_job.id_} successfully re-queued for retry")
+                    logger.info(f"Job {_faulted_id} successfully re-queued for retry")
                 else:
-                    logger.debug(f"Job {faulted_job.id_} already in jobs_pending_inference, not re-queuing")
+                    logger.debug(f"Job {_faulted_id} already in jobs_pending_inference, not re-queuing")
 
                 return
 
@@ -5787,8 +5806,9 @@ class HordeWorkerProcessManager:
                     f"{fault_detail}, marking as permanently faulted",
                 )
 
-            if faulted_job in self.jobs_pending_inference:
-                self.jobs_pending_inference.remove(faulted_job)
+            _pend_match = next((j for j in self.jobs_pending_inference if j.id_ == _faulted_id), None)
+            if _pend_match is not None:
+                self.jobs_pending_inference.remove(_pend_match)
                 self._invalidate_megapixelsteps_cache()
                 self._restart_idle_timer_if_queue_empty()
 
@@ -5818,11 +5838,12 @@ class HordeWorkerProcessManager:
             self._record_faulted_job_history(faulted_job, fault_phase)
 
             if process_info is not None:
-                logger.error(f"Job {faulted_job.id_} faulted due to {self._process_label(process_info.process_id)} crashing")
+                logger.error(f"Job {_faulted_id} faulted due to {self._process_label(process_info.process_id)} crashing")
 
-            if faulted_job in self.jobs_in_progress:
-                logger.debug(f"Removing job {faulted_job.id_} from jobs_in_progress")
-                self.jobs_in_progress.remove(faulted_job)
+            _ip_fault = next((j for j in self.jobs_in_progress if j.id_ == _faulted_id), None)
+            if _ip_fault is not None:
+                logger.debug(f"Removing job {_faulted_id} from jobs_in_progress")
+                self.jobs_in_progress.remove(_ip_fault)
 
             for horde_job_info in list(self.jobs_pending_safety_check):
                 if horde_job_info.sdk_api_job_info.id_ == faulted_job.id_:
