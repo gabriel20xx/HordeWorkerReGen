@@ -107,7 +107,7 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     # Timeouts
     "process_timeout": {"type": int, "min": 60, "max": 3600},
     "inference_timeout": {"type": int, "min": 60, "max": 7200},
-    "inference_step_timeout": {"type": int, "min": 60, "max": 1800},
+    "inference_step_timeout": {"type": int, "min": 10, "max": 1800},
     "preload_timeout": {"type": int, "min": 15, "max": 600},
     "post_process_timeout": {"type": int, "min": 15, "max": 600},
     "waiting_for_job_timeout": {"type": int, "min": 60, "max": 3600},
@@ -1486,7 +1486,7 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-toggle-slider { background: #334155; }
         [data-theme="dark"] .setting-toggle input:checked + .setting-toggle-slider { background: var(--accent); }
         /* Number input */
-        .setting-reset-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 0.9rem; line-height: 1; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; flex-shrink: 0; }
+        .setting-reset-btn { display: inline-flex; align-items: center; justify-content: center; width: var(--action-btn-height); height: var(--action-btn-height); padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 0.9rem; line-height: 1; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; flex-shrink: 0; }
         .setting-reset-btn:not(:disabled):hover { background: rgba(99,102,241,0.1); color: var(--accent); border-color: var(--accent); }
         .setting-reset-btn:disabled { opacity: 0.22; cursor: not-allowed; }
         .settings-page-btn.reset-all { background: transparent; border-color: var(--border); color: var(--text-muted); }
@@ -2073,6 +2073,10 @@ class WorkerWebUI:
         }
         const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'stats', 'logs', 'settings']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
+        const GALLERY_DEFAULT_PAGE_SIZE = 96;
+        let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
+        let galleryModelFilter = '';
+        let gallerySafetyFilter = '';
         var galleryViewMode = (function() { try { return localStorage.getItem('horde-gallery-view') || 'grid'; } catch(e) { return 'grid'; } })();
         var _galleryCurrentPageImages = null; // cached for view-mode switch without re-fetch
         let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); var parsed = s ? JSON.parse(s) : []; return Array.isArray(parsed) ? parsed : []; } catch(e) { return []; } })();
@@ -2813,12 +2817,8 @@ class WorkerWebUI:
                 .catch(function(e) { console.error('Failed to clear errors:', e); })
                 .finally(function() { if (btn) btn.disabled = false; });
         }
-        const GALLERY_DEFAULT_PAGE_SIZE = 96;
-        let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
         // Sync the select element's initial value with the JS constant (single source of truth)
         document.getElementById('gallery-page-size').value = String(GALLERY_DEFAULT_PAGE_SIZE);
-        let galleryModelFilter = ''; // Empty string = show all models
-        let gallerySafetyFilter = ''; // Empty string = show all (sfw + nsfw + csam)
         let lastKnownImagesCount = -1; // -1 = sentinel: first status poll not yet completed
         // Set to true when new images arrive while the gallery tab is not active.
         // Consumed by showPage() to refresh or show the banner on return.
@@ -4802,7 +4802,7 @@ class WorkerWebUI:
             horde_model_stickiness:   ['Model Stickiness',        'Chance (0\u20131) to prefer currently loaded models when popping a job.',  'Performance',  'float', 0.0, 1.0, false, null, 'AIWORKER_MODEL_STICKINESS'],
             process_timeout:          ['Total Job Timeout (s)',        'Max seconds for an entire job (model load + inference + post-processing) before the process is killed.',                     'Timeouts', 'int',  60,   3600, false, null, 'AIWORKER_PROCESS_TIMEOUT'],
             inference_timeout:        ['Inference Timeout - All Steps (s)', 'Max total seconds allowed for all inference steps combined. If inference takes longer than this the process is replaced.', 'Timeouts', 'int',  60,   7200, false, null, 'AIWORKER_INFERENCE_TIMEOUT'],
-            inference_step_timeout:   ['Inference Step Timeout (s)',  'Max seconds allowed for a single inference step before the job is detected as stuck.',                                          'Timeouts', 'int',  60,   1800, false, null, 'AIWORKER_INFERENCE_STEP_TIMEOUT'],
+            inference_step_timeout:   ['Inference Step Timeout (s)',  'Max seconds allowed for a single inference step before the job is detected as stuck.',                                          'Timeouts', 'int',  10,   1800, false, null, 'AIWORKER_INFERENCE_STEP_TIMEOUT'],
             preload_timeout:          ['Model Preload Timeout (s)',   'Max seconds allowed to load (preload) a model before the process is replaced.',                                                 'Timeouts', 'int',  15,   600,  false, null, 'AIWORKER_PRELOAD_TIMEOUT'],
             post_process_timeout:     ['Post-Process Timeout (s)',    'Max seconds allowed for post-processing (upscaling, face-fix, etc.).',                                                          'Timeouts', 'int',  15,   600,  false, null, 'AIWORKER_POST_PROCESS_TIMEOUT'],
             waiting_for_job_timeout:  ['Waiting for Job Timeout (s)', 'Seconds a WAITING_FOR_JOB process can be heartbeat-silent before being replaced (when work is pending). Effective threshold is max(total_job_timeout, this value).', 'Timeouts', 'int', 60, 3600, false, null, 'AIWORKER_WAITING_FOR_JOB_TIMEOUT'],
@@ -4828,8 +4828,8 @@ class WorkerWebUI:
             unload_models_from_vram_often: true, very_fast_disk_mode: false,
             post_process_job_overlap: false, cycle_process_on_model_change: false,
             horde_model_stickiness: 0.0,
-            process_timeout: 300, inference_timeout: 1800, inference_step_timeout: 600,
-            preload_timeout: 80, post_process_timeout: 60, waiting_for_job_timeout: 600,
+            process_timeout: 180, inference_timeout: 120, inference_step_timeout: 30,
+            preload_timeout: 60, post_process_timeout: 60, waiting_for_job_timeout: 600,
             minutes_allowed_without_jobs: 30, auto_restart_on_idle_minutes: 60,
             force_restart_timeout: 30, suppress_speed_warnings: false,
             exit_on_unhandled_faults: false, limited_console_messages: false,

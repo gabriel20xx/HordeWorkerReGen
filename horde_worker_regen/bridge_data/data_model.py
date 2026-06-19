@@ -51,29 +51,23 @@ class reGenBridgeData(CombinedHordeBridgeData):
     unload_models_from_vram_often: bool = Field(default=True)
     """If true, models will be unloaded from VRAM more often."""
 
-    process_timeout: int = Field(default=300)
+    process_timeout: int = Field(default=180)
     """The maximum amount of time to allow a job to run before it is killed"""
 
     post_process_timeout: int = Field(default=60, ge=15)
 
     download_timeout: int = Field(default=TOTAL_LORA_DOWNLOAD_TIMEOUT + 1)
     """The maximum amount of time to allow an aux model to download before it is killed"""
-    preload_timeout: int = Field(default=80, ge=15)
+    preload_timeout: int = Field(default=60, ge=15)
     """The maximum amount of time to allow a model to load before it is killed"""
-    inference_step_timeout: int = Field(default=600, ge=60, le=1800)
-    """The maximum amount of time (in seconds) to allow for inference progress before detecting a stuck job.
+    inference_step_timeout: int = Field(default=30, ge=10, le=1800)
+    """The maximum amount of time (in seconds) to allow for inference progress before detecting a stuck job."""
 
-    Recommended settings based on GPU performance:
-    - High-end GPUs (RTX 4090, A100): 300-600 seconds (5-10 minutes)
-    - Mid-range GPUs (RTX 3080, 4070): 600-900 seconds (10-15 minutes)
-    - Low-end GPUs (GTX 1660, RTX 3060): 900-1200 seconds (15-20 minutes)
-    """
-
-    inference_timeout: int = Field(default=1800, ge=60, le=7200)
+    inference_timeout: int = Field(default=120, ge=60, le=7200)
     """Total time (seconds) allowed for all inference steps combined.
 
     If a process remains in an inference state longer than this, it is considered stuck and replaced,
-    regardless of per-step heartbeat activity. Default is 1800s (30 min).
+    regardless of per-step heartbeat activity.
     """
 
     waiting_for_job_timeout: int = Field(default=600, ge=60, le=3600)
