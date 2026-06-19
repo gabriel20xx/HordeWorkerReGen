@@ -206,16 +206,30 @@ def _apply_prompt_filters(
     append: list[str] | None = None,
     remove: list[str] | None = None,
     replace: list[str] | None = None,
+    remove_cleanup_separators: bool = True,
+    append_separator: bool = True,
 ) -> str:
     """Apply separate append/remove/replace filter lists to *text*.
 
     - *remove*: each item is a literal string to strip from the text
     - *replace*: each item is ``find==>with`` format; entries without ``==>`` are skipped
-    - *append*: each item is appended with a comma separator when text is non-empty
+    - *append*: each item is appended; separator behaviour is controlled by *append_separator*
+    - *remove_cleanup_separators*: when True, collapses orphaned commas/spaces between removed
+      items (e.g. ``"a, , , b"`` → ``"a, b"``)
+    - *append_separator*: when True each appended string is joined with ``", "``; when False
+      the string is concatenated directly
     """
     for item in (remove or []):
         if item:
             text = text.replace(item, "")
+    if remove_cleanup_separators and remove:
+        # Collapse any run of commas (with optional whitespace between) into a single ", ".
+        # This cleans up ", , , " patterns left when adjacent items were removed.
+        text = re.sub(r",\s*(?:,\s*)+", ", ", text)
+        # Strip orphaned leading/trailing commas and whitespace.
+        text = text.strip(" ,")
+        # Normalize multiple consecutive spaces that removal may have left.
+        text = re.sub(r"  +", " ", text)
     for rule in (replace or []):
         if not rule or "==>" not in rule:
             continue
@@ -224,8 +238,11 @@ def _apply_prompt_filters(
             text = text.replace(find, with_)
     for item in (append or []):
         if item:
-            sep = ", " if text.strip() else ""
-            text = text.rstrip(" ,") + sep + item
+            if append_separator:
+                sep = ", " if text.strip() else ""
+                text = text.rstrip(" ,") + sep + item
+            else:
+                text = text + item
     return text
 
 
@@ -3115,6 +3132,10 @@ class HordeWorkerProcessManager:
             self._in_deadlock = False
             self._in_queue_deadlock = False
 
+            if not isinstance(message, HordeProcessMessage):
+                logger.error(f"Received a message that is not a HordeProcessMessage (skipping): {message}")
+                continue
+
             if isinstance(message, HordeProcessHeartbeatMessage):
                 self._process_map.on_heartbeat(
                     message.process_id,
@@ -3144,9 +3165,6 @@ class HordeWorkerProcessManager:
                     # f"{message.model_dump(exclude={'job_result_images_base64', 'replacement_image_base64'})}",
                 )
 
-            if not isinstance(message, HordeProcessMessage):
-                logger.error(f"Received a message that is not a HordeProcessMessage (skipping): {message}")
-                continue
             if message.process_id not in self._process_map:
                 logger.warning(f"Received a message from an unknown process (skipping): process_id={message.process_id}")
                 continue
@@ -3723,12 +3741,16 @@ class HordeWorkerProcessManager:
                                         append=self.bridge_data.positive_prompt_append,
                                         remove=self.bridge_data.positive_prompt_remove,
                                         replace=self.bridge_data.positive_prompt_replace,
+                                        remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
+                                        append_separator=self.bridge_data.prompt_append_separator,
                                     )
                                     _gneg = _apply_prompt_filters(
                                         _gneg_orig,
                                         append=self.bridge_data.negative_prompt_append,
                                         remove=self.bridge_data.negative_prompt_remove,
                                         replace=self.bridge_data.negative_prompt_replace,
+                                        remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
+                                        append_separator=self.bridge_data.prompt_append_separator,
                                     )
                                     gallery_image["positive_prompt"] = _gpos.strip()
                                     gallery_image["negative_prompt"] = _gneg.strip()
@@ -4296,12 +4318,16 @@ class HordeWorkerProcessManager:
                 append=self.bridge_data.positive_prompt_append,
                 remove=self.bridge_data.positive_prompt_remove,
                 replace=self.bridge_data.positive_prompt_replace,
+                remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
+                append_separator=self.bridge_data.prompt_append_separator,
             )
             _neg = _apply_prompt_filters(
                 _parts[1] if len(_parts) > 1 else "",
                 append=self.bridge_data.negative_prompt_append,
                 remove=self.bridge_data.negative_prompt_remove,
                 replace=self.bridge_data.negative_prompt_replace,
+                remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
+                append_separator=self.bridge_data.prompt_append_separator,
             )
             _filtered_prompt = f"{_pos.strip()}###{_neg.strip()}"
             if _filtered_prompt != _original_prompt:

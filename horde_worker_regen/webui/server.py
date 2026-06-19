@@ -131,6 +131,8 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "negative_prompt_append": {"type": list},
     "negative_prompt_remove": {"type": list},
     "negative_prompt_replace": {"type": list},
+    "prompt_remove_cleanup_separators": {"type": bool},
+    "prompt_append_separator": {"type": bool},
 }
 
 
@@ -1583,6 +1585,13 @@ class WorkerWebUI:
         .pf-add-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,0.07); }
         [data-theme="dark"] .pf-add-btn { border-color: #334155; color: #94a3b8; }
         [data-theme="dark"] .pf-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .pf-options-row { display: flex; flex-wrap: wrap; gap: 10px 28px; }
+        .pf-option { display: flex; align-items: center; gap: 9px; }
+        .pf-option-text { display: flex; flex-direction: column; gap: 1px; }
+        .pf-option-label { font-size: 0.83rem; font-weight: 500; color: #334155; }
+        [data-theme="dark"] .pf-option-label { color: #cbd5e1; }
+        .pf-option-desc { font-size: 0.72rem; color: #64748b; }
+        [data-theme="dark"] .pf-option-desc { color: #94a3b8; }
         .setting-replace-list { display: flex; flex-direction: column; gap: 5px; min-width: 280px; }
         .replace-row { display: flex; align-items: center; gap: 5px; }
         .replace-find, .replace-with { flex: 1; min-width: 0; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; font-family: inherit; height: var(--action-btn-height); box-sizing: border-box; }
@@ -4993,6 +5002,8 @@ class WorkerWebUI:
             negative_prompt_append:   ['Negative — Add', 'Strings to append to every negative prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
             negative_prompt_remove:   ['Negative — Remove', 'Strings to remove from every negative prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
             negative_prompt_replace:  ['Negative — Replace', 'Text pairs to replace in every negative prompt.', 'Prompt Filters', 'str_replace_list', null, null, false, null, null],
+            prompt_remove_cleanup_separators: ['Cleanup Separators After Removal', 'Remove orphaned commas and spaces left between deleted strings. E.g. removing "foo" and "bar" from "a, foo, bar, b" gives "a, b" instead of "a, , , b".', 'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_append_separator:  ['Auto-Separator When Appending', 'Insert ", " between each appended string and the existing prompt text. When off, strings are concatenated without any separator.', 'Prompt Filters', 'bool', null, null, false, null, null],
         };
 
         // Default values for each setting key — used by the per-row reset button.
@@ -5013,6 +5024,8 @@ class WorkerWebUI:
             max_submit_retries: 10, data_retention_days: 7,
             positive_prompt_append: [], positive_prompt_remove: [], positive_prompt_replace: [],
             negative_prompt_append: [], negative_prompt_remove: [], negative_prompt_replace: [],
+            prompt_remove_cleanup_separators: true,
+            prompt_append_separator: true,
         };
 
         var _settingsLoaded = false;
@@ -5642,6 +5655,38 @@ class WorkerWebUI:
 
                 html += '</div></div>';
             });
+
+            // Filter behavior options (global — apply to both positive and negative)
+            function _pfOptVal(key, defaultVal) {
+                if (Object.prototype.hasOwnProperty.call(_settingsPending, key)) return !!_settingsPending[key];
+                if (Object.prototype.hasOwnProperty.call(settings, key)) return !!settings[key];
+                return defaultVal;
+            }
+            var removeCleanup = _pfOptVal('prompt_remove_cleanup_separators', true);
+            var appendSep     = _pfOptVal('prompt_append_separator', true);
+
+            html += '<div class="pf-block">';
+            html += '<div class="pf-block-title">Filter Options</div>';
+            html += '<div class="pf-options-row">';
+
+            html += '<div class="pf-option">';
+            html += '<label class="setting-toggle" title="Cleanup Separators After Removal">'
+                 +  '<input type="checkbox"' + (removeCleanup ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_cleanup_separators\', this.checked)" aria-label="Cleanup Separators After Removal">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<div class="pf-option-text"><div class="pf-option-label">Cleanup separators after removal</div>'
+                 +  '<div class="pf-option-desc">Remove orphaned commas and spaces left between deleted strings.</div></div>';
+            html += '</div>';
+
+            html += '<div class="pf-option">';
+            html += '<label class="setting-toggle" title="Auto-Separator When Appending">'
+                 +  '<input type="checkbox"' + (appendSep ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_append_separator\', this.checked)" aria-label="Auto-Separator When Appending">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<div class="pf-option-text"><div class="pf-option-label">Auto-separator when appending</div>'
+                 +  '<div class="pf-option-desc">Insert ", " between each appended string and the existing prompt text.</div></div>';
+            html += '</div>';
+
+            html += '</div></div>';
+
             return html;
         }
 

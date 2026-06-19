@@ -119,9 +119,18 @@ def _install_excepthook() -> None:
         if args.exc_type is None or issubclass(args.exc_type, SystemExit):
             return
         thread_name = args.thread.name if args.thread is not None else "<unknown>"
-        logger.opt(exception=(args.exc_type, args.exc_value, args.exc_tb)).critical(
-            f"Unhandled exception in thread '{thread_name}'"
-        )
+        try:
+            logger.opt(exception=(args.exc_type, args.exc_value, args.exc_tb)).critical(
+                f"Unhandled exception in thread '{thread_name}'"
+            )
+        except Exception:
+            # Last-resort: if loguru itself fails, print to stderr so the exception
+            # is not silently swallowed (e.g. during process shutdown).
+            print(
+                f"CRITICAL (logger unavailable): unhandled exception in thread '{thread_name}':"
+                f" {args.exc_type.__name__}: {args.exc_value}",
+                file=sys.stderr,
+            )
 
     threading.excepthook = _handle_thread_exception
 
@@ -214,7 +223,9 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         diagnose=False,
     )
 
-    # Error trace log: full backtraces with local variable values for debugging.
+    # Error trace log: full backtraces; variable values only for the main process.
+    # Subprocesses run GPU/ML code — diagnosing there risks introspecting CUDA objects
+    # whose state is undefined after an OOM or hardware error.
     logger.add(
         _LOGS_DIR / trace_log_name,
         format=file_format,
@@ -224,7 +235,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         retention=_TRACE_RETENTION,
         encoding="utf-8",
         backtrace=True,
-        diagnose=True,
+        diagnose=process_id is None,
     )
 
     # Crash log: CRITICAL only — first place to look when the worker dies.

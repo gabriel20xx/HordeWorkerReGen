@@ -102,6 +102,19 @@ class reGenBridgeData(CombinedHordeBridgeData):
     negative_prompt_replace: list[str] = Field(default_factory=list)
     """Replacement rules for negative prompts in ``find==>replace`` format."""
 
+    prompt_remove_cleanup_separators: bool = True
+    """When True, collapses any runs of commas/spaces left between removed strings into a single ', '.
+
+    Example: removing ``"foo"`` and ``"bar"`` from ``"a, foo, bar, b"`` → ``"a, b"`` instead of
+    ``"a, , , b"``.
+    """
+
+    prompt_append_separator: bool = True
+    """When True, each appended string is joined to the running prompt with ``", "``.
+
+    When False the string is concatenated directly (no separator inserted).
+    """
+
     minutes_allowed_without_jobs: int = Field(default=30, ge=0, lt=60 * 60)
 
     auto_restart_on_idle_minutes: int = Field(default=60, ge=0, le=1440, validate_default=True)
