@@ -231,6 +231,7 @@ class WorkerWebUI:
         self._live_errors_history: list[str] = []
 
         self._session_baseline: dict[str, Any] = {}
+        self._persisted_reset_baseline: dict[str, Any] = {}
         self._persisted_settings: dict[str, Any] = {}
 
         if self._errors_db_path is not None:
@@ -442,6 +443,18 @@ class WorkerWebUI:
                     )
                 except Exception:
                     pass  # column already exists on existing databases
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS horde_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_json TEXT NOT NULL,
+                        timestamp REAL NOT NULL
+                    )
+                    """,
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_horde_timestamp ON horde_snapshots (timestamp)",
+                )
                 conn.commit()
 
             # Gallery database
@@ -488,6 +501,7 @@ class WorkerWebUI:
         self._persisted_errors: list[str] = []
         self._persisted_gallery: list[dict[str, Any]] = []
         self._persisted_stats: list[dict[str, Any]] = []
+        self._persisted_horde_snapshots: list[dict[str, Any]] = []
         # Max gallery_id across ALL rows (not just within retention) so _next_gallery_id
         # stays unique even when no in-retention rows are loaded at startup.
         self._persisted_max_gallery_id: int = -1
@@ -555,6 +569,22 @@ class WorkerWebUI:
                             self._persisted_stats.append(decoded)
                     except (ValueError, TypeError):
                         pass
+
+                # Load horde snapshots (last 3 hours / _HORDE_MAX_SERVER_SNAPS entries)
+                horde_rows = conn.execute(
+                    "SELECT snapshot_json FROM ("
+                    "SELECT id, snapshot_json, timestamp FROM horde_snapshots"
+                    " WHERE timestamp >= ? ORDER BY timestamp DESC, id DESC LIMIT ?"
+                    ") ORDER BY timestamp ASC, id ASC",
+                    (cutoff, self._HORDE_MAX_SERVER_SNAPS),
+                ).fetchall()
+                for row in horde_rows:
+                    try:
+                        decoded = json.loads(row[0])
+                        if isinstance(decoded, dict):
+                            self._persisted_horde_snapshots.append(decoded)
+                    except (ValueError, TypeError):
+                        pass
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not load stats from '{self._stats_db_path}': {exc}")
 
@@ -589,7 +619,7 @@ class WorkerWebUI:
                     if rb_row and rb_row[0]:
                         rb = json.loads(rb_row[0])
                         if rb:
-                            self.status_data["stats_reset_baseline"] = rb
+                            self._persisted_reset_baseline = rb
                 except Exception:
                     pass
         except Exception as exc:  # noqa: BLE001
@@ -627,6 +657,9 @@ class WorkerWebUI:
         for key, value in self._session_baseline.items():
             if value:
                 self.status_data[key] = value
+
+        if self._persisted_reset_baseline:
+            self.status_data["stats_reset_baseline"] = self._persisted_reset_baseline
 
     @staticmethod
     def _history_overlap_len(newer: list[str], older: list[str]) -> int:
@@ -666,6 +699,10 @@ class WorkerWebUI:
                 last = self._stats_snapshots[-1]
                 self._last_stats_snapshot_time = self._safe_snapshot_time(last)
 
+        horde = getattr(self, "_persisted_horde_snapshots", [])
+        if horde:
+            self._horde_snapshots = list(horde)
+
     @staticmethod
     def _safe_snapshot_time(snapshot: dict[str, Any]) -> float:
         """Return a snapshot timestamp as float, falling back to 0.0 for malformed values."""
@@ -691,6 +728,7 @@ class WorkerWebUI:
             # Prune stats database
             with sqlite3.connect(self._stats_db_path) as conn:
                 conn.execute("DELETE FROM stats_snapshots WHERE timestamp < ?", (cutoff,))
+                conn.execute("DELETE FROM horde_snapshots WHERE timestamp < ?", (cutoff,))
                 conn.commit()
 
             # Prune gallery database
@@ -736,6 +774,11 @@ class WorkerWebUI:
         if self._stats_snapshots:
             last = self._stats_snapshots[-1]
             self._last_stats_snapshot_time = self._safe_snapshot_time(last)
+
+        # Rebuild horde snapshots.
+        horde = getattr(self, "_persisted_horde_snapshots", [])
+        if horde:
+            self._horde_snapshots = list(horde)
 
         # Re-merge errors history (live session errors + reloaded persisted history).
         self.status_data["errors_history"] = self._merge_errors_history(self._live_errors_history)
@@ -882,6 +925,7 @@ class WorkerWebUI:
         self.app.router.add_get("/api/gallery/models", self._handle_gallery_models)
         self.app.router.add_get("/api/gallery/safety", self._handle_gallery_safety)
         self.app.router.add_get("/api/gallery/image", self._handle_gallery_image)
+        self.app.router.add_get("/api/gallery/last-batch", self._handle_gallery_last_batch)
         self.app.router.add_get("/api/config", self._handle_config)
         self.app.router.add_get("/health", self._handle_health)
         self.app.router.add_delete("/api/worker/{worker_id}", self._handle_delete_worker)
@@ -1503,6 +1547,27 @@ class WorkerWebUI:
         .setting-textarea { width: 200px; min-height: 54px; max-height: 180px; padding: 5px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; resize: vertical; transition: border-color 0.15s; font-family: inherit; line-height: 1.5; }
         .setting-textarea:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .setting-textarea { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        .prompt-filter-row .setting-ctrl { flex-direction: column; align-items: flex-start; gap: 10px; min-width: 320px; max-width: 480px; }
+        .pf-section { width: 100%; }
+        .pf-section-label { font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 5px; }
+        [data-theme="dark"] .pf-section-label { color: #94a3b8; }
+        .pf-pills { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; margin-bottom: 5px; }
+        .pf-pill { display: inline-flex; align-items: center; padding: 2px 9px; background: #dbeafe; color: #1d4ed8; border-radius: 10px; font-size: 0.78rem; cursor: pointer; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; transition: background 0.13s, color 0.13s; }
+        .pf-pill:hover { background: #fecaca; color: #dc2626; }
+        .pf-pill--replace { background: #fef9c3; color: #92400e; }
+        .pf-pill--replace:hover { background: #fecaca; color: #dc2626; }
+        [data-theme="dark"] .pf-pill { background: #1e3a5f; color: #93c5fd; }
+        [data-theme="dark"] .pf-pill:hover { background: #450a0a; color: #fca5a5; }
+        [data-theme="dark"] .pf-pill--replace { background: #3b2600; color: #fde68a; }
+        [data-theme="dark"] .pf-pill--replace:hover { background: #450a0a; color: #fca5a5; }
+        .pf-input-row { display: flex; align-items: center; gap: 5px; }
+        .pf-input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; font-family: inherit; height: var(--action-btn-height); box-sizing: border-box; }
+        .pf-input:focus { outline: none; border-color: var(--accent); }
+        [data-theme="dark"] .pf-input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        .pf-add-btn { width: var(--action-btn-height); height: var(--action-btn-height); border: 1px solid #cbd5e1; border-radius: 5px; background: transparent; color: #64748b; cursor: pointer; font-size: 1rem; line-height: 1; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .pf-add-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,0.07); }
+        [data-theme="dark"] .pf-add-btn { border-color: #334155; color: #94a3b8; }
+        [data-theme="dark"] .pf-add-btn:hover { border-color: var(--accent); color: var(--accent); }
         .setting-replace-list { display: flex; flex-direction: column; gap: 5px; min-width: 280px; }
         .replace-row { display: flex; align-items: center; gap: 5px; }
         .replace-find, .replace-with { flex: 1; min-width: 0; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; font-family: inherit; height: var(--action-btn-height); box-sizing: border-box; }
@@ -3096,6 +3161,7 @@ class WorkerWebUI:
                         const frag = document.createDocumentFragment();
                         newImages.forEach(({ img, idx }) => {
                             const galleryId = img.gallery_id;
+                            const ts = formatTimestamp(img.timestamp);
                             const model = img.model ? escapeHtml(img.model) : '';
                             const isNsfw = img.is_nsfw === true, isCsam = img.is_csam === true;
                             const div = document.createElement('div');
@@ -4985,7 +5051,7 @@ class WorkerWebUI:
                 }
                 stageSettingChange(key, def);
             } else if (Array.isArray(def)) {
-                var spec = _settingsSpec[key];
+                var spec = _SETTINGS_SPEC[key];
                 var specType = spec ? spec[3] : null;
                 if (specType === 'str_replace_list') {
                     var container = document.getElementById('sinp-' + key);
@@ -5146,6 +5212,11 @@ class WorkerWebUI:
                 html += '<div class="settings-group">';
                 html += '<div class="settings-group-title">' + escapeHtml(cat) + '</div>';
                 html += '<div class="settings-grid">';
+                if (cat === 'Prompt Filters') {
+                    html += _renderPromptFilterRows(settings);
+                    html += '</div></div>';
+                    continue;
+                }
                 for (var ki = 0; ki < keys.length; ki++) {
                     var key = keys[ki];
                     var spec = _SETTINGS_SPEC[key];
@@ -5434,6 +5505,128 @@ class WorkerWebUI:
             stageSettingChange(key, lines);
         }
 
+        function _renderPromptFilterRows(settings) {
+            var html = '';
+            ['positive', 'negative'].forEach(function(type) {
+                var appendKey = type + '_prompt_append';
+                var removeKey = type + '_prompt_remove';
+                var replaceKey = type + '_prompt_replace';
+                function getVal(k) {
+                    if (Object.prototype.hasOwnProperty.call(_settingsPending, k)) return _settingsPending[k];
+                    if (Object.prototype.hasOwnProperty.call(settings, k)) return settings[k];
+                    return [];
+                }
+                var appendVal = Array.isArray(getVal(appendKey)) ? getVal(appendKey) : [];
+                var removeVal = Array.isArray(getVal(removeKey)) ? getVal(removeKey) : [];
+                var replaceVal = Array.isArray(getVal(replaceKey)) ? getVal(replaceKey) : [];
+                var label = type === 'positive' ? 'Positive Prompt' : 'Negative Prompt';
+                var desc = 'Filters applied to every ' + type + ' prompt before generation and gallery saving. Original prompt sent to Horde unchanged.';
+                html += '<div class="setting-row prompt-filter-row">';
+                html += '<div class="setting-info"><div class="setting-label">' + escapeHtml(label) + '</div>';
+                html += '<div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
+                html += '<div class="setting-ctrl">';
+
+                // Add section
+                html += '<div class="pf-section"><div class="pf-section-label">Add</div>';
+                html += '<div class="pf-pills" id="pfpills-' + type + '-add">';
+                appendVal.forEach(function(item) {
+                    html += '<span class="pf-pill" data-value="' + escapeHtml(item) + '" onclick="_pfRemovePill(this,\'' + type + '-add\')">' + escapeHtml(item) + ' ×</span>';
+                });
+                html += '</div>';
+                html += '<div class="pf-input-row"><input type="text" class="pf-input" id="pfinp-' + type + '-add" placeholder="String to append…" onkeydown="if(event.key===\'Enter\'){pfAddPill(\'' + type + '-add\');event.preventDefault();}"><button class="pf-add-btn" onclick="pfAddPill(\'' + type + '-add\')" title="Add">+</button></div>';
+                html += '</div>';
+
+                // Remove section
+                html += '<div class="pf-section"><div class="pf-section-label">Remove</div>';
+                html += '<div class="pf-pills" id="pfpills-' + type + '-remove">';
+                removeVal.forEach(function(item) {
+                    html += '<span class="pf-pill" data-value="' + escapeHtml(item) + '" onclick="_pfRemovePill(this,\'' + type + '-remove\')">' + escapeHtml(item) + ' ×</span>';
+                });
+                html += '</div>';
+                html += '<div class="pf-input-row"><input type="text" class="pf-input" id="pfinp-' + type + '-remove" placeholder="String to remove…" onkeydown="if(event.key===\'Enter\'){pfAddPill(\'' + type + '-remove\');event.preventDefault();}"><button class="pf-add-btn" onclick="pfAddPill(\'' + type + '-remove\')" title="Add">+</button></div>';
+                html += '</div>';
+
+                // Replace section
+                html += '<div class="pf-section"><div class="pf-section-label">Replace</div>';
+                html += '<div class="pf-pills" id="pfpills-' + type + '-replace">';
+                replaceVal.forEach(function(rule) {
+                    var parts = rule.split('==>', 2);
+                    var find = parts[0] || '';
+                    var withV = parts.length > 1 ? parts[1] : '';
+                    var display = escapeHtml((find || '…') + ' → ' + (withV || '…'));
+                    html += '<span class="pf-pill pf-pill--replace" data-value="' + escapeHtml(rule) + '" onclick="_pfRemovePill(this,\'' + type + '-replace\')">' + display + ' ×</span>';
+                });
+                html += '</div>';
+                html += '<div class="pf-input-row"><input type="text" class="pf-input" id="pfinp-' + type + '-replace-find" placeholder="Find…">';
+                html += '<span class="replace-arrow">→</span>';
+                html += '<input type="text" class="pf-input" id="pfinp-' + type + '-replace-with" placeholder="Replace with…" onkeydown="if(event.key===\'Enter\'){pfAddReplacePill(\'' + type + '\');event.preventDefault();}"><button class="pf-add-btn" onclick="pfAddReplacePill(\'' + type + '\')" title="Add">+</button></div>';
+                html += '</div>';
+
+                html += '</div></div>';
+            });
+            return html;
+        }
+
+        function _pfStage(sectionId) {
+            var parts = sectionId.split('-');
+            var type = parts[0];
+            var op = parts.slice(1).join('-');
+            var key = type + '_prompt_' + op;
+            var container = document.getElementById('pfpills-' + sectionId);
+            if (!container) return;
+            var pills = container.querySelectorAll('.pf-pill');
+            var list = [];
+            pills.forEach(function(p) {
+                var v = p.getAttribute('data-value');
+                if (v !== null) list.push(v);
+            });
+            stageSettingChange(key, list);
+        }
+
+        function _pfRemovePill(pill, sectionId) {
+            pill.remove();
+            _pfStage(sectionId);
+        }
+
+        function pfAddPill(sectionId) {
+            var inp = document.getElementById('pfinp-' + sectionId);
+            if (!inp) return;
+            var val = inp.value.trim();
+            if (!val) return;
+            inp.value = '';
+            var container = document.getElementById('pfpills-' + sectionId);
+            if (!container) return;
+            var span = document.createElement('span');
+            span.className = 'pf-pill';
+            span.setAttribute('data-value', val);
+            span.textContent = val + ' ×';
+            span.onclick = function() { _pfRemovePill(this, sectionId); };
+            container.appendChild(span);
+            _pfStage(sectionId);
+        }
+
+        function pfAddReplacePill(type) {
+            var findInp = document.getElementById('pfinp-' + type + '-replace-find');
+            var withInp = document.getElementById('pfinp-' + type + '-replace-with');
+            if (!findInp || !withInp) return;
+            var find = findInp.value.trim();
+            var withV = withInp.value.trim();
+            if (!find && !withV) return;
+            findInp.value = ''; withInp.value = '';
+            var rule = find + '==>' + withV;
+            var display = (find || '…') + ' → ' + (withV || '…');
+            var container = document.getElementById('pfpills-' + type + '-replace');
+            if (!container) return;
+            var span = document.createElement('span');
+            span.className = 'pf-pill pf-pill--replace';
+            span.setAttribute('data-value', rule);
+            span.textContent = display + ' ×';
+            var sid = type + '-replace';
+            span.onclick = function() { _pfRemovePill(this, sid); };
+            container.appendChild(span);
+            _pfStage(sid);
+        }
+
         function addReplaceRow(key) {
             var container = document.getElementById('sinp-' + key);
             if (!container) return;
@@ -5619,13 +5812,37 @@ class WorkerWebUI:
                     if (typeof ts !== 'number') ts = Number(ts);
                     if (!Number.isFinite(ts)) ts = 0;
                     _lastFetchedImageTimestamp = ts;
-                    renderLastImages(
-                        imgData.last_image_base64 || [],
-                        document.getElementById('overview-image-container'),
-                        ts,
-                        imgData.last_image_model || null,
-                        imgData.last_image_safety || null
-                    );
+                    var hasSessionImage = ts !== 0 && imgData.last_image_base64 && imgData.last_image_base64.length > 0;
+                    if (hasSessionImage) {
+                        renderLastImages(
+                            imgData.last_image_base64 || [],
+                            document.getElementById('overview-image-container'),
+                            ts,
+                            imgData.last_image_model || null,
+                            imgData.last_image_safety || null
+                        );
+                    } else {
+                        // No session image yet — show last gallery batch as a preview.
+                        fetch('/api/gallery/last-batch')
+                            .then(function(r) { return r.json(); })
+                            .then(function(batchData) {
+                                // Abort if a real session image arrived while we were fetching.
+                                if (_lastFetchedImageTimestamp !== 0) return;
+                                var imgs = batchData && batchData.images;
+                                if (!imgs || imgs.length === 0) return;
+                                var b64arr = imgs.map(function(i) { return i.base64; }).filter(Boolean);
+                                if (b64arr.length === 0) return;
+                                var safety = imgs.map(function(i) { return { is_nsfw: i.is_nsfw, is_csam: i.is_csam }; });
+                                renderLastImages(
+                                    b64arr,
+                                    document.getElementById('overview-image-container'),
+                                    imgs[0].timestamp,
+                                    imgs[0].model || null,
+                                    safety
+                                );
+                            })
+                            .catch(function() {});
+                    }
                 })
                 .catch(function() {});
             try {
@@ -6213,6 +6430,32 @@ class WorkerWebUI:
             "csam": csam_count,
         })
 
+    async def _handle_gallery_last_batch(self, request: web.Request) -> web.Response:
+        """Return full-resolution images from the most recent gallery batch.
+
+        A "batch" is all images sharing the same timestamp (within a 2-second window),
+        i.e. all outputs from a single job. Used by the overview page to pre-fill the
+        Last Result container when no image has been generated in the current session.
+        """
+        if not self._gallery_dict:
+            return web.json_response({"images": []})
+        latest_ts = max(entry.get("timestamp", 0) for entry in self._gallery_dict.values())
+        batch = sorted(
+            (e for e in self._gallery_dict.values() if abs(e.get("timestamp", 0) - latest_ts) < 2.0),
+            key=lambda e: e.get("gallery_id", 0),
+        )
+        result = [
+            {
+                "base64": e.get("base64", ""),
+                "timestamp": e.get("timestamp", 0),
+                "model": e.get("model", ""),
+                "is_nsfw": e.get("is_nsfw", False),
+                "is_csam": e.get("is_csam", False),
+            }
+            for e in batch
+        ]
+        return web.json_response({"images": result})
+
     async def _handle_gallery_image(self, request: web.Request) -> web.Response:
         """Return a single gallery image by its stable ``gallery_id``.
 
@@ -6555,6 +6798,16 @@ class WorkerWebUI:
                             self._horde_snapshots.append(snap)
                             if len(self._horde_snapshots) > self._HORDE_MAX_SERVER_SNAPS:
                                 self._horde_snapshots = self._horde_snapshots[-self._HORDE_MAX_SERVER_SNAPS :]
+                            if self._stats_db_path is not None:
+                                try:
+                                    with sqlite3.connect(self._stats_db_path) as _conn:
+                                        _conn.execute(
+                                            "INSERT INTO horde_snapshots (snapshot_json, timestamp) VALUES (?, ?)",
+                                            (json.dumps(snap), snap["t"]),
+                                        )
+                                        _conn.commit()
+                                except Exception:
+                                    pass
                 except asyncio.CancelledError:
                     raise
                 except Exception:
