@@ -69,6 +69,19 @@ class reGenBridgeData(CombinedHordeBridgeData):
     - Low-end GPUs (GTX 1660, RTX 3060): 900-1200 seconds (15-20 minutes)
     """
 
+    inference_timeout: int = Field(default=1800, ge=60, le=7200)
+    """Total time (seconds) allowed for all inference steps combined.
+
+    If a process remains in an inference state longer than this, it is considered stuck and replaced,
+    regardless of per-step heartbeat activity. Default is 1800s (30 min).
+    """
+
+    waiting_for_job_timeout: int = Field(default=600, ge=60, le=3600)
+    """Seconds a WAITING_FOR_JOB process can be heartbeat-silent before being replaced (when local work is pending).
+
+    The effective threshold is max(process_timeout, waiting_for_job_timeout). Default is 600s (10 min).
+    """
+
     minutes_allowed_without_jobs: int = Field(default=30, ge=0, lt=60 * 60)
 
     auto_restart_on_idle_minutes: int = Field(default=60, ge=0, le=1440, validate_default=True)

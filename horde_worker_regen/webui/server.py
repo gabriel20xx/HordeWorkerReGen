@@ -106,9 +106,11 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "horde_model_stickiness": {"type": float, "min": 0.0, "max": 1.0},
     # Timeouts
     "process_timeout": {"type": int, "min": 60, "max": 3600},
-    "post_process_timeout": {"type": int, "min": 15, "max": 600},
-    "preload_timeout": {"type": int, "min": 15, "max": 600},
+    "inference_timeout": {"type": int, "min": 60, "max": 7200},
     "inference_step_timeout": {"type": int, "min": 60, "max": 1800},
+    "preload_timeout": {"type": int, "min": 15, "max": 600},
+    "post_process_timeout": {"type": int, "min": 15, "max": 600},
+    "waiting_for_job_timeout": {"type": int, "min": 60, "max": 3600},
     # Behavior
     "minutes_allowed_without_jobs": {"type": int, "min": 0, "max": 3599},
     "auto_restart_on_idle_minutes": {"type": int, "min": 0, "max": 1440},
@@ -1021,6 +1023,7 @@ class WorkerWebUI:
         .card-title { font-size: 0.8rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; display: flex; align-items: center; gap: 7px; }
 
         .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--page-spacing); }
+        .grid-4 > *, .grid-3 > *, .grid-2 > * { min-width: 0; }
         .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--page-spacing); }
         .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--page-spacing); }
         .overview-bottom-grid-left { grid-row: span 2; }
@@ -1240,7 +1243,7 @@ class WorkerWebUI:
         .errors-view-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 3px 10px; font-size: 0.75rem; cursor: pointer; color: var(--text-muted); transition: background 0.15s, color 0.15s, border-color 0.15s; }
         .errors-view-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
         .errors-view-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
-        .errors-clear-btn { background: #e2e8f0; color: #475569; border: none; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; margin-left: 6px; }
+        .errors-clear-btn { background: #e2e8f0; color: #475569; border: 1px solid transparent; border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; margin-left: 6px; }
         .errors-clear-btn:hover { background: #fecaca; color: #dc2626; }
         .errors-clear-btn:disabled { opacity: 0.5; cursor: default; }
         [data-theme="dark"] .errors-clear-btn { background: #2d3f55; color: #94a3b8; }
@@ -1401,12 +1404,12 @@ class WorkerWebUI:
         .stats-window-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 3px 11px; font-size: 0.78rem; font-weight: 600; cursor: pointer; color: var(--text-muted); transition: background 0.15s, color 0.15s, border-color 0.15s; }
         .stats-window-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
         .stats-window-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
-        .chart-container { position: relative; width: 100%; height: 150px; }
-        .chart-container canvas { display: block; }
-        .chart-container-sm { position: relative; width: 100%; height: 110px; }
-        .chart-container-sm canvas { display: block; }
-        .chart-container-md { position: relative; width: 100%; height: 160px; }
-        .chart-container-md canvas { display: block; }
+        .chart-container { position: relative; width: 100%; height: 150px; overflow: hidden; }
+        .chart-container canvas { display: block; max-width: 100%; }
+        .chart-container-sm { position: relative; width: 100%; height: 110px; overflow: hidden; }
+        .chart-container-sm canvas { display: block; max-width: 100%; }
+        .chart-container-md { position: relative; width: 100%; height: 160px; overflow: hidden; }
+        .chart-container-md canvas { display: block; max-width: 100%; }
         .chart-label { font-size: 0.75rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
         [data-theme="dark"] .chart-label { color: #94a3b8; }
         .chart-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -1483,6 +1486,12 @@ class WorkerWebUI:
         [data-theme="dark"] .setting-toggle-slider { background: #334155; }
         [data-theme="dark"] .setting-toggle input:checked + .setting-toggle-slider { background: var(--accent); }
         /* Number input */
+        .setting-reset-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 0.9rem; line-height: 1; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; flex-shrink: 0; }
+        .setting-reset-btn:not(:disabled):hover { background: rgba(99,102,241,0.1); color: var(--accent); border-color: var(--accent); }
+        .setting-reset-btn:disabled { opacity: 0.22; cursor: not-allowed; }
+        .settings-page-btn.reset-all { background: transparent; border-color: var(--border); color: var(--text-muted); }
+        .settings-page-btn.reset-all:hover:not(:disabled) { background: #fee2e2; color: #b91c1c; border-color: #f87171; }
+        [data-theme="dark"] .settings-page-btn.reset-all:hover:not(:disabled) { background: #3b0a0a; color: #fca5a5; border-color: #b91c1c; }
         .setting-number { width: 68px; height: var(--action-btn-height); padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
         .setting-number:disabled { opacity: 0.55; cursor: not-allowed; background: #e2e8f0; color: #64748b; }
         .setting-number:focus { outline: none; border-color: var(--accent); }
@@ -2012,6 +2021,7 @@ class WorkerWebUI:
                             <div class="settings-header-actions">
                                 <button id="settings-apply-btn" class="settings-page-btn apply" onclick="applyPendingSettings()" disabled>Apply</button>
                                 <button id="settings-restart-btn" class="settings-page-btn restart" onclick="restartProgram()">Restart</button>
+                                <button id="settings-reset-all-btn" class="settings-page-btn reset-all" onclick="showResetAllConfirm()" title="Reset all settings to their default values">&#8635; Reset All</button>
                                 <span id="settings-status" class="section-count" style="display:none;"></span>
                             </div>
                         </div>
@@ -2033,6 +2043,16 @@ class WorkerWebUI:
             <div id="overlay-counter" class="image-overlay-counter"></div>
         </div>
         <button id="overlay-next" class="image-overlay-nav next" onclick="overlayNavigate(1)" aria-label="Next image" title="Next image">&#8250;</button>
+    </div>
+    <div id="reset-all-confirm-modal" class="confirm-modal-backdrop" aria-hidden="true" onclick="dismissResetAllConfirm(event)">
+        <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="reset-all-confirm-title" aria-describedby="reset-all-confirm-body">
+            <div id="reset-all-confirm-title" class="confirm-modal-title">Reset all settings to defaults?</div>
+            <div id="reset-all-confirm-body" class="confirm-modal-body">All settings with known defaults will be staged at their default values. You can still review changes before applying.</div>
+            <div class="confirm-modal-actions">
+                <button class="confirm-modal-btn cancel" type="button" onclick="closeResetAllConfirm()">Cancel</button>
+                <button class="confirm-modal-btn confirm" type="button" onclick="confirmResetAll()">Reset All</button>
+            </div>
+        </div>
     </div>
     <div id="restart-confirm-modal" class="confirm-modal-backdrop" aria-hidden="true" onclick="dismissRestartConfirm(event)">
         <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="restart-confirm-title" aria-describedby="restart-confirm-body">
@@ -2869,8 +2889,8 @@ class WorkerWebUI:
                 if (isList) {
                     const tsLong = formatTimestampFull(img.timestamp);
                     const steps = img.inference_steps ? img.inference_steps + ' steps' : '';
-                    const posPrompt = img.positive_prompt ? escapeHtml(truncatePrompt(img.positive_prompt, 90)) : '';
-                    const negPrompt = img.negative_prompt ? escapeHtml(truncatePrompt(img.negative_prompt, 90)) : '';
+                    const posPrompt = img.positive_prompt ? escapeHtml(img.positive_prompt) : '';
+                    const negPrompt = img.negative_prompt ? escapeHtml(img.negative_prompt) : '';
                     const flagBadges = (isNsfw || isCsam) ? '<div class="gallery-list-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                     const imgHtml = validCache ? '<img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />' : '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />';
                     const row1 = (model || steps) ? '<div class="gallery-list-row1">'+(model ? '<span class="gallery-list-model">'+model+'</span>' : '')+(steps ? '<span class="gallery-list-steps">'+steps+'</span>' : '')+'</div>' : '';
@@ -2879,8 +2899,8 @@ class WorkerWebUI:
                         '<div class="gallery-list-meta">' +
                         row1 +
                         (tsLong ? '<div class="gallery-list-ts">'+tsLong+'</div>' : '') +
-                        (posPrompt ? '<div class="gallery-list-prompt pos">'+posPrompt+'</div>' : '') +
-                        (negPrompt ? '<div class="gallery-list-prompt neg">'+negPrompt+'</div>' : '') +
+                        (posPrompt ? '<div class="gallery-list-prompt pos" title="'+posPrompt+'">'+posPrompt+'</div>' : '') +
+                        (negPrompt ? '<div class="gallery-list-prompt neg" title="'+negPrompt+'">'+negPrompt+'</div>' : '') +
                         flagBadges +
                         '</div></div>';
                 }
@@ -2926,12 +2946,11 @@ class WorkerWebUI:
                 if (data.base64) return 'data:image/png;base64,'+data.base64;
                 return null;
             }
-            function loadNext(i) {
-                if (batchId !== _galleryThumbnailBatchId || i >= galleryIds.length) return;
-                const galleryId = galleryIds[i];
-                // If the thumbnail is already cached (rendered immediately by renderGalleryPageSkeleton),
-                // skip the network request and move straight to the next item.
-                if (_galleryThumbnailCache.has(galleryId)) { loadNext(i + 1); return; }
+            // Pool-based parallel loader: keep up to CONCURRENCY fetches in-flight at once.
+            const CONCURRENCY = 8;
+            let nextIndex = 0;
+            let activeCount = 0;
+            function fetchOne(galleryId) {
                 fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true', { signal: batchAbort.signal })
                     .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                     .then(data => {
@@ -2955,12 +2974,22 @@ class WorkerWebUI:
                         const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
                         if (container) container.classList.remove('loading');
                     })
-                    .finally(() => { loadNext(i + 1); });
+                    .finally(() => { activeCount--; launchNext(); });
+            }
+            function launchNext() {
+                while (activeCount < CONCURRENCY && nextIndex < galleryIds.length) {
+                    if (batchId !== _galleryThumbnailBatchId) return;
+                    const galleryId = galleryIds[nextIndex++];
+                    // Skip items already in cache — they were rendered by the skeleton.
+                    if (_galleryThumbnailCache.has(galleryId)) { continue; }
+                    activeCount++;
+                    fetchOne(galleryId);
+                }
             }
             // Abort the previous batch's requests and register the new controller.
             if (_galleryBatchAbort) { try { _galleryBatchAbort.abort(); } catch(_){} }
             _galleryBatchAbort = batchAbort;
-            loadNext(0);
+            launchNext();
         }
         function fetchGalleryPage(page) {
             if (galleryFetchInProgress) return;
@@ -3050,8 +3079,8 @@ class WorkerWebUI:
                             if (isList) {
                                 const tsLong = formatTimestampFull(img.timestamp);
                                 const steps = img.inference_steps ? img.inference_steps + ' steps' : '';
-                                const posPrompt = img.positive_prompt ? escapeHtml(truncatePrompt(img.positive_prompt, 90)) : '';
-                                const negPrompt = img.negative_prompt ? escapeHtml(truncatePrompt(img.negative_prompt, 90)) : '';
+                                const posPrompt = img.positive_prompt ? escapeHtml(img.positive_prompt) : '';
+                                const negPrompt = img.negative_prompt ? escapeHtml(img.negative_prompt) : '';
                                 const flagBadges = (isNsfw || isCsam) ? '<div class="gallery-list-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                                 const row1 = (model || steps) ? '<div class="gallery-list-row1">'+(model ? '<span class="gallery-list-model">'+model+'</span>' : '')+(steps ? '<span class="gallery-list-steps">'+steps+'</span>' : '')+'</div>' : '';
                                 div.className = 'gallery-list-item loading';
@@ -3059,7 +3088,7 @@ class WorkerWebUI:
                                 if (isNsfw) div.setAttribute('data-nsfw', '1');
                                 if (isCsam) div.setAttribute('data-csam', '1');
                                 div.innerHTML = '<div class="gallery-list-thumb"><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" /></div>' +
-                                    '<div class="gallery-list-meta">'+row1+(tsLong ? '<div class="gallery-list-ts">'+tsLong+'</div>' : '')+(posPrompt ? '<div class="gallery-list-prompt pos">'+posPrompt+'</div>' : '')+(negPrompt ? '<div class="gallery-list-prompt neg">'+negPrompt+'</div>' : '')+flagBadges+'</div>';
+                                    '<div class="gallery-list-meta">'+row1+(tsLong ? '<div class="gallery-list-ts">'+tsLong+'</div>' : '')+(posPrompt ? '<div class="gallery-list-prompt pos" title="'+posPrompt+'">'+posPrompt+'</div>' : '')+(negPrompt ? '<div class="gallery-list-prompt neg" title="'+negPrompt+'">'+negPrompt+'</div>' : '')+flagBadges+'</div>';
                             } else {
                                 const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
@@ -4771,10 +4800,12 @@ class WorkerWebUI:
             post_process_job_overlap: ['PP Job Overlap',          'Overlap post-processing with the next inference job.',               'Performance',  'bool',  null, null, false, null, 'AIWORKER_POST_PROCESS_JOB_OVERLAP'],
             cycle_process_on_model_change: ['Cycle Process on Model Change', 'Restart the inference process when the loaded model changes.', 'Performance', 'bool', null, null, false, null, 'AIWORKER_CYCLE_PROCESS_ON_MODEL_CHANGE'],
             horde_model_stickiness:   ['Model Stickiness',        'Chance (0\u20131) to prefer currently loaded models when popping a job.',  'Performance',  'float', 0.0, 1.0, false, null, 'AIWORKER_MODEL_STICKINESS'],
-            process_timeout:          ['Process Timeout (s)',     'Max seconds a job may run before being killed.',                     'Timeouts',     'int',   60,   3600, false, null, 'AIWORKER_PROCESS_TIMEOUT'],
-            post_process_timeout:     ['Post-Process Timeout (s)','Max seconds allowed for post-processing.',                          'Timeouts',     'int',   15,   600,  false, null, 'AIWORKER_POST_PROCESS_TIMEOUT'],
-            preload_timeout:          ['Preload Timeout (s)',      'Max seconds allowed to load a model.',                             'Timeouts',     'int',   15,   600,  false, null, 'AIWORKER_PRELOAD_TIMEOUT'],
-            inference_step_timeout:   ['Inference Step Timeout (s)','Max seconds allowed per inference step before detecting a stuck job.','Timeouts',  'int',   60,   1800, false, null, 'AIWORKER_INFERENCE_STEP_TIMEOUT'],
+            process_timeout:          ['Total Job Timeout (s)',        'Max seconds for an entire job (model load + inference + post-processing) before the process is killed.',                     'Timeouts', 'int',  60,   3600, false, null, 'AIWORKER_PROCESS_TIMEOUT'],
+            inference_timeout:        ['Inference Timeout - All Steps (s)', 'Max total seconds allowed for all inference steps combined. If inference takes longer than this the process is replaced.', 'Timeouts', 'int',  60,   7200, false, null, 'AIWORKER_INFERENCE_TIMEOUT'],
+            inference_step_timeout:   ['Inference Step Timeout (s)',  'Max seconds allowed for a single inference step before the job is detected as stuck.',                                          'Timeouts', 'int',  60,   1800, false, null, 'AIWORKER_INFERENCE_STEP_TIMEOUT'],
+            preload_timeout:          ['Model Preload Timeout (s)',   'Max seconds allowed to load (preload) a model before the process is replaced.',                                                 'Timeouts', 'int',  15,   600,  false, null, 'AIWORKER_PRELOAD_TIMEOUT'],
+            post_process_timeout:     ['Post-Process Timeout (s)',    'Max seconds allowed for post-processing (upscaling, face-fix, etc.).',                                                          'Timeouts', 'int',  15,   600,  false, null, 'AIWORKER_POST_PROCESS_TIMEOUT'],
+            waiting_for_job_timeout:  ['Waiting for Job Timeout (s)', 'Seconds a WAITING_FOR_JOB process can be heartbeat-silent before being replaced (when work is pending). Effective threshold is max(total_job_timeout, this value).', 'Timeouts', 'int', 60, 3600, false, null, 'AIWORKER_WAITING_FOR_JOB_TIMEOUT'],
             minutes_allowed_without_jobs: ['Minutes Without Jobs','Minutes of idle time before the worker warns about no jobs.',       'Behavior',     'int',   0,    3599, false, null, 'AIWORKER_MINUTES_ALLOWED_WITHOUT_JOBS'],
             auto_restart_on_idle_minutes: ['Auto-Restart Idle (min)','Restart the worker automatically if no job has been submitted for this many minutes (0\u00a0=\u00a0disabled; default\u00a060).', 'Behavior', 'int', 0, 1440, false, null, 'AIWORKER_AUTO_RESTART_IDLE_MINUTES'],
             force_restart_timeout:    ['Force Restart Timeout (s)','Seconds to wait for a graceful shutdown before forcing the restart/exit (kills child processes). Mainly applies to auto-restart-on-idle so a stuck shutdown cannot delay the restart.', 'Behavior', 'int', 5, 600, false, null, 'AIWORKER_FORCE_RESTART_TIMEOUT'],
@@ -4787,6 +4818,24 @@ class WorkerWebUI:
             max_job_retries:          ['Max Job Retries',         'Number of times a faulted job is retried before being permanently faulted (0 = no retries; default 1).', 'Behavior', 'int',  0,    10,   false, null, 'AIWORKER_MAX_JOB_RETRIES'],
             max_submit_retries:       ['Max Submit Retries',      'Number of times a job submission can be retried before being marked as failed (default 10).', 'Behavior', 'int',  0,    50,   false, null, 'AIWORKER_MAX_SUBMIT_RETRIES'],
             data_retention_days:      ['Data Retention (days)',   'Number of days to keep errors, statistics, and gallery images in the database (1\u2013\u200a3650; default\u00a07).', 'Behavior', 'int', 1, 3650, false, null, 'AIWORKER_DATA_RETENTION_DAYS'],
+        };
+
+        // Default values for each setting key — used by the per-row reset button.
+        // null means no known default (reset button hidden for that key).
+        var _SETTINGS_DEFAULTS = {
+            safety_on_gpu: false, high_memory_mode: true, very_high_memory_mode: false,
+            high_performance_mode: true, moderate_performance_mode: false,
+            unload_models_from_vram_often: true, very_fast_disk_mode: false,
+            post_process_job_overlap: false, cycle_process_on_model_change: false,
+            horde_model_stickiness: 0.0,
+            process_timeout: 300, inference_timeout: 1800, inference_step_timeout: 600,
+            preload_timeout: 80, post_process_timeout: 60, waiting_for_job_timeout: 600,
+            minutes_allowed_without_jobs: 30, auto_restart_on_idle_minutes: 60,
+            force_restart_timeout: 30, suppress_speed_warnings: false,
+            exit_on_unhandled_faults: false, limited_console_messages: false,
+            stats_output_frequency: 30, purge_loras_on_download: false,
+            remove_maintenance_on_init: true, max_job_retries: 1,
+            max_submit_retries: 10, data_retention_days: 7,
         };
 
         var _settingsLoaded = false;
@@ -4853,6 +4902,84 @@ class WorkerWebUI:
                 _showSettingFeedback(key, true, 'Pending', {pending: true});
             } else {
                 _clearSettingFeedback(key);
+            }
+            _updateSingleResetBtn(key, value);
+        }
+
+        function _isAtDefault(key, value) {
+            if (!Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key)) return false;
+            var def = _SETTINGS_DEFAULTS[key];
+            if (def === null) return false;
+            if (typeof def === 'boolean') return value === def;
+            return Number(value) === def;
+        }
+
+        function _updateSingleResetBtn(key, currentValue) {
+            var btn = document.getElementById('srst-' + key);
+            if (!btn) return;
+            btn.disabled = _isAtDefault(key, currentValue);
+        }
+
+        function _updateAllResetBtns() {
+            for (var key in _SETTINGS_DEFAULTS) {
+                if (!Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key)) continue;
+                var currentVal;
+                if (Object.prototype.hasOwnProperty.call(_settingsPending, key)) {
+                    currentVal = _settingsPending[key];
+                } else if (Object.prototype.hasOwnProperty.call(_settingsSnapshot, key)) {
+                    currentVal = _settingsSnapshot[key];
+                } else {
+                    continue;
+                }
+                _updateSingleResetBtn(key, currentVal);
+            }
+        }
+
+        function resetSettingToDefault(key) {
+            if (!Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key)) return;
+            var def = _SETTINGS_DEFAULTS[key];
+            if (def === null) return;
+            if (typeof def === 'boolean') {
+                var chk = document.querySelector('#srst-' + key + ' ~ label input, label:has(~ #srst-' + key + ') input');
+                // find the checkbox in the same setting-ctrl
+                var btn = document.getElementById('srst-' + key);
+                if (btn) {
+                    var ctrl = btn.closest('.setting-ctrl');
+                    if (ctrl) { var cb = ctrl.querySelector('input[type="checkbox"]'); if (cb) cb.checked = def; }
+                }
+                stageSettingChange(key, def);
+            } else {
+                var inp = document.getElementById('sinp-' + key);
+                if (inp) { inp.value = String(def); }
+                stageSettingChange(key, def);
+            }
+        }
+
+        function showResetAllConfirm() {
+            var modal = document.getElementById('reset-all-confirm-modal');
+            if (!modal) return;
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeResetAllConfirm() {
+            var modal = document.getElementById('reset-all-confirm-modal');
+            if (!modal) return;
+            modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+
+        function dismissResetAllConfirm(event) {
+            if (event.target === event.currentTarget) closeResetAllConfirm();
+        }
+
+        function confirmResetAll() {
+            closeResetAllConfirm();
+            for (var key in _SETTINGS_DEFAULTS) {
+                if (!Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key)) continue;
+                var def = _SETTINGS_DEFAULTS[key];
+                if (def === null) continue;
+                resetSettingToDefault(key);
             }
         }
 
@@ -4996,6 +5123,10 @@ class WorkerWebUI:
                         var chk = (val === true) ? 'checked' : '';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
                         html += '<label class="setting-toggle" title="' + escapeHtml(label) + '"><input type="checkbox" ' + chk + ' onchange="stageSettingChange(\'' + escapeHtml(key) + '\', this.checked)" aria-label="' + escapeHtml(label) + '"><span class="setting-toggle-slider"></span></label>';
+                        if (Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key) && _SETTINGS_DEFAULTS[key] !== null) {
+                            var boolAtDefault = (val === _SETTINGS_DEFAULTS[key]);
+                            html += '<button class="setting-reset-btn" id="srst-' + escapeHtml(key) + '" onclick="resetSettingToDefault(\'' + escapeHtml(key) + '\')" title="Reset to default (' + escapeHtml(String(_SETTINGS_DEFAULTS[key])) + ')" aria-label="Reset ' + escapeHtml(label) + ' to default"' + (boolAtDefault ? ' disabled' : '') + '>&#8635;</button>';
+                        }
                     } else if (type === 'int_auto') {
                         var pfx = spec[7];
                         var _changeFnNames = {queue: 'setMaxQueueSize', models: 'setMaxActiveModels'};
@@ -5042,6 +5173,10 @@ class WorkerWebUI:
                         var step = (type === 'float') ? ' step="0.01"' : ' step="1"';
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
                         html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numVal)) + '"' + minAttr + maxAttr + step + ' id="sinp-' + escapeHtml(key) + '" aria-label="' + escapeHtml(label) + '" onchange="stageNumericSetting(\'' + escapeHtml(key) + '\')" onkeydown="if(event.key===\'Enter\'){stageNumericSetting(\'' + escapeHtml(key) + '\');event.preventDefault();}">';
+                        if (Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key) && _SETTINGS_DEFAULTS[key] !== null) {
+                            var numAtDefault = (val !== null && val !== undefined && Number(val) === _SETTINGS_DEFAULTS[key]);
+                            html += '<button class="setting-reset-btn" id="srst-' + escapeHtml(key) + '" onclick="resetSettingToDefault(\'' + escapeHtml(key) + '\')" title="Reset to default (' + escapeHtml(String(_SETTINGS_DEFAULTS[key])) + ')" aria-label="Reset ' + escapeHtml(label) + ' to default"' + (numAtDefault ? ' disabled' : '') + '>&#8635;</button>';
+                        }
                     }
                     html += '</div></div>';
                 }
@@ -5049,6 +5184,7 @@ class WorkerWebUI:
             }
             body.innerHTML = html || '<div class="settings-unavailable">No configurable settings available.</div>';
             _updateApplyButtonState();
+            _updateAllResetBtns();
             // Render the API reference section for the pause-jobs endpoint
             _renderApiRefSection(body, settings);
             // Fetch and render the Models section after the settings categories
@@ -5807,9 +5943,17 @@ class WorkerWebUI:
         )
 
     async def _handle_errors_clear(self, request: web.Request) -> web.Response:
-        """Clear all accumulated error history."""
+        """Clear all accumulated error history, including the persisted DB log."""
         self.status_data["errors_history"] = []
         self._live_errors_history = []
+        self._persisted_errors = []
+        if self._errors_db_path is not None:
+            try:
+                with sqlite3.connect(self._errors_db_path) as conn:
+                    conn.execute("DELETE FROM errors_log")
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not clear errors from DB: {exc}")
         return web.json_response({"ok": True})
 
     async def _handle_gallery(self, request: web.Request) -> web.Response:
@@ -5974,12 +6118,21 @@ class WorkerWebUI:
         entry = self._gallery_dict.get(gallery_id)
         if entry is None:
             raise web.HTTPNotFound(reason="Gallery image not found")
+        _THUMB_CACHE_HEADERS = {"Cache-Control": "public, max-age=86400, immutable"}
         if thumbnail_only and entry.get("thumbnail"):
             # When a thumbnail is available, omit the full-resolution base64
             # to keep the payload small for the gallery grid.
-            return web.json_response({k: v for k, v in entry.items() if k != "base64"})
-        # If no thumbnail is available (e.g. Pillow not installed), fall back to
-        # returning the full entry including base64 so the client can still render.
+            return web.json_response(
+                {k: v for k, v in entry.items() if k != "base64"},
+                headers=_THUMB_CACHE_HEADERS,
+            )
+        if thumbnail_only and entry.get("base64"):
+            # Pillow not installed — return full PNG as fallback but still allow caching.
+            return web.json_response(
+                {k: v for k, v in entry.items()},
+                headers=_THUMB_CACHE_HEADERS,
+            )
+        # Full image requested (overlay viewer) — no cache header so full-res is always fresh.
         return web.json_response(entry)
 
     async def _handle_get_settings(self, request: web.Request) -> web.Response:

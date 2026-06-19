@@ -249,6 +249,12 @@ class HordeProcessInfo:
     last_inference_step_timestamp: float | None
     """Last time an INFERENCE_STEP heartbeat was received. None until the first step arrives."""
 
+    inference_started_timestamp: float | None
+    """Timestamp when this process entered INFERENCE_STARTING for the current job. None when not inferring.
+
+    Unlike state_entered_timestamp (which resets on every state change), this persists across the
+    INFERENCE_STARTING → INFERENCE_PROCESSING transition so total inference duration can be measured."""
+
     last_received_timestamp: float
     """Last time we updated the process info. If we're regularly working, then this value should change frequently."""
     loaded_horde_model_name: str | None
@@ -330,6 +336,7 @@ class HordeProcessInfo:
         self.last_progress_timestamp = time.time()
         self.last_progress_value = None
         self.last_inference_step_timestamp = None
+        self.inference_started_timestamp: float | None = None
 
         self.last_job_referenced = None
 
@@ -609,6 +616,13 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         self[process_id].last_process_state = new_state
         self[process_id].last_received_timestamp = time.time()
         self[process_id].state_entered_timestamp = time.time()
+
+        # Track when inference starts so total inference duration can be measured independently
+        # of per-state elapsed time (state_entered_timestamp resets on every transition).
+        if new_state == HordeProcessState.INFERENCE_STARTING:
+            self[process_id].inference_started_timestamp = time.time()
+        elif new_state not in (HordeProcessState.INFERENCE_STARTING, HordeProcessState.INFERENCE_PROCESSING):
+            self[process_id].inference_started_timestamp = None
 
         if (
             new_state == HordeProcessState.INFERENCE_COMPLETE
@@ -1437,10 +1451,8 @@ class HordeWorkerProcessManager:
     # Constants for worker config display
     WORKER_CONFIG_REPORT_INTERVAL_SECONDS = 300  # 5 minutes
 
-    # Minimum time (seconds) a WAITING_FOR_JOB process can be heartbeat-silent before it
-    # is considered hung and replaced (when local work is pending).  The effective threshold
-    # is max(bridge_data.process_timeout, _WAITING_FOR_JOB_STALE_THRESHOLD) so that workers
-    # with a high process_timeout are not replaced prematurely.
+    # Retained for reference; the live threshold now comes from bridge_data.waiting_for_job_timeout
+    # (default 600 s, configurable via the webui Timeouts page).
     _WAITING_FOR_JOB_STALE_THRESHOLD = 600  # 10 minutes
 
     # Constants for job retry logic
@@ -6092,9 +6104,6 @@ class HordeWorkerProcessManager:
         if jobs_queued >= max_queue_size:
             return
 
-        if len(self.jobs_pending_inference) >= self.max_inference_processes:
-            return
-
         # Don't start jobs if we can't evaluate safety (NSFW/CSAM)
         if self._process_map.get_first_available_safety_process() is None:
             return
@@ -6328,7 +6337,7 @@ class HordeWorkerProcessManager:
                                 self.remove_maintenance()
                                 logger.success("Maintenance mode automatically deactivated")
                             except Exception:
-                                logger.error("Maintenance mode couldn't been deactivated automatically")
+                                logger.error("Maintenance mode couldn't been deactivated automatically", exc_info=True)
                 elif "we cannot accept workers serving" in job_pop_response.message.lower():
                     logger.warning(f"Failed to pop job (Unrecognized Model): {job_pop_response}")
                     logger.error(
@@ -6663,6 +6672,7 @@ class HordeWorkerProcessManager:
                     logger.error(
                         f"Discarding job {head_job.sdk_api_job_info.id_} from submit queue "
                         "after unexpected exception to prevent queue blockage",
+                        exc_info=True,
                     )
                     self._discard_broken_job(head_job)
 
@@ -7009,6 +7019,7 @@ class HordeWorkerProcessManager:
             except Exception:
                 # Unexpected errors are already logged by logger.catch(reraise=True) in the loop body;
                 # sleep before retrying to keep the control loop alive without duplicating logs.
+                logger.debug("_process_control_loop recovering from exception (see above), sleeping before retry")
                 await asyncio.sleep(self._loop_interval)
 
         while len(self.jobs_pending_inference) > 0:
@@ -8317,7 +8328,7 @@ class HordeWorkerProcessManager:
                 self._shutdown()
                 break
             except Exception as e:
-                logger.error(f"Error in webui update loop: {e}")
+                logger.error(f"Error in webui update loop: {e}", exc_info=True)
                 await asyncio.sleep(self.bridge_data.webui_update_interval)
 
     async def _main_loop(self) -> None:
@@ -8422,7 +8433,7 @@ class HordeWorkerProcessManager:
             q.cancel_join_thread()
             q.close()
         except Exception:
-            pass
+            logger.debug("Failed to close process message queue during cleanup", exc_info=True)
         for _attr in ("_sem", "_rlock", "_wlock"):
             inner = getattr(q, _attr, None)
             if inner is not None:
@@ -8433,7 +8444,10 @@ class HordeWorkerProcessManager:
             try:
                 _process_info.pipe_connection.close()
             except Exception:
-                pass
+                logger.debug(
+                    f"Failed to close pipe connection for process {_process_info.process_id} during cleanup",
+                    exc_info=True,
+                )
 
     def start(self) -> None:
         """Start the process manager."""
@@ -8983,8 +8997,23 @@ class HordeWorkerProcessManager:
                     self.bridge_data.inference_step_timeout,
                 )
 
-            if is_stuck_inference:
-                # Enhanced logging for stuck job detection
+            # Check total inference duration even if per-step heartbeats are alive.
+            # This fires only when is_stuck_on_inference() didn't already trigger.
+            if (
+                not is_stuck_inference
+                and process_info.inference_started_timestamp is not None
+                and (now - process_info.inference_started_timestamp) > self.bridge_data.inference_timeout
+            ):
+                total_elapsed = now - process_info.inference_started_timestamp
+                logger.error(
+                    f"{process_info} exceeded total inference_timeout of {self.bridge_data.inference_timeout}s "
+                    f"(running for {total_elapsed:.1f}s) — replacing.",
+                )
+                self._replace_inference_process(process_info)
+                any_replaced = any_process_replaced = True
+
+            elif is_stuck_inference:
+                # Per-step stall detected — enhanced logging then replace.
                 time_since_heartbeat = now - process_info.last_heartbeat_timestamp
                 time_since_progress = now - process_info.last_progress_timestamp
                 progress_str = (
@@ -9113,14 +9142,14 @@ class HordeWorkerProcessManager:
                 # PROCESS_ENDING.  A freshly replaced process starts in PROCESS_STARTING (with
                 # a fresh timestamp) so it will never match this condition immediately after a
                 # recovery — no need to gate this check on _recently_recovered.
-                # The effective threshold is max(process_timeout, _WAITING_FOR_JOB_STALE_THRESHOLD)
+                # The effective threshold is max(process_timeout, waiting_for_job_timeout)
                 # so that even workers with a short process_timeout wait at least
-                # _WAITING_FOR_JOB_STALE_THRESHOLD seconds before a replacement is triggered.
+                # waiting_for_job_timeout seconds before a replacement is triggered.
                 if (
                     process_info.process_type == HordeProcessType.INFERENCE
                     and process_info.last_process_state == HordeProcessState.WAITING_FOR_JOB
                     and (now - process_info.last_heartbeat_timestamp)
-                    > max(self.bridge_data.process_timeout, HordeWorkerProcessManager._WAITING_FOR_JOB_STALE_THRESHOLD)
+                    > max(self.bridge_data.process_timeout, self.bridge_data.waiting_for_job_timeout)
                 ):
                     logger.error(
                         f"{process_info} has been idle in WAITING_FOR_JOB for "
