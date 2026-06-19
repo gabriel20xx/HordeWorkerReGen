@@ -145,3 +145,94 @@ class TestConfigureLoggerFormatFileLogging:
         content = (tmp_path / "bridge.log").read_text(encoding="utf-8")
         assert "no-logging file message" in content
 
+    def test_main_process_creates_crash_and_webui_logs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """process_id=None should also create crash.log and webui.log."""
+        import horde_worker_regen.logger_config as mod
+
+        monkeypatch.setattr(mod, "_LOGS_DIR", tmp_path)
+        monkeypatch.delenv("AIWORKER_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("AIWORKER_DEBUG", raising=False)
+
+        mod.configure_logger_format(process_id=None)
+
+        assert (tmp_path / "crash.log").exists(), "crash.log should be created for the main process"
+        assert (tmp_path / "webui.log").exists(), "webui.log should be created for the main process"
+
+    def test_subprocess_does_not_create_crash_or_webui_logs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Subprocesses should NOT create crash.log or webui.log."""
+        import horde_worker_regen.logger_config as mod
+
+        monkeypatch.setattr(mod, "_LOGS_DIR", tmp_path)
+        monkeypatch.delenv("AIWORKER_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("AIWORKER_DEBUG", raising=False)
+
+        mod.configure_logger_format(process_id=2)
+
+        assert not (tmp_path / "crash.log").exists(), "crash.log should NOT be created for subprocesses"
+        assert not (tmp_path / "webui.log").exists(), "webui.log should NOT be created for subprocesses"
+
+    def test_crash_log_receives_critical_messages(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """crash.log should capture CRITICAL-level messages."""
+        import horde_worker_regen.logger_config as mod
+
+        monkeypatch.setattr(mod, "_LOGS_DIR", tmp_path)
+        monkeypatch.delenv("AIWORKER_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("AIWORKER_DEBUG", raising=False)
+
+        mod.configure_logger_format(process_id=None)
+        logger.critical("test critical for crash log")
+        logger.complete()
+
+        content = (tmp_path / "crash.log").read_text(encoding="utf-8")
+        assert "test critical for crash log" in content
+
+    def test_crash_log_does_not_receive_error_messages(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """crash.log should NOT capture ERROR or lower messages."""
+        import horde_worker_regen.logger_config as mod
+
+        monkeypatch.setattr(mod, "_LOGS_DIR", tmp_path)
+        monkeypatch.delenv("AIWORKER_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("AIWORKER_DEBUG", raising=False)
+
+        mod.configure_logger_format(process_id=None)
+        logger.error("error only message")
+        logger.complete()
+
+        content = (tmp_path / "crash.log").read_text(encoding="utf-8")
+        assert "error only message" not in content
+
+    def test_file_format_includes_source_location(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """bridge.log entries should include module:function:line source location."""
+        import horde_worker_regen.logger_config as mod
+
+        monkeypatch.setattr(mod, "_LOGS_DIR", tmp_path)
+        monkeypatch.delenv("AIWORKER_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("AIWORKER_DEBUG", raising=False)
+
+        mod.configure_logger_format(process_id=None)
+        logger.info("source location test")
+        logger.complete()
+
+        content = (tmp_path / "bridge.log").read_text(encoding="utf-8")
+        # Format: timestamp | level | module:function:line | message
+        # The line should contain at least one colon-separated location field
+        assert "source location test" in content
+        # Find the line containing our message and verify it has the location field
+        matching_lines = [line for line in content.splitlines() if "source location test" in line]
+        assert matching_lines, "Message should appear in log file"
+        log_line = matching_lines[0]
+        parts = log_line.split(" | ")
+        assert len(parts) >= 4, f"Log line should have 4 '|'-separated fields, got: {log_line!r}"
+        location_field = parts[2]
+        assert ":" in location_field, f"Location field should be 'module:function:line', got: {location_field!r}"
+
