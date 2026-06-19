@@ -539,12 +539,19 @@ class WorkerWebUI:
                         "gallery_id": row[0],
                         "timestamp": row[1],
                         "model": row[2],
-                        "base64": row[3],
                         "is_nsfw": bool(row[5]),
                         "is_csam": bool(row[6]),
                     }
                     if row[4] is not None:
+                        # Keep only the lightweight thumbnail in memory; the full-resolution
+                        # base64 stays in the DB and is fetched on demand by the overlay
+                        # viewer. This bounds the startup memory baseline (full PNGs are
+                        # several MB each and would otherwise all be loaded into RAM).
                         entry["thumbnail"] = row[4]
+                    else:
+                        # No thumbnail available — keep the full-resolution base64 as the
+                        # only displayable copy.
+                        entry["base64"] = row[3]
                     if row[7]:
                         try:
                             entry.update(json.loads(row[7]))
@@ -6570,16 +6577,22 @@ class WorkerWebUI:
             (e for e in self._gallery_dict.values() if abs(e.get("timestamp", 0) - latest_ts) < 2.0),
             key=lambda e: e.get("gallery_id", 0),
         )
-        result = [
-            {
-                "base64": e.get("base64", ""),
-                "timestamp": e.get("timestamp", 0),
-                "model": e.get("model", ""),
-                "is_nsfw": e.get("is_nsfw", False),
-                "is_csam": e.get("is_csam", False),
-            }
-            for e in batch
-        ]
+        result = []
+        for e in batch:
+            # Full-resolution base64 may have been evicted from memory to bound RAM; it is
+            # persisted in the gallery DB, so fetch it back on demand when missing.
+            b64 = e.get("base64")
+            if not b64:
+                b64 = self._fetch_gallery_base64_from_db(e.get("gallery_id"))
+            result.append(
+                {
+                    "base64": b64 or "",
+                    "timestamp": e.get("timestamp", 0),
+                    "model": e.get("model", ""),
+                    "is_nsfw": e.get("is_nsfw", False),
+                    "is_csam": e.get("is_csam", False),
+                },
+            )
         return web.json_response({"images": result})
 
     async def _handle_gallery_image(self, request: web.Request) -> web.Response:
@@ -6620,6 +6633,12 @@ class WorkerWebUI:
                 headers=_THUMB_CACHE_HEADERS,
             )
         # Full image requested (overlay viewer) — no cache header so full-res is always fresh.
+        # The full-resolution base64 may have been evicted from memory to bound RAM (it is
+        # persisted in the gallery DB); fetch it back on demand when it is not in memory.
+        if not entry.get("base64"):
+            full_b64 = self._fetch_gallery_base64_from_db(gallery_id)
+            if full_b64:
+                entry = {**entry, "base64": full_b64}
         return web.json_response(entry)
 
     async def _handle_get_settings(self, request: web.Request) -> web.Response:
@@ -6953,6 +6972,29 @@ class WorkerWebUI:
 
         return web.json_response({"restarting": True})
 
+    def _fetch_gallery_base64_from_db(self, gallery_id: int | None) -> str | None:
+        """Return the full-resolution base64 PNG for a gallery image from the database.
+
+        In-memory gallery entries keep only a small thumbnail once the full-resolution
+        image has been persisted (see :meth:`add_gallery_image`), so the overlay viewer
+        and last-batch endpoints fetch the full image back on demand. Returns ``None``
+        when no database is configured or the row cannot be read.
+        """
+        if self._gallery_db_path is None or gallery_id is None:
+            return None
+        try:
+            with sqlite3.connect(self._gallery_db_path) as conn:
+                row = conn.execute(
+                    "SELECT base64_data FROM gallery_images WHERE gallery_id = ? ORDER BY id DESC LIMIT 1",
+                    (gallery_id,),
+                ).fetchone()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load gallery image {gallery_id} from database: {exc}")
+            return None
+        if row and row[0]:
+            return row[0]
+        return None
+
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
         """Append one image entry to the gallery history.
 
@@ -6980,6 +7022,7 @@ class WorkerWebUI:
         self.status_data["images_count"] = len(self._gallery_dict)
 
         # Persist to database.
+        persisted = False
         if self._gallery_db_path is not None:
             _known_cols = {"gallery_id", "timestamp", "model", "base64", "thumbnail", "is_nsfw", "is_csam"}
             extra = {k: v for k, v in entry.items() if k not in _known_cols}
@@ -7004,8 +7047,20 @@ class WorkerWebUI:
                         ),
                     )
                     conn.commit()
+                persisted = True
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Could not persist gallery image to database: {exc}")
+
+        # Bound in-RAM growth: the full-resolution base64 PNG (several MB each) is the
+        # dominant memory cost and the reason the worker can exhaust RAM and be OOM-killed
+        # (taking down the whole container) after running for a while. Once the image is
+        # safely persisted to the gallery DB and a lightweight thumbnail exists for the grid
+        # view, drop the full-resolution base64 from the in-memory entry; the overlay viewer
+        # fetches it back from the DB on demand (see _handle_gallery_image /
+        # _handle_gallery_last_batch). When no DB is configured or no thumbnail could be
+        # generated, the base64 is kept in memory as the only available copy.
+        if persisted and entry.get("thumbnail") and entry.get("base64") is not None:
+            entry.pop("base64", None)
 
     def update_status(
         self,
