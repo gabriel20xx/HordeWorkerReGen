@@ -1547,12 +1547,20 @@ class WorkerWebUI:
         .setting-textarea { width: 200px; min-height: 54px; max-height: 180px; padding: 5px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; resize: vertical; transition: border-color 0.15s; font-family: inherit; line-height: 1.5; }
         .setting-textarea:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .setting-textarea { background: #1e293b; border-color: #334155; color: #e2e8f0; }
-        .prompt-filter-row .setting-ctrl { flex-direction: column; align-items: flex-start; gap: 10px; min-width: 320px; max-width: 480px; }
-        .pf-section { width: 100%; }
+        .pf-block { grid-column: 1 / -1; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+        .pf-block:hover { border-color: #cbd5e1; }
+        [data-theme="dark"] .pf-block:hover { border-color: #334155; }
+        .pf-block-title { font-size: 0.88rem; font-weight: 700; color: #1e293b; margin-bottom: 3px; }
+        [data-theme="dark"] .pf-block-title { color: #e2e8f0; }
+        .pf-block-desc { font-size: 0.75rem; color: #64748b; margin-bottom: 12px; }
+        [data-theme="dark"] .pf-block-desc { color: #94a3b8; }
+        .pf-columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+        @media (max-width: 700px) { .pf-columns { grid-template-columns: 1fr; } }
+        .pf-col { display: flex; flex-direction: column; }
         .pf-section-label { font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 5px; }
         [data-theme="dark"] .pf-section-label { color: #94a3b8; }
-        .pf-pills { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; margin-bottom: 5px; }
-        .pf-pill { display: inline-flex; align-items: center; padding: 2px 9px; background: #dbeafe; color: #1d4ed8; border-radius: 10px; font-size: 0.78rem; cursor: pointer; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; transition: background 0.13s, color 0.13s; }
+        .pf-pills { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; margin-bottom: 5px; flex: 1; align-content: flex-start; }
+        .pf-pill { display: inline-flex; align-items: center; padding: 2px 9px; background: #dbeafe; color: #1d4ed8; border-radius: 10px; font-size: 0.78rem; cursor: pointer; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; transition: background 0.13s, color 0.13s; }
         .pf-pill:hover { background: #fecaca; color: #dc2626; }
         .pf-pill--replace { background: #fef9c3; color: #92400e; }
         .pf-pill--replace:hover { background: #fecaca; color: #dc2626; }
@@ -1560,7 +1568,7 @@ class WorkerWebUI:
         [data-theme="dark"] .pf-pill:hover { background: #450a0a; color: #fca5a5; }
         [data-theme="dark"] .pf-pill--replace { background: #3b2600; color: #fde68a; }
         [data-theme="dark"] .pf-pill--replace:hover { background: #450a0a; color: #fca5a5; }
-        .pf-input-row { display: flex; align-items: center; gap: 5px; }
+        .pf-input-row { display: flex; align-items: center; gap: 5px; margin-top: auto; }
         .pf-input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; font-family: inherit; height: var(--action-btn-height); box-sizing: border-box; }
         .pf-input:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .pf-input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
@@ -5519,15 +5527,17 @@ class WorkerWebUI:
                 var appendVal = Array.isArray(getVal(appendKey)) ? getVal(appendKey) : [];
                 var removeVal = Array.isArray(getVal(removeKey)) ? getVal(removeKey) : [];
                 var replaceVal = Array.isArray(getVal(replaceKey)) ? getVal(replaceKey) : [];
-                var label = type === 'positive' ? 'Positive Prompt' : 'Negative Prompt';
+                var title = type === 'positive' ? 'Positive Prompt Filters' : 'Negative Prompt Filters';
                 var desc = 'Filters applied to every ' + type + ' prompt before generation and gallery saving. Original prompt sent to Horde unchanged.';
-                html += '<div class="setting-row prompt-filter-row">';
-                html += '<div class="setting-info"><div class="setting-label">' + escapeHtml(label) + '</div>';
-                html += '<div class="setting-desc">' + escapeHtml(desc) + '</div></div>';
-                html += '<div class="setting-ctrl">';
 
-                // Add section
-                html += '<div class="pf-section"><div class="pf-section-label">Add</div>';
+                html += '<div class="pf-block">';
+                html += '<div class="pf-block-title">' + escapeHtml(title) + '</div>';
+                html += '<div class="pf-block-desc">' + escapeHtml(desc) + '</div>';
+                html += '<div class="pf-columns">';
+
+                // Add column
+                html += '<div class="pf-col">';
+                html += '<div class="pf-section-label">Add</div>';
                 html += '<div class="pf-pills" id="pfpills-' + type + '-add">';
                 appendVal.forEach(function(item) {
                     html += '<span class="pf-pill" data-value="' + escapeHtml(item) + '" onclick="_pfRemovePill(this,\'' + type + '-add\')">' + escapeHtml(item) + ' ×</span>';
@@ -5536,8 +5546,9 @@ class WorkerWebUI:
                 html += '<div class="pf-input-row"><input type="text" class="pf-input" id="pfinp-' + type + '-add" placeholder="String to append…" onkeydown="if(event.key===\'Enter\'){pfAddPill(\'' + type + '-add\');event.preventDefault();}"><button class="pf-add-btn" onclick="pfAddPill(\'' + type + '-add\')" title="Add">+</button></div>';
                 html += '</div>';
 
-                // Remove section
-                html += '<div class="pf-section"><div class="pf-section-label">Remove</div>';
+                // Remove column
+                html += '<div class="pf-col">';
+                html += '<div class="pf-section-label">Remove</div>';
                 html += '<div class="pf-pills" id="pfpills-' + type + '-remove">';
                 removeVal.forEach(function(item) {
                     html += '<span class="pf-pill" data-value="' + escapeHtml(item) + '" onclick="_pfRemovePill(this,\'' + type + '-remove\')">' + escapeHtml(item) + ' ×</span>';
@@ -5546,8 +5557,9 @@ class WorkerWebUI:
                 html += '<div class="pf-input-row"><input type="text" class="pf-input" id="pfinp-' + type + '-remove" placeholder="String to remove…" onkeydown="if(event.key===\'Enter\'){pfAddPill(\'' + type + '-remove\');event.preventDefault();}"><button class="pf-add-btn" onclick="pfAddPill(\'' + type + '-remove\')" title="Add">+</button></div>';
                 html += '</div>';
 
-                // Replace section
-                html += '<div class="pf-section"><div class="pf-section-label">Replace</div>';
+                // Replace column
+                html += '<div class="pf-col">';
+                html += '<div class="pf-section-label">Replace</div>';
                 html += '<div class="pf-pills" id="pfpills-' + type + '-replace">';
                 replaceVal.forEach(function(rule) {
                     var parts = rule.split('==>', 2);
