@@ -61,6 +61,10 @@ RUN --mount=type=cache,target="${PIP_CACHE_DIR}",sharing=locked,id=pip-cache \
         pip install opencv-python-headless -r requirements.txt -U --extra-index-url "https://download.pytorch.org/whl/cu${CUDA_VERSION_SHORT}"; \
     fi
 
+# Remove legacy annotator files that hordelib warns about on startup
+RUN find "${APP_HOME}/venv/lib" -name "dpt_hybrid-midas-501f0c75.pt" \
+    -path "*/comfy_controlnet_preprocessors/ckpts/*" -delete || true
+
 # Stage 3: Final stage
 FROM builder AS final
 

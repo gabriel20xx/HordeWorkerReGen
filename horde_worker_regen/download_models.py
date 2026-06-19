@@ -1,6 +1,28 @@
 """Contains the code to download all models specified in the config file. Executable as a standalone script."""
 
+import importlib.util
+import pathlib
 import warnings
+
+# Files that hordelib used to bundle inside its package that have since moved.
+_HORDELIB_LEGACY_ANNOTATOR_FILES = [
+    "nodes/comfy_controlnet_preprocessors/ckpts/dpt_hybrid-midas-501f0c75.pt",
+]
+
+
+def _remove_legacy_annotators() -> None:
+    """Delete stale annotator files that hordelib moved out of its package directory."""
+    spec = importlib.util.find_spec("hordelib")
+    if spec is None or not spec.origin:
+        return
+    pkg_root = pathlib.Path(spec.origin).parent
+    for rel in _HORDELIB_LEGACY_ANNOTATOR_FILES:
+        legacy = pkg_root / rel
+        if legacy.exists():
+            try:
+                legacy.unlink()
+            except OSError:
+                pass
 
 
 def download_all_models(
@@ -137,6 +159,7 @@ def download_all_models(
                 continue
 
             SharedModelManager.manager.controlnet.download_model(cn_model)
+        _remove_legacy_annotators()
         if not SharedModelManager.preload_annotators():
             logger.error("Failed to download the controlnet annotators")
             exit(1)

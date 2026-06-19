@@ -3144,13 +3144,12 @@ class HordeWorkerProcessManager:
                     # f"{message.model_dump(exclude={'job_result_images_base64', 'replacement_image_base64'})}",
                 )
 
-            # These events happening are program-breaking conditions that (hopefully) should never happen in production
-            # and are mainly to make debugging easier when making changes to the code, but serve as a guard against
-            # truly catastrophic failures
             if not isinstance(message, HordeProcessMessage):
-                raise ValueError(f"Received a message that is not a HordeProcessMessage: {message}")
+                logger.error(f"Received a message that is not a HordeProcessMessage (skipping): {message}")
+                continue
             if message.process_id not in self._process_map:
-                raise ValueError(f"Received a message from an unknown process: {message}")
+                logger.warning(f"Received a message from an unknown process (skipping): process_id={message.process_id}")
+                continue
 
             known_launch_identifier = self._process_map[message.process_id].process_launch_identifier
 
