@@ -2335,7 +2335,8 @@ class HordeWorkerProcessManager:
         if not hasattr(self.bridge_data, key):
             raise ValueError(f"Unknown bridge_data field: '{key}'")
         setattr(self.bridge_data, key, value)
-        logger.info(f"Runtime setting '{key}' changed to {value!r} via web UI")
+        if not (isinstance(value, list) and len(value) == 0):
+            logger.info(f"Runtime setting '{key}' changed to {value!r} via web UI")
         # Propagate data_retention_days to the webui so the database is pruned immediately.
         if key == "data_retention_days" and self.webui is not None:
             self.webui.set_data_retention_days(int(value))
