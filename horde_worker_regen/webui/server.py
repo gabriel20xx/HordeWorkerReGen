@@ -3274,6 +3274,8 @@ class WorkerWebUI:
         // Tracks the last image submission timestamp for which images have been fetched.
         // Images are only re-fetched when this value changes, keeping /api/status lightweight.
         let _lastFetchedImageTimestamp = null;
+        // Stores the raw timestamp so the 1-second tick can reformat the "X seconds ago" label.
+        let _lastImageSubmissionTimestamp = null;
         // Track the current job id and its highest-seen progress so the bar never goes
         // backwards for the same job.  Reset whenever the displayed job id changes.
         let _currentJobId = null;
@@ -3299,6 +3301,10 @@ class WorkerWebUI:
             const totalEl = document.getElementById('job-total-timer');
             if (totalEl) {
                 totalEl.textContent = _currentJobStartTime ? '\u23F1 ' + formatElapsed(_currentJobStartTime) : '';
+            }
+            const timeEl = document.getElementById('overview-image-time');
+            if (timeEl) {
+                timeEl.textContent = _lastImageSubmissionTimestamp ? formatTimeAgo(_lastImageSubmissionTimestamp) : '';
             }
         }, 1000);
         function _getImageKey(rawB64, timestamp, model, safety) {
@@ -3666,7 +3672,7 @@ class WorkerWebUI:
                         ojd.innerHTML = '<div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div>';
                     }
                     const hasImage = data.last_image_submission_timestamp && data.last_image_submission_timestamp !== 0;
-                    document.getElementById('overview-image-time').textContent = hasImage ? formatTimeAgo(data.last_image_submission_timestamp) : '';
+                    _lastImageSubmissionTimestamp = hasImage ? data.last_image_submission_timestamp : null;
                     // Fetch images separately so the status payload stays small.
                     // Images are re-fetched only when the submission timestamp changes.
                     if (data.last_image_submission_timestamp !== _lastFetchedImageTimestamp) {
