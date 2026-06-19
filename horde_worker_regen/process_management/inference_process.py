@@ -864,7 +864,12 @@ class HordeInferenceProcess(HordeProcess):
                     cleaned_negative = _MULTIPLE_SPACES_PATTERN.sub(" ", cleaned_negative)
                     cleaned_negative = cleaned_negative.strip(" ,")
                     self._last_sanitized_negative_prompt = cleaned_negative
-                    job_info.payload.prompt = f"{positive_prompt}###{cleaned_negative}"
+                    # payload is a frozen Pydantic model — use model_copy to produce a new
+                    # instance with the updated prompt rather than assigning in place.
+                    new_payload = job_info.payload.model_copy(
+                        update={"prompt": f"{positive_prompt}###{cleaned_negative}"},
+                    )
+                    job_info = job_info.model_copy(update={"payload": new_payload})
             except Exception as e:
                 logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
             # ! IMPORTANT: End own code

@@ -3716,20 +3716,26 @@ class HordeWorkerProcessManager:
                                     gallery_image["height"] = payload.height
                                 if payload.prompt is not None:
                                     _gparts = payload.prompt.split("###", 1)
+                                    _gpos_orig = _gparts[0].strip()
+                                    _gneg_orig = _gparts[1].strip() if len(_gparts) > 1 else ""
                                     _gpos = _apply_prompt_filters(
-                                        _gparts[0].strip(),
+                                        _gpos_orig,
                                         append=self.bridge_data.positive_prompt_append,
                                         remove=self.bridge_data.positive_prompt_remove,
                                         replace=self.bridge_data.positive_prompt_replace,
                                     )
                                     _gneg = _apply_prompt_filters(
-                                        _gparts[1].strip() if len(_gparts) > 1 else "",
+                                        _gneg_orig,
                                         append=self.bridge_data.negative_prompt_append,
                                         remove=self.bridge_data.negative_prompt_remove,
                                         replace=self.bridge_data.negative_prompt_replace,
                                     )
                                     gallery_image["positive_prompt"] = _gpos.strip()
                                     gallery_image["negative_prompt"] = _gneg.strip()
+                                    if _gpos.strip() != _gpos_orig:
+                                        gallery_image["original_positive_prompt"] = _gpos_orig
+                                    if _gneg.strip() != _gneg_orig:
+                                        gallery_image["original_negative_prompt"] = _gneg_orig
                             if completed_job_info.time_to_generate is not None:
                                 gallery_image["time_to_generate"] = completed_job_info.time_to_generate
                             self.webui.add_gallery_image(gallery_image)

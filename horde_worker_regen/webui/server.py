@@ -1227,8 +1227,13 @@ class WorkerWebUI:
         .gallery-list-model { font-size: 0.84rem; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
         .gallery-list-steps { font-size: 0.72rem; color: #64748b; background: #e2e8f0; border-radius: 4px; padding: 1px 5px; white-space: nowrap; flex-shrink: 0; }
         .gallery-list-ts { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
-        .gallery-list-prompt { font-size: 0.73rem; color: #475569; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .gallery-list-prompt { font-size: 0.73rem; color: #475569; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
         .gallery-list-prompt.neg { color: #94a3b8; }
+        .gallery-list-item.prompt-expanded .gallery-list-prompt { white-space: normal; overflow: visible; text-overflow: unset; word-break: break-word; }
+        .gallery-list-item { cursor: default; }
+        .gallery-list-thumb { cursor: pointer; }
+        .prompt-diff-removed { color: #b91c1c; text-decoration: line-through; background: #fee2e2; border-radius: 2px; padding: 0 2px; }
+        .prompt-diff-added { color: #15803d; background: #dcfce7; border-radius: 2px; padding: 0 2px; }
         .gallery-list-badges { display: flex; gap: 4px; margin-top: 4px; }
         .gallery-list-item.loading .gallery-list-thumb { background: linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 50%,#f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
         [data-theme="dark"] .gallery-list-item { border-color: #2d3f55; background: #151e2e; }
@@ -1240,6 +1245,8 @@ class WorkerWebUI:
         [data-theme="dark"] .gallery-list-prompt.neg { color: #64748b; }
         [data-theme="dark"] .gallery-list-thumb { background: #1e293b; }
         [data-theme="dark"] .gallery-list-item.loading .gallery-list-thumb { background: linear-gradient(90deg,#1e293b 25%,#2d3f55 50%,#1e293b 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
+        [data-theme="dark"] .prompt-diff-removed { color: #f87171; background: #450a0a; }
+        [data-theme="dark"] .prompt-diff-added { color: #86efac; background: #052e16; }
 
         .last-image-container { display: flex; align-items: center; justify-content: center; border-radius: 8px; height: 400px; overflow: hidden; }
         .last-image-container.loading { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: gallery-shimmer 1.5s infinite; }
@@ -2177,6 +2184,55 @@ class WorkerWebUI:
         var _galleryCurrentPageImages = null; // cached for view-mode switch without re-fetch
         let cachedWorkersList = (function() { try { var s = localStorage.getItem('horde-workers-list'); var parsed = s ? JSON.parse(s) : []; return Array.isArray(parsed) ? parsed : []; } catch(e) { return []; } })();
         let currentWorkerName = '';
+        // Word-level LCS diff between two prompt strings.
+        // Returns an array of {t: 'eq'|'del'|'add', w: string} tokens.
+        function computeWordDiff(origText, filtText) {
+            var o = origText.trim().split(/\s+/).filter(Boolean);
+            var f = filtText.trim().split(/\s+/).filter(Boolean);
+            var m = o.length, n = f.length;
+            var dp = new Array(m + 1);
+            for (var _i = 0; _i <= m; _i++) dp[_i] = new Array(n + 1).fill(0);
+            for (var _i = 1; _i <= m; _i++)
+                for (var _j = 1; _j <= n; _j++)
+                    dp[_i][_j] = o[_i-1] === f[_j-1] ? dp[_i-1][_j-1] + 1 : Math.max(dp[_i-1][_j], dp[_i][_j-1]);
+            var diff = [], _i = m, _j = n;
+            while (_i > 0 || _j > 0) {
+                if (_i > 0 && _j > 0 && o[_i-1] === f[_j-1]) { diff.unshift({t:'eq', w:o[_i-1]}); _i--; _j--; }
+                else if (_j > 0 && (_i === 0 || dp[_i][_j-1] >= dp[_i-1][_j])) { diff.unshift({t:'add', w:f[_j-1]}); _j--; }
+                else { diff.unshift({t:'del', w:o[_i-1]}); _i--; }
+            }
+            return diff;
+        }
+        // Render a prompt string with diff markers if an original (pre-filter) version exists.
+        // Removed words show as red strikethrough; added words show as green highlight.
+        function renderPromptDiff(filtText, origText) {
+            if (!filtText) return '';
+            if (!origText || origText === filtText) return escapeHtml(filtText);
+            var diff = computeWordDiff(origText, filtText);
+            var html = '', prevType = null, buf = [];
+            function flush() {
+                if (!buf.length) return;
+                var text = escapeHtml(buf.join(' '));
+                if (prevType === 'del') html += '<span class="prompt-diff-removed">' + text + '</span>';
+                else if (prevType === 'add') html += '<span class="prompt-diff-added">' + text + '</span>';
+                else html += text;
+                buf = [];
+            }
+            diff.forEach(function(d) {
+                if (d.t !== prevType) { flush(); prevType = d.t; }
+                buf.push(d.w);
+            });
+            flush();
+            return html;
+        }
+        // Event delegation: expand/collapse prompts in gallery list view on meta-area click.
+        document.addEventListener('click', function(evt) {
+            if (galleryViewMode !== 'list') return;
+            var meta = evt.target.closest ? evt.target.closest('.gallery-list-meta') : null;
+            if (!meta) return;
+            var item = meta.closest('.gallery-list-item');
+            if (item) item.classList.toggle('prompt-expanded');
+        });
         // Event delegation: handle delete-button clicks on the workers list container.
         document.addEventListener('click', function(evt) {
             var btn = evt.target.closest('.worker-delete-btn');
@@ -2985,8 +3041,10 @@ class WorkerWebUI:
                 if (isList) {
                     const tsLong = formatTimestampFull(img.timestamp);
                     const steps = img.inference_steps ? img.inference_steps + ' steps' : '';
-                    const posPrompt = img.positive_prompt ? escapeHtml(img.positive_prompt) : '';
-                    const negPrompt = img.negative_prompt ? escapeHtml(img.negative_prompt) : '';
+                    const posPromptHtml = renderPromptDiff(img.positive_prompt || '', img.original_positive_prompt || '');
+                    const negPromptHtml = renderPromptDiff(img.negative_prompt || '', img.original_negative_prompt || '');
+                    const posTitle = img.positive_prompt ? escapeHtml(img.positive_prompt) : '';
+                    const negTitle = img.negative_prompt ? escapeHtml(img.negative_prompt) : '';
                     const flagBadges = (isNsfw || isCsam) ? '<div class="gallery-list-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                     const imgHtml = validCache ? '<img alt="Generated image" src="'+cachedSrc+'" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" />' : '<img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" />';
                     const row1 = (model || steps) ? '<div class="gallery-list-row1">'+(model ? '<span class="gallery-list-model">'+model+'</span>' : '')+(steps ? '<span class="gallery-list-steps">'+steps+'</span>' : '')+'</div>' : '';
@@ -2995,8 +3053,8 @@ class WorkerWebUI:
                         '<div class="gallery-list-meta">' +
                         row1 +
                         (tsLong ? '<div class="gallery-list-ts">'+tsLong+'</div>' : '') +
-                        (posPrompt ? '<div class="gallery-list-prompt pos" title="'+posPrompt+'">'+posPrompt+'</div>' : '') +
-                        (negPrompt ? '<div class="gallery-list-prompt neg" title="'+negPrompt+'">'+negPrompt+'</div>' : '') +
+                        (posPromptHtml ? '<div class="gallery-list-prompt pos" title="'+posTitle+'">'+posPromptHtml+'</div>' : '') +
+                        (negPromptHtml ? '<div class="gallery-list-prompt neg" title="'+negTitle+'">'+negPromptHtml+'</div>' : '') +
                         flagBadges +
                         '</div></div>';
                 }
@@ -3176,8 +3234,10 @@ class WorkerWebUI:
                             if (isList) {
                                 const tsLong = formatTimestampFull(img.timestamp);
                                 const steps = img.inference_steps ? img.inference_steps + ' steps' : '';
-                                const posPrompt = img.positive_prompt ? escapeHtml(img.positive_prompt) : '';
-                                const negPrompt = img.negative_prompt ? escapeHtml(img.negative_prompt) : '';
+                                const posPromptHtml = renderPromptDiff(img.positive_prompt || '', img.original_positive_prompt || '');
+                                const negPromptHtml = renderPromptDiff(img.negative_prompt || '', img.original_negative_prompt || '');
+                                const posTitle = img.positive_prompt ? escapeHtml(img.positive_prompt) : '';
+                                const negTitle = img.negative_prompt ? escapeHtml(img.negative_prompt) : '';
                                 const flagBadges = (isNsfw || isCsam) ? '<div class="gallery-list-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                                 const row1 = (model || steps) ? '<div class="gallery-list-row1">'+(model ? '<span class="gallery-list-model">'+model+'</span>' : '')+(steps ? '<span class="gallery-list-steps">'+steps+'</span>' : '')+'</div>' : '';
                                 div.className = 'gallery-list-item loading';
@@ -3185,7 +3245,7 @@ class WorkerWebUI:
                                 if (isNsfw) div.setAttribute('data-nsfw', '1');
                                 if (isCsam) div.setAttribute('data-csam', '1');
                                 div.innerHTML = '<div class="gallery-list-thumb"><img alt="Generated image" data-gallery-id="'+galleryId+'" data-idx="'+idx+'" style="display:none;" /></div>' +
-                                    '<div class="gallery-list-meta">'+row1+(tsLong ? '<div class="gallery-list-ts">'+tsLong+'</div>' : '')+(posPrompt ? '<div class="gallery-list-prompt pos" title="'+posPrompt+'">'+posPrompt+'</div>' : '')+(negPrompt ? '<div class="gallery-list-prompt neg" title="'+negPrompt+'">'+negPrompt+'</div>' : '')+flagBadges+'</div>';
+                                    '<div class="gallery-list-meta">'+row1+(tsLong ? '<div class="gallery-list-ts">'+tsLong+'</div>' : '')+(posPromptHtml ? '<div class="gallery-list-prompt pos" title="'+posTitle+'">'+posPromptHtml+'</div>' : '')+(negPromptHtml ? '<div class="gallery-list-prompt neg" title="'+negTitle+'">'+negPromptHtml+'</div>' : '')+flagBadges+'</div>';
                             } else {
                                 const flagBadges = (isNsfw || isCsam) ? '<div class="image-flag-badges">'+(isCsam ? '<span class="image-flag-badge csam">CSAM</span>' : '')+(isNsfw ? '<span class="image-flag-badge nsfw">NSFW</span>' : '')+'</div>' : '';
                                 const cap = [ts, model].filter(Boolean).join(' \u00b7 ');
@@ -3775,8 +3835,14 @@ class WorkerWebUI:
                             }
                             fetchLastImage(data.last_image_submission_timestamp);
                         } else {
+                            var _prevImageTs = _lastFetchedImageTimestamp;
                             _lastFetchedImageTimestamp = data.last_image_submission_timestamp;
-                            renderLastImages([], document.getElementById('overview-image-container'), 0, null, null);
+                            // Only clear the container when a real session image is gone (prevTs > 0 → 0).
+                            // On the initial null → 0 transition leave the container alone so the
+                            // initializeUpdates gallery preview can still render.
+                            if (_prevImageTs !== null && _prevImageTs !== 0) {
+                                renderLastImages([], document.getElementById('overview-image-container'), 0, null, null);
+                            }
                         }
                     }
                     const qd = document.getElementById('job-queue');
@@ -5818,8 +5884,9 @@ class WorkerWebUI:
             fetch('/api/last_image')
                 .then(function(r) { return r.json(); })
                 .then(function(imgData) {
-                    // Only render if the status poll has not already fetched newer data.
-                    if (_lastFetchedImageTimestamp !== null) return;
+                    // Only skip if a real session image (ts > 0) has already been fetched.
+                    // If ts is 0 the status poll beat us here but showed nothing — still show gallery.
+                    if (_lastFetchedImageTimestamp !== null && _lastFetchedImageTimestamp > 0) return;
                     var ts = imgData && imgData.last_image_submission_timestamp;
                     if (typeof ts !== 'number') ts = Number(ts);
                     if (!Number.isFinite(ts)) ts = 0;
