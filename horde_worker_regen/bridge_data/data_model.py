@@ -76,6 +76,19 @@ class reGenBridgeData(CombinedHordeBridgeData):
     The effective threshold is max(process_timeout, waiting_for_job_timeout). Default is 600s (10 min).
     """
 
+    positive_prompt_filters: list[str] = Field(default_factory=list)
+    """Transformation rules applied to every positive prompt before generation and gallery saving.
+    The original unmodified prompt is preserved in the Horde submission metadata.
+
+    Each rule is a line in ``find==>replace`` format:
+    - ``bad word==>``       — remove "bad word"
+    - ``==>masterpiece``   — append "masterpiece" to the prompt
+    - ``old style==>new``  — replace "old style" with "new"
+    """
+
+    negative_prompt_filters: list[str] = Field(default_factory=list)
+    """Same as positive_prompt_filters but applied to negative prompts."""
+
     minutes_allowed_without_jobs: int = Field(default=30, ge=0, lt=60 * 60)
 
     auto_restart_on_idle_minutes: int = Field(default=60, ge=0, le=1440, validate_default=True)

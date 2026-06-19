@@ -200,6 +200,31 @@ def _remove_awaiting_request(session: "AIHordeAPIAsyncClientSession | None", req
         pass
 
 
+def _apply_prompt_filters(text: str, rules: list[str]) -> str:
+    """Apply a list of ``find==>replace`` filter rules to *text*.
+
+    Rule semantics:
+    - ``"find==>replace"``  — replace every occurrence of *find* with *replace*
+    - ``"find==>"`        — remove every occurrence of *find* (replace with nothing)
+    - ``"==>append"``     — append *append* to the text (with a comma separator if text is non-empty)
+    - Lines without ``==>`` are treated as plain remove rules for backward compatibility.
+    """
+    for rule in rules:
+        if not rule:
+            continue
+        if "==>" in rule:
+            find, replace = rule.split("==>", 1)
+            if find == "":
+                if replace:
+                    sep = ", " if text.strip() else ""
+                    text = text.rstrip(" ,") + sep + replace
+            else:
+                text = text.replace(find, replace)
+        else:
+            text = text.replace(rule, "")
+    return text
+
+
 _excludes_for_job_dump = {
     "job_image_results": True,
     "sdk_api_job_info": {
@@ -3687,9 +3712,17 @@ class HordeWorkerProcessManager:
                                 if payload.height is not None:
                                     gallery_image["height"] = payload.height
                                 if payload.prompt is not None:
-                                    _parts = payload.prompt.split("###", 1)
-                                    gallery_image["positive_prompt"] = _parts[0].strip()
-                                    gallery_image["negative_prompt"] = _parts[1].strip() if len(_parts) > 1 else ""
+                                    _gparts = payload.prompt.split("###", 1)
+                                    _gpos = _apply_prompt_filters(
+                                        _gparts[0].strip(),
+                                        self.bridge_data.positive_prompt_filters,
+                                    )
+                                    _gneg = _apply_prompt_filters(
+                                        _gparts[1].strip() if len(_gparts) > 1 else "",
+                                        self.bridge_data.negative_prompt_filters,
+                                    )
+                                    gallery_image["positive_prompt"] = _gpos.strip()
+                                    gallery_image["negative_prompt"] = _gneg.strip()
                             if completed_job_info.time_to_generate is not None:
                                 gallery_image["time_to_generate"] = completed_job_info.time_to_generate
                             self.webui.add_gallery_image(gallery_image)
@@ -4230,13 +4263,35 @@ class HordeWorkerProcessManager:
         # We store the amount of batches this job will do,
         # as we use that later to check if we should start inference in parallel
         process_with_model.batch_amount = next_job.payload.n_iter
-        if process_with_model.safe_send_message(
+
+        # Apply prompt filters for local generation only — transform the prompt sent to the
+        # inference child, then immediately restore the original so all other code paths
+        # (gen_metadata, Horde submission) continue to use the unmodified prompt.
+        _inference_original_prompt = next_job.payload.prompt
+        if _inference_original_prompt and (
+            self.bridge_data.positive_prompt_filters or self.bridge_data.negative_prompt_filters
+        ):
+            _parts = _inference_original_prompt.split("###", 1)
+            _pos = _apply_prompt_filters(_parts[0], self.bridge_data.positive_prompt_filters)
+            _neg = _apply_prompt_filters(
+                _parts[1] if len(_parts) > 1 else "",
+                self.bridge_data.negative_prompt_filters,
+            )
+            next_job.payload.prompt = f"{_pos.strip()}###{_neg.strip()}"
+
+        _send_succeeded = process_with_model.safe_send_message(
             HordeInferenceControlMessage(
                 control_flag=HordeControlFlag.START_INFERENCE,
                 horde_model_name=next_job.model,
                 sdk_api_job_info=next_job,
             ),
-        ):
+        )
+        # Restore original prompt unconditionally — the queue pickles the message on enqueue,
+        # so restoration here never affects what the child received, but ensures the parent's
+        # job object always holds the original prompt for gen_metadata and re-dispatch.
+        next_job.payload.prompt = _inference_original_prompt
+
+        if _send_succeeded:
             self.jobs_in_progress.append(next_job)
 
             process_with_model.last_control_flag = HordeControlFlag.START_INFERENCE

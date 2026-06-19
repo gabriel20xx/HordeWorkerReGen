@@ -124,6 +124,9 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "max_job_retries": {"type": int, "min": 0, "max": 10},
     "max_submit_retries": {"type": int, "min": 0, "max": 50},
     "data_retention_days": {"type": int, "min": 1, "max": 3650},
+    # Prompt filters
+    "positive_prompt_filters": {"type": list},
+    "negative_prompt_filters": {"type": list},
 }
 
 
@@ -1493,6 +1496,9 @@ class WorkerWebUI:
         .settings-page-btn.reset-all:hover:not(:disabled) { background: #fee2e2; color: #b91c1c; border-color: #f87171; }
         [data-theme="dark"] .settings-page-btn.reset-all:hover:not(:disabled) { background: #3b0a0a; color: #fca5a5; border-color: #b91c1c; }
         .setting-number { width: 68px; height: var(--action-btn-height); padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
+        .setting-textarea { width: 200px; min-height: 54px; max-height: 180px; padding: 5px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; resize: vertical; transition: border-color 0.15s; font-family: inherit; line-height: 1.5; }
+        .setting-textarea:focus { outline: none; border-color: var(--accent); }
+        [data-theme="dark"] .setting-textarea { background: #1e293b; border-color: #334155; color: #e2e8f0; }
         .setting-number:disabled { opacity: 0.55; cursor: not-allowed; background: #e2e8f0; color: #64748b; }
         .setting-number:focus { outline: none; border-color: var(--accent); }
         [data-theme="dark"] .setting-number { background: #1e293b; border-color: #334155; color: #e2e8f0; }
@@ -4818,6 +4824,8 @@ class WorkerWebUI:
             max_job_retries:          ['Max Job Retries',         'Number of times a faulted job is retried before being permanently faulted (0 = no retries; default 1).', 'Behavior', 'int',  0,    10,   false, null, 'AIWORKER_MAX_JOB_RETRIES'],
             max_submit_retries:       ['Max Submit Retries',      'Number of times a job submission can be retried before being marked as failed (default 10).', 'Behavior', 'int',  0,    50,   false, null, 'AIWORKER_MAX_SUBMIT_RETRIES'],
             data_retention_days:      ['Data Retention (days)',   'Number of days to keep errors, statistics, and gallery images in the database (1\u2013\u200a3650; default\u00a07).', 'Behavior', 'int', 1, 3650, false, null, 'AIWORKER_DATA_RETENTION_DAYS'],
+            positive_prompt_filters:  ['Positive Prompt Filters', 'Rules applied to every positive prompt before generation and gallery saving. One rule per line in find==>replace format. Leave the left side empty to append (==>text), leave the right side empty to remove (text==>), or fill both to replace. The original prompt is sent to Horde unchanged.', 'Prompt Filters', 'str_list', null, null, false, null, null],
+            negative_prompt_filters:  ['Negative Prompt Filters', 'Same as Positive Prompt Filters but applied to the negative prompt.', 'Prompt Filters', 'str_list', null, null, false, null, null],
         };
 
         // Default values for each setting key — used by the per-row reset button.
@@ -4836,6 +4844,7 @@ class WorkerWebUI:
             stats_output_frequency: 30, purge_loras_on_download: false,
             remove_maintenance_on_init: true, max_job_retries: 1,
             max_submit_retries: 10, data_retention_days: 7,
+            positive_prompt_filters: [], negative_prompt_filters: [],
         };
 
         var _settingsLoaded = false;
@@ -4910,6 +4919,7 @@ class WorkerWebUI:
             if (!Object.prototype.hasOwnProperty.call(_SETTINGS_DEFAULTS, key)) return false;
             var def = _SETTINGS_DEFAULTS[key];
             if (def === null) return false;
+            if (Array.isArray(def)) return JSON.stringify(Array.isArray(value) ? value : []) === JSON.stringify(def);
             if (typeof def === 'boolean') return value === def;
             return Number(value) === def;
         }
@@ -5166,6 +5176,12 @@ class WorkerWebUI:
                         html += '<span class="setting-feedback" id="sfb-' + escapeHtml(key) + '"></span>';
                         html += '<input type="number" class="setting-number" value="' + escapeHtml(String(numValA)) + '"' + minAttrA + maxAttrA + ' step="1" id="' + pfx + '-max-input" aria-label="' + escapeHtml(label) + '"' + (isAutoA ? ' disabled' : '') + ' onchange="' + _changeFnNames[pfx] + '()" onkeydown="if(event.key===\'Enter\'){' + _changeFnNames[pfx] + '();event.preventDefault();}">';
                         html += '<button class="limit-auto-btn' + (isAutoA ? ' active' : '') + '" id="' + pfx + '-auto-btn" onclick="' + _autoFnNames[pfx] + '()" title="' + escapeHtml(_autoTitles[pfx]) + '" aria-pressed="' + (isAutoA ? 'true' : 'false') + '">Auto</button>';
+                    } else if (type === 'str_list') {
+                        var listVal = Array.isArray(val) ? val.join('\n') : '';
+                        var listPlaceholder = (key === 'positive_prompt_filters' || key === 'negative_prompt_filters')
+                            ? 'find==>replace  (remove: word==>,  append: ==>word)'
+                            : 'One entry per line…';
+                        html += '<textarea class="setting-textarea" id="sinp-' + escapeHtml(key) + '" rows="3" placeholder="' + escapeHtml(listPlaceholder) + '" aria-label="' + escapeHtml(label) + '" onchange="stageListSetting(\'' + escapeHtml(key) + '\')">' + escapeHtml(listVal) + '</textarea>';
                     } else {
                         var numVal = (val !== null && val !== undefined) ? val : '';
                         var minAttr = (minV !== null) ? ' min="' + minV + '"' : '';
@@ -5349,6 +5365,13 @@ class WorkerWebUI:
             if (minV !== null && parsed < minV) { _showSettingFeedback(key, false, 'Min ' + minV); return; }
             if (maxV !== null && parsed > maxV) { _showSettingFeedback(key, false, 'Max ' + maxV); return; }
             stageSettingChange(key, parsed);
+        }
+
+        function stageListSetting(key) {
+            var el = document.getElementById('sinp-' + key);
+            if (!el) return;
+            var lines = el.value.split('\n').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+            stageSettingChange(key, lines);
         }
 
         async function applyPendingSettings() {
@@ -6290,6 +6313,12 @@ class WorkerWebUI:
                 return web.json_response({"error": f"Value for '{key}' must be >= {min_v}"}, status=400)
             if max_v is not None and value > max_v:
                 return web.json_response({"error": f"Value for '{key}' must be <= {max_v}"}, status=400)
+        elif expected_type is list:
+            if not isinstance(raw_value, list):
+                return web.json_response({"error": f"Field 'value' must be a list for setting '{key}'"}, status=400)
+            if not all(isinstance(s, str) for s in raw_value):
+                return web.json_response({"error": f"All items in '{key}' must be strings"}, status=400)
+            value = [s for s in raw_value if s.strip()]
         else:
             return web.json_response({"error": "Internal configuration error"}, status=500)
 
