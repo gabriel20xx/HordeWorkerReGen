@@ -854,6 +854,54 @@ async def test_webui_gallery_image_thumbnail_only() -> None:
         await webui.stop()
 
 
+def test_webui_gallery_evicts_base64_from_memory_when_persisted(tmp_path: pathlib.Path) -> None:
+    """Once persisted to the DB with a thumbnail, the full base64 is dropped from memory.
+
+    This is the memory-bounding behaviour that prevents the worker from accumulating
+    every generated image's multi-MB base64 in RAM (which would eventually OOM-kill the
+    container). The full image must remain recoverable from the gallery database.
+    """
+    webui = WorkerWebUI(port=0, db_path=str(tmp_path))
+    test_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+    # Provide an explicit thumbnail so the eviction path is exercised even when Pillow is
+    # unavailable to generate one from the base64.
+    webui.add_gallery_image({"base64": test_b64, "thumbnail": "thumb", "timestamp": 1.0, "model": "m"})
+
+    entry = webui._gallery_dict[0]
+    assert entry.get("thumbnail"), "a thumbnail should be present in memory"
+    assert "base64" not in entry, "full-resolution base64 must be evicted from memory once persisted"
+    # ...but it must still be recoverable from the database on demand.
+    assert webui._fetch_gallery_base64_from_db(0) == test_b64
+
+
+@pytest.mark.asyncio
+async def test_webui_gallery_full_res_served_from_db_when_evicted(tmp_path: pathlib.Path) -> None:
+    """/api/gallery/image returns the full-resolution image from the DB after RAM eviction."""
+    webui = WorkerWebUI(port=0, db_path=str(tmp_path))
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        test_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        webui.add_gallery_image({"base64": test_b64, "timestamp": 1.0, "model": "m"})
+
+        # Simulate memory eviction: the full base64 is gone from RAM but persisted in the DB.
+        webui._gallery_dict[0].pop("base64", None)
+        assert "base64" not in webui._gallery_dict[0]
+
+        # The overlay endpoint must still return the full-resolution image (fetched from the DB).
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id=0",
+        ) as response:
+            assert response.status == 200
+            img = await response.json()
+        assert img["base64"] == test_b64
+    finally:
+        await webui.stop()
+
+
 @pytest.mark.asyncio
 async def test_webui_status_excludes_errors_history_and_has_errors_count() -> None:
     """Test that /api/status omits errors_history and includes errors_count."""

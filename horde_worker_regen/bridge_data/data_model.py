@@ -90,7 +90,9 @@ class reGenBridgeData(CombinedHordeBridgeData):
     positive_prompt_replace: list[str] = Field(default_factory=list)
     """Replacement rules for positive prompts in ``find==>replace`` format.
     Each entry must contain ``==>`` (e.g. ``old style==>new style``).
-    The original unmodified prompt is preserved in the Horde submission metadata.
+    ``find`` is matched as a whole word, case-insensitively (e.g. ``cat`` matches
+    ``Cat``/``CAT`` but not the ``cat`` inside ``category``); ``replace`` is inserted
+    literally. The original unmodified prompt is preserved in the Horde submission metadata.
     """
 
     negative_prompt_append: list[str] = Field(default_factory=list)
@@ -100,7 +102,9 @@ class reGenBridgeData(CombinedHordeBridgeData):
     """Strings removed from every negative prompt before generation and gallery saving."""
 
     negative_prompt_replace: list[str] = Field(default_factory=list)
-    """Replacement rules for negative prompts in ``find==>replace`` format."""
+    """Replacement rules for negative prompts in ``find==>replace`` format.
+    ``find`` is matched as a whole word, case-insensitively; ``replace`` is inserted literally.
+    """
 
     prompt_remove_cleanup_separators: bool = True
     """When True, collapses any runs of commas/spaces left between removed strings into a single ', '.

@@ -235,7 +235,12 @@ def _apply_prompt_filters(
             continue
         find, with_ = rule.split("==>", 1)
         if find:
-            text = text.replace(find, with_)
+            # Whole-word, case-insensitive replacement: only standalone occurrences of
+            # *find* are replaced (e.g. "cat" does not match inside "category"), regardless
+            # of letter case ("Cat"/"CAT" both match). The replacement text is inserted
+            # literally, so backslashes/group references in *with_* are not interpreted.
+            pattern = re.compile(rf"\b{re.escape(find)}\b", re.IGNORECASE)
+            text = pattern.sub(lambda _match: with_, text)
     for item in (append or []):
         if item:
             if append_separator:
