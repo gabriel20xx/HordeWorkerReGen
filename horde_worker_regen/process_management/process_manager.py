@@ -1691,7 +1691,7 @@ class HordeWorkerProcessManager:
     _max_faulted_jobs_history: int = 20
     """Maximum number of faulted jobs to keep in history."""
 
-    _errors_history: list[str]
+    _errors_history: deque[str]
     """A list of recent error messages for display in the webui."""
 
     jobs_pending_submit: list[HordeJobInfo]
@@ -1943,7 +1943,7 @@ class HordeWorkerProcessManager:
         self.job_faults = {}
         self._faulted_jobs_history = []
         self._faulted_jobs_per_phase: dict[str, int] = {}
-        self._errors_history: list[str] = []
+        self._errors_history: deque[str] = deque(maxlen=self._MAX_ERRORS_HISTORY)
         # Tracks the length of _errors_history at the last webui update so the list
         # is only copied and sent when new errors have been added.
         self._errors_history_last_sent_len: int = -1
@@ -2098,7 +2098,7 @@ class HordeWorkerProcessManager:
         """Model name used for the last preview image."""
         self._last_image_safety: list[dict] = []
         """Per-image safety flags (is_nsfw, is_csam) for the last preview images."""
-        self._console_logs: list[str] = []
+        self._console_logs: deque[str] = deque(maxlen=self._MAX_CONSOLE_LOGS_BUFFER)
         """Recent console logs for webui display."""
         self._log_handler_id: int | None = None
         """ID of the logger handler for capturing console logs."""
@@ -2154,18 +2154,12 @@ class HordeWorkerProcessManager:
         if clean_message:
             # Store the original message with ANSI codes for colored display in webui
             self._console_logs.append(message.strip())
-            # Keep only the last N logs
-            if len(self._console_logs) > self._MAX_CONSOLE_LOGS_BUFFER:
-                self._console_logs = self._console_logs[-self._MAX_CONSOLE_LOGS_BUFFER :]
 
             # Also capture ERROR and CRITICAL level messages into errors_history
             log_record = getattr(message, "record", None)
             level = log_record.get("level") if log_record is not None else None
             if level is not None and level.no >= logger.level("ERROR").no:
-                self._errors_history.insert(0, clean_message)
-                # Prevent unbounded growth of the errors history buffer
-                if len(self._errors_history) > self._MAX_ERRORS_HISTORY:
-                    del self._errors_history[self._MAX_ERRORS_HISTORY :]
+                self._errors_history.appendleft(clean_message)
 
     def remove_maintenance(self) -> None:
         """Removes the maintenance from the named worker."""
@@ -8382,10 +8376,10 @@ class HordeWorkerProcessManager:
             last_image_submission_timestamp=self._last_image_job_timestamp,
             last_image_model=self._last_image_model,
             last_image_safety=self._last_image_safety,
-            console_logs=self._console_logs[-self._WEBUI_CONSOLE_LOGS_LIMIT :] if self._console_logs else [],
+            console_logs=list(self._console_logs)[-self._WEBUI_CONSOLE_LOGS_LIMIT:] if self._console_logs else [],
             faulted_jobs_history=self._faulted_jobs_history,
             errors_history=(
-                self._errors_history
+                list(self._errors_history)
                 if len(self._errors_history) != self._errors_history_last_sent_len
                 else None
             ),

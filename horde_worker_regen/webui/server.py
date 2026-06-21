@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -317,14 +318,14 @@ class WorkerWebUI:
         self._next_gallery_id: int = 0
 
         # Ring buffer for time-series statistics snapshots served by /api/stats.
-        self._stats_snapshots: list[dict[str, Any]] = []
+        self._stats_snapshots: deque[dict[str, Any]] = deque(maxlen=_MAX_STATS_SNAPSHOTS)
         # Unix timestamp of the most recently recorded snapshot (0 = none yet).
         self._last_stats_snapshot_time: float = 0.0
 
         # Server-side horde network performance snapshots (accumulated even when
         # no browser is connected).  Served via /api/horde-snapshots so the JS
         # can seed its chart with history going back to server startup.
-        self._horde_snapshots: list[dict[str, Any]] = []
+        self._horde_snapshots: deque[dict[str, Any]] = deque(maxlen=self._HORDE_MAX_SERVER_SNAPS)
         # Background asyncio task handle for the horde polling loop.
         self._horde_bg_task: asyncio.Task | None = None
 
@@ -702,7 +703,7 @@ class WorkerWebUI:
 
         stats = getattr(self, "_persisted_stats", [])
         if stats:
-            self._stats_snapshots = list(stats)
+            self._stats_snapshots = deque(stats, maxlen=_MAX_STATS_SNAPSHOTS)
             if self._stats_snapshots:
                 # Restore the last snapshot time so the interval guard works correctly.
                 last = self._stats_snapshots[-1]
@@ -710,7 +711,7 @@ class WorkerWebUI:
 
         horde = getattr(self, "_persisted_horde_snapshots", [])
         if horde:
-            self._horde_snapshots = list(horde)
+            self._horde_snapshots = deque(horde, maxlen=self._HORDE_MAX_SERVER_SNAPS)
 
     @staticmethod
     def _safe_snapshot_time(snapshot: dict[str, Any]) -> float:
@@ -779,7 +780,7 @@ class WorkerWebUI:
 
         # Rebuild stats snapshots.
         stats = getattr(self, "_persisted_stats", [])
-        self._stats_snapshots = list(stats)
+        self._stats_snapshots = deque(stats, maxlen=_MAX_STATS_SNAPSHOTS)
         if self._stats_snapshots:
             last = self._stats_snapshots[-1]
             self._last_stats_snapshot_time = self._safe_snapshot_time(last)
@@ -787,7 +788,7 @@ class WorkerWebUI:
         # Rebuild horde snapshots.
         horde = getattr(self, "_persisted_horde_snapshots", [])
         if horde:
-            self._horde_snapshots = list(horde)
+            self._horde_snapshots = deque(horde, maxlen=self._HORDE_MAX_SERVER_SNAPS)
 
         # Re-merge errors history (live session errors + reloaded persisted history).
         self.status_data["errors_history"] = self._merge_errors_history(self._live_errors_history)
@@ -4755,13 +4756,6 @@ class WorkerWebUI:
             }
         });
 
-        // Redraw charts on window resize when stats page is active
-        window.addEventListener('resize', function() {
-            if (_statsData && document.getElementById('page-stats').classList.contains('active')) {
-                renderStatsPage(_statsData);
-            }
-        });
-
         // ========================================================
         // HORDE NETWORK PAGE
         // ========================================================
@@ -6005,7 +5999,7 @@ class WorkerWebUI:
         """
         # Inject server-accumulated horde snapshots so they're available synchronously
         # the moment the page loads — no separate /api/horde-snapshots round-trip needed.
-        snaps_json = json.dumps(self._horde_snapshots[-self._HORDE_MAX_SERVER_SNAPS:] if self._horde_snapshots else [])
+        snaps_json = json.dumps(list(self._horde_snapshots))
         html = html.replace(
             "var _hordeSnapshots = [];",
             f"var _hordeSnapshots = {snaps_json};",
@@ -6214,7 +6208,7 @@ class WorkerWebUI:
             }
         """
         return web.json_response({
-            "snapshots": self._stats_snapshots,
+            "snapshots": list(self._stats_snapshots),
             "images_per_model": self.status_data.get("images_per_model", {}),
             "failed_jobs_per_model": self.status_data.get("failed_jobs_per_model", {}),
             "faulted_jobs_per_phase": self.status_data.get("faulted_jobs_per_phase", {}),
@@ -6264,8 +6258,6 @@ class WorkerWebUI:
             "ks": round(float(sd.get("kudos_earned_session", 0)), 2),
         }
         self._stats_snapshots.append(snapshot)
-        if len(self._stats_snapshots) > _MAX_STATS_SNAPSHOTS:
-            self._stats_snapshots = self._stats_snapshots[-_MAX_STATS_SNAPSHOTS:]
 
         # Persist to database.
         if self._stats_db_path is not None:
@@ -6914,7 +6906,7 @@ class WorkerWebUI:
 
     async def _handle_horde_snapshots(self, request: web.Request) -> web.Response:
         """Return server-accumulated horde network performance snapshots."""
-        return web.json_response({"snapshots": self._horde_snapshots})
+        return web.json_response({"snapshots": list(self._horde_snapshots)})
 
     _HORDE_POLL_INTERVAL: float = 30.0
     _HORDE_MAX_SERVER_SNAPS: int = 360  # 3 hours at 30-second intervals
@@ -6941,8 +6933,6 @@ class WorkerWebUI:
                                 "past_min_mps": data.get("past_minute_megapixelsteps", 0),
                             }
                             self._horde_snapshots.append(snap)
-                            if len(self._horde_snapshots) > self._HORDE_MAX_SERVER_SNAPS:
-                                self._horde_snapshots = self._horde_snapshots[-self._HORDE_MAX_SERVER_SNAPS :]
                             if self._stats_db_path is not None:
                                 try:
                                     with sqlite3.connect(self._stats_db_path) as _conn:
