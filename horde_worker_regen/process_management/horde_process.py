@@ -261,8 +261,8 @@ class HordeProcess(abc.ABC):
 
             try:
                 message.gpu_usage_percent = self.get_gpu_usage_percent()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get GPU usage percent: {type(e).__name__}: {e}")
 
         self.process_message_queue.put(message)
         return True

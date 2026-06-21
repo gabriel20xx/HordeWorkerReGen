@@ -410,7 +410,16 @@ class HordeSafetyProcess(HordeProcess):
             )
 
             if nsfw_result is None:
-                raise RuntimeError("NSFW result is None")
+                logger.error(f"NSFW checker returned None for image in job {message.job_id}; treating as unsafe.")
+                safety_evaluations.append(
+                    HordeSafetyEvaluation(
+                        is_nsfw=True,
+                        is_csam=False,
+                        replacement_image_base64=self.censor_sfw_worker_image_base64,
+                        failed=True,
+                    ),
+                )
+                continue
 
             replacement_image_base64: str | None = None
 

@@ -3128,6 +3128,9 @@ class HordeWorkerProcessManager:
             except queue.Empty:
                 logger.debug("Queue was empty, breaking")
                 break
+            except (EOFError, ConnectionError, BrokenPipeError, OSError) as e:
+                logger.error(f"Process message queue IPC failure ({type(e).__name__}): {e}")
+                break
 
             self._in_deadlock = False
             self._in_queue_deadlock = False
@@ -3143,10 +3146,15 @@ class HordeWorkerProcessManager:
                     percent_complete=message.percent_complete,
                 )
 
+                if message.process_id not in self._process_map:
+                    continue
+
                 in_progress_job_info = self._process_map[message.process_id].last_job_referenced
 
                 if message.process_warning is not None and (
-                    in_progress_job_info is not None and in_progress_job_info.payload.n_iter < 4
+                    in_progress_job_info is not None
+                    and in_progress_job_info.payload is not None
+                    and in_progress_job_info.payload.n_iter < 4
                 ):
                     logger.warning(f"{self._process_label(message.process_id)} warning: {message.process_warning}")
 
@@ -3609,13 +3617,21 @@ class HordeWorkerProcessManager:
 
                 any_safety_failed = False
 
+                if len(message.safety_evaluations) != len(completed_job_info.job_image_results):
+                    logger.error(
+                        f"Safety evaluation count mismatch for job {message.job_id}: "
+                        f"{len(message.safety_evaluations)} evaluations vs "
+                        f"{len(completed_job_info.job_image_results)} images — skipping safety processing.",
+                    )
+                    continue
+
                 for i in range(len(completed_job_info.job_image_results)):
                     # We add to the image faults, all faults due to source images/masks
                     if completed_job_info.sdk_api_job_info.id_ is None:
                         continue
-                    completed_job_info.job_image_results[i].generation_faults += self.job_faults[
-                        completed_job_info.sdk_api_job_info.id_
-                    ]
+                    completed_job_info.job_image_results[i].generation_faults += self.job_faults.get(
+                        completed_job_info.sdk_api_job_info.id_, []
+                    )
                     replacement_image = message.safety_evaluations[i].replacement_image_base64
 
                     if message.safety_evaluations[i].failed:
