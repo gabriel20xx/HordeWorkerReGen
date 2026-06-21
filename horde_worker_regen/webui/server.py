@@ -1125,9 +1125,11 @@ class WorkerWebUI:
         .process-state-badge { font-size: 0.72rem; background: #f0fdf4; color: #166534; padding: 1px 7px; border-radius: 4px; font-weight: 600; margin-left: auto; }
         .process-detail-text { font-size: 0.8rem; color: #64748b; }
 
-        .job-item { background: #f8fafc; border: 1px solid #e8eef4; border-radius: 7px; padding: 7px 12px; margin-bottom: 5px; font-size: 0.83rem; }
+        .job-item { display: flex; align-items: center; justify-content: space-between; background: #f8fafc; border: 1px solid #e8eef4; border-radius: 7px; padding: 7px 12px; margin-bottom: 5px; font-size: 0.83rem; }
         .job-item:last-child { margin-bottom: 0; }
+        .job-item-left { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .job-id { font-family: 'Courier New', monospace; color: var(--accent); font-weight: 600; font-size: 0.8rem; }
+        .job-elapsed { flex-shrink: 0; margin-left: 10px; color: #8899aa; font-size: 0.78rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
         .model-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .model-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 500; }
@@ -3875,7 +3877,7 @@ class WorkerWebUI:
                         if (qmSetBtn) qmSetBtn.disabled = queueAuto;
                     }
                     if (data.job_queue.length > 0) {
-                        qd.innerHTML = data.job_queue.map(j => { const bi = j.batch_size&&j.batch_size>1?' ('+escapeHtml(j.batch_size)+'x batch)':''; return '<div class="job-item"><span class="job-id">'+escapeHtml(j.id||'N/A')+'</span>: '+escapeHtml(j.model||'Unknown model')+bi+'</div>'; }).join('');
+                        qd.innerHTML = data.job_queue.map(j => { const bi = j.batch_size&&j.batch_size>1?' ('+escapeHtml(j.batch_size)+'x batch)':''; const elapsed = j.popped_at ? formatElapsed(j.popped_at * 1000) : ''; const elapsedHtml = elapsed ? '<span class="job-elapsed">'+escapeHtml(elapsed)+'</span>' : ''; return '<div class="job-item"><span class="job-item-left"><span class="job-id">'+escapeHtml(j.id||'N/A')+'</span>: '+escapeHtml(j.model||'Unknown model')+bi+'</span>'+elapsedHtml+'</div>'; }).join('');
                     } else { qd.innerHTML = '<div class="empty-state">Queue is empty</div>'; }
                     const md = document.getElementById('models-loaded');
                     document.getElementById('models-count').textContent = data.models_loaded.length;

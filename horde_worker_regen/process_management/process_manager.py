@@ -8074,6 +8074,7 @@ class HordeWorkerProcessManager:
                         "id": str(job.id_.root)[:8] if job.id_ else "N/A",
                         "model": job.model,
                         "batch_size": job.payload.n_iter if job.payload else None,
+                        "popped_at": self.job_pop_timestamps.get(job),
                     },
                 )
 
