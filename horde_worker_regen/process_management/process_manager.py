@@ -2585,7 +2585,20 @@ class HordeWorkerProcessManager:
         if len(self.jobs_in_progress) > 0:
             return False
         if len(self.jobs_pending_inference) > 0:
-            return False
+            # Only block shutdown when at least one inference process is still alive and
+            # could actually process the queued jobs. If every inference process is already
+            # ending/ended, the queue will never drain on its own — proceed so the worker
+            # can restart and retry.
+            if any(
+                p.last_process_state
+                not in (HordeProcessState.PROCESS_ENDING, HordeProcessState.PROCESS_ENDED)
+                for p in self._process_map.get_inference_processes()
+            ):
+                return False
+            logger.warning(
+                f"Shutdown: {len(self.jobs_pending_inference)} queued job(s) cannot be processed — "
+                "all inference processes are ending. Proceeding with shutdown.",
+            )
         if len(self.jobs_pending_submit) > 0:
             return False
 
@@ -7166,6 +7179,17 @@ class HordeWorkerProcessManager:
                 await asyncio.sleep(self._loop_interval)
 
         while len(self.jobs_pending_inference) > 0:
+            # If every inference process is already ending/ended, the pending jobs will
+            # never drain — break so the worker can proceed with the restart.
+            if all(
+                p.last_process_state in (HordeProcessState.PROCESS_ENDING, HordeProcessState.PROCESS_ENDED)
+                for p in self._process_map.get_inference_processes()
+            ):
+                logger.warning(
+                    f"Shutdown drain: {len(self.jobs_pending_inference)} pending job(s) remain but "
+                    "all inference processes are ending — proceeding with restart.",
+                )
+                break
             await asyncio.sleep(0.2)
             async with self._jobs_pending_inference_lock, self._jobs_safety_check_lock, self._completed_jobs_lock:
                 self.receive_and_handle_process_messages()
