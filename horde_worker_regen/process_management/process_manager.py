@@ -1402,21 +1402,34 @@ class PendingSubmitJob(PendingJob):  # TODO: Split into a new file
     @property
     def image_result(self) -> HordeImageResult | None:
         """Return the image result for the job."""
-        if self.completed_job_info.job_image_results is not None:
-            return self.completed_job_info.job_image_results[self.gen_iter]
-        return None
+        results = self.completed_job_info.job_image_results
+        if results is None or self.gen_iter >= len(results):
+            return None
+        return results[self.gen_iter]
 
     @property
     def job_id(self) -> JobID:
         """Return the job ID for the job."""
-        return self.completed_job_info.sdk_api_job_info.ids[self.gen_iter]
+        ids = self.completed_job_info.sdk_api_job_info.ids
+        if not ids:
+            raise IndexError(f"sdk_api_job_info.ids is empty or None for gen_iter={self.gen_iter}")
+        if self.gen_iter >= len(ids):
+            raise IndexError(
+                f"gen_iter={self.gen_iter} out of range for sdk_api_job_info.ids (len={len(ids)})"
+            )
+        return ids[self.gen_iter]
 
     @property
     def r2_upload(self) -> str:
         """Return the r2 upload for the job."""
-        if self.completed_job_info.sdk_api_job_info.r2_uploads is None:
-            return ""  # SDK declares r2_uploads as optional; defensive fallback
-        return self.completed_job_info.sdk_api_job_info.r2_uploads[self.gen_iter]
+        r2_uploads = self.completed_job_info.sdk_api_job_info.r2_uploads
+        if not r2_uploads:
+            return ""
+        if self.gen_iter >= len(r2_uploads):
+            raise IndexError(
+                f"gen_iter={self.gen_iter} out of range for sdk_api_job_info.r2_uploads (len={len(r2_uploads)})"
+            )
+        return r2_uploads[self.gen_iter]
 
     @property
     def batch_count(self) -> int:
