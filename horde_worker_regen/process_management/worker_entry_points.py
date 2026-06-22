@@ -158,7 +158,8 @@ def start_inference_process(
         with logger.catch(reraise=True):
             logger.debug(f"Using extra comfyui args: {extra_comfyui_args}")
             hordelib.initialise(
-                setup_logging=None,
+                setup_logging=False,  # we own all sinks; False prevents hordelib from
+                                      # calling logger.remove() and recreating root log files
                 process_id=process_id,
                 logging_verbosity=0,
                 force_normal_vram_mode=False,
