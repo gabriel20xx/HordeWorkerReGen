@@ -6338,7 +6338,10 @@ class HordeWorkerProcessManager:
         max_queue_size = self.max_queue_size
         if not isinstance(max_queue_size, int):
             max_queue_size = self.bridge_data.queue_size
-        if jobs_queued >= max_queue_size:
+        # max_queue_size=0 means "no pre-buffering" — the worker-availability check below
+        # (get_first_available_inference_process) is the natural limiter in that case.
+        # Applying >= 0 here would always be True and block every pop.
+        if max_queue_size > 0 and jobs_queued >= max_queue_size:
             return
 
         # Don't start jobs if we can't evaluate safety (NSFW/CSAM)

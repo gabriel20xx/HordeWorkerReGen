@@ -152,7 +152,12 @@ def start_inference_process(
             logger.info("High memory mode and vram heavy models are both enabled. Reserving 6GB VRAM.")
             extra_comfyui_args.extend(["--reserve-vram", "6"])
 
-        if "--reserve-vram" not in extra_comfyui_args:
+        if (
+            "--reserve-vram" not in extra_comfyui_args
+            and not very_high_memory_mode  # uses --gpu-only
+            and not high_memory_mode       # intentionally lets ComfyUI manage VRAM
+            and not low_memory_mode        # uses --novram
+        ):
             logger.warning("No VRAM reservation specified.")
 
         with logger.catch(reraise=True):
