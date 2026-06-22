@@ -222,10 +222,11 @@ class reGenBridgeData(CombinedHordeBridgeData):
     webui_update_interval: float = Field(default=1.0, ge=0.5, le=10.0)
     """The interval in seconds between web UI backend updates. Valid range: 0.5 to 10 seconds."""
 
-    max_active_models: int | None = Field(default=None, ge=1)
+    max_active_models: int | None = Field(default=None, ge=0)
     """Maximum number of active model slots.
 
     When set, this overrides the startup-derived value (max_threads + queue_size).
+    A value of 0 (or ``AIWORKER_MAX_ACTIVE_MODELS=0``) is a sentinel meaning "use auto mode".
     """
 
     data_retention_days: int = Field(default=7, ge=1, le=3650, validate_default=True)

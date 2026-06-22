@@ -1914,6 +1914,11 @@ class HordeWorkerProcessManager:
         self._queue_size_override: int | None = None
         self._max_active_models_override: int | None = None
 
+        # 0 is a sentinel meaning "use auto mode" — treat it the same as unset so the
+        # startup derivation (queue_size + max_threads) is used as the initial value.
+        if self.bridge_data.max_active_models == 0:
+            self.bridge_data.max_active_models = None
+
         startup_max_active_models = self.bridge_data.max_active_models
         if startup_max_active_models is None:
             startup_max_active_models = self.bridge_data.queue_size + self.bridge_data.max_threads
@@ -2060,6 +2065,28 @@ class HordeWorkerProcessManager:
         self._pending_process_job_timings: dict[int, dict[str, float]] = {}
         # Buffered per-state timings for completed jobs awaiting final successful submission.
         self._pending_completed_job_timings: dict[ImageGenerateJobPopResponse, dict[str, float]] = {}
+
+        # Honor AIWORKER_QUEUE_SIZE=0 and AIWORKER_MAX_ACTIVE_MODELS=0 as "activate auto mode".
+        # This allows Docker/env-var users to opt into automatic tuning without editing YAML.
+        if os.getenv("AIWORKER_QUEUE_SIZE") == "0":
+            self._queue_size_auto = True
+            self._queue_size_override = self._compute_auto_queue_size()
+            logger.info(
+                f"Queue size auto mode activated via AIWORKER_QUEUE_SIZE=0 "
+                f"(initial value: {self._queue_size_override})",
+            )
+        if os.getenv("AIWORKER_MAX_ACTIVE_MODELS") == "0":
+            self._max_active_models_auto = True
+            _auto_count = self._compute_auto_max_active_models()
+            self._max_active_models_override = _auto_count
+            self.bridge_data.max_active_models = _auto_count
+            os.environ["AIWORKER_MAX_ACTIVE_MODELS"] = str(_auto_count)
+            self._lru.capacity = _auto_count
+            self._inference_scale_down_requested = True
+            logger.info(
+                f"Max active models auto mode activated via AIWORKER_MAX_ACTIVE_MODELS=0 "
+                f"(initial value: {_auto_count})",
+            )
 
         # Per-model timing accumulators (session totals).
         # Maps model name → {"sum": float, "count": int, "max": float}
