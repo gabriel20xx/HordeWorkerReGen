@@ -85,11 +85,11 @@ def create_plain_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS") -
 
 
 _LOGS_DIR = Path("logs")
-_LOG_ROTATION = "10 MB"
-_LOG_RETENTION = 3
-_TRACE_RETENTION = 5
-_CRASH_RETENTION = 5
-_CRASH_ROTATION = "1 MB"
+_LOG_ROTATION = "00:00"       # rotate at midnight
+_LOG_RETENTION = "7 days"
+_TRACE_RETENTION = "7 days"
+_CRASH_RETENTION = "30 days"  # keep crash logs longer
+_CRASH_ROTATION = "00:00"
 
 
 def _install_excepthook() -> None:
@@ -202,11 +202,11 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         )
 
     if process_id is None:
-        bridge_log_name = "bridge.log"
-        trace_log_name = "trace.log"
+        bridge_log_name = "bridge_{time:YYYY-MM-DD}.log"
+        trace_log_name = "trace_{time:YYYY-MM-DD}.log"
     else:
-        bridge_log_name = f"bridge_{process_id}.log"
-        trace_log_name = f"trace_{process_id}.log"
+        bridge_log_name = f"bridge_{process_id}_{{time:YYYY-MM-DD}}.log"
+        trace_log_name = f"trace_{process_id}_{{time:YYYY-MM-DD}}.log"
 
     _LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -242,7 +242,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
     # Only created for the main process; subprocesses use trace_N.log.
     if process_id is None:
         logger.add(
-            _LOGS_DIR / "crash.log",
+            _LOGS_DIR / "crash_{time:YYYY-MM-DD}.log",
             format=file_format,
             level="CRITICAL",
             colorize=False,
@@ -259,7 +259,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
             return record["name"].startswith("horde_worker_regen.webui")
 
         logger.add(
-            _LOGS_DIR / "webui.log",
+            _LOGS_DIR / "webui_{time:YYYY-MM-DD}.log",
             format=file_format,
             level=log_level,
             colorize=False,
