@@ -12,11 +12,23 @@ import argparse
 import io
 import multiprocessing
 import os
+import re
 import time
+import warnings
 from multiprocessing.context import BaseContext
 
-import re
 from loguru import logger
+
+# horde_sdk Pydantic models have fields named model_* (e.g. model_version, model_seed)
+# that conflict with Pydantic's protected "model_" namespace.  Those models belong to a
+# third-party package so we can't add `protected_namespaces = ()` ourselves; suppress
+# the warnings here before the import chain triggers them.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Field .+ has conflict with protected namespace",
+    category=UserWarning,
+    module=r"pydantic\._internal\._fields",
+)
 
 
 def main(
