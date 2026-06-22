@@ -200,6 +200,27 @@ def _remove_awaiting_request(session: "AIHordeAPIAsyncClientSession | None", req
         pass
 
 
+def _active_filter_entries(groups: list, type_enabled: bool) -> list[str] | None:
+    """Return a flat list of entries from all enabled groups, or None if disabled/empty.
+
+    Accepts both ``PromptFilterGroup`` instances and plain dicts so that the result
+    is correct regardless of whether Pydantic has validated the field value.
+    """
+    if not type_enabled:
+        return None
+    entries: list[str] = []
+    for g in groups:
+        if isinstance(g, dict):
+            if not g.get("enabled", True):
+                continue
+            entries.extend(str(e) for e in g.get("entries", []) if e)
+        else:
+            if not g.enabled:
+                continue
+            entries.extend(e for e in g.entries if e)
+    return entries if entries else None
+
+
 def _apply_prompt_filters(
     text: str,
     *,
@@ -2383,6 +2404,16 @@ class HordeWorkerProcessManager:
             return
         if not hasattr(self.bridge_data, key):
             raise ValueError(f"Unknown bridge_data field: '{key}'")
+        _FILTER_GROUP_KEYS = {
+            "positive_prompt_append", "positive_prompt_remove", "positive_prompt_replace",
+            "negative_prompt_append", "negative_prompt_remove", "negative_prompt_replace",
+        }
+        if key in _FILTER_GROUP_KEYS and isinstance(value, list):
+            from horde_worker_regen.bridge_data.data_model import PromptFilterGroup
+            value = [
+                PromptFilterGroup.model_validate(item) if isinstance(item, dict) else item
+                for item in value
+            ]
         setattr(self.bridge_data, key, value)
         if not (isinstance(value, list) and len(value) == 0):
             logger.info(f"Runtime setting '{key}' changed to {value!r} via web UI")
@@ -2538,13 +2569,17 @@ class HordeWorkerProcessManager:
         - **30 – 90 s** (medium): existing headroom is sufficient; no adjustment.
         - **90 – 300 s** (slow): cap at 1 — one pre-loaded job hides model-swap
           latency without wasting VRAM on more.
-        - **≥ 300 s** (very slow): 0 — pre-loading provides no measurable benefit.
+        - **≥ 300 s** (very slow): 1 minimum — keeps at least one job ready so
+          the worker never idles between very long generations.
 
         Timing data is ignored until at least 3 samples have been collected to
         avoid reacting to a single anomalously fast or slow job.
 
+        The result is always at least 1 so that auto mode never fully disables
+        the queue — a queue size of 0 would be equivalent to turning auto off.
+
         Returns:
-            Recommended max queue size (>= 0).
+            Recommended max queue size (>= 1).
         """
         concurrent = self._max_concurrent_inference_processes
         base = max(0, self._max_inference_processes - concurrent)
@@ -2558,19 +2593,21 @@ class HordeWorkerProcessManager:
 
         if avg_job_time < 15:
             # Very fast: pre-load 2 jobs per worker to eliminate idle time
-            return max(base, concurrent * 2)
+            result = max(base, concurrent * 2)
         elif avg_job_time < 30:
             # Fast: pre-load 1 job per worker
-            return max(base, concurrent)
+            result = max(base, concurrent)
         elif avg_job_time < 90:
             # Medium: current headroom is adequate
-            return max(0, base)
+            result = base
         elif avg_job_time < 300:
             # Slow: one job ahead hides model-swap latency
-            return max(0, min(base, 1))
+            result = min(base, 1)
         else:
-            # Very slow: pre-loading provides no benefit
-            return 0
+            # Very slow: keep exactly one job ready to avoid idle time between long jobs
+            result = 1
+
+        return max(1, result)
 
     def _compute_auto_max_active_models(self) -> int:
         """Compute the optimal active-model count based on available VRAM.
@@ -3872,13 +3909,13 @@ class HordeWorkerProcessManager:
                                     _gparts = payload.prompt.split("###", 1)
                                     _gpos_orig = _gparts[0].strip()
                                     _gneg_orig = _gparts[1].strip() if len(_gparts) > 1 else ""
-                                    _pf_on = self.bridge_data.prompt_filters_enabled
                                     _gbd = self.bridge_data
+                                    _gpf_on = _gbd.prompt_filters_enabled
                                     _gpos = _apply_prompt_filters(
                                         _gpos_orig,
-                                        append=_gbd.positive_prompt_append if (_pf_on and _gbd.positive_prompt_append_enabled) else None,
-                                        remove=_gbd.positive_prompt_remove if (_pf_on and _gbd.positive_prompt_remove_enabled) else None,
-                                        replace=_gbd.positive_prompt_replace if (_pf_on and _gbd.positive_prompt_replace_enabled) else None,
+                                        append=_active_filter_entries(_gbd.positive_prompt_append, _gpf_on and _gbd.positive_prompt_append_enabled),
+                                        remove=_active_filter_entries(_gbd.positive_prompt_remove, _gpf_on and _gbd.positive_prompt_remove_enabled),
+                                        replace=_active_filter_entries(_gbd.positive_prompt_replace, _gpf_on and _gbd.positive_prompt_replace_enabled),
                                         remove_cleanup_separators=_gbd.prompt_remove_cleanup_separators,
                                         append_separator=_gbd.prompt_append_separator,
                                         remove_whole_word=_gbd.prompt_remove_whole_word,
@@ -3886,9 +3923,9 @@ class HordeWorkerProcessManager:
                                     )
                                     _gneg = _apply_prompt_filters(
                                         _gneg_orig,
-                                        append=_gbd.negative_prompt_append if (_pf_on and _gbd.negative_prompt_append_enabled) else None,
-                                        remove=_gbd.negative_prompt_remove if (_pf_on and _gbd.negative_prompt_remove_enabled) else None,
-                                        replace=_gbd.negative_prompt_replace if (_pf_on and _gbd.negative_prompt_replace_enabled) else None,
+                                        append=_active_filter_entries(_gbd.negative_prompt_append, _gpf_on and _gbd.negative_prompt_append_enabled),
+                                        remove=_active_filter_entries(_gbd.negative_prompt_remove, _gpf_on and _gbd.negative_prompt_remove_enabled),
+                                        replace=_active_filter_entries(_gbd.negative_prompt_replace, _gpf_on and _gbd.negative_prompt_replace_enabled),
                                         remove_cleanup_separators=_gbd.prompt_remove_cleanup_separators,
                                         append_separator=_gbd.prompt_append_separator,
                                         remove_whole_word=_gbd.prompt_remove_whole_word,
@@ -4448,20 +4485,19 @@ class HordeWorkerProcessManager:
         _original_prompt = next_job.payload.prompt
         _bd = self.bridge_data
         _pf_on = _bd.prompt_filters_enabled
-        if _original_prompt and _pf_on and (
-            (_bd.positive_prompt_append and _bd.positive_prompt_append_enabled)
-            or (_bd.positive_prompt_remove and _bd.positive_prompt_remove_enabled)
-            or (_bd.positive_prompt_replace and _bd.positive_prompt_replace_enabled)
-            or (_bd.negative_prompt_append and _bd.negative_prompt_append_enabled)
-            or (_bd.negative_prompt_remove and _bd.negative_prompt_remove_enabled)
-            or (_bd.negative_prompt_replace and _bd.negative_prompt_replace_enabled)
-        ):
+        _pos_append  = _active_filter_entries(_bd.positive_prompt_append,  _pf_on and _bd.positive_prompt_append_enabled)
+        _pos_remove  = _active_filter_entries(_bd.positive_prompt_remove,  _pf_on and _bd.positive_prompt_remove_enabled)
+        _pos_replace = _active_filter_entries(_bd.positive_prompt_replace, _pf_on and _bd.positive_prompt_replace_enabled)
+        _neg_append  = _active_filter_entries(_bd.negative_prompt_append,  _pf_on and _bd.negative_prompt_append_enabled)
+        _neg_remove  = _active_filter_entries(_bd.negative_prompt_remove,  _pf_on and _bd.negative_prompt_remove_enabled)
+        _neg_replace = _active_filter_entries(_bd.negative_prompt_replace, _pf_on and _bd.negative_prompt_replace_enabled)
+        if _original_prompt and (_pos_append or _pos_remove or _pos_replace or _neg_append or _neg_remove or _neg_replace):
             _parts = _original_prompt.split("###", 1)
             _pos = _apply_prompt_filters(
                 _parts[0],
-                append=_bd.positive_prompt_append if _bd.positive_prompt_append_enabled else None,
-                remove=_bd.positive_prompt_remove if _bd.positive_prompt_remove_enabled else None,
-                replace=_bd.positive_prompt_replace if _bd.positive_prompt_replace_enabled else None,
+                append=_pos_append,
+                remove=_pos_remove,
+                replace=_pos_replace,
                 remove_cleanup_separators=_bd.prompt_remove_cleanup_separators,
                 append_separator=_bd.prompt_append_separator,
                 remove_whole_word=_bd.prompt_remove_whole_word,
@@ -4469,9 +4505,9 @@ class HordeWorkerProcessManager:
             )
             _neg = _apply_prompt_filters(
                 _parts[1] if len(_parts) > 1 else "",
-                append=_bd.negative_prompt_append if _bd.negative_prompt_append_enabled else None,
-                remove=_bd.negative_prompt_remove if _bd.negative_prompt_remove_enabled else None,
-                replace=_bd.negative_prompt_replace if _bd.negative_prompt_replace_enabled else None,
+                append=_neg_append,
+                remove=_neg_remove,
+                replace=_neg_replace,
                 remove_cleanup_separators=_bd.prompt_remove_cleanup_separators,
                 append_separator=_bd.prompt_append_separator,
                 remove_whole_word=_bd.prompt_remove_whole_word,

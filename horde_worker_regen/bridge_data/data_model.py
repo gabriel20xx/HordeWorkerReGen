@@ -8,11 +8,19 @@ from typing import Any
 
 from horde_sdk.ai_horde_worker.bridge_data import CombinedHordeBridgeData
 from loguru import logger
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from ruamel.yaml import YAML
 
 from horde_worker_regen.consts import TOTAL_LORA_DOWNLOAD_TIMEOUT
 from horde_worker_regen.locale_info.regen_bridge_data_fields import BRIDGE_DATA_FIELD_DESCRIPTIONS
+
+
+class PromptFilterGroup(BaseModel):
+    """A named, togglable group of strings within a prompt filter type."""
+
+    name: str = ""
+    enabled: bool = True
+    entries: list[str] = Field(default_factory=list)
 
 
 class reGenBridgeData(CombinedHordeBridgeData):
@@ -76,35 +84,48 @@ class reGenBridgeData(CombinedHordeBridgeData):
     The effective threshold is max(process_timeout, waiting_for_job_timeout). Default is 600s (10 min).
     """
 
-    positive_prompt_append: list[str] = Field(default_factory=list)
-    """Strings appended to every positive prompt before generation and gallery saving.
-    Each entry is a literal string (e.g. ``masterpiece``).
+    positive_prompt_append: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of strings appended to every positive prompt before generation and gallery saving.
     The original unmodified prompt is preserved in the Horde submission metadata.
     """
 
-    positive_prompt_remove: list[str] = Field(default_factory=list)
-    """Strings removed from every positive prompt before generation and gallery saving.
-    Each entry is a literal string to strip out.
+    positive_prompt_remove: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of strings removed from every positive prompt before generation and gallery saving."""
+
+    positive_prompt_replace: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of replacement rules for positive prompts in ``find==>replace`` format.
+    ``find`` is matched as a whole word, case-insensitively; ``replace`` is inserted literally.
+    The original unmodified prompt is preserved in the Horde submission metadata.
     """
 
-    positive_prompt_replace: list[str] = Field(default_factory=list)
-    """Replacement rules for positive prompts in ``find==>replace`` format.
-    Each entry must contain ``==>`` (e.g. ``old style==>new style``).
-    ``find`` is matched as a whole word, case-insensitively (e.g. ``cat`` matches
-    ``Cat``/``CAT`` but not the ``cat`` inside ``category``); ``replace`` is inserted
-    literally. The original unmodified prompt is preserved in the Horde submission metadata.
-    """
+    negative_prompt_append: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of strings appended to every negative prompt before generation and gallery saving."""
 
-    negative_prompt_append: list[str] = Field(default_factory=list)
-    """Strings appended to every negative prompt before generation and gallery saving."""
+    negative_prompt_remove: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of strings removed from every negative prompt before generation and gallery saving."""
 
-    negative_prompt_remove: list[str] = Field(default_factory=list)
-    """Strings removed from every negative prompt before generation and gallery saving."""
-
-    negative_prompt_replace: list[str] = Field(default_factory=list)
-    """Replacement rules for negative prompts in ``find==>replace`` format.
+    negative_prompt_replace: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of replacement rules for negative prompts in ``find==>replace`` format.
     ``find`` is matched as a whole word, case-insensitively; ``replace`` is inserted literally.
     """
+
+    @field_validator(
+        "positive_prompt_append",
+        "positive_prompt_remove",
+        "positive_prompt_replace",
+        "negative_prompt_append",
+        "negative_prompt_remove",
+        "negative_prompt_replace",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_filter_groups(cls, v: Any) -> Any:
+        """Accept old flat list[str] format by bundling all strings into one unnamed group."""
+        if not isinstance(v, list):
+            return []
+        if v and all(isinstance(item, str) for item in v):
+            return [{"name": "", "enabled": True, "entries": [s for s in v if s]}]
+        return v
 
     prompt_remove_cleanup_separators: bool = True
     """When True, collapses any runs of commas/spaces left between removed strings into a single ', '.

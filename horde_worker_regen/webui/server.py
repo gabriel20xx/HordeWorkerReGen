@@ -1616,6 +1616,26 @@ class WorkerWebUI:
         [data-theme="dark"] .pf-option-label { color: #cbd5e1; }
         .pf-option-desc { font-size: 0.72rem; color: #64748b; }
         [data-theme="dark"] .pf-option-desc { color: #94a3b8; }
+        /* Prompt filter group UI */
+        .pfg-section { display: flex; flex-direction: column; }
+        .pfg-section-header { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; min-height: 24px; }
+        .pfg-section-header .pf-section-label { margin-bottom: 0; }
+        .pfg-add-group-btn { margin-left: auto; padding: 2px 8px; font-size: 0.73rem; border: 1px solid #cbd5e1; border-radius: 5px; background: transparent; color: #64748b; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+        .pfg-add-group-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,0.07); }
+        [data-theme="dark"] .pfg-add-group-btn { border-color: #334155; color: #94a3b8; }
+        [data-theme="dark"] .pfg-add-group-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .pfg-groups { display: flex; flex-direction: column; gap: 5px; }
+        .pfg-group { border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; background: var(--bg); display: flex; flex-direction: column; gap: 5px; }
+        .pfg-group--disabled { opacity: 0.55; }
+        .pfg-group-header { display: flex; align-items: center; gap: 5px; }
+        .pfg-name-input { flex: 1; min-width: 0; padding: 2px 6px; border: 1px solid transparent; border-radius: 4px; font-size: 0.8rem; background: transparent; color: inherit; font-family: inherit; }
+        .pfg-name-input:hover { border-color: var(--border); background: var(--card-bg); }
+        .pfg-name-input:focus { border-color: var(--accent); background: var(--card-bg); outline: none; }
+        [data-theme="dark"] .pfg-name-input:hover, [data-theme="dark"] .pfg-name-input:focus { background: #1e293b; }
+        .pfg-delete-btn { width: 20px; height: 20px; border: 1px solid #fca5a5; border-radius: 4px; background: transparent; color: #ef4444; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .pfg-delete-btn:hover { background: #fef2f2; }
+        [data-theme="dark"] .pfg-delete-btn { border-color: #7f1d1d; color: #f87171; }
+        [data-theme="dark"] .pfg-delete-btn:hover { background: #450a0a; }
         .setting-replace-list { display: flex; flex-direction: column; gap: 5px; min-width: 280px; }
         .replace-row { display: flex; align-items: center; gap: 5px; }
         .replace-find, .replace-with { flex: 1; min-width: 0; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; font-family: inherit; height: var(--action-btn-height); box-sizing: border-box; }
@@ -5112,10 +5132,17 @@ class WorkerWebUI:
 
         function stageSettingChange(key, value) {
             var isPending = true;
-            if (Object.prototype.hasOwnProperty.call(_settingsSnapshot, key) && _settingsSnapshot[key] === value) {
-                delete _settingsPending[key];
-                isPending = false;
-            } else {
+            if (Object.prototype.hasOwnProperty.call(_settingsSnapshot, key)) {
+                var snap = _settingsSnapshot[key];
+                var equal = (typeof value === 'object' && value !== null)
+                    ? JSON.stringify(snap) === JSON.stringify(value)
+                    : snap === value;
+                if (equal) {
+                    delete _settingsPending[key];
+                    isPending = false;
+                }
+            }
+            if (isPending) {
                 _settingsPending[key] = value;
             }
             _setSettingsDirty(
@@ -5625,174 +5652,82 @@ class WorkerWebUI:
             stageSettingChange(key, lines);
         }
 
-        function _renderPromptFilterRows(settings) {
-            var html = '';
-            ['positive', 'negative'].forEach(function(type) {
-                var appendKey = type + '_prompt_append';
-                var removeKey = type + '_prompt_remove';
-                var replaceKey = type + '_prompt_replace';
-                function getVal(k) {
-                    if (Object.prototype.hasOwnProperty.call(_settingsPending, k)) return _settingsPending[k];
-                    if (Object.prototype.hasOwnProperty.call(settings, k)) return settings[k];
-                    return [];
-                }
-                var appendVal = Array.isArray(getVal(appendKey)) ? getVal(appendKey) : [];
-                var removeVal = Array.isArray(getVal(removeKey)) ? getVal(removeKey) : [];
-                var replaceVal = Array.isArray(getVal(replaceKey)) ? getVal(replaceKey) : [];
-                var title = type === 'positive' ? 'Positive Prompt Filters' : 'Negative Prompt Filters';
-                var desc = 'Filters applied to every ' + type + ' prompt before generation and gallery saving. Original prompt sent to Horde unchanged.';
+        // ── Prompt filter group helpers ──────────────────────────────────────────
 
-                html += '<div class="pf-block">';
-                html += '<div class="pf-block-title">' + escapeHtml(title) + '</div>';
-                html += '<div class="pf-block-desc">' + escapeHtml(desc) + '</div>';
-                html += '<div class="pf-columns">';
-
-                // Add column
-                html += '<div class="pf-col">';
-                html += '<div class="pf-section-label">Add</div>';
-                html += '<div class="pf-pills" id="pfpills-' + type + '-add">';
-                appendVal.forEach(function(item) {
-                    html += '<span class="pf-pill" data-value="' + escapeHtml(item) + '" onclick="_pfRemovePill(this,\'' + type + '-add\')">' + escapeHtml(item) + ' ×</span>';
-                });
-                html += '</div>';
-                html += '<div class="pf-input-row"><input type="text" class="pf-input" id="pfinp-' + type + '-add" placeholder="String to append…" onkeydown="if(event.key===\'Enter\'){pfAddPill(\'' + type + '-add\');event.preventDefault();}"><button class="pf-add-btn" onclick="pfAddPill(\'' + type + '-add\')" title="Add">+</button></div>';
-                html += '</div>';
-
-                // Remove column
-                html += '<div class="pf-col">';
-                html += '<div class="pf-section-label">Remove</div>';
-                html += '<div class="pf-pills" id="pfpills-' + type + '-remove">';
-                removeVal.forEach(function(item) {
-                    html += '<span class="pf-pill" data-value="' + escapeHtml(item) + '" onclick="_pfRemovePill(this,\'' + type + '-remove\')">' + escapeHtml(item) + ' ×</span>';
-                });
-                html += '</div>';
-                html += '<div class="pf-input-row"><input type="text" class="pf-input" id="pfinp-' + type + '-remove" placeholder="String to remove…" onkeydown="if(event.key===\'Enter\'){pfAddPill(\'' + type + '-remove\');event.preventDefault();}"><button class="pf-add-btn" onclick="pfAddPill(\'' + type + '-remove\')" title="Add">+</button></div>';
-                html += '</div>';
-
-                // Replace column
-                html += '<div class="pf-col">';
-                html += '<div class="pf-section-label">Replace</div>';
-                html += '<div class="pf-pills" id="pfpills-' + type + '-replace">';
-                replaceVal.forEach(function(rule) {
-                    var parts = rule.split('==>', 2);
-                    var find = parts[0] || '';
-                    var withV = parts.length > 1 ? parts[1] : '';
-                    var display = escapeHtml((find || '…') + ' → ' + (withV || '…'));
-                    html += '<span class="pf-pill pf-pill--replace" data-value="' + escapeHtml(rule) + '" onclick="_pfRemovePill(this,\'' + type + '-replace\')">' + display + ' ×</span>';
-                });
-                html += '</div>';
-                html += '<div class="pf-input-row"><input type="text" class="pf-input" id="pfinp-' + type + '-replace-find" placeholder="Find…">';
-                html += '<span class="replace-arrow">→</span>';
-                html += '<input type="text" class="pf-input" id="pfinp-' + type + '-replace-with" placeholder="Replace with…" onkeydown="if(event.key===\'Enter\'){pfAddReplacePill(\'' + type + '\');event.preventDefault();}"><button class="pf-add-btn" onclick="pfAddReplacePill(\'' + type + '\')" title="Add">+</button></div>';
-                html += '</div>';
-
-                html += '</div></div>';
-            });
-
-            // Filter behavior options (global — apply to both positive and negative)
-            function _pfOptVal(key, defaultVal) {
-                if (Object.prototype.hasOwnProperty.call(_settingsPending, key)) return !!_settingsPending[key];
-                if (Object.prototype.hasOwnProperty.call(settings, key)) return !!settings[key];
-                return defaultVal;
-            }
-            var filtersEnabled  = _pfOptVal('prompt_filters_enabled', true);
-            var removeCleanup   = _pfOptVal('prompt_remove_cleanup_separators', true);
-            var appendSep       = _pfOptVal('prompt_append_separator', true);
-            var wholeWord       = _pfOptVal('prompt_remove_whole_word', false);
-            var caseSensitive   = _pfOptVal('prompt_remove_case_sensitive', true);
-
-            html += '<div class="pf-block">';
-            html += '<div class="pf-block-title">Filter Options</div>';
-            html += '<div class="pf-options-row">';
-
-            html += '<div class="pf-option">';
-            html += '<label class="setting-toggle" title="Prompt Filters Enabled">'
-                 +  '<input type="checkbox"' + (filtersEnabled ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_filters_enabled\', this.checked)" aria-label="Prompt Filters Enabled">'
-                 +  '<span class="setting-toggle-slider"></span></label>';
-            html += '<div class="pf-option-text"><div class="pf-option-label">Filters enabled</div>'
-                 +  '<div class="pf-option-desc">Master switch — when off, no append/remove/replace operations are applied.</div></div>';
-            html += '</div>';
-
-            html += '<div class="pf-option">';
-            html += '<label class="setting-toggle" title="Whole-Word Remove Matching">'
-                 +  '<input type="checkbox"' + (wholeWord ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_whole_word\', this.checked)" aria-label="Whole-Word Remove Matching">'
-                 +  '<span class="setting-toggle-slider"></span></label>';
-            html += '<div class="pf-option-text"><div class="pf-option-label">Whole-word matching (remove)</div>'
-                 +  '<div class="pf-option-desc">Only remove a string when it appears as a complete word — "cat" will not match inside "category".</div></div>';
-            html += '</div>';
-
-            html += '<div class="pf-option">';
-            html += '<label class="setting-toggle" title="Case-Sensitive Remove Matching">'
-                 +  '<input type="checkbox"' + (caseSensitive ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_case_sensitive\', this.checked)" aria-label="Case-Sensitive Remove Matching">'
-                 +  '<span class="setting-toggle-slider"></span></label>';
-            html += '<div class="pf-option-text"><div class="pf-option-label">Case-sensitive matching (remove)</div>'
-                 +  '<div class="pf-option-desc">Match remove strings exactly as typed. When off, "Cat" and "CAT" both match "cat".</div></div>';
-            html += '</div>';
-
-            html += '<div class="pf-option">';
-            html += '<label class="setting-toggle" title="Cleanup Separators After Removal">'
-                 +  '<input type="checkbox"' + (removeCleanup ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_cleanup_separators\', this.checked)" aria-label="Cleanup Separators After Removal">'
-                 +  '<span class="setting-toggle-slider"></span></label>';
-            html += '<div class="pf-option-text"><div class="pf-option-label">Cleanup separators after removal</div>'
-                 +  '<div class="pf-option-desc">Remove orphaned commas and spaces left between deleted strings.</div></div>';
-            html += '</div>';
-
-            html += '<div class="pf-option">';
-            html += '<label class="setting-toggle" title="Auto-Separator When Appending">'
-                 +  '<input type="checkbox"' + (appendSep ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_append_separator\', this.checked)" aria-label="Auto-Separator When Appending">'
-                 +  '<span class="setting-toggle-slider"></span></label>';
-            html += '<div class="pf-option-text"><div class="pf-option-label">Auto-separator when appending</div>'
-                 +  '<div class="pf-option-desc">Insert ", " between each appended string and the existing prompt text.</div></div>';
-            html += '</div>';
-
-            html += '</div></div>';
-
-            return html;
+        function _pfgSectionKey(sectionId) {
+            // sectionId: "{type}-{op}" e.g. "positive-add" / "negative-replace"
+            var dash = sectionId.indexOf('-');
+            var type = sectionId.slice(0, dash);
+            var op   = sectionId.slice(dash + 1);
+            var opKey = op === 'add' ? 'append' : op;
+            return type + '_prompt_' + opKey;
         }
 
-        function _pfStage(sectionId) {
-            var parts = sectionId.split('-');
-            var type = parts[0];
-            var op = parts.slice(1).join('-');
-            // Section IDs use 'add' for the append operation; map to the actual setting key suffix.
-            var op_key = op === 'add' ? 'append' : op;
-            var key = type + '_prompt_' + op_key;
-            var container = document.getElementById('pfpills-' + sectionId);
+        function _pfgStageSection(sectionId) {
+            var key = _pfgSectionKey(sectionId);
+            var container = document.getElementById('pfgsec-' + sectionId);
             if (!container) return;
-            var pills = container.querySelectorAll('.pf-pill');
-            var list = [];
-            pills.forEach(function(p) {
-                var v = p.getAttribute('data-value');
-                if (v !== null) list.push(v);
+            var groups = [];
+            container.querySelectorAll('.pfg-group').forEach(function(groupEl) {
+                var nameEl   = groupEl.querySelector('.pfg-name-input');
+                var toggleEl = groupEl.querySelector('.pfg-group-toggle');
+                var entries  = [];
+                groupEl.querySelectorAll('.pf-pill').forEach(function(p) {
+                    var v = p.getAttribute('data-value');
+                    if (v !== null && v !== '') entries.push(v);
+                });
+                groups.push({
+                    name:    nameEl    ? nameEl.value.trim() : '',
+                    enabled: toggleEl  ? toggleEl.checked   : true,
+                    entries: entries,
+                });
             });
-            stageSettingChange(key, list);
+            stageSettingChange(key, groups);
         }
 
-        function _pfRemovePill(pill, sectionId) {
-            pill.remove();
-            _pfStage(sectionId);
+        function pfgAddGroup(sectionId) {
+            var container = document.getElementById('pfgsec-' + sectionId);
+            if (!container) return;
+            var isReplace = sectionId.indexOf('-replace') !== -1;
+            var div = document.createElement('div');
+            div.className = 'pfg-group';
+            div.innerHTML = _pfgGroupBodyHtml(sectionId, '', true, [], isReplace);
+            container.appendChild(div);
+            _pfgStageSection(sectionId);
+            var nameInp = div.querySelector('.pfg-name-input');
+            if (nameInp) nameInp.focus();
         }
 
-        function pfAddPill(sectionId) {
-            var inp = document.getElementById('pfinp-' + sectionId);
+        function pfgDeleteGroup(btn, sectionId) {
+            var groupEl = btn.closest('.pfg-group');
+            if (groupEl) groupEl.remove();
+            _pfgStageSection(sectionId);
+        }
+
+        function pfgAddPill(btn, sectionId) {
+            var groupEl = btn.closest('.pfg-group');
+            if (!groupEl) return;
+            var inp = groupEl.querySelector('.pfg-pill-input');
             if (!inp) return;
             var val = inp.value.trim();
             if (!val) return;
             inp.value = '';
-            var container = document.getElementById('pfpills-' + sectionId);
-            if (!container) return;
+            var pillsContainer = groupEl.querySelector('.pf-pills');
+            if (!pillsContainer) return;
             var span = document.createElement('span');
             span.className = 'pf-pill';
             span.setAttribute('data-value', val);
             span.textContent = val + ' ×';
-            span.onclick = function() { _pfRemovePill(this, sectionId); };
-            container.appendChild(span);
-            _pfStage(sectionId);
+            span.onclick = function() { span.remove(); _pfgStageSection(sectionId); };
+            pillsContainer.appendChild(span);
+            _pfgStageSection(sectionId);
         }
 
-        function pfAddReplacePill(type) {
-            var findInp = document.getElementById('pfinp-' + type + '-replace-find');
-            var withInp = document.getElementById('pfinp-' + type + '-replace-with');
+        function pfgAddReplacePill(btn, sectionId) {
+            var groupEl = btn.closest('.pfg-group');
+            if (!groupEl) return;
+            var findInp = groupEl.querySelector('.pfg-replace-find');
+            var withInp = groupEl.querySelector('.pfg-replace-with');
             if (!findInp || !withInp) return;
             var find = findInp.value.trim();
             var withV = withInp.value.trim();
@@ -5800,51 +5735,168 @@ class WorkerWebUI:
             findInp.value = ''; withInp.value = '';
             var rule = find + '==>' + withV;
             var display = (find || '…') + ' → ' + (withV || '…');
-            var container = document.getElementById('pfpills-' + type + '-replace');
-            if (!container) return;
+            var pillsContainer = groupEl.querySelector('.pf-pills');
+            if (!pillsContainer) return;
             var span = document.createElement('span');
             span.className = 'pf-pill pf-pill--replace';
             span.setAttribute('data-value', rule);
             span.textContent = display + ' ×';
-            var sid = type + '-replace';
-            span.onclick = function() { _pfRemovePill(this, sid); };
-            container.appendChild(span);
-            _pfStage(sid);
+            span.onclick = function() { span.remove(); _pfgStageSection(sectionId); };
+            pillsContainer.appendChild(span);
+            _pfgStageSection(sectionId);
         }
 
-        function addReplaceRow(key) {
-            var container = document.getElementById('sinp-' + key);
-            if (!container) return;
-            var addBtn = container.querySelector('.replace-add-row');
-            var row = document.createElement('div');
-            row.className = 'replace-row';
-            row.innerHTML = '<input type="text" class="replace-find" placeholder="Find…" oninput="stageReplaceList(\'' + key + '\')" aria-label="Find text">'
-                + '<span class="replace-arrow">→</span>'
-                + '<input type="text" class="replace-with" placeholder="Replace with…" oninput="stageReplaceList(\'' + key + '\')" aria-label="Replace with">'
-                + '<button class="replace-row-del" onclick="removeReplaceRow(this,\'' + key + '\')" title="Remove row" aria-label="Remove row">\xd7</button>';
-            container.insertBefore(row, addBtn);
-            row.querySelector('.replace-find').focus();
-        }
-
-        function removeReplaceRow(btn, key) {
-            var row = btn.closest('.replace-row');
-            if (row) row.remove();
-            stageReplaceList(key);
-        }
-
-        function stageReplaceList(key) {
-            var container = document.getElementById('sinp-' + key);
-            if (!container) return;
-            var result = [];
-            container.querySelectorAll('.replace-row').forEach(function(row) {
-                var findEl = row.querySelector('.replace-find');
-                var withEl = row.querySelector('.replace-with');
-                if (!findEl || !withEl) return;
-                var f = findEl.value.trim();
-                var w = withEl.value.trim();
-                if (f || w) result.push(f + '==>' + w);
+        function _pfgGroupBodyHtml(sectionId, name, enabled, entries, isReplace) {
+            var e = escapeHtml;
+            var sid = e(sectionId);
+            var html = '';
+            html += '<div class="pfg-group-header">';
+            html += '<label class="setting-toggle" title="' + (enabled ? 'Group enabled' : 'Group disabled') + '">'
+                 +  '<input type="checkbox" class="pfg-group-toggle"' + (enabled ? ' checked' : '')
+                 +  ' onchange="this.closest(\'.pfg-group\').classList.toggle(\'pfg-group--disabled\',!this.checked);_pfgStageSection(\'' + sid + '\')" aria-label="Enable group">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<input type="text" class="pfg-name-input" value="' + e(name) + '" placeholder="Group name…"'
+                 +  ' oninput="_pfgStageSection(\'' + sid + '\')" aria-label="Group name">';
+            html += '<button class="pfg-delete-btn" onclick="pfgDeleteGroup(this,\'' + sid + '\')" title="Delete group" aria-label="Delete group">×</button>';
+            html += '</div>';
+            html += '<div class="pf-pills">';
+            entries.forEach(function(entry) {
+                if (isReplace) {
+                    var parts = entry.split('==>', 2);
+                    var find = parts[0] || '';
+                    var withV = parts.length > 1 ? parts[1] : '';
+                    var disp = e((find || '…') + ' → ' + (withV || '…'));
+                    html += '<span class="pf-pill pf-pill--replace" data-value="' + e(entry)
+                         +  '" onclick="this.remove();_pfgStageSection(\'' + sid + '\')">' + disp + ' ×</span>';
+                } else {
+                    html += '<span class="pf-pill" data-value="' + e(entry)
+                         +  '" onclick="this.remove();_pfgStageSection(\'' + sid + '\')">' + e(entry) + ' ×</span>';
+                }
             });
-            stageSettingChange(key, result);
+            html += '</div>';
+            if (isReplace) {
+                html += '<div class="pf-input-row">'
+                     +  '<input type="text" class="pf-input pfg-replace-find" placeholder="Find…"'
+                     +  ' onkeydown="if(event.key===\'Enter\'){pfgAddReplacePill(this,\'' + sid + '\');event.preventDefault();}">'
+                     +  '<span class="replace-arrow">→</span>'
+                     +  '<input type="text" class="pf-input pfg-replace-with" placeholder="Replace with…"'
+                     +  ' onkeydown="if(event.key===\'Enter\'){pfgAddReplacePill(this,\'' + sid + '\');event.preventDefault();}">'
+                     +  '<button class="pf-add-btn" onclick="pfgAddReplacePill(this,\'' + sid + '\')" title="Add">+</button>'
+                     +  '</div>';
+            } else {
+                var ph = sectionId.indexOf('-add') !== -1 ? 'String to append…' : 'String to remove…';
+                html += '<div class="pf-input-row">'
+                     +  '<input type="text" class="pf-input pfg-pill-input" placeholder="' + ph + '"'
+                     +  ' onkeydown="if(event.key===\'Enter\'){pfgAddPill(this,\'' + sid + '\');event.preventDefault();}">'
+                     +  '<button class="pf-add-btn" onclick="pfgAddPill(this,\'' + sid + '\')" title="Add">+</button>'
+                     +  '</div>';
+            }
+            return html;
+        }
+
+        function _pfgRenderSection(settings, sectionId, label, key, typeEnabledKey) {
+            var e = escapeHtml;
+            var isReplace = sectionId.indexOf('-replace') !== -1;
+            function getGroups(k) {
+                if (Object.prototype.hasOwnProperty.call(_settingsPending, k)) return _settingsPending[k];
+                if (Object.prototype.hasOwnProperty.call(settings, k)) return settings[k];
+                return [];
+            }
+            function getOptVal(k, def) {
+                if (Object.prototype.hasOwnProperty.call(_settingsPending, k)) return !!_settingsPending[k];
+                if (Object.prototype.hasOwnProperty.call(settings, k)) return !!settings[k];
+                return def;
+            }
+            var groups = Array.isArray(getGroups(key)) ? getGroups(key) : [];
+            var typeEnabled = getOptVal(typeEnabledKey, true);
+            var html = '<div class="pfg-section pf-col">';
+            html += '<div class="pfg-section-header">';
+            html += '<span class="pf-section-label">' + e(label) + '</span>';
+            html += '<label class="setting-toggle" title="' + e(label) + ' enabled">'
+                 +  '<input type="checkbox"' + (typeEnabled ? ' checked' : '')
+                 +  ' onchange="stageSettingChange(\'' + e(typeEnabledKey) + '\',this.checked)" aria-label="' + e(label) + ' enabled">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<button class="pfg-add-group-btn" onclick="pfgAddGroup(\'' + e(sectionId) + '\')" title="Add group">+ Group</button>';
+            html += '</div>';
+            html += '<div class="pfg-groups" id="pfgsec-' + e(sectionId) + '">';
+            groups.forEach(function(group) {
+                if (!group || typeof group !== 'object') return;
+                var gName    = typeof group.name    === 'string' ? group.name  : '';
+                var gEnabled = group.enabled !== false;
+                var gEntries = Array.isArray(group.entries) ? group.entries : [];
+                html += '<div class="pfg-group' + (!gEnabled ? ' pfg-group--disabled' : '') + '">';
+                html += _pfgGroupBodyHtml(sectionId, gName, gEnabled, gEntries, isReplace);
+                html += '</div>';
+            });
+            html += '</div>';
+            html += '</div>';
+            return html;
+        }
+
+        function _renderPromptFilterRows(settings) {
+            var html = '';
+            ['positive', 'negative'].forEach(function(type) {
+                var title = type === 'positive' ? 'Positive Prompt Filters' : 'Negative Prompt Filters';
+                var desc  = 'Filters applied to every ' + type + ' prompt before generation and gallery saving. '
+                          + 'Original prompt sent to Horde unchanged.';
+                html += '<div class="pf-block">';
+                html += '<div class="pf-block-title">' + escapeHtml(title) + '</div>';
+                html += '<div class="pf-block-desc">' + escapeHtml(desc) + '</div>';
+                html += '<div class="pf-columns">';
+                html += _pfgRenderSection(settings, type + '-add',     'Add',     type + '_prompt_append',  type + '_prompt_append_enabled');
+                html += _pfgRenderSection(settings, type + '-remove',  'Remove',  type + '_prompt_remove',  type + '_prompt_remove_enabled');
+                html += _pfgRenderSection(settings, type + '-replace', 'Replace', type + '_prompt_replace', type + '_prompt_replace_enabled');
+                html += '</div></div>';
+            });
+
+            // Filter behavior options (global)
+            function _pfOptVal(key, defaultVal) {
+                if (Object.prototype.hasOwnProperty.call(_settingsPending, key)) return !!_settingsPending[key];
+                if (Object.prototype.hasOwnProperty.call(settings, key)) return !!settings[key];
+                return defaultVal;
+            }
+            var filtersEnabled = _pfOptVal('prompt_filters_enabled', true);
+            var removeCleanup  = _pfOptVal('prompt_remove_cleanup_separators', true);
+            var appendSep      = _pfOptVal('prompt_append_separator', true);
+            var wholeWord      = _pfOptVal('prompt_remove_whole_word', false);
+            var caseSensitive  = _pfOptVal('prompt_remove_case_sensitive', true);
+
+            html += '<div class="pf-block">';
+            html += '<div class="pf-block-title">Filter Options</div>';
+            html += '<div class="pf-options-row">';
+
+            html += '<div class="pf-option"><label class="setting-toggle" title="Prompt Filters Enabled">'
+                 +  '<input type="checkbox"' + (filtersEnabled ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_filters_enabled\',this.checked)" aria-label="Prompt Filters Enabled">'
+                 +  '<span class="setting-toggle-slider"></span></label>'
+                 +  '<div class="pf-option-text"><div class="pf-option-label">Filters enabled</div>'
+                 +  '<div class="pf-option-desc">Master switch — when off, no append/remove/replace operations are applied.</div></div></div>';
+
+            html += '<div class="pf-option"><label class="setting-toggle" title="Whole-Word Remove Matching">'
+                 +  '<input type="checkbox"' + (wholeWord ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_whole_word\',this.checked)" aria-label="Whole-Word Remove Matching">'
+                 +  '<span class="setting-toggle-slider"></span></label>'
+                 +  '<div class="pf-option-text"><div class="pf-option-label">Whole-word matching (remove)</div>'
+                 +  '<div class="pf-option-desc">Only remove a string when it appears as a complete word.</div></div></div>';
+
+            html += '<div class="pf-option"><label class="setting-toggle" title="Case-Sensitive Remove Matching">'
+                 +  '<input type="checkbox"' + (caseSensitive ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_case_sensitive\',this.checked)" aria-label="Case-Sensitive Remove Matching">'
+                 +  '<span class="setting-toggle-slider"></span></label>'
+                 +  '<div class="pf-option-text"><div class="pf-option-label">Case-sensitive matching (remove)</div>'
+                 +  '<div class="pf-option-desc">Match remove strings exactly as typed.</div></div></div>';
+
+            html += '<div class="pf-option"><label class="setting-toggle" title="Cleanup Separators After Removal">'
+                 +  '<input type="checkbox"' + (removeCleanup ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_cleanup_separators\',this.checked)" aria-label="Cleanup Separators After Removal">'
+                 +  '<span class="setting-toggle-slider"></span></label>'
+                 +  '<div class="pf-option-text"><div class="pf-option-label">Cleanup separators after removal</div>'
+                 +  '<div class="pf-option-desc">Remove orphaned commas and spaces left between deleted strings.</div></div></div>';
+
+            html += '<div class="pf-option"><label class="setting-toggle" title="Auto-Separator When Appending">'
+                 +  '<input type="checkbox"' + (appendSep ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_append_separator\',this.checked)" aria-label="Auto-Separator When Appending">'
+                 +  '<span class="setting-toggle-slider"></span></label>'
+                 +  '<div class="pf-option-text"><div class="pf-option-label">Auto-separator when appending</div>'
+                 +  '<div class="pf-option-desc">Insert ", " between each appended string and the existing prompt text.</div></div></div>';
+
+            html += '</div></div>';
+            return html;
         }
 
         async function applyPendingSettings() {
@@ -6850,9 +6902,29 @@ class WorkerWebUI:
         elif expected_type is list:
             if not isinstance(raw_value, list):
                 return web.json_response({"error": f"Field 'value' must be a list for setting '{key}'"}, status=400)
-            if not all(isinstance(s, str) for s in raw_value):
-                return web.json_response({"error": f"All items in '{key}' must be strings"}, status=400)
-            value = [s for s in raw_value if s.strip()]
+            _FILTER_GROUP_KEYS = {
+                "positive_prompt_append", "positive_prompt_remove", "positive_prompt_replace",
+                "negative_prompt_append", "negative_prompt_remove", "negative_prompt_replace",
+            }
+            if key in _FILTER_GROUP_KEYS:
+                # Expect a list of group dicts: [{name, enabled, entries}, ...]
+                cleaned_groups = []
+                for item in raw_value:
+                    if not isinstance(item, dict):
+                        continue
+                    cleaned_groups.append({
+                        "name": str(item.get("name", "")),
+                        "enabled": bool(item.get("enabled", True)),
+                        "entries": [
+                            str(e) for e in item.get("entries", [])
+                            if isinstance(e, str) and e.strip()
+                        ],
+                    })
+                value = cleaned_groups
+            else:
+                if not all(isinstance(s, str) for s in raw_value):
+                    return web.json_response({"error": f"All items in '{key}' must be strings"}, status=400)
+                value = [s for s in raw_value if s.strip()]
         else:
             return web.json_response({"error": "Internal configuration error"}, status=500)
 
