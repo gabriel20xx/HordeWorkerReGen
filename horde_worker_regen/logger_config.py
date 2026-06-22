@@ -28,7 +28,7 @@ def create_level_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS") -
         "DEBUG": f"{{time:{time_format}}} <dim>|</dim> <blue>{{level: <8}}</blue> <dim>|</dim> {{message}}",
         "INFO": (
             f"{{time:{time_format}}} <dim>|</dim>"
-            f" <bold><cyan>{{level: <8}}</cyan></bold> <dim>|</dim> {{message}}"
+            f" <bold><cyan>{{level: <8}}</cyan></bold> <dim>|</dim> <bold><cyan>{{message}}</cyan></bold>"
         ),
         "SUCCESS": (
             f"{{time:{time_format}}} <dim>|</dim>"
