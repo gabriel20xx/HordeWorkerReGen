@@ -241,6 +241,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         encoding="utf-8",
         backtrace=True,
         diagnose=False,
+        delay=True,
     )
 
     # trace/ — error trace log: ERROR and above with full backtraces.
@@ -256,6 +257,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         encoding="utf-8",
         backtrace=True,
         diagnose=process_id is None,
+        delay=True,
     )
 
     # crash/ and webui/ are main-process-only sinks.
@@ -271,6 +273,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
             encoding="utf-8",
             backtrace=True,
             diagnose=True,
+            delay=True,
         )
 
         # webui/ — scoped to the webui module so its traffic stays out of bridge/.
@@ -288,6 +291,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
             filter=_webui_filter,
             backtrace=True,
             diagnose=False,
+            delay=True,
         )
 
     _install_excepthook()
