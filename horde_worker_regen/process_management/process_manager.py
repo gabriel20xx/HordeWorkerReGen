@@ -6649,9 +6649,12 @@ class HordeWorkerProcessManager:
     def calculate_kudos_info(self) -> None:
         """Calculate and log information about the kudos generated in the current session."""
         time_since_session_start = time.time() - self.session_start_time
+        if time_since_session_start <= 0:
+            return
         kudos_per_hour_session = self.kudos_generated_this_session / time_since_session_start * 3600
+        active_time = time_since_session_start - self._time_spent_no_jobs_available
         active_kudos_per_hour = (
-            self.kudos_generated_this_session / (time_since_session_start - self._time_spent_no_jobs_available) * 3600
+            self.kudos_generated_this_session / active_time * 3600 if active_time > 0 else 0.0
         )
 
         kudos_total_past_hour = self.calculate_kudos_totals()
