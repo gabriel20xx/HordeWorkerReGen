@@ -2551,8 +2551,8 @@ class HordeWorkerProcessManager:
 
         total_stats = self._job_time_stats.get("TOTAL")
         if not (total_stats and total_stats["count"] >= 3):
-            # Insufficient data — return base headroom unchanged
-            return max(0, base)
+            # Insufficient data — need at least 1 so jobs can pop to gather timing data.
+            return max(1, base)
 
         avg_job_time = total_stats["sum"] / total_stats["count"]
 
@@ -2907,11 +2907,30 @@ class HordeWorkerProcessManager:
         if process_info.loaded_horde_model_name is not None:
             self._horde_model_map.expire_entry(process_info.loaded_horde_model_name)
 
-        try:
-            process_info.safe_send_message(HordeControlMessage(control_flag=HordeControlFlag.END_PROCESS))
-        except BrokenPipeError:
-            if not self._shutting_down:
-                logger.debug(f"Process {process_info.process_id} control channel vanished")
+        # Send the END_PROCESS control message in a daemon thread with a short timeout.
+        # If the child is stuck in a blocking GPU operation it may not be draining the
+        # pipe, causing pipe_connection.send() to block indefinitely and freeze the
+        # asyncio event loop.  We always fall through to kill() below regardless.
+        import threading
+
+        def _send_end() -> None:
+            try:
+                process_info.safe_send_message(HordeControlMessage(control_flag=HordeControlFlag.END_PROCESS))
+            except BrokenPipeError:
+                if not self._shutting_down:
+                    logger.debug(f"Process {process_info.process_id} control channel vanished")
+            except Exception:
+                pass
+
+        _send_thread = threading.Thread(target=_send_end, daemon=True)
+        _send_thread.start()
+        _send_thread.join(timeout=1.5)
+        if _send_thread.is_alive():
+            logger.debug(
+                f"END_PROCESS send to {self._process_label(process_info.process_id)} timed out "
+                "(pipe buffer likely full — child is stuck); proceeding to kill.",
+            )
+
         try:
             process_info.mp_process.join(timeout=1)
             process_info.mp_process.kill()
@@ -3614,10 +3633,13 @@ class HordeWorkerProcessManager:
                 if _ip_match is not None:
                     self.jobs_in_progress.remove(_ip_match)
                 else:
-                    logger.error(
-                        f"Job {_msg_job_id} not found in jobs_in_progress. "
-                        "Did it fault? "
-                        f"(Process {message.process_id})",
+                    # Job completed but was not found in the in-progress tracking list.
+                    # This can happen when the job was dispatched before tracking was established
+                    # (e.g. a skip-the-line dispatch from a stale cached result). The result is
+                    # still processed normally below — this is a tracking inconsistency, not a fault.
+                    logger.debug(
+                        f"Job {_msg_job_id} not found in jobs_in_progress on completion "
+                        f"(Process {message.process_id}) — tracking inconsistency, job will still be processed",
                     )
 
                 for job in self.jobs_pending_inference:
@@ -3851,25 +3873,26 @@ class HordeWorkerProcessManager:
                                     _gpos_orig = _gparts[0].strip()
                                     _gneg_orig = _gparts[1].strip() if len(_gparts) > 1 else ""
                                     _pf_on = self.bridge_data.prompt_filters_enabled
+                                    _gbd = self.bridge_data
                                     _gpos = _apply_prompt_filters(
                                         _gpos_orig,
-                                        append=self.bridge_data.positive_prompt_append if _pf_on else None,
-                                        remove=self.bridge_data.positive_prompt_remove if _pf_on else None,
-                                        replace=self.bridge_data.positive_prompt_replace if _pf_on else None,
-                                        remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
-                                        append_separator=self.bridge_data.prompt_append_separator,
-                                        remove_whole_word=self.bridge_data.prompt_remove_whole_word,
-                                        remove_case_sensitive=self.bridge_data.prompt_remove_case_sensitive,
+                                        append=_gbd.positive_prompt_append if (_pf_on and _gbd.positive_prompt_append_enabled) else None,
+                                        remove=_gbd.positive_prompt_remove if (_pf_on and _gbd.positive_prompt_remove_enabled) else None,
+                                        replace=_gbd.positive_prompt_replace if (_pf_on and _gbd.positive_prompt_replace_enabled) else None,
+                                        remove_cleanup_separators=_gbd.prompt_remove_cleanup_separators,
+                                        append_separator=_gbd.prompt_append_separator,
+                                        remove_whole_word=_gbd.prompt_remove_whole_word,
+                                        remove_case_sensitive=_gbd.prompt_remove_case_sensitive,
                                     )
                                     _gneg = _apply_prompt_filters(
                                         _gneg_orig,
-                                        append=self.bridge_data.negative_prompt_append if _pf_on else None,
-                                        remove=self.bridge_data.negative_prompt_remove if _pf_on else None,
-                                        replace=self.bridge_data.negative_prompt_replace if _pf_on else None,
-                                        remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
-                                        append_separator=self.bridge_data.prompt_append_separator,
-                                        remove_whole_word=self.bridge_data.prompt_remove_whole_word,
-                                        remove_case_sensitive=self.bridge_data.prompt_remove_case_sensitive,
+                                        append=_gbd.negative_prompt_append if (_pf_on and _gbd.negative_prompt_append_enabled) else None,
+                                        remove=_gbd.negative_prompt_remove if (_pf_on and _gbd.negative_prompt_remove_enabled) else None,
+                                        replace=_gbd.negative_prompt_replace if (_pf_on and _gbd.negative_prompt_replace_enabled) else None,
+                                        remove_cleanup_separators=_gbd.prompt_remove_cleanup_separators,
+                                        append_separator=_gbd.prompt_append_separator,
+                                        remove_whole_word=_gbd.prompt_remove_whole_word,
+                                        remove_case_sensitive=_gbd.prompt_remove_case_sensitive,
                                     )
                                     gallery_image["positive_prompt"] = _gpos.strip()
                                     gallery_image["negative_prompt"] = _gneg.strip()
@@ -4423,34 +4446,36 @@ class HordeWorkerProcessManager:
         # submission always use the original prompt. model_copy() works on frozen models.
         _job_to_dispatch = next_job
         _original_prompt = next_job.payload.prompt
-        if _original_prompt and self.bridge_data.prompt_filters_enabled and (
-            self.bridge_data.positive_prompt_append
-            or self.bridge_data.positive_prompt_remove
-            or self.bridge_data.positive_prompt_replace
-            or self.bridge_data.negative_prompt_append
-            or self.bridge_data.negative_prompt_remove
-            or self.bridge_data.negative_prompt_replace
+        _bd = self.bridge_data
+        _pf_on = _bd.prompt_filters_enabled
+        if _original_prompt and _pf_on and (
+            (_bd.positive_prompt_append and _bd.positive_prompt_append_enabled)
+            or (_bd.positive_prompt_remove and _bd.positive_prompt_remove_enabled)
+            or (_bd.positive_prompt_replace and _bd.positive_prompt_replace_enabled)
+            or (_bd.negative_prompt_append and _bd.negative_prompt_append_enabled)
+            or (_bd.negative_prompt_remove and _bd.negative_prompt_remove_enabled)
+            or (_bd.negative_prompt_replace and _bd.negative_prompt_replace_enabled)
         ):
             _parts = _original_prompt.split("###", 1)
             _pos = _apply_prompt_filters(
                 _parts[0],
-                append=self.bridge_data.positive_prompt_append,
-                remove=self.bridge_data.positive_prompt_remove,
-                replace=self.bridge_data.positive_prompt_replace,
-                remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
-                append_separator=self.bridge_data.prompt_append_separator,
-                remove_whole_word=self.bridge_data.prompt_remove_whole_word,
-                remove_case_sensitive=self.bridge_data.prompt_remove_case_sensitive,
+                append=_bd.positive_prompt_append if _bd.positive_prompt_append_enabled else None,
+                remove=_bd.positive_prompt_remove if _bd.positive_prompt_remove_enabled else None,
+                replace=_bd.positive_prompt_replace if _bd.positive_prompt_replace_enabled else None,
+                remove_cleanup_separators=_bd.prompt_remove_cleanup_separators,
+                append_separator=_bd.prompt_append_separator,
+                remove_whole_word=_bd.prompt_remove_whole_word,
+                remove_case_sensitive=_bd.prompt_remove_case_sensitive,
             )
             _neg = _apply_prompt_filters(
                 _parts[1] if len(_parts) > 1 else "",
-                append=self.bridge_data.negative_prompt_append,
-                remove=self.bridge_data.negative_prompt_remove,
-                replace=self.bridge_data.negative_prompt_replace,
-                remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
-                append_separator=self.bridge_data.prompt_append_separator,
-                remove_whole_word=self.bridge_data.prompt_remove_whole_word,
-                remove_case_sensitive=self.bridge_data.prompt_remove_case_sensitive,
+                append=_bd.negative_prompt_append if _bd.negative_prompt_append_enabled else None,
+                remove=_bd.negative_prompt_remove if _bd.negative_prompt_remove_enabled else None,
+                replace=_bd.negative_prompt_replace if _bd.negative_prompt_replace_enabled else None,
+                remove_cleanup_separators=_bd.prompt_remove_cleanup_separators,
+                append_separator=_bd.prompt_append_separator,
+                remove_whole_word=_bd.prompt_remove_whole_word,
+                remove_case_sensitive=_bd.prompt_remove_case_sensitive,
             )
             _filtered_prompt = f"{_pos.strip()}###{_neg.strip()}"
             if _filtered_prompt != _original_prompt:
@@ -8154,12 +8179,13 @@ class HordeWorkerProcessManager:
                 )
         else:
             # No job is actively in inference yet, but a process may be preloading a model
-            # for an upcoming job. Show that process/job so the UI is not blank during the
-            # model-loading phase.
+            # or downloading auxiliary models for an upcoming job. Show that process/job so
+            # the UI is not blank during the model-loading or aux-download phase.
             for process in self._process_map.values():
                 if process.last_process_state in (
                     HordeProcessState.MODEL_PRELOADING,
                     HordeProcessState.MODEL_PRELOADED,
+                    HordeProcessState.DOWNLOADING_AUX_MODEL,
                 ) and process.last_job_referenced is not None:
                     job = process.last_job_referenced
                     _current_job_obj = job

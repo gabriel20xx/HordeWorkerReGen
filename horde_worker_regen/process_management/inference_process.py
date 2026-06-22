@@ -546,6 +546,9 @@ class HordeInferenceProcess(HordeProcess):
     _last_inference_percent: int | None = None
     """Last percentage reported by the progress callback; used by the background heartbeat thread."""
 
+    _last_step_callback_time: float = 0.0
+    """Monotonic timestamp of the last progress callback — used to guard the heartbeat log message."""
+
     def _inference_heartbeat_loop(self, stop_event: threading.Event) -> None:
         """Send periodic heartbeats during inference to prevent false stuck-process detection.
 
@@ -577,10 +580,17 @@ class HordeInferenceProcess(HordeProcess):
                         f"{self._INFERENCE_HEARTBEAT_INTERVAL:.0f}s, progress not yet received)",
                     )
                 else:
-                    logger.info(
-                        f"Inference still running (no step callback for {self._INFERENCE_HEARTBEAT_INTERVAL:.0f}s): "
-                        f"last progress {last_pct}% — process is alive, likely in VAE decode or final step",
-                    )
+                    elapsed = time.monotonic() - self._last_step_callback_time
+                    if elapsed >= self._INFERENCE_HEARTBEAT_INTERVAL:
+                        logger.info(
+                            f"Inference still running (no step callback for {elapsed:.0f}s): "
+                            f"last progress {last_pct}% — process is alive, likely in VAE decode or final step",
+                        )
+                    else:
+                        logger.debug(
+                            f"Background heartbeat (step callbacks active, last {elapsed:.1f}s ago): "
+                            f"last progress {last_pct}%",
+                        )
                     self.send_heartbeat_message(
                         heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE,
                         percent_complete=last_pct,
@@ -624,6 +634,7 @@ class HordeInferenceProcess(HordeProcess):
         Args:
             progress_report (ProgressReport): The progress report from the HordeLib instance.
         """
+        self._last_step_callback_time = time.monotonic()
         try:
             self._progress_callback_impl(progress_report)
         except Exception as cb_err:
@@ -835,6 +846,7 @@ class HordeInferenceProcess(HordeProcess):
         self._current_job_inference_steps_complete = False
         self._last_job_inference_rate = None
         self._last_inference_percent = None
+        self._last_step_callback_time = 0.0
         self._post_processing_was_started = False
 
         # Capture original_prompt here so the finally block can always restore it,

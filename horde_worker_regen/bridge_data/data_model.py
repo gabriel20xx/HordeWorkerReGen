@@ -126,6 +126,24 @@ class reGenBridgeData(CombinedHordeBridgeData):
     the individual filter lists.  Defaults to True (filters active).
     """
 
+    positive_prompt_append_enabled: bool = True
+    """When False, the positive append list is ignored even if non-empty."""
+
+    positive_prompt_remove_enabled: bool = True
+    """When False, the positive remove list is ignored even if non-empty."""
+
+    positive_prompt_replace_enabled: bool = True
+    """When False, the positive replace list is ignored even if non-empty."""
+
+    negative_prompt_append_enabled: bool = True
+    """When False, the negative append list is ignored even if non-empty."""
+
+    negative_prompt_remove_enabled: bool = True
+    """When False, the negative remove list is ignored even if non-empty."""
+
+    negative_prompt_replace_enabled: bool = True
+    """When False, the negative replace list is ignored even if non-empty."""
+
     prompt_remove_whole_word: bool = False
     """When True, a remove entry only matches when it appears as a complete word
     (i.e. not as part of a longer word).  E.g. ``"cat"`` will not match ``"category"``.
