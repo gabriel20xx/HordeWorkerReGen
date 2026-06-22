@@ -273,8 +273,6 @@ def init() -> int:
             logger.warning(f"Failed to remove .abort file: {e}")
     # ! IMPORTANT: End of own code
 
-    logger.info(f"Multiprocessing start method: {multiprocessing.get_start_method()}")
-
     # Create args for -v, allowing -vvv
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", action="count", default=0, help="Increase verbosity of output")
@@ -381,6 +379,10 @@ def init() -> int:
     from horde_worker_regen.logger_config import configure_logger_format
 
     configure_logger_format(enable_stderr=not args.no_logging)
+
+    # Log after configure_logger_format so it goes through our custom colored format,
+    # not the default loguru sink that was active before the call above.
+    logger.info(f"Multiprocessing start method: {multiprocessing.get_start_method()}")
 
     # We only need to download the legacy DBs once, so we do it here instead of in the worker processes
 

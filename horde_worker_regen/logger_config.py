@@ -28,7 +28,7 @@ def create_level_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS") -
         "DEBUG": f"{{time:{time_format}}} <dim>|</dim> <blue>{{level: <8}}</blue> <dim>|</dim> {{message}}",
         "INFO": (
             f"{{time:{time_format}}} <dim>|</dim>"
-            f" <bold><cyan>{{level: <8}}</cyan></bold> <dim>|</dim> <bold><cyan>{{message}}</cyan></bold>"
+            f" <bold><cyan>{{level: <8}}</cyan></bold> <dim>|</dim> {{message}}"
         ),
         "SUCCESS": (
             f"{{time:{time_format}}} <dim>|</dim>"
@@ -99,32 +99,21 @@ _TRACE_RETENTION = "7 days"
 _CRASH_RETENTION = "30 days"
 _CRASH_ROTATION = "00:00"
 
-# Module-name prefixes whose INFO/DEBUG messages are suppressed on the console.
-# These are ComfyUI internals and low-level hordelib plumbing that produce high-volume
-# status lines (device placement, attention mode, VAE dtype …) that belong in log files
-# but clutter the terminal.  WARNING and above always pass through so real problems
-# remain visible.
-_CONSOLE_SUPPRESSED_PREFIXES: tuple[str, ...] = (
-    "comfy",          # ComfyUI core (comfy.model_management, comfy.ldm.*, …)
-    "nodes",          # ComfyUI custom-node modules
-    "execution",      # ComfyUI prompt-executor
-    "folder_paths",   # ComfyUI path helpers
-    "hordelib.comfy", # hordelib's thin ComfyUI wrappers
-)
-
-
 def _make_console_filter(warn_level_no: int) -> Any:
-    """Return a loguru filter that suppresses noisy ComfyUI modules below WARNING."""
-    prefixes = _CONSOLE_SUPPRESSED_PREFIXES
+    """Return a loguru filter that limits INFO/DEBUG to our own code on the console.
+
+    At WARNING and above every module passes through so real problems are always visible.
+    Below WARNING only records whose logger name is within ``horde_worker_regen``
+    are shown.  This silences the high-volume status lines emitted by ComfyUI,
+    hordelib internals, and Python's import machinery without needing an
+    ever-growing deny-list.
+    """
 
     def _filter(record: dict[str, Any]) -> bool:
         if record["level"].no >= warn_level_no:
-            return True  # always show WARNING / ERROR / CRITICAL
+            return True
         name: str = record["name"] or ""
-        for prefix in prefixes:
-            if name == prefix or name.startswith(prefix + "."):
-                return False
-        return True
+        return name == "horde_worker_regen" or name.startswith("horde_worker_regen.")
 
     return _filter
 

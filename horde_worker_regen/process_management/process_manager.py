@@ -2493,29 +2493,47 @@ class HordeWorkerProcessManager:
         """Compute a queue-size override from observed worker throughput.
 
         The heuristic starts from available non-concurrent process headroom and
-        then adjusts based on average TOTAL job duration:
+        then adjusts based on average TOTAL job duration.  Timing tiers:
 
-        - Increase buffering for fast jobs (< 30 s average total) to keep
-          inference workers fed.
-        - Reduce buffering for slow jobs (>= 120 s average total) where a large
-          queue would just waste VRAM loading models ahead of time.
+        - **< 15 s** (very fast): buffer 2 × concurrent to eliminate idle time —
+          at this speed the API round-trip dominates, so deep buffering pays off.
+        - **15 – 30 s** (fast): buffer 1 × concurrent to keep workers fed.
+        - **30 – 90 s** (medium): existing headroom is sufficient; no adjustment.
+        - **90 – 300 s** (slow): cap at 1 — one pre-loaded job hides model-swap
+          latency without wasting VRAM on more.
+        - **≥ 300 s** (very slow): 0 — pre-loading provides no measurable benefit.
+
+        Timing data is ignored until at least 3 samples have been collected to
+        avoid reacting to a single anomalously fast or slow job.
 
         Returns:
             Recommended max queue size (>= 0).
         """
-        base = max(0, self._max_inference_processes - self._max_concurrent_inference_processes)
+        concurrent = self._max_concurrent_inference_processes
+        base = max(0, self._max_inference_processes - concurrent)
 
         total_stats = self._job_time_stats.get("TOTAL")
-        if total_stats and total_stats["count"] > 0:
-            avg_job_time = total_stats["sum"] / total_stats["count"]
-            if avg_job_time < 30:
-                # Fast jobs – buffer aggressively so processes are never idle
-                base = max(base, self._max_concurrent_inference_processes)
-            elif avg_job_time >= 120:
-                # Slow jobs – minimal headroom; current threads can keep themselves busy
-                base = max(0, self._max_concurrent_inference_processes - 1)
+        if not (total_stats and total_stats["count"] >= 3):
+            # Insufficient data — return base headroom unchanged
+            return max(0, base)
 
-        return max(0, base)
+        avg_job_time = total_stats["sum"] / total_stats["count"]
+
+        if avg_job_time < 15:
+            # Very fast: pre-load 2 jobs per worker to eliminate idle time
+            return max(base, concurrent * 2)
+        elif avg_job_time < 30:
+            # Fast: pre-load 1 job per worker
+            return max(base, concurrent)
+        elif avg_job_time < 90:
+            # Medium: current headroom is adequate
+            return max(0, base)
+        elif avg_job_time < 300:
+            # Slow: one job ahead hides model-swap latency
+            return max(0, min(base, 1))
+        else:
+            # Very slow: pre-loading provides no benefit
+            return 0
 
     def _compute_auto_max_active_models(self) -> int:
         """Compute the optimal active-model count based on available VRAM.
@@ -2524,11 +2542,13 @@ class HordeWorkerProcessManager:
 
         1. Derive a per-model VRAM footprint from current worker VRAM usage
            divided by the number of currently-loaded models.  Falls back to a
-           2 GB estimate when no models are loaded or VRAM data is unavailable.
-        2. Compute free VRAM as ``total_vram - system_vram_used``, then apply a
-           10 % safety margin.
-        3. Return ``max(1, floor(free_vram / per_model_vram))``, capped at 16 to
-           avoid runaway values on systems with unusually large VRAM.
+           4 GB estimate (SDXL-class typical footprint) when no models are loaded
+           or VRAM data is unavailable.
+        2. Reserve an explicit *inference headroom*: ``max(2 GB, 10 % of total VRAM)``.
+           This is more conservative than a flat percentage on smaller cards
+           (8–12 GB) where 10 % leaves almost no room for active computation.
+        3. Compute available VRAM as ``total_vram - system_vram_used - inference_headroom``.
+        4. Return ``max(1, floor(available / per_model))``, capped at 16.
 
         When total VRAM data has not yet been collected (e.g. at startup or on
         CPU-only machines), the current ``max_inference_processes`` is returned
@@ -2552,12 +2572,14 @@ class HordeWorkerProcessManager:
         if worker_vram > 0 and num_loaded > 0:
             per_model_vram = worker_vram / num_loaded
         else:
-            per_model_vram = 2048.0  # 2 GB default estimate
+            per_model_vram = 4096.0  # 4 GB default (SDXL-class typical footprint)
 
-        per_model_vram = max(per_model_vram, 256.0)  # floor at 256 MB to avoid division explosion
+        per_model_vram = max(per_model_vram, 512.0)  # floor at 512 MB to avoid division explosion
 
-        # Available VRAM with safety margin (retain 10 %)
-        available_vram = max(0.0, total_vram - system_vram_used) * 0.9
+        # Reserve headroom for active inference operations.
+        # On small cards the percentage is too small; use an absolute minimum of 2 GB.
+        inference_headroom = max(2048.0, total_vram * 0.10)
+        available_vram = max(0.0, total_vram - system_vram_used - inference_headroom)
         if available_vram <= 0:
             return max(1, num_loaded)
 

@@ -1088,7 +1088,9 @@ class WorkerWebUI:
         .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--page-spacing); }
         .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--page-spacing); }
         .overview-bottom-grid-left { grid-row: span 2; }
-        .card-header-count { font-size: 0.75rem; font-weight: 700; color: #475569; }
+        .card-header-count { font-size: 0.8rem; font-weight: 700; color: #334155; }
+        #queue-count, #models-count { color: #2563eb; }
+        #queue-max,   #models-max   { color: #64748b; }
 
         .stat-card { background: var(--card-bg); border-radius: 12px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); border: 1px solid var(--border); }
         .stat-card-label { font-size: 0.75rem; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
@@ -1396,6 +1398,9 @@ class WorkerWebUI:
         [data-theme="dark"] .stat-value { color: #f1f5f9; }
         [data-theme="dark"] .stat-row { border-bottom-color: #2d3f55; }
         [data-theme="dark"] .card-header { border-bottom-color: #2d3f55; }
+        [data-theme="dark"] .card-header-count { color: #cbd5e1; }
+        [data-theme="dark"] #queue-count, [data-theme="dark"] #models-count { color: #60a5fa; }
+        [data-theme="dark"] #queue-max,   [data-theme="dark"] #models-max   { color: #94a3b8; }
         [data-theme="dark"] .card-title { color: #94a3b8; }
         [data-theme="dark"] .progress-label { color: #94a3b8; }
         [data-theme="dark"] .progress-value { color: #f1f5f9; }
