@@ -46,8 +46,10 @@ def _initialize_horde_logging(process_id: int) -> None:
     """Initialize HordeLog and configure the standardized log format for a worker process."""
     from hordelib.utils.logger import HordeLog
 
+    # setup_logging=False: skip hordelib's own file sinks — configure_logger_format()
+    # owns all file sink setup and would remove them immediately anyway via logger.remove().
     HordeLog.initialise(
-        setup_logging=True,
+        setup_logging=False,
         process_id=process_id,
         verbosity_count=_HORDELIB_VERBOSITY,
     )

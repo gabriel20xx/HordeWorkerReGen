@@ -349,9 +349,12 @@ def init() -> int:
     elif args.v == 0:
         target_verbosity = 3  # Default to INFO or higher (Warning, Error, Critical)
 
-    # Initialise logging with loguru
+    # Initialise HordeLog without its own file sinks (setup_logging=False) — all file
+    # logging is configured immediately after by configure_logger_format(), which owns
+    # the sink layout.  setup_logging=True would create files in the root logs/ folder
+    # that get orphaned the moment configure_logger_format() calls logger.remove().
     HordeLog.initialise(
-        setup_logging=True,
+        setup_logging=False,
         process_id=None,
         verbosity_count=target_verbosity,
     )
