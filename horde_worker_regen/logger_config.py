@@ -99,6 +99,35 @@ _TRACE_RETENTION = "7 days"
 _CRASH_RETENTION = "30 days"
 _CRASH_ROTATION = "00:00"
 
+# Module-name prefixes whose INFO/DEBUG messages are suppressed on the console.
+# These are ComfyUI internals and low-level hordelib plumbing that produce high-volume
+# status lines (device placement, attention mode, VAE dtype …) that belong in log files
+# but clutter the terminal.  WARNING and above always pass through so real problems
+# remain visible.
+_CONSOLE_SUPPRESSED_PREFIXES: tuple[str, ...] = (
+    "comfy",          # ComfyUI core (comfy.model_management, comfy.ldm.*, …)
+    "nodes",          # ComfyUI custom-node modules
+    "execution",      # ComfyUI prompt-executor
+    "folder_paths",   # ComfyUI path helpers
+    "hordelib.comfy", # hordelib's thin ComfyUI wrappers
+)
+
+
+def _make_console_filter(warn_level_no: int) -> Any:
+    """Return a loguru filter that suppresses noisy ComfyUI modules below WARNING."""
+    prefixes = _CONSOLE_SUPPRESSED_PREFIXES
+
+    def _filter(record: dict[str, Any]) -> bool:
+        if record["level"].no >= warn_level_no:
+            return True  # always show WARNING / ERROR / CRITICAL
+        name: str = record["name"] or ""
+        for prefix in prefixes:
+            if name == prefix or name.startswith(prefix + "."):
+                return False
+        return True
+
+    return _filter
+
 
 def _install_excepthook() -> None:
     """Install sys.excepthook and threading.excepthook to capture unhandled exceptions.
@@ -208,11 +237,13 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
     file_format = create_plain_format_function(time_format="YYYY-MM-DD HH:mm:ss.SSS")
 
     if enable_stderr:
+        _warn_level_no = logger.level("WARNING").no
         logger.add(
             sys.stderr,
             format=console_format,
             level=log_level,
             colorize=True,
+            filter=_make_console_filter(_warn_level_no),
         )
 
     # Build per-type sink paths.  The {time:YYYY-MM-DD} token in the date directory

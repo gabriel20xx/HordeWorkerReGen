@@ -196,31 +196,37 @@ class LogConsoleRewriter(io.StringIO):
         should_modify = not self.in_traceback and not is_traceback_line and not is_error_line
 
         if should_modify:
+            # Each entry: (pattern, replacement, exact_word_match, case_sensitive)
+            # exact_word_match=True wraps the pattern in \b boundaries so "start_inference"
+            # won't match inside "start_inference_process".
+            # case_sensitive=False adds re.IGNORECASE.
             replacements = [
-                ("horde_worker_regen.process_management.process_manager", "Worker"),
-                ("horde_worker_regen.", ""),
-                ("receive_and_handle_process_messages", "Process"),
-                ("start_inference_processes", "Starting"),
-                ("_start_inference_process", "Starting"),
-                ("start_inference_process", "Starting"),
-                ("start_safety_process", "Safety"),
-                ("start_inference", "Process"),
-                ("print_status_method", "Status"),
-                ("log_kudos_info", "Kudos"),
-                ("submit_single_generation", "Submit"),
-                ("preload_models", "Loading"),
-                ("api_job_pop", "New Job"),
-                ("_process_control_loop", "Control"),
-                ("_bridge_data_loop", "Config"),
-                ("enable_performance_mode", "Performance"),
-                ("replace_hung_processes", "Recovery"),
-                ("handle_job_fault", "Job Fault"),
-                ("api_submit_job", "Submitting"),
-                ("_end_inference_process", "Stopping"),
+                ("horde_worker_regen.process_management.process_manager", "Worker",      True, True),
+                ("horde_worker_regen.",                                   "",            True, True),
+                ("receive_and_handle_process_messages",                   "Process",     True, True),
+                ("start_inference_processes",                             "Starting",    True, True),
+                ("_start_inference_process",                              "Starting",    True, True),
+                ("start_inference_process",                               "Starting",    True, True),
+                ("start_safety_process",                                  "Safety",      True, True),
+                ("start_inference",                                       "Process",     True, True),
+                ("print_status_method",                                   "Status",      True, True),
+                ("log_kudos_info",                                        "Kudos",       True, True),
+                ("submit_single_generation",                              "Submit",      True, True),
+                ("preload_models",                                        "Loading",     True, True),
+                ("api_job_pop",                                           "New Job",     True, True),
+                ("_process_control_loop",                                 "Control",     True, True),
+                ("_bridge_data_loop",                                     "Config",      True, True),
+                ("enable_performance_mode",                               "Performance", True, True),
+                ("replace_hung_processes",                                "Recovery",    True, True),
+                ("handle_job_fault",                                      "Job Fault",   True, True),
+                ("api_submit_job",                                        "Submitting",  True, True),
+                ("_end_inference_process",                                "Stopping",    True, True),
             ]
 
-            for old, new in replacements:
-                message = message.replace(old, new)
+            for old, new, exact, case_sensitive in replacements:
+                flags = 0 if case_sensitive else re.IGNORECASE
+                pattern = (r'\b' + re.escape(old) + r'\b') if exact else re.escape(old)
+                message = re.sub(pattern, new, message, flags=flags)
 
             replacement = ""
 
