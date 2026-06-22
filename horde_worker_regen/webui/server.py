@@ -134,6 +134,9 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "negative_prompt_replace": {"type": list},
     "prompt_remove_cleanup_separators": {"type": bool},
     "prompt_append_separator": {"type": bool},
+    "prompt_filters_enabled": {"type": bool},
+    "prompt_remove_whole_word": {"type": bool},
+    "prompt_remove_case_sensitive": {"type": bool},
 }
 
 
@@ -5010,8 +5013,11 @@ class WorkerWebUI:
             negative_prompt_append:   ['Negative — Add', 'Strings to append to every negative prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
             negative_prompt_remove:   ['Negative — Remove', 'Strings to remove from every negative prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
             negative_prompt_replace:  ['Negative — Replace', 'Text pairs to replace in every negative prompt.', 'Prompt Filters', 'str_replace_list', null, null, false, null, null],
-            prompt_remove_cleanup_separators: ['Cleanup Separators After Removal', 'Remove orphaned commas and spaces left between deleted strings. E.g. removing "foo" and "bar" from "a, foo, bar, b" gives "a, b" instead of "a, , , b".', 'Prompt Filters', 'bool', null, null, false, null, null],
-            prompt_append_separator:  ['Auto-Separator When Appending', 'Insert ", " between each appended string and the existing prompt text. When off, strings are concatenated without any separator.', 'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_filters_enabled:           ['Prompt Filters Enabled',           'Master switch — when off, no append/remove/replace operations are applied regardless of the lists below.',                                                                         'Prompt Filters', 'bool', null, null, true,  null, null],
+            prompt_remove_cleanup_separators: ['Cleanup Separators After Removal',  'Remove orphaned commas and spaces left between deleted strings. E.g. removing "foo" and "bar" from "a, foo, bar, b" gives "a, b" instead of "a, , , b".',                        'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_append_separator:          ['Auto-Separator When Appending',     'Insert ", " between each appended string and the existing prompt text. When off, strings are concatenated without any separator.',                                                  'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_remove_whole_word:         ['Whole-Word Remove Matching',        'Only remove a string when it appears as a complete word. E.g. "cat" will not match inside "category". Uses word-boundary anchors.',                                                'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_remove_case_sensitive:     ['Case-Sensitive Remove Matching',    'Match remove strings exactly as typed. When off, "Cat" and "CAT" both match "cat".',                                                                                               'Prompt Filters', 'bool', null, null, false, null, null],
         };
 
         // Default values for each setting key — used by the per-row reset button.
@@ -5032,8 +5038,11 @@ class WorkerWebUI:
             max_submit_retries: 10, data_retention_days: 7,
             positive_prompt_append: [], positive_prompt_remove: [], positive_prompt_replace: [],
             negative_prompt_append: [], negative_prompt_remove: [], negative_prompt_replace: [],
+            prompt_filters_enabled: true,
             prompt_remove_cleanup_separators: true,
             prompt_append_separator: true,
+            prompt_remove_whole_word: false,
+            prompt_remove_case_sensitive: true,
         };
 
         var _settingsLoaded = false;
@@ -5670,12 +5679,39 @@ class WorkerWebUI:
                 if (Object.prototype.hasOwnProperty.call(settings, key)) return !!settings[key];
                 return defaultVal;
             }
-            var removeCleanup = _pfOptVal('prompt_remove_cleanup_separators', true);
-            var appendSep     = _pfOptVal('prompt_append_separator', true);
+            var filtersEnabled  = _pfOptVal('prompt_filters_enabled', true);
+            var removeCleanup   = _pfOptVal('prompt_remove_cleanup_separators', true);
+            var appendSep       = _pfOptVal('prompt_append_separator', true);
+            var wholeWord       = _pfOptVal('prompt_remove_whole_word', false);
+            var caseSensitive   = _pfOptVal('prompt_remove_case_sensitive', true);
 
             html += '<div class="pf-block">';
             html += '<div class="pf-block-title">Filter Options</div>';
             html += '<div class="pf-options-row">';
+
+            html += '<div class="pf-option">';
+            html += '<label class="setting-toggle" title="Prompt Filters Enabled">'
+                 +  '<input type="checkbox"' + (filtersEnabled ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_filters_enabled\', this.checked)" aria-label="Prompt Filters Enabled">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<div class="pf-option-text"><div class="pf-option-label">Filters enabled</div>'
+                 +  '<div class="pf-option-desc">Master switch — when off, no append/remove/replace operations are applied.</div></div>';
+            html += '</div>';
+
+            html += '<div class="pf-option">';
+            html += '<label class="setting-toggle" title="Whole-Word Remove Matching">'
+                 +  '<input type="checkbox"' + (wholeWord ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_whole_word\', this.checked)" aria-label="Whole-Word Remove Matching">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<div class="pf-option-text"><div class="pf-option-label">Whole-word matching (remove)</div>'
+                 +  '<div class="pf-option-desc">Only remove a string when it appears as a complete word — "cat" will not match inside "category".</div></div>';
+            html += '</div>';
+
+            html += '<div class="pf-option">';
+            html += '<label class="setting-toggle" title="Case-Sensitive Remove Matching">'
+                 +  '<input type="checkbox"' + (caseSensitive ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_case_sensitive\', this.checked)" aria-label="Case-Sensitive Remove Matching">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<div class="pf-option-text"><div class="pf-option-label">Case-sensitive matching (remove)</div>'
+                 +  '<div class="pf-option-desc">Match remove strings exactly as typed. When off, "Cat" and "CAT" both match "cat".</div></div>';
+            html += '</div>';
 
             html += '<div class="pf-option">';
             html += '<label class="setting-toggle" title="Cleanup Separators After Removal">'

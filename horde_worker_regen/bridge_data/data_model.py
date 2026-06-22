@@ -119,6 +119,24 @@ class reGenBridgeData(CombinedHordeBridgeData):
     When False the string is concatenated directly (no separator inserted).
     """
 
+    prompt_filters_enabled: bool = True
+    """Master switch for all prompt filters.
+
+    When False, no append/remove/replace operations are applied regardless of
+    the individual filter lists.  Defaults to True (filters active).
+    """
+
+    prompt_remove_whole_word: bool = False
+    """When True, a remove entry only matches when it appears as a complete word
+    (i.e. not as part of a longer word).  E.g. ``"cat"`` will not match ``"category"``.
+    Implemented with ``\\b`` word-boundary anchors.
+    """
+
+    prompt_remove_case_sensitive: bool = True
+    """When True (default), remove entries are matched with their exact capitalisation.
+    When False, matching is case-insensitive (``"Cat"`` and ``"CAT"`` both match ``"cat"``).
+    """
+
     minutes_allowed_without_jobs: int = Field(default=30, ge=0, lt=60 * 60)
 
     auto_restart_on_idle_minutes: int = Field(default=60, ge=0, le=1440, validate_default=True)

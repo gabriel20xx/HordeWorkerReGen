@@ -208,11 +208,16 @@ def _apply_prompt_filters(
     replace: list[str] | None = None,
     remove_cleanup_separators: bool = True,
     append_separator: bool = True,
+    remove_whole_word: bool = False,
+    remove_case_sensitive: bool = True,
 ) -> str:
     """Apply separate append/remove/replace filter lists to *text*.
 
-    - *remove*: each item is a literal string to strip from the text
-    - *replace*: each item is ``find==>with`` format; entries without ``==>`` are skipped
+    - *remove*: each item is a literal string to strip from the text.
+      Controlled by *remove_whole_word* (only match standalone words) and
+      *remove_case_sensitive* (case-exact vs. case-insensitive matching).
+    - *replace*: each item is ``find==>with`` format; entries without ``==>`` are skipped.
+      Always matched whole-word and case-insensitively.
     - *append*: each item is appended; separator behaviour is controlled by *append_separator*
     - *remove_cleanup_separators*: when True, collapses orphaned commas/spaces between removed
       items (e.g. ``"a, , , b"`` → ``"a, b"``)
@@ -221,7 +226,12 @@ def _apply_prompt_filters(
     """
     for item in (remove or []):
         if item:
-            text = text.replace(item, "")
+            if remove_whole_word or not remove_case_sensitive:
+                flags = 0 if remove_case_sensitive else re.IGNORECASE
+                pat = rf"\b{re.escape(item)}\b" if remove_whole_word else re.escape(item)
+                text = re.compile(pat, flags).sub("", text)
+            else:
+                text = text.replace(item, "")
     if remove_cleanup_separators and remove:
         # Collapse any run of commas (with optional whitespace between) into a single ", ".
         # This cleans up ", , , " patterns left when adjacent items were removed.
@@ -3813,21 +3823,26 @@ class HordeWorkerProcessManager:
                                     _gparts = payload.prompt.split("###", 1)
                                     _gpos_orig = _gparts[0].strip()
                                     _gneg_orig = _gparts[1].strip() if len(_gparts) > 1 else ""
+                                    _pf_on = self.bridge_data.prompt_filters_enabled
                                     _gpos = _apply_prompt_filters(
                                         _gpos_orig,
-                                        append=self.bridge_data.positive_prompt_append,
-                                        remove=self.bridge_data.positive_prompt_remove,
-                                        replace=self.bridge_data.positive_prompt_replace,
+                                        append=self.bridge_data.positive_prompt_append if _pf_on else None,
+                                        remove=self.bridge_data.positive_prompt_remove if _pf_on else None,
+                                        replace=self.bridge_data.positive_prompt_replace if _pf_on else None,
                                         remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
                                         append_separator=self.bridge_data.prompt_append_separator,
+                                        remove_whole_word=self.bridge_data.prompt_remove_whole_word,
+                                        remove_case_sensitive=self.bridge_data.prompt_remove_case_sensitive,
                                     )
                                     _gneg = _apply_prompt_filters(
                                         _gneg_orig,
-                                        append=self.bridge_data.negative_prompt_append,
-                                        remove=self.bridge_data.negative_prompt_remove,
-                                        replace=self.bridge_data.negative_prompt_replace,
+                                        append=self.bridge_data.negative_prompt_append if _pf_on else None,
+                                        remove=self.bridge_data.negative_prompt_remove if _pf_on else None,
+                                        replace=self.bridge_data.negative_prompt_replace if _pf_on else None,
                                         remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
                                         append_separator=self.bridge_data.prompt_append_separator,
+                                        remove_whole_word=self.bridge_data.prompt_remove_whole_word,
+                                        remove_case_sensitive=self.bridge_data.prompt_remove_case_sensitive,
                                     )
                                     gallery_image["positive_prompt"] = _gpos.strip()
                                     gallery_image["negative_prompt"] = _gneg.strip()
@@ -4381,7 +4396,7 @@ class HordeWorkerProcessManager:
         # submission always use the original prompt. model_copy() works on frozen models.
         _job_to_dispatch = next_job
         _original_prompt = next_job.payload.prompt
-        if _original_prompt and (
+        if _original_prompt and self.bridge_data.prompt_filters_enabled and (
             self.bridge_data.positive_prompt_append
             or self.bridge_data.positive_prompt_remove
             or self.bridge_data.positive_prompt_replace
@@ -4397,6 +4412,8 @@ class HordeWorkerProcessManager:
                 replace=self.bridge_data.positive_prompt_replace,
                 remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
                 append_separator=self.bridge_data.prompt_append_separator,
+                remove_whole_word=self.bridge_data.prompt_remove_whole_word,
+                remove_case_sensitive=self.bridge_data.prompt_remove_case_sensitive,
             )
             _neg = _apply_prompt_filters(
                 _parts[1] if len(_parts) > 1 else "",
@@ -4405,6 +4422,8 @@ class HordeWorkerProcessManager:
                 replace=self.bridge_data.negative_prompt_replace,
                 remove_cleanup_separators=self.bridge_data.prompt_remove_cleanup_separators,
                 append_separator=self.bridge_data.prompt_append_separator,
+                remove_whole_word=self.bridge_data.prompt_remove_whole_word,
+                remove_case_sensitive=self.bridge_data.prompt_remove_case_sensitive,
             )
             _filtered_prompt = f"{_pos.strip()}###{_neg.strip()}"
             if _filtered_prompt != _original_prompt:
