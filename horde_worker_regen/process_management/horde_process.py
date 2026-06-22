@@ -6,6 +6,7 @@ import abc
 import enum
 import signal
 import sys
+import threading
 import time
 from abc import abstractmethod
 from enum import auto
@@ -336,10 +337,22 @@ class HordeProcess(abc.ABC):
             info="Process ending",
         )
 
-        try:
-            self.cleanup_for_exit()
-        except Exception as e:
-            logger.exception(f"Error during cleanup_for_exit, process will still end: {type(e).__name__}: {e}")
+        _CLEANUP_TIMEOUT = 60.0
+
+        def _run_cleanup() -> None:
+            try:
+                self.cleanup_for_exit()
+            except Exception as e:
+                logger.exception(f"Error during cleanup_for_exit, process will still end: {type(e).__name__}: {e}")
+
+        cleanup_thread = threading.Thread(target=_run_cleanup, daemon=True)
+        cleanup_thread.start()
+        cleanup_thread.join(timeout=_CLEANUP_TIMEOUT)
+        if cleanup_thread.is_alive():
+            logger.warning(
+                f"cleanup_for_exit() did not complete within {_CLEANUP_TIMEOUT:.0f}s "
+                "(likely waiting on a GPU/VRAM operation); forcing exit.",
+            )
 
         logger.info("Process ended")
         self.send_process_state_change_message(
