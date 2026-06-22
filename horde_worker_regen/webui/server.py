@@ -134,6 +134,9 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "negative_prompt_replace": {"type": list},
     "prompt_remove_cleanup_separators": {"type": bool},
     "prompt_append_separator": {"type": bool},
+    "prompt_filters_enabled": {"type": bool},
+    "prompt_remove_whole_word": {"type": bool},
+    "prompt_remove_case_sensitive": {"type": bool},
 }
 
 
@@ -1088,7 +1091,9 @@ class WorkerWebUI:
         .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--page-spacing); }
         .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--page-spacing); }
         .overview-bottom-grid-left { grid-row: span 2; }
-        .card-header-count { font-size: 0.75rem; font-weight: 700; color: #475569; }
+        .card-header-count { font-size: 0.8rem; font-weight: 700; color: #334155; }
+        #queue-count, #models-count { color: #2563eb; }
+        #queue-max,   #models-max   { color: #64748b; }
 
         .stat-card { background: var(--card-bg); border-radius: 12px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); border: 1px solid var(--border); }
         .stat-card-label { font-size: 0.75rem; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
@@ -1396,6 +1401,9 @@ class WorkerWebUI:
         [data-theme="dark"] .stat-value { color: #f1f5f9; }
         [data-theme="dark"] .stat-row { border-bottom-color: #2d3f55; }
         [data-theme="dark"] .card-header { border-bottom-color: #2d3f55; }
+        [data-theme="dark"] .card-header-count { color: #cbd5e1; }
+        [data-theme="dark"] #queue-count, [data-theme="dark"] #models-count { color: #60a5fa; }
+        [data-theme="dark"] #queue-max,   [data-theme="dark"] #models-max   { color: #94a3b8; }
         [data-theme="dark"] .card-title { color: #94a3b8; }
         [data-theme="dark"] .progress-label { color: #94a3b8; }
         [data-theme="dark"] .progress-value { color: #f1f5f9; }
@@ -5005,8 +5013,11 @@ class WorkerWebUI:
             negative_prompt_append:   ['Negative — Add', 'Strings to append to every negative prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
             negative_prompt_remove:   ['Negative — Remove', 'Strings to remove from every negative prompt. One entry per line.', 'Prompt Filters', 'str_list', null, null, false, null, null],
             negative_prompt_replace:  ['Negative — Replace', 'Text pairs to replace in every negative prompt.', 'Prompt Filters', 'str_replace_list', null, null, false, null, null],
-            prompt_remove_cleanup_separators: ['Cleanup Separators After Removal', 'Remove orphaned commas and spaces left between deleted strings. E.g. removing "foo" and "bar" from "a, foo, bar, b" gives "a, b" instead of "a, , , b".', 'Prompt Filters', 'bool', null, null, false, null, null],
-            prompt_append_separator:  ['Auto-Separator When Appending', 'Insert ", " between each appended string and the existing prompt text. When off, strings are concatenated without any separator.', 'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_filters_enabled:           ['Prompt Filters Enabled',           'Master switch — when off, no append/remove/replace operations are applied regardless of the lists below.',                                                                         'Prompt Filters', 'bool', null, null, true,  null, null],
+            prompt_remove_cleanup_separators: ['Cleanup Separators After Removal',  'Remove orphaned commas and spaces left between deleted strings. E.g. removing "foo" and "bar" from "a, foo, bar, b" gives "a, b" instead of "a, , , b".',                        'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_append_separator:          ['Auto-Separator When Appending',     'Insert ", " between each appended string and the existing prompt text. When off, strings are concatenated without any separator.',                                                  'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_remove_whole_word:         ['Whole-Word Remove Matching',        'Only remove a string when it appears as a complete word. E.g. "cat" will not match inside "category". Uses word-boundary anchors.',                                                'Prompt Filters', 'bool', null, null, false, null, null],
+            prompt_remove_case_sensitive:     ['Case-Sensitive Remove Matching',    'Match remove strings exactly as typed. When off, "Cat" and "CAT" both match "cat".',                                                                                               'Prompt Filters', 'bool', null, null, false, null, null],
         };
 
         // Default values for each setting key — used by the per-row reset button.
@@ -5027,8 +5038,11 @@ class WorkerWebUI:
             max_submit_retries: 10, data_retention_days: 7,
             positive_prompt_append: [], positive_prompt_remove: [], positive_prompt_replace: [],
             negative_prompt_append: [], negative_prompt_remove: [], negative_prompt_replace: [],
+            prompt_filters_enabled: true,
             prompt_remove_cleanup_separators: true,
             prompt_append_separator: true,
+            prompt_remove_whole_word: false,
+            prompt_remove_case_sensitive: true,
         };
 
         var _settingsLoaded = false;
@@ -5665,12 +5679,39 @@ class WorkerWebUI:
                 if (Object.prototype.hasOwnProperty.call(settings, key)) return !!settings[key];
                 return defaultVal;
             }
-            var removeCleanup = _pfOptVal('prompt_remove_cleanup_separators', true);
-            var appendSep     = _pfOptVal('prompt_append_separator', true);
+            var filtersEnabled  = _pfOptVal('prompt_filters_enabled', true);
+            var removeCleanup   = _pfOptVal('prompt_remove_cleanup_separators', true);
+            var appendSep       = _pfOptVal('prompt_append_separator', true);
+            var wholeWord       = _pfOptVal('prompt_remove_whole_word', false);
+            var caseSensitive   = _pfOptVal('prompt_remove_case_sensitive', true);
 
             html += '<div class="pf-block">';
             html += '<div class="pf-block-title">Filter Options</div>';
             html += '<div class="pf-options-row">';
+
+            html += '<div class="pf-option">';
+            html += '<label class="setting-toggle" title="Prompt Filters Enabled">'
+                 +  '<input type="checkbox"' + (filtersEnabled ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_filters_enabled\', this.checked)" aria-label="Prompt Filters Enabled">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<div class="pf-option-text"><div class="pf-option-label">Filters enabled</div>'
+                 +  '<div class="pf-option-desc">Master switch — when off, no append/remove/replace operations are applied.</div></div>';
+            html += '</div>';
+
+            html += '<div class="pf-option">';
+            html += '<label class="setting-toggle" title="Whole-Word Remove Matching">'
+                 +  '<input type="checkbox"' + (wholeWord ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_whole_word\', this.checked)" aria-label="Whole-Word Remove Matching">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<div class="pf-option-text"><div class="pf-option-label">Whole-word matching (remove)</div>'
+                 +  '<div class="pf-option-desc">Only remove a string when it appears as a complete word — "cat" will not match inside "category".</div></div>';
+            html += '</div>';
+
+            html += '<div class="pf-option">';
+            html += '<label class="setting-toggle" title="Case-Sensitive Remove Matching">'
+                 +  '<input type="checkbox"' + (caseSensitive ? ' checked' : '') + ' onchange="stageSettingChange(\'prompt_remove_case_sensitive\', this.checked)" aria-label="Case-Sensitive Remove Matching">'
+                 +  '<span class="setting-toggle-slider"></span></label>';
+            html += '<div class="pf-option-text"><div class="pf-option-label">Case-sensitive matching (remove)</div>'
+                 +  '<div class="pf-option-desc">Match remove strings exactly as typed. When off, "Cat" and "CAT" both match "cat".</div></div>';
+            html += '</div>';
 
             html += '<div class="pf-option">';
             html += '<label class="setting-toggle" title="Cleanup Separators After Removal">'

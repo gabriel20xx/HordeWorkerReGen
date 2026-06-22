@@ -46,8 +46,10 @@ def _initialize_horde_logging(process_id: int) -> None:
     """Initialize HordeLog and configure the standardized log format for a worker process."""
     from hordelib.utils.logger import HordeLog
 
+    # setup_logging=False: skip hordelib's own file sinks — configure_logger_format()
+    # owns all file sink setup and would remove them immediately anyway via logger.remove().
     HordeLog.initialise(
-        setup_logging=True,
+        setup_logging=False,
         process_id=process_id,
         verbosity_count=_HORDELIB_VERBOSITY,
     )
@@ -156,7 +158,8 @@ def start_inference_process(
         with logger.catch(reraise=True):
             logger.debug(f"Using extra comfyui args: {extra_comfyui_args}")
             hordelib.initialise(
-                setup_logging=None,
+                setup_logging=False,  # we own all sinks; False prevents hordelib from
+                                      # calling logger.remove() and recreating root log files
                 process_id=process_id,
                 logging_verbosity=0,
                 force_normal_vram_mode=False,

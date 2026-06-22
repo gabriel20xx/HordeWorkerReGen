@@ -12,11 +12,23 @@ import argparse
 import io
 import multiprocessing
 import os
+import re
 import time
+import warnings
 from multiprocessing.context import BaseContext
 
-import re
 from loguru import logger
+
+# horde_sdk Pydantic models have fields named model_* (e.g. model_version, model_seed)
+# that conflict with Pydantic's protected "model_" namespace.  Those models belong to a
+# third-party package so we can't add `protected_namespaces = ()` ourselves; suppress
+# the warnings here before the import chain triggers them.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Field .+ has conflict with protected namespace",
+    category=UserWarning,
+    module=r"pydantic\._internal\._fields",
+)
 
 
 def main(
@@ -196,31 +208,37 @@ class LogConsoleRewriter(io.StringIO):
         should_modify = not self.in_traceback and not is_traceback_line and not is_error_line
 
         if should_modify:
+            # Each entry: (pattern, replacement, exact_word_match, case_sensitive)
+            # exact_word_match=True wraps the pattern in \b boundaries so "start_inference"
+            # won't match inside "start_inference_process".
+            # case_sensitive=False adds re.IGNORECASE.
             replacements = [
-                ("horde_worker_regen.process_management.process_manager", "Worker"),
-                ("horde_worker_regen.", ""),
-                ("receive_and_handle_process_messages", "Process"),
-                ("start_inference_processes", "Starting"),
-                ("_start_inference_process", "Starting"),
-                ("start_inference_process", "Starting"),
-                ("start_safety_process", "Safety"),
-                ("start_inference", "Process"),
-                ("print_status_method", "Status"),
-                ("log_kudos_info", "Kudos"),
-                ("submit_single_generation", "Submit"),
-                ("preload_models", "Loading"),
-                ("api_job_pop", "New Job"),
-                ("_process_control_loop", "Control"),
-                ("_bridge_data_loop", "Config"),
-                ("enable_performance_mode", "Performance"),
-                ("replace_hung_processes", "Recovery"),
-                ("handle_job_fault", "Job Fault"),
-                ("api_submit_job", "Submitting"),
-                ("_end_inference_process", "Stopping"),
+                ("horde_worker_regen.process_management.process_manager", "Worker",      True, True),
+                ("horde_worker_regen.",                                   "",            True, True),
+                ("receive_and_handle_process_messages",                   "Process",     True, True),
+                ("start_inference_processes",                             "Starting",    True, True),
+                ("_start_inference_process",                              "Starting",    True, True),
+                ("start_inference_process",                               "Starting",    True, True),
+                ("start_safety_process",                                  "Safety",      True, True),
+                ("start_inference",                                       "Process",     True, True),
+                ("print_status_method",                                   "Status",      True, True),
+                ("log_kudos_info",                                        "Kudos",       True, True),
+                ("submit_single_generation",                              "Submit",      True, True),
+                ("preload_models",                                        "Loading",     True, True),
+                ("api_job_pop",                                           "New Job",     True, True),
+                ("_process_control_loop",                                 "Control",     True, True),
+                ("_bridge_data_loop",                                     "Config",      True, True),
+                ("enable_performance_mode",                               "Performance", True, True),
+                ("replace_hung_processes",                                "Recovery",    True, True),
+                ("handle_job_fault",                                      "Job Fault",   True, True),
+                ("api_submit_job",                                        "Submitting",  True, True),
+                ("_end_inference_process",                                "Stopping",    True, True),
             ]
 
-            for old, new in replacements:
-                message = message.replace(old, new)
+            for old, new, exact, case_sensitive in replacements:
+                flags = 0 if case_sensitive else re.IGNORECASE
+                pattern = (r'\b' + re.escape(old) + r'\b') if exact else re.escape(old)
+                message = re.sub(pattern, new, message, flags=flags)
 
             replacement = ""
 
@@ -254,8 +272,6 @@ def init() -> int:
         except OSError as e:
             logger.warning(f"Failed to remove .abort file: {e}")
     # ! IMPORTANT: End of own code
-
-    logger.info(f"Multiprocessing start method: {multiprocessing.get_start_method()}")
 
     # Create args for -v, allowing -vvv
     parser = argparse.ArgumentParser()
@@ -349,9 +365,12 @@ def init() -> int:
     elif args.v == 0:
         target_verbosity = 3  # Default to INFO or higher (Warning, Error, Critical)
 
-    # Initialise logging with loguru
+    # Initialise HordeLog without its own file sinks (setup_logging=False) — all file
+    # logging is configured immediately after by configure_logger_format(), which owns
+    # the sink layout.  setup_logging=True would create files in the root logs/ folder
+    # that get orphaned the moment configure_logger_format() calls logger.remove().
     HordeLog.initialise(
-        setup_logging=True,
+        setup_logging=False,
         process_id=None,
         verbosity_count=target_verbosity,
     )
@@ -360,6 +379,10 @@ def init() -> int:
     from horde_worker_regen.logger_config import configure_logger_format
 
     configure_logger_format(enable_stderr=not args.no_logging)
+
+    # Log after configure_logger_format so it goes through our custom colored format,
+    # not the default loguru sink that was active before the call above.
+    logger.info(f"Multiprocessing start method: {multiprocessing.get_start_method()}")
 
     # We only need to download the legacy DBs once, so we do it here instead of in the worker processes
 

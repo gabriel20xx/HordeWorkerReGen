@@ -85,11 +85,37 @@ def create_plain_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS") -
 
 
 _LOGS_DIR = Path("logs")
-_LOG_ROTATION = "10 MB"
-_LOG_RETENTION = 3
-_TRACE_RETENTION = 5
-_CRASH_RETENTION = 5
-_CRASH_ROTATION = "1 MB"
+
+# Loguru substitutes {time:...} tokens anywhere in the sink path — including directory
+# components — when it opens or rotates a file.  Using {time:YYYY-MM-DD} as a folder
+# segment means each calendar day gets its own subdirectory automatically.
+_DATE_SUBDIR = "{time:YYYY-MM-DD}"
+
+# Rotation/retention policy:
+#   bridge/ and trace/ — keep 7 days; crash/ — keep 30 days (crash logs are rare and valuable).
+_LOG_ROTATION = "00:00"        # midnight: one file per day
+_LOG_RETENTION = "7 days"
+_TRACE_RETENTION = "7 days"
+_CRASH_RETENTION = "30 days"
+_CRASH_ROTATION = "00:00"
+
+def _make_console_filter(warn_level_no: int) -> Any:
+    """Return a loguru filter that limits INFO/DEBUG to our own code on the console.
+
+    At WARNING and above every module passes through so real problems are always visible.
+    Below WARNING only records whose logger name is within ``horde_worker_regen``
+    are shown.  This silences the high-volume status lines emitted by ComfyUI,
+    hordelib internals, and Python's import machinery without needing an
+    ever-growing deny-list.
+    """
+
+    def _filter(record: dict[str, Any]) -> bool:
+        if record["level"].no >= warn_level_no:
+            return True
+        name: str = record["name"] or ""
+        return name == "horde_worker_regen" or name.startswith("horde_worker_regen.")
+
+    return _filter
 
 
 def _install_excepthook() -> None:
@@ -141,21 +167,27 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
     Call this after ``HordeLog.initialise()`` to replace the default format with
     a consistent pattern that works across the main process and all subprocesses.
 
-    Log files written
-    -----------------
-    All files land in the ``logs/`` directory (created automatically).
+    Log directory layout
+    --------------------
+    Files are written under ``logs/YYYY-MM-DD/`` — a new date directory is created
+    automatically at midnight when the sinks rotate.  Within each date directory there
+    is one subdirectory per log *type*::
 
-    Main process (``process_id=None``):
+        logs/
+          2026-06-22/
+            bridge/          ← full operational log; all messages at the configured level
+            │  bridge.log    ← main process
+            │  bridge_1.log  ← subprocess 1
+            │  bridge_2.log  ← subprocess 2 …
+            trace/           ← ERROR and above; full backtraces
+            │  trace.log     ← main process
+            │  trace_1.log   ← subprocess 1 …
+            crash/           ← CRITICAL only; diagnose=True  (main process only)
+            │  crash.log
+            webui/           ← horde_worker_regen.webui module only  (main process only)
+               webui.log
 
-    * ``bridge.log``  — all messages at the configured log level.
-    * ``trace.log``   — ERROR and above; full backtraces with variable values.
-    * ``crash.log``   — CRITICAL only; full backtraces with variable values.
-    * ``webui.log``   — messages from the ``horde_worker_regen.webui`` module only.
-
-    Subprocesses (``process_id=N``):
-
-    * ``bridge_N.log`` — all messages from that subprocess.
-    * ``trace_N.log``  — ERROR and above from that subprocess.
+    Retention: ``bridge/`` and ``trace/`` → 7 days; ``crash/`` → 30 days.
 
     File format (plain text, no color characters)::
 
@@ -194,25 +226,33 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
     file_format = create_plain_format_function(time_format="YYYY-MM-DD HH:mm:ss.SSS")
 
     if enable_stderr:
+        _warn_level_no = logger.level("WARNING").no
         logger.add(
             sys.stderr,
             format=console_format,
             level=log_level,
             colorize=True,
+            filter=_make_console_filter(_warn_level_no),
         )
 
-    if process_id is None:
-        bridge_log_name = "bridge.log"
-        trace_log_name = "trace.log"
-    else:
-        bridge_log_name = f"bridge_{process_id}.log"
-        trace_log_name = f"trace_{process_id}.log"
+    # Build per-type sink paths.  The {time:YYYY-MM-DD} token in the date directory
+    # component is replaced by loguru when it opens or rotates a file, so each calendar
+    # day gets its own subdirectory automatically.
+    date_dir = _LOGS_DIR / _DATE_SUBDIR
 
+    if process_id is None:
+        bridge_log = date_dir / "bridge" / "bridge.log"
+        trace_log  = date_dir / "trace"  / "trace.log"
+    else:
+        bridge_log = date_dir / "bridge" / f"bridge_{process_id}.log"
+        trace_log  = date_dir / "trace"  / f"trace_{process_id}.log"
+
+    # logs/ root is created here; loguru creates the date and type subdirectories itself.
     _LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Main log: all messages, no diagnose to keep it concise.
+    # bridge/ — full operational log: all messages at the configured level.
     logger.add(
-        _LOGS_DIR / bridge_log_name,
+        bridge_log,
         format=file_format,
         level=log_level,
         colorize=False,
@@ -221,13 +261,14 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         encoding="utf-8",
         backtrace=True,
         diagnose=False,
+        delay=True,
     )
 
-    # Error trace log: full backtraces; variable values only for the main process.
-    # Subprocesses run GPU/ML code — diagnosing there risks introspecting CUDA objects
-    # whose state is undefined after an OOM or hardware error.
+    # trace/ — error trace log: ERROR and above with full backtraces.
+    # diagnose=True only for the main process: subprocesses run GPU/ML code and
+    # introspecting CUDA tensors after an OOM or hardware fault is unsafe.
     logger.add(
-        _LOGS_DIR / trace_log_name,
+        trace_log,
         format=file_format,
         level="ERROR",
         colorize=False,
@@ -236,13 +277,14 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         encoding="utf-8",
         backtrace=True,
         diagnose=process_id is None,
+        delay=True,
     )
 
-    # Crash log: CRITICAL only — first place to look when the worker dies.
-    # Only created for the main process; subprocesses use trace_N.log.
+    # crash/ and webui/ are main-process-only sinks.
     if process_id is None:
+        # crash/ — CRITICAL only: first place to look when the worker dies.
         logger.add(
-            _LOGS_DIR / "crash.log",
+            date_dir / "crash" / "crash.log",
             format=file_format,
             level="CRITICAL",
             colorize=False,
@@ -251,15 +293,15 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
             encoding="utf-8",
             backtrace=True,
             diagnose=True,
+            delay=True,
         )
 
-        # WebUI log: scoped to the webui module so its traffic does not get
-        # buried in the main bridge.log.
+        # webui/ — scoped to the webui module so its traffic stays out of bridge/.
         def _webui_filter(record: dict[str, Any]) -> bool:
             return record["name"].startswith("horde_worker_regen.webui")
 
         logger.add(
-            _LOGS_DIR / "webui.log",
+            date_dir / "webui" / "webui.log",
             format=file_format,
             level=log_level,
             colorize=False,
@@ -269,6 +311,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
             filter=_webui_filter,
             backtrace=True,
             diagnose=False,
+            delay=True,
         )
 
     _install_excepthook()
@@ -278,9 +321,17 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
 
     pid = os.getpid()
     if process_id is None:
+        from datetime import date  # noqa: PLC0415
+
+        today_log_dir = (_LOGS_DIR / str(date.today())).resolve()
         logger.info(f"{'=' * 60}")
         logger.info(f"  Worker main process started (PID={pid})")
-        logger.info(f"  Log files: {_LOGS_DIR.resolve()}")
+        logger.info(f"  Logs root  : {_LOGS_DIR.resolve()}")
+        logger.info(f"  Today      : {today_log_dir}")
+        logger.info(f"    bridge/  — all messages ({log_level}+)")
+        logger.info(f"    trace/   — ERROR+ with backtraces")
+        logger.info(f"    crash/   — CRITICAL only")
+        logger.info(f"    webui/   — webui module only")
         logger.info(f"{'=' * 60}")
     else:
         logger.info(f"--- Subprocess {process_id} started (PID={pid}) ---")
