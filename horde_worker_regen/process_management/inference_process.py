@@ -429,6 +429,7 @@ class HordeInferenceProcess(HordeProcess):
 
         if self._is_busy:
             logger.warning("Cannot preload model while busy")
+            return
 
         self.clear_gc_and_torch_cache()
 

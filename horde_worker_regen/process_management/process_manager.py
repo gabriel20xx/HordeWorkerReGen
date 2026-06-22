@@ -3153,14 +3153,14 @@ class HordeWorkerProcessManager:
                 continue
 
             if isinstance(message, HordeProcessHeartbeatMessage):
+                if message.process_id not in self._process_map:
+                    continue
+
                 self._process_map.on_heartbeat(
                     message.process_id,
                     heartbeat_type=message.heartbeat_type,
                     percent_complete=message.percent_complete,
                 )
-
-                if message.process_id not in self._process_map:
-                    continue
 
                 in_progress_job_info = self._process_map[message.process_id].last_job_referenced
 
@@ -6370,7 +6370,11 @@ class HordeWorkerProcessManager:
 
         if self.bridge_data.custom_models is not None and len(self.bridge_data.custom_models) > 0:
             logger.debug("Custom models are enabled, adding them to the list of models to pop")
-            custom_model_names = {model["name"] for model in self.bridge_data.custom_models}
+            custom_model_names = {
+                name
+                for model in self.bridge_data.custom_models
+                if (name := model.get("name")) is not None
+            }
             models.update(custom_model_names)
 
         # Exclude models that are in the inference-failure cooldown.  These models have
