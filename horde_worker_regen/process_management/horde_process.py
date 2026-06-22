@@ -278,7 +278,12 @@ class HordeProcess(abc.ABC):
     def receive_and_handle_control_messages(self) -> None:
         """Get and handle any control messages pending from the main process."""
         while self.pipe_connection.poll():
-            message = self.pipe_connection.recv()
+            try:
+                message = self.pipe_connection.recv()
+            except EOFError:
+                logger.info("Pipe connection closed by parent process — ending subprocess")
+                self._end_process = True
+                return
 
             if not isinstance(message, HordeControlMessage):
                 logger.critical(f"Received unexpected message type: {type(message).__name__}")
