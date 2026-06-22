@@ -337,7 +337,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
             )
 
         if self.high_memory_mode:
-            if self.queue_size == 0:
+            if self.queue_size == 0 and os.getenv("AIWORKER_QUEUE_SIZE") != "0":
                 logger.warning(
                     "High memory mode is enabled, you should consider setting queue_size to 1 or higher. "
                     "Increasing this value increases system memory usage. See the bridgeData_template.yaml for more "
