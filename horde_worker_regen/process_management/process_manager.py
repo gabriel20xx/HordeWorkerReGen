@@ -203,14 +203,17 @@ def _remove_awaiting_request(session: "AIHordeAPIAsyncClientSession | None", req
 def _active_filter_entries(groups: list, type_enabled: bool) -> list[str] | None:
     """Return a flat list of entries from all enabled groups, or None if disabled/empty.
 
-    Accepts both ``PromptFilterGroup`` instances and plain dicts so that the result
-    is correct regardless of whether Pydantic has validated the field value.
+    Accepts ``PromptFilterGroup`` instances, plain dicts, and bare strings (old YAML format)
+    so that the result is correct regardless of how Pydantic loaded the field value.
     """
     if not type_enabled:
         return None
     entries: list[str] = []
     for g in groups:
-        if isinstance(g, dict):
+        if isinstance(g, str):
+            if g:
+                entries.append(g)
+        elif isinstance(g, dict):
             if not g.get("enabled", True):
                 continue
             entries.extend(str(e) for e in g.get("entries", []) if e)
@@ -280,6 +283,66 @@ def _apply_prompt_filters(
             else:
                 text = text + item
     return text
+
+
+def _apply_prompt_swap(
+    pos: str,
+    neg: str,
+    swap_entries: list[str],
+    *,
+    remove_whole_word: bool = False,
+    remove_case_sensitive: bool = True,
+    remove_cleanup_separators: bool = True,
+    append_separator: bool = True,
+) -> tuple[str, str]:
+    """Move strings found in one prompt into the other.
+
+    For each entry: if it appears in the positive prompt it is removed from positive and
+    appended to negative, and vice-versa.  Presence is checked against the original
+    (pre-modification) values so that a string found in both prompts simultaneously is
+    moved in both directions independently rather than cancelling out.
+    """
+    if not swap_entries:
+        return pos, neg
+    pos_matches: list[str] = []
+    neg_matches: list[str] = []
+    for entry in swap_entries:
+        if not entry:
+            continue
+        if remove_whole_word or not remove_case_sensitive:
+            flags = 0 if remove_case_sensitive else re.IGNORECASE
+            pat = re.compile(
+                rf"\b{re.escape(entry)}\b" if remove_whole_word else re.escape(entry),
+                flags,
+            )
+            if pat.search(pos):
+                pos_matches.append(entry)
+            if pat.search(neg):
+                neg_matches.append(entry)
+        else:
+            if entry in pos:
+                pos_matches.append(entry)
+            if entry in neg:
+                neg_matches.append(entry)
+    if pos_matches:
+        pos = _apply_prompt_filters(
+            pos,
+            remove=pos_matches,
+            remove_whole_word=remove_whole_word,
+            remove_case_sensitive=remove_case_sensitive,
+            remove_cleanup_separators=remove_cleanup_separators,
+        )
+        neg = _apply_prompt_filters(neg, append=pos_matches, append_separator=append_separator)
+    if neg_matches:
+        neg = _apply_prompt_filters(
+            neg,
+            remove=neg_matches,
+            remove_whole_word=remove_whole_word,
+            remove_case_sensitive=remove_case_sensitive,
+            remove_cleanup_separators=remove_cleanup_separators,
+        )
+        pos = _apply_prompt_filters(pos, append=neg_matches, append_separator=append_separator)
+    return pos, neg
 
 
 _excludes_for_job_dump = {
@@ -2407,6 +2470,7 @@ class HordeWorkerProcessManager:
         _FILTER_GROUP_KEYS = {
             "positive_prompt_append", "positive_prompt_remove", "positive_prompt_replace",
             "negative_prompt_append", "negative_prompt_remove", "negative_prompt_replace",
+            "prompt_swap",
         }
         if key in _FILTER_GROUP_KEYS and isinstance(value, list):
             from horde_worker_regen.bridge_data.data_model import PromptFilterGroup
@@ -3931,6 +3995,15 @@ class HordeWorkerProcessManager:
                                         remove_whole_word=_gbd.prompt_remove_whole_word,
                                         remove_case_sensitive=_gbd.prompt_remove_case_sensitive,
                                     )
+                                    _gswap = _active_filter_entries(_gbd.prompt_swap, _gpf_on and _gbd.prompt_swap_enabled)
+                                    if _gswap:
+                                        _gpos, _gneg = _apply_prompt_swap(
+                                            _gpos, _gneg, _gswap,
+                                            remove_whole_word=_gbd.prompt_remove_whole_word,
+                                            remove_case_sensitive=_gbd.prompt_remove_case_sensitive,
+                                            remove_cleanup_separators=_gbd.prompt_remove_cleanup_separators,
+                                            append_separator=_gbd.prompt_append_separator,
+                                        )
                                     gallery_image["positive_prompt"] = _gpos.strip()
                                     gallery_image["negative_prompt"] = _gneg.strip()
                                     if _gpos.strip() != _gpos_orig:
@@ -4485,13 +4558,14 @@ class HordeWorkerProcessManager:
         _original_prompt = next_job.payload.prompt
         _bd = self.bridge_data
         _pf_on = _bd.prompt_filters_enabled
-        _pos_append  = _active_filter_entries(_bd.positive_prompt_append,  _pf_on and _bd.positive_prompt_append_enabled)
-        _pos_remove  = _active_filter_entries(_bd.positive_prompt_remove,  _pf_on and _bd.positive_prompt_remove_enabled)
-        _pos_replace = _active_filter_entries(_bd.positive_prompt_replace, _pf_on and _bd.positive_prompt_replace_enabled)
-        _neg_append  = _active_filter_entries(_bd.negative_prompt_append,  _pf_on and _bd.negative_prompt_append_enabled)
-        _neg_remove  = _active_filter_entries(_bd.negative_prompt_remove,  _pf_on and _bd.negative_prompt_remove_enabled)
-        _neg_replace = _active_filter_entries(_bd.negative_prompt_replace, _pf_on and _bd.negative_prompt_replace_enabled)
-        if _original_prompt and (_pos_append or _pos_remove or _pos_replace or _neg_append or _neg_remove or _neg_replace):
+        _pos_append   = _active_filter_entries(_bd.positive_prompt_append,  _pf_on and _bd.positive_prompt_append_enabled)
+        _pos_remove   = _active_filter_entries(_bd.positive_prompt_remove,  _pf_on and _bd.positive_prompt_remove_enabled)
+        _pos_replace  = _active_filter_entries(_bd.positive_prompt_replace, _pf_on and _bd.positive_prompt_replace_enabled)
+        _neg_append   = _active_filter_entries(_bd.negative_prompt_append,  _pf_on and _bd.negative_prompt_append_enabled)
+        _neg_remove   = _active_filter_entries(_bd.negative_prompt_remove,  _pf_on and _bd.negative_prompt_remove_enabled)
+        _neg_replace  = _active_filter_entries(_bd.negative_prompt_replace, _pf_on and _bd.negative_prompt_replace_enabled)
+        _swap_entries = _active_filter_entries(_bd.prompt_swap,             _pf_on and _bd.prompt_swap_enabled)
+        if _original_prompt and (_pos_append or _pos_remove or _pos_replace or _neg_append or _neg_remove or _neg_replace or _swap_entries):
             _parts = _original_prompt.split("###", 1)
             _pos = _apply_prompt_filters(
                 _parts[0],
@@ -4513,6 +4587,14 @@ class HordeWorkerProcessManager:
                 remove_whole_word=_bd.prompt_remove_whole_word,
                 remove_case_sensitive=_bd.prompt_remove_case_sensitive,
             )
+            if _swap_entries:
+                _pos, _neg = _apply_prompt_swap(
+                    _pos, _neg, _swap_entries,
+                    remove_whole_word=_bd.prompt_remove_whole_word,
+                    remove_case_sensitive=_bd.prompt_remove_case_sensitive,
+                    remove_cleanup_separators=_bd.prompt_remove_cleanup_separators,
+                    append_separator=_bd.prompt_append_separator,
+                )
             _filtered_prompt = f"{_pos.strip()}###{_neg.strip()}"
             if _filtered_prompt != _original_prompt:
                 _filtered_payload = next_job.payload.model_copy(update={"prompt": _filtered_prompt})

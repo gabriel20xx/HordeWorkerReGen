@@ -109,6 +109,12 @@ class reGenBridgeData(CombinedHordeBridgeData):
     ``find`` is matched as a whole word, case-insensitively; ``replace`` is inserted literally.
     """
 
+    prompt_swap: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of strings to swap between positive and negative prompts.
+    If a string is found in the positive prompt it is moved to the negative prompt, and vice-versa.
+    Presence is checked against the original (pre-filter) values before any modification.
+    """
+
     @field_validator(
         "positive_prompt_append",
         "positive_prompt_remove",
@@ -116,6 +122,7 @@ class reGenBridgeData(CombinedHordeBridgeData):
         "negative_prompt_append",
         "negative_prompt_remove",
         "negative_prompt_replace",
+        "prompt_swap",
         mode="before",
     )
     @classmethod
@@ -164,6 +171,9 @@ class reGenBridgeData(CombinedHordeBridgeData):
 
     negative_prompt_replace_enabled: bool = True
     """When False, the negative replace list is ignored even if non-empty."""
+
+    prompt_swap_enabled: bool = True
+    """When False, the swap list is ignored even if non-empty."""
 
     prompt_remove_whole_word: bool = False
     """When True, a remove entry only matches when it appears as a complete word

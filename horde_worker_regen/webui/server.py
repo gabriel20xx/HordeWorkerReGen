@@ -1636,6 +1636,7 @@ class WorkerWebUI:
         .pfg-delete-btn:hover { background: #fef2f2; }
         [data-theme="dark"] .pfg-delete-btn { border-color: #7f1d1d; color: #f87171; }
         [data-theme="dark"] .pfg-delete-btn:hover { background: #450a0a; }
+        .pfg-section--full { flex: 1 1 100%; }
         .setting-replace-list { display: flex; flex-direction: column; gap: 5px; min-width: 280px; }
         .replace-row { display: flex; align-items: center; gap: 5px; }
         .replace-find, .replace-with { flex: 1; min-width: 0; padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; font-family: inherit; height: var(--action-btn-height); box-sizing: border-box; }
@@ -5045,6 +5046,8 @@ class WorkerWebUI:
             negative_prompt_remove_enabled:  ['Negative — Remove Enabled', 'When off, strings in the Negative Remove list are not removed even if the list is non-empty.',                                                                  'Prompt Filters', 'bool',           null, null, false, null, null],
             negative_prompt_replace:         ['Negative — Replace',        'Text pairs to replace in every negative prompt.',                                                                                                                'Prompt Filters', 'str_replace_list', null, null, false, null, null],
             negative_prompt_replace_enabled: ['Negative — Replace Enabled','When off, rules in the Negative Replace list are not applied even if the list is non-empty.',                                                                   'Prompt Filters', 'bool',           null, null, false, null, null],
+            prompt_swap:                     ['Swap',                      'Strings moved between positive and negative prompts — if a string is found in the positive prompt it is moved to the negative prompt, and vice-versa.',           'Prompt Filters', 'str_list',        null, null, false, null, null],
+            prompt_swap_enabled:             ['Swap Enabled',              'When off, the swap list is ignored even if non-empty.',                                                                                                              'Prompt Filters', 'bool',           null, null, false, null, null],
             prompt_filters_enabled:           ['Prompt Filters Enabled',           'Master switch — when off, no append/remove/replace operations are applied regardless of the lists below.',                                                                         'Prompt Filters', 'bool', null, null, true,  null, null],
             prompt_remove_cleanup_separators: ['Cleanup Separators After Removal',  'Remove orphaned commas and spaces left between deleted strings. E.g. removing "foo" and "bar" from "a, foo, bar, b" gives "a, b" instead of "a, , , b".',                        'Prompt Filters', 'bool', null, null, false, null, null],
             prompt_append_separator:          ['Auto-Separator When Appending',     'Insert ", " between each appended string and the existing prompt text. When off, strings are concatenated without any separator.',                                                  'Prompt Filters', 'bool', null, null, false, null, null],
@@ -5074,6 +5077,7 @@ class WorkerWebUI:
             negative_prompt_append: [], negative_prompt_append_enabled: true,
             negative_prompt_remove: [], negative_prompt_remove_enabled: true,
             negative_prompt_replace: [], negative_prompt_replace_enabled: true,
+            prompt_swap: [], prompt_swap_enabled: true,
             prompt_filters_enabled: true,
             prompt_remove_cleanup_separators: true,
             prompt_append_separator: true,
@@ -5655,8 +5659,9 @@ class WorkerWebUI:
         // ── Prompt filter group helpers ──────────────────────────────────────────
 
         function _pfgSectionKey(sectionId) {
-            // sectionId: "{type}-{op}" e.g. "positive-add" / "negative-replace"
+            // sectionId: "{type}-{op}" e.g. "positive-add" / "negative-replace" or "swap"
             var dash = sectionId.indexOf('-');
+            if (dash === -1) return 'prompt_' + sectionId;
             var type = sectionId.slice(0, dash);
             var op   = sectionId.slice(dash + 1);
             var opKey = op === 'add' ? 'append' : op;
@@ -5784,7 +5789,7 @@ class WorkerWebUI:
                      +  '<button class="pf-add-btn" onclick="pfgAddReplacePill(this,\'' + sid + '\')" title="Add">+</button>'
                      +  '</div>';
             } else {
-                var ph = sectionId.indexOf('-add') !== -1 ? 'String to append…' : 'String to remove…';
+                var ph = sectionId === 'swap' ? 'String to swap…' : (sectionId.indexOf('-add') !== -1 ? 'String to append…' : 'String to remove…');
                 html += '<div class="pf-input-row">'
                      +  '<input type="text" class="pf-input pfg-pill-input" placeholder="' + ph + '"'
                      +  ' onkeydown="if(event.key===\'Enter\'){pfgAddPill(this,\'' + sid + '\');event.preventDefault();}">'
@@ -5794,7 +5799,7 @@ class WorkerWebUI:
             return html;
         }
 
-        function _pfgRenderSection(settings, sectionId, label, key, typeEnabledKey) {
+        function _pfgRenderSection(settings, sectionId, label, key, typeEnabledKey, extraColClass) {
             var e = escapeHtml;
             var isReplace = sectionId.indexOf('-replace') !== -1;
             function getGroups(k) {
@@ -5809,7 +5814,8 @@ class WorkerWebUI:
             }
             var groups = Array.isArray(getGroups(key)) ? getGroups(key) : [];
             var typeEnabled = getOptVal(typeEnabledKey, true);
-            var html = '<div class="pfg-section pf-col">';
+            var colClass = 'pfg-section ' + (extraColClass || 'pf-col');
+            var html = '<div class="' + colClass + '">';
             html += '<div class="pfg-section-header">';
             html += '<span class="pf-section-label">' + e(label) + '</span>';
             html += '<label class="setting-toggle" title="' + e(label) + ' enabled">'
@@ -5848,6 +5854,16 @@ class WorkerWebUI:
                 html += _pfgRenderSection(settings, type + '-replace', 'Replace', type + '_prompt_replace', type + '_prompt_replace_enabled');
                 html += '</div></div>';
             });
+
+            // Swap block — spans full width between the two filter rows
+            html += '<div class="pf-block">';
+            html += '<div class="pf-block-title">Prompt Swap</div>';
+            html += '<div class="pf-block-desc">Strings moved between positive and negative prompts. '
+                 +  'If a string is found in the positive prompt it is removed from positive and added to negative, '
+                 +  'and vice-versa. Applied after append/remove/replace filters.</div>';
+            html += '<div>';
+            html += _pfgRenderSection(settings, 'swap', 'Swap', 'prompt_swap', 'prompt_swap_enabled', 'pfg-section--full');
+            html += '</div></div>';
 
             // Filter behavior options (global)
             function _pfOptVal(key, defaultVal) {
@@ -6905,6 +6921,7 @@ class WorkerWebUI:
             _FILTER_GROUP_KEYS = {
                 "positive_prompt_append", "positive_prompt_remove", "positive_prompt_replace",
                 "negative_prompt_append", "negative_prompt_remove", "negative_prompt_replace",
+                "prompt_swap",
             }
             if key in _FILTER_GROUP_KEYS:
                 # Expect a list of group dicts: [{name, enabled, entries}, ...]
