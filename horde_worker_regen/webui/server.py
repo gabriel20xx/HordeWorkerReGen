@@ -1050,11 +1050,14 @@ class WorkerWebUI:
         .sidebar-overlay.active { display: block; }
 
         /* ---- Mobile navbar ---- */
-        .mobile-navbar { display: none; position: fixed; top: 0; left: 0; right: 0; height: 54px; background: var(--sidebar-bg); align-items: center; padding: 0 14px; z-index: 200; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); border-bottom: 1px solid var(--sidebar-border); }
-        .hamburger-btn { background: none; border: none; color: var(--sidebar-text-strong); font-size: 1.3rem; cursor: pointer; padding: 6px; border-radius: 6px; line-height: 1; transition: background 0.15s; }
+        .mobile-navbar { display: none; position: fixed; top: 0; left: 0; right: 0; height: 54px; background: var(--sidebar-bg); align-items: center; padding: 0 12px; z-index: 200; gap: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); border-bottom: 1px solid var(--sidebar-border); }
+        .hamburger-btn { background: none; border: none; color: var(--sidebar-text-strong); font-size: 1.3rem; cursor: pointer; padding: 6px; border-radius: 6px; line-height: 1; transition: background 0.15s; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
         .hamburger-btn:hover { background: var(--sidebar-hover); }
-        .mobile-title { color: var(--sidebar-text-strong); font-size: 0.95rem; font-weight: 600; flex: 1; }
+        .mobile-title { color: var(--sidebar-text-strong); font-size: 0.95rem; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .mobile-navbar #mobile-status-badge { flex-shrink: 0; display: inline-flex; }
         .mobile-uptime { color: var(--sidebar-text); font-size: 0.7rem; font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0; }
+        .mobile-navbar .theme-toggle { flex-shrink: 0; }
+        @media (max-width: 400px) { .mobile-uptime { display: none; } }
 
         /* ---- Mobile resources sub-bar ---- */
         .mobile-resources { display: none; position: fixed; top: 54px; left: 0; right: 0; background: #12162a; grid-template-columns: repeat(4, 1fr); padding: 3px 6px; z-index: 199; border-bottom: 1px solid rgba(255,255,255,0.06); }
@@ -1071,12 +1074,12 @@ class WorkerWebUI:
         .topbar-worker { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
         .topbar-worker-name { font-size: 1.15rem; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .topbar-worker-sub { font-size: 0.82rem; color: #64748b; margin-top: 2px; }
-        .topbar-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; align-items: center; align-content: center; justify-items: stretch; }
+        .topbar-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; align-self: center; }
         .topbar-uptime { font-size: 0.82rem; color: #64748b; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px; padding: 4px 10px; text-align: center; display: flex; align-items: center; justify-content: center; }
 
         /* ---- Status badges ---- */
-        #worker-status-badge { display: flex; }
-        #worker-status-badge .status-badge { width: 100%; justify-content: center; }
+        #worker-status-badge { display: inline-flex; }
+        #worker-status-badge .status-badge { justify-content: center; }
         .status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
         .status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
         .status-active { background: #d1fae5; color: #065f46; }
@@ -1177,7 +1180,7 @@ class WorkerWebUI:
         [data-theme="dark"] .limit-auto-btn { background: #1e293b; color: #94a3b8; }
         [data-theme="dark"] .limit-auto-btn:hover { background: #2d3f55; }
         [data-theme="dark"] .limit-auto-btn.active { background: var(--success); color: #fff; }
-        .theme-toggle, .limit-set-btn, .limit-auto-btn, .console-pause-btn, .console-copy-btn, .job-pops-pause-btn, .errors-view-btn, .pagination-controls button, .image-overlay-close, .worker-delete-btn, .stats-window-btn, .horde-window-btn, .settings-page-btn, .setting-apply-btn, .confirm-modal-btn {
+        .theme-toggle, .nsfw-blur-btn, .clear-maintenance-btn, .limit-set-btn, .limit-auto-btn, .console-pause-btn, .console-copy-btn, .job-pops-pause-btn, .errors-view-btn, .pagination-controls button, .image-overlay-close, .worker-delete-btn, .stats-window-btn, .horde-window-btn, .settings-page-btn, .setting-apply-btn, .confirm-modal-btn {
             height: var(--action-btn-height);
             box-sizing: border-box;
             display: inline-flex;
@@ -1206,8 +1209,8 @@ class WorkerWebUI:
         .console-filter-select { margin-left: 6px; background: var(--card-bg); color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; height: var(--action-btn-height); }
 
         /* ---- Job pops pause button ---- */
-        .job-pops-pause-wrap { position: relative; display: flex; width: 100%; }
-        .job-pops-pause-btn { background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; white-space: nowrap; width: 100%; }
+        .job-pops-pause-wrap { position: relative; display: flex; }
+        .job-pops-pause-btn { background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; white-space: nowrap; }
         .job-pops-pause-btn:hover { background: #cbd5e1; }
         .job-pops-pause-btn.paused { background: #e0e7ff; color: #3730a3; border-color: #a5b4fc; }
         .job-pops-pause-btn.paused:hover { background: #c7d2fe; }
@@ -1377,7 +1380,7 @@ class WorkerWebUI:
         /* ---- Theme toggle (square) ---- */
         .theme-toggle { background: none; border: 1px solid rgba(255,255,255,0.18); color: var(--text-light); font-size: 1rem; cursor: pointer; padding: 5px 9px; border-radius: 4px; line-height: 1; transition: background 0.15s; flex-shrink: 0; }
         .theme-toggle:hover { background: rgba(255,255,255,0.08); }
-        .topbar .theme-toggle { background: none; border: 1px solid #e2e8f0; color: #475569; width: 100%; }
+        .topbar .theme-toggle { background: none; border: 1px solid #e2e8f0; color: #475569; width: var(--action-btn-height); padding: 0; flex-shrink: 0; }
         .topbar .theme-toggle:hover { background: #f1f5f9; }
         .nsfw-blur-btn { background: none; border: 1px solid #e2e8f0; color: #475569; font-size: 0.78rem; font-weight: 600; cursor: pointer; padding: 5px 10px; border-radius: 4px; white-space: nowrap; flex-shrink: 0; transition: background 0.15s; }
         .nsfw-blur-btn:hover { background: #f1f5f9; }
@@ -2806,7 +2809,7 @@ class WorkerWebUI:
                     : '<span class="status-badge status-active" style="font-size:0.68rem;padding:2px 7px;">Active</span>');
             if (!_jobPopsPauseInFlight) _updatePauseBtn(isPaused, _jobPopsPauseUntil);
             const maintBtn = document.getElementById('clear-maintenance-btn');
-            if (maintBtn) maintBtn.style.display = maint ? '' : 'none';
+            if (maintBtn) maintBtn.style.display = maint ? 'inline-flex' : 'none';
         }
         let _clearMaintenanceInFlight = false;
         function clearMaintenanceMode() {
