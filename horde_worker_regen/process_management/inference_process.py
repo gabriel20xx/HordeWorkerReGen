@@ -26,7 +26,6 @@ from horde_sdk.ai_horde_api.apimodels import (
     ImageGenerateJobPopResponse,
 )
 from loguru import logger
-from pydantic import ValidationError as PydanticValidationError
 from typing_extensions import override
 
 from horde_worker_regen.consts import BASE_LORA_DOWNLOAD_TIMEOUT, EXTRA_LORA_DOWNLOAD_TIMEOUT
@@ -66,14 +65,6 @@ else:
     class ProgressReport:  # noqa
         pass
 
-
-# Precompiled regex patterns for prompt sanitization (performance optimization)
-_NEGATIVE_PROMPT_KEYWORDS_PATTERN = re.compile(
-    r"\b(child|infant|underage|immature|teenager|tween)\b",
-    flags=re.IGNORECASE,
-)
-_MULTIPLE_COMMAS_PATTERN = re.compile(r"\s*,\s*")
-_MULTIPLE_SPACES_PATTERN = re.compile(r"\s{2,}")
 
 
 class HordeInferenceProcess(HordeProcess):
@@ -849,9 +840,6 @@ class HordeInferenceProcess(HordeProcess):
         self._last_step_callback_time = 0.0
         self._post_processing_was_started = False
 
-        # Capture original_prompt here so the finally block can always restore it,
-        # even if an exception occurs before the sanitization section runs.
-        original_prompt = job_info.payload.prompt
         self._last_sanitized_negative_prompt = None
 
         # Everything after acquire() is wrapped in a single try/finally so that
@@ -864,28 +852,6 @@ class HordeInferenceProcess(HordeProcess):
                 process_state=HordeProcessState.INFERENCE_PROCESSING,
                 info="Processing inference",
             )
-
-            # ! IMPORTANT: Start own code
-            try:
-                prompt = job_info.payload.prompt
-                if prompt and "###" in prompt:
-                    positive_prompt, negative_prompt = prompt.split("###", 1)
-                    cleaned_negative = negative_prompt
-                    # Use precompiled regex patterns for better performance
-                    cleaned_negative = _NEGATIVE_PROMPT_KEYWORDS_PATTERN.sub("", cleaned_negative)
-                    cleaned_negative = _MULTIPLE_COMMAS_PATTERN.sub(", ", cleaned_negative)
-                    cleaned_negative = _MULTIPLE_SPACES_PATTERN.sub(" ", cleaned_negative)
-                    cleaned_negative = cleaned_negative.strip(" ,")
-                    self._last_sanitized_negative_prompt = cleaned_negative
-                    # payload is a frozen Pydantic model — use model_copy to produce a new
-                    # instance with the updated prompt rather than assigning in place.
-                    new_payload = job_info.payload.model_copy(
-                        update={"prompt": f"{positive_prompt}###{cleaned_negative}"},
-                    )
-                    job_info = job_info.model_copy(update={"payload": new_payload})
-            except Exception as e:
-                logger.warning(f"Failed to sanitize negative prompt: {type(e).__name__} {e}")
-            # ! IMPORTANT: End own code
 
             self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
             logger.info(f"Starting inference for job(s) {job_info.ids}")
@@ -962,16 +928,6 @@ class HordeInferenceProcess(HordeProcess):
             self._current_job_inference_steps_complete = False
             self._vae_acquire_attempted = False
             self._vae_lock_was_acquired = False
-
-            # ! IMPORTANT: Start own code
-            # Use contextlib.suppress(AttributeError, PydanticValidationError) because
-            # ImageGenerateJobPopPayload is a frozen Pydantic v2 model, which raises
-            # pydantic.ValidationError (not AttributeError) when an assignment is attempted.
-            # Without this, the ValidationError propagates out of the finally block and causes
-            # start_inference() to be treated as failed even when basic_inference() succeeded.
-            with contextlib.suppress(AttributeError, PydanticValidationError):
-                job_info.payload.prompt = original_prompt
-            # ! IMPORTANT: End own code
 
             # The inference semaphore is released during progress_callback when post-processing
             # starts (_in_post_processing becomes True).  Only release it here if that path was
