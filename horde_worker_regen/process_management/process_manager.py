@@ -2616,9 +2616,19 @@ class HordeWorkerProcessManager:
                 result[field_name] = self.MAX_SUBMIT_RETRIES
                 continue
             try:
-                result[field_name] = getattr(self.bridge_data, field_name)
+                value = getattr(self.bridge_data, field_name)
             except AttributeError:
-                pass
+                continue
+            # Pydantic model instances are not JSON-serialisable by the standard
+            # json encoder.  Convert list-of-models to plain dicts so the web UI
+            # can serve them without a 500 error.
+            if isinstance(value, list):
+                result[field_name] = [
+                    item.model_dump() if hasattr(item, "model_dump") else item
+                    for item in value
+                ]
+            else:
+                result[field_name] = value
         return result
 
     def _compute_auto_queue_size(self) -> int:
