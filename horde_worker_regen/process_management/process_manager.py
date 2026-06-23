@@ -1452,7 +1452,7 @@ class PendingJob(BaseModel):
     """Base class for all PendingJobs async tasks."""
 
     state: JobSubmitState = JobSubmitState.PENDING
-    max_submit_retries: int = 10
+    max_submit_retries: int = 3
     _consecutive_failed_job_submits: int = 0
 
     @property
@@ -1615,7 +1615,7 @@ class HordeWorkerProcessManager:
 
     # Constants for job retry logic
     MAX_JOB_RETRIES = 1  # Number of retries for faulted jobs
-    MAX_SUBMIT_RETRIES = 10  # Number of times a job submission can be retried before being marked failed
+    MAX_SUBMIT_RETRIES = 3  # Number of times a job submission can be retried before being marked failed
 
     # Constants for preload-stuck cooldown logic.
     # When a model causes MODEL_PRELOADING to hang this many times within

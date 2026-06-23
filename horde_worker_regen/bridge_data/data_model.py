@@ -175,15 +175,15 @@ class reGenBridgeData(CombinedHordeBridgeData):
     prompt_swap_enabled: bool = True
     """When False, the swap list is ignored even if non-empty."""
 
-    prompt_remove_whole_word: bool = False
-    """When True, a remove entry only matches when it appears as a complete word
+    prompt_remove_whole_word: bool = True
+    """When True (default), a remove entry only matches when it appears as a complete word
     (i.e. not as part of a longer word).  E.g. ``"cat"`` will not match ``"category"``.
     Implemented with ``\\b`` word-boundary anchors.
     """
 
-    prompt_remove_case_sensitive: bool = True
-    """When True (default), remove entries are matched with their exact capitalisation.
-    When False, matching is case-insensitive (``"Cat"`` and ``"CAT"`` both match ``"cat"``).
+    prompt_remove_case_sensitive: bool = False
+    """When False (default), matching is case-insensitive (``"Cat"`` and ``"CAT"`` both match ``"cat"``).
+    When True, remove entries are matched with their exact capitalisation.
     """
 
     minutes_allowed_without_jobs: int = Field(default=30, ge=0, lt=60 * 60)
@@ -195,13 +195,13 @@ class reGenBridgeData(CombinedHordeBridgeData):
     Can also be configured via the AIWORKER_AUTO_RESTART_IDLE_MINUTES environment variable.
     """
 
-    force_restart_timeout: int = Field(default=30, ge=5, le=600, validate_default=True)
+    force_restart_timeout: int = Field(default=60, ge=5, le=600, validate_default=True)
     """Maximum seconds to wait for a graceful shutdown to finish before forcing it.
 
     When the worker is restarting (most notably an auto-restart triggered by
     `auto_restart_on_idle_minutes`) and the graceful shutdown does not complete within this many
     seconds, the worker hard-kills its child processes and exits so the restart can proceed.
-    The default is 30 seconds. Can also be configured via the AIWORKER_FORCE_RESTART_TIMEOUT
+    The default is 60 seconds. Can also be configured via the AIWORKER_FORCE_RESTART_TIMEOUT
     environment variable.
     """
 

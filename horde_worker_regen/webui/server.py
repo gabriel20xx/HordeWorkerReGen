@@ -338,6 +338,11 @@ class WorkerWebUI:
         # Background asyncio task handle for the horde polling loop.
         self._horde_bg_task: asyncio.Task | None = None
 
+        # Database reset progress: None = idle, 0-100 = in progress/done.
+        self._db_reset_progress: int | None = None
+        self._db_reset_error: str | None = None
+        self._db_reset_task: asyncio.Task | None = None
+
         # Re-populate gallery dict and stats from any data loaded from DB.
         if self._errors_db_path is not None:
             self._restore_persisted_collections()
@@ -960,6 +965,7 @@ class WorkerWebUI:
         self.app.router.add_post("/api/restart", self._handle_restart_program)
         self.app.router.add_post("/api/reset-stats", self._handle_reset_stats)
         self.app.router.add_post("/api/reset-database", self._handle_reset_database)
+        self.app.router.add_get("/api/reset-database/progress", self._handle_reset_database_progress)
         self.app.router.add_get("/api/horde-snapshots", self._handle_horde_snapshots)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
@@ -5051,7 +5057,7 @@ class WorkerWebUI:
             purge_loras_on_download:  ['Purge LoRAs on Download', 'Delete existing LoRA cache before downloading new LoRAs.',          'Behavior',     'bool',  null, null, false, null, 'AIWORKER_PURGE_LORAS_ON_DOWNLOAD'],
             remove_maintenance_on_init:['Auto-Remove Maintenance','Automatically clear maintenance mode — on startup AND continuously while running (re-clears it if maintenance is re-applied).', 'Behavior', 'bool', null, null, true, null, 'AIWORKER_REMOVE_MAINTENANCE_ON_INIT'],
             max_job_retries:          ['Max Job Retries',         'Number of times a faulted job is retried before being permanently faulted (0 = no retries; default 1).', 'Behavior', 'int',  0,    10,   false, null, 'AIWORKER_MAX_JOB_RETRIES'],
-            max_submit_retries:       ['Max Submit Retries',      'Number of times a job submission can be retried before being marked as failed (default 10).', 'Behavior', 'int',  0,    50,   false, null, 'AIWORKER_MAX_SUBMIT_RETRIES'],
+            max_submit_retries:       ['Max Submit Retries',      'Number of times a job submission can be retried before being marked as failed (default 3).', 'Behavior', 'int',  0,    50,   false, null, 'AIWORKER_MAX_SUBMIT_RETRIES'],
             data_retention_days:      ['Data Retention (days)',   'Number of days to keep errors, statistics, and gallery images in the database (1\u2013\u200a3650; default\u00a07).', 'Behavior', 'int', 1, 3650, false, null, 'AIWORKER_DATA_RETENTION_DAYS'],
             positive_prompt_append:          ['Positive — Add',            'Strings to append to every positive prompt before generation and gallery saving. One entry per line. The original prompt is sent to Horde unchanged.', 'Prompt Filters', 'str_list',        null, null, false, null, null],
             positive_prompt_append_enabled:  ['Positive — Add Enabled',    'When off, strings in the Positive Add list are not appended even if the list is non-empty.',                                                                    'Prompt Filters', 'bool',           null, null, false, null, null],
@@ -5085,11 +5091,11 @@ class WorkerWebUI:
             process_timeout: 180, inference_timeout: 120, inference_step_timeout: 30,
             preload_timeout: 60, post_process_timeout: 60, waiting_for_job_timeout: 600,
             minutes_allowed_without_jobs: 30, auto_restart_on_idle_minutes: 60,
-            force_restart_timeout: 30, suppress_speed_warnings: false,
+            force_restart_timeout: 60, suppress_speed_warnings: false,
             exit_on_unhandled_faults: false, limited_console_messages: false,
             stats_output_frequency: 30, purge_loras_on_download: false,
             remove_maintenance_on_init: true, max_job_retries: 1,
-            max_submit_retries: 10, data_retention_days: 7,
+            max_submit_retries: 3, data_retention_days: 7,
             positive_prompt_append: [], positive_prompt_append_enabled: true,
             positive_prompt_remove: [], positive_prompt_remove_enabled: true,
             positive_prompt_replace: [], positive_prompt_replace_enabled: true,
@@ -5100,8 +5106,8 @@ class WorkerWebUI:
             prompt_filters_enabled: true,
             prompt_remove_cleanup_separators: true,
             prompt_append_separator: true,
-            prompt_remove_whole_word: false,
-            prompt_remove_case_sensitive: true,
+            prompt_remove_whole_word: true,
+            prompt_remove_case_sensitive: false,
         };
 
         var _settingsLoaded = false;
@@ -5291,30 +5297,49 @@ class WorkerWebUI:
         }
 
         var _resetDbInFlight = false;
+        var _resetDbPollTimer = null;
+        function _stopResetDbPoll() {
+            if (_resetDbPollTimer !== null) { clearInterval(_resetDbPollTimer); _resetDbPollTimer = null; }
+        }
+        function _finishResetDb(btn, errMsg) {
+            _stopResetDbPoll();
+            _resetDbInFlight = false;
+            if (btn) btn.disabled = false;
+            if (errMsg) { _setSettingsStatus(errMsg, true); return; }
+            _setSettingsStatus('Database reset (100%)', false);
+            updateStatus();
+        }
+        function _pollResetDbProgress(btn) {
+            fetch('/api/reset-database/progress')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var pct = (typeof data.progress === 'number') ? data.progress : 0;
+                    if (!data.done) {
+                        _setSettingsStatus('Resetting database... ' + pct + '%', false);
+                        return;
+                    }
+                    if (data.error) { _finishResetDb(btn, data.error); return; }
+                    _finishResetDb(btn, null);
+                })
+                .catch(function() { /* keep polling on transient errors */ });
+        }
         function confirmResetDatabase() {
             closeResetDbConfirm();
             if (_resetDbInFlight) return;
             _resetDbInFlight = true;
             var btn = document.getElementById('settings-reset-db-btn');
             if (btn) btn.disabled = true;
-            _setSettingsStatus('Resetting database...', false);
+            _setSettingsStatus('Resetting database... 0%', false);
             fetch('/api/reset-database', {method: 'POST'})
                 .then(function(r) { return r.json().catch(function() { return {}; }).then(function(body) { return {ok: r.ok, body: body}; }); })
                 .then(function(res) {
-                    _resetDbInFlight = false;
-                    if (btn) btn.disabled = false;
-                    if (!res.ok || !(res.body && res.body.ok)) {
-                        _setSettingsStatus((res.body && res.body.error) ? res.body.error : 'Database reset failed', true);
+                    if (!res.ok || !res.body.started) {
+                        _finishResetDb(btn, (res.body && res.body.error) ? res.body.error : 'Database reset failed');
                         return;
                     }
-                    _setSettingsStatus('Database reset', false);
-                    updateStatus();
+                    _resetDbPollTimer = setInterval(function() { _pollResetDbProgress(btn); }, 300);
                 })
-                .catch(function() {
-                    _resetDbInFlight = false;
-                    if (btn) btn.disabled = false;
-                    _setSettingsStatus('Database reset failed', true);
-                });
+                .catch(function() { _finishResetDb(btn, 'Database reset failed'); });
         }
 
         function stageQueueSetting(payload) {
@@ -5942,8 +5967,8 @@ class WorkerWebUI:
             var filtersEnabled = _pfOptVal('prompt_filters_enabled', true);
             var removeCleanup  = _pfOptVal('prompt_remove_cleanup_separators', true);
             var appendSep      = _pfOptVal('prompt_append_separator', true);
-            var wholeWord      = _pfOptVal('prompt_remove_whole_word', false);
-            var caseSensitive  = _pfOptVal('prompt_remove_case_sensitive', true);
+            var wholeWord      = _pfOptVal('prompt_remove_whole_word', true);
+            var caseSensitive  = _pfOptVal('prompt_remove_case_sensitive', false);
 
             html += '<div class="pf-block">';
             html += '<div class="pf-block-title">Filter Options</div>';
@@ -7120,6 +7145,87 @@ class WorkerWebUI:
                 logger.warning(f"Could not persist reset baseline: {exc}")
         return web.json_response({"reset": True})
 
+    async def _handle_reset_database_progress(self, request: web.Request) -> web.Response:
+        """Return the current database reset progress (0-100) or null if idle."""
+        return web.json_response(
+            {
+                "progress": self._db_reset_progress,
+                "done": self._db_reset_progress == 100,
+                "error": self._db_reset_error,
+            }
+        )
+
+    def _do_reset_errors_db(self) -> None:
+        """Blocking: wipe the errors DB. Runs in a thread executor."""
+        assert self._errors_db_path is not None
+        with sqlite3.connect(self._errors_db_path, timeout=30) as conn:
+            conn.execute("DELETE FROM errors_log")
+            conn.commit()
+
+    def _do_reset_stats_db(self) -> None:
+        """Blocking: wipe the stats DB. Runs in a thread executor."""
+        assert self._stats_db_path is not None
+        with sqlite3.connect(self._stats_db_path, timeout=30) as conn:
+            conn.execute("DELETE FROM stats_snapshots")
+            conn.execute("DELETE FROM horde_snapshots")
+            conn.execute("DELETE FROM session_overview")
+            conn.commit()
+
+    def _do_reset_gallery_db(self) -> None:
+        """Blocking: wipe the gallery DB. Runs in a thread executor."""
+        assert self._gallery_db_path is not None
+        with sqlite3.connect(self._gallery_db_path, timeout=30) as conn:
+            conn.execute("DELETE FROM gallery_images")
+            conn.commit()
+
+    async def _run_reset_database(self) -> None:
+        """Background task: reset all databases and track progress (0-100)."""
+        loop = asyncio.get_event_loop()
+        self._db_reset_error = None
+        failed: list[str] = []
+
+        # 10% — in-memory state cleared (done synchronously before this task starts)
+        self._db_reset_progress = 10
+
+        if self._errors_db_path is not None:
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, self._do_reset_errors_db),
+                    timeout=60,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not reset errors DB: {exc}")
+                failed.append("errors")
+        self._db_reset_progress = 40
+
+        if self._stats_db_path is not None:
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, self._do_reset_stats_db),
+                    timeout=60,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not reset stats DB: {exc}")
+                failed.append("stats")
+        self._db_reset_progress = 70
+
+        if self._gallery_db_path is not None:
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, self._do_reset_gallery_db),
+                    timeout=60,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not reset gallery DB: {exc}")
+                failed.append("gallery")
+        self._db_reset_progress = 100
+
+        if failed:
+            self._db_reset_error = f"Failed to reset: {', '.join(failed)}"
+            logger.warning(f"WebUI database reset completed with errors: {self._db_reset_error}")
+        else:
+            logger.info("WebUI databases reset via settings page.")
+
     async def _handle_reset_database(self, request: web.Request) -> web.Response:
         """Wipe all persisted history across the SQLite databases.
 
@@ -7127,9 +7233,14 @@ class WorkerWebUI:
         resets the matching in-memory collections so the UI reflects an empty
         state immediately.  Runtime settings (``webui_settings.json``) are left
         untouched — use "Reset All" on the settings page for those.
+
+        Returns immediately with ``{"started": true}`` and tracks progress via
+        GET /api/reset-database/progress (0-100).
         """
-        # Reset in-memory state first so the next /api/status poll is empty even
-        # if a DB write below fails.
+        if self._db_reset_task is not None and not self._db_reset_task.done():
+            return web.json_response({"started": False, "error": "Reset already in progress"}, status=409)
+
+        # Reset in-memory state immediately so the next /api/status poll is empty.
         self.status_data["errors_history"] = []
         self._live_errors_history = []
         self._persisted_errors = []
@@ -7143,45 +7254,10 @@ class WorkerWebUI:
         self._persisted_reset_baseline = {}
         self.status_data["stats_reset_baseline"] = {}
 
-        failed: list[str] = []
-
-        if self._errors_db_path is not None:
-            try:
-                with sqlite3.connect(self._errors_db_path) as conn:
-                    conn.execute("DELETE FROM errors_log")
-                    conn.commit()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"Could not reset errors DB: {exc}")
-                failed.append("errors")
-
-        if self._stats_db_path is not None:
-            try:
-                with sqlite3.connect(self._stats_db_path) as conn:
-                    conn.execute("DELETE FROM stats_snapshots")
-                    conn.execute("DELETE FROM horde_snapshots")
-                    conn.execute("DELETE FROM session_overview")
-                    conn.commit()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"Could not reset stats DB: {exc}")
-                failed.append("stats")
-
-        if self._gallery_db_path is not None:
-            try:
-                with sqlite3.connect(self._gallery_db_path) as conn:
-                    conn.execute("DELETE FROM gallery_images")
-                    conn.commit()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"Could not reset gallery DB: {exc}")
-                failed.append("gallery")
-
-        if failed:
-            return web.json_response(
-                {"ok": False, "error": f"Failed to reset: {', '.join(failed)}"},
-                status=500,
-            )
-
-        logger.info("WebUI databases reset via settings page.")
-        return web.json_response({"ok": True})
+        self._db_reset_progress = 0
+        self._db_reset_error = None
+        self._db_reset_task = asyncio.create_task(self._run_reset_database())
+        return web.json_response({"started": True})
 
     async def _handle_horde_snapshots(self, request: web.Request) -> web.Response:
         """Return server-accumulated horde network performance snapshots."""
