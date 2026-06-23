@@ -34,26 +34,30 @@ class VersionMeta(BaseModel):
     required_min_version_info: dict[str, RequiredVersionInfo]
 
 
-def _version_tuple(v: str) -> tuple[int, ...]:
-    """Parse a version string into a tuple of integers for comparison.
+def _version_tuple(v: str) -> tuple[int, int, int]:
+    """Parse a version string into a (MAJOR, MINOR, PATCH) tuple for comparison.
 
-    Only the first three components (MAJOR, MINOR, PATCH) are considered.
-    Versions with fewer than three components return a shorter tuple.
+    Only the first three components are considered. Versions with fewer than three
+    components are padded with zeros so the result is always a 3-tuple — this keeps
+    comparisons well-defined and lets callers safely unpack three values.
 
     Args:
         v: A version string such as '10.1.2'.
 
     Returns:
-        A tuple of up to three integers representing the version components.
+        A 3-tuple of integers representing (major, minor, patch).
 
     Raises:
         ValueError: If the version string contains non-numeric components.
     """
     parts = v.split(".")[:3]
     try:
-        return tuple(int(x) for x in parts)
+        components = [int(x) for x in parts]
     except ValueError as e:
         raise ValueError(f"Invalid version string {v!r}: version components must be numeric") from e
+    while len(components) < 3:
+        components.append(0)
+    return (components[0], components[1], components[2])
 
 
 def _compare_versions(a: str, b: str) -> int:
@@ -97,6 +101,24 @@ def do_version_check() -> None:
         logger.warning("If this keeps happening, please check your internet connection and try again.")
         version_meta = get_local_version_meta()
 
+    # Version strings in the (network-fetched) version meta may be malformed; a parse
+    # failure here must not prevent the worker from starting. Default to "version OK"
+    # so version enforcement is skipped rather than crashing startup.
+    try:
+        _check_version_requirements(version_meta)
+    except ValueError as e:
+        logger.warning(
+            f"Could not evaluate version requirements ({e}). "
+            "Skipping version checks and continuing.",
+        )
+
+
+def _check_version_requirements(version_meta: VersionMeta) -> None:
+    """Evaluate version requirements and apply their side effects.
+
+    Raises:
+        ValueError: If any compared version string contains non-numeric components.
+    """
     # If the required_min_version is not satisfied, raise an error
     if not _compare_versions(horde_worker_regen.__version__, version_meta.required_min_version) >= 0:
         # Get the reason for the required update

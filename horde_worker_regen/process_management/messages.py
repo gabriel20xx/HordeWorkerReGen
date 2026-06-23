@@ -229,6 +229,8 @@ class HordeDownloadProgressMessage(HordeModelStateChangeMessage):
     @property
     def progress_percent(self) -> float:
         """The progress of the download as a percentage."""
+        if self.total_bytes <= 0:
+            return 0.0
         return self.total_downloaded_bytes / self.total_bytes * 100
 
 

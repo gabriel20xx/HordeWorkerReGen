@@ -959,6 +959,7 @@ class WorkerWebUI:
         self.app.router.add_post("/api/models", self._handle_toggle_model)
         self.app.router.add_post("/api/restart", self._handle_restart_program)
         self.app.router.add_post("/api/reset-stats", self._handle_reset_stats)
+        self.app.router.add_post("/api/reset-database", self._handle_reset_database)
         self.app.router.add_get("/api/horde-snapshots", self._handle_horde_snapshots)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
@@ -1579,6 +1580,10 @@ class WorkerWebUI:
         .settings-page-btn.reset-all { background: transparent; border-color: var(--border); color: var(--text-muted); }
         .settings-page-btn.reset-all:hover:not(:disabled) { background: #fee2e2; color: #b91c1c; border-color: #f87171; }
         [data-theme="dark"] .settings-page-btn.reset-all:hover:not(:disabled) { background: #3b0a0a; color: #fca5a5; border-color: #b91c1c; }
+        .settings-page-btn.reset-db { background: transparent; border-color: #ef4444; color: #b91c1c; }
+        .settings-page-btn.reset-db:hover:not(:disabled) { background: #fee2e2; color: #991b1b; border-color: #dc2626; }
+        [data-theme="dark"] .settings-page-btn.reset-db { border-color: #7f1d1d; color: #fca5a5; }
+        [data-theme="dark"] .settings-page-btn.reset-db:hover:not(:disabled) { background: #3b0a0a; color: #fecaca; border-color: #b91c1c; }
         .setting-number { width: 68px; height: var(--action-btn-height); padding: 4px 7px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; text-align: center; background: #f8fafc; color: #1e293b; transition: border-color 0.15s; }
         .setting-textarea { width: 200px; min-height: 54px; max-height: 180px; padding: 5px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.83rem; background: #f8fafc; color: #1e293b; resize: vertical; transition: border-color 0.15s; font-family: inherit; line-height: 1.5; }
         .setting-textarea:focus { outline: none; border-color: var(--accent); }
@@ -2182,6 +2187,7 @@ class WorkerWebUI:
                                 <button id="settings-apply-btn" class="settings-page-btn apply" onclick="applyPendingSettings()" disabled>Apply</button>
                                 <button id="settings-restart-btn" class="settings-page-btn restart" onclick="restartProgram()">Restart</button>
                                 <button id="settings-reset-all-btn" class="settings-page-btn reset-all" onclick="showResetAllConfirm()" title="Reset all settings to their default values">&#8635; Reset All</button>
+                                <button id="settings-reset-db-btn" class="settings-page-btn reset-db" onclick="showResetDbConfirm()" title="Permanently delete all stored history (errors, statistics, gallery images, network snapshots)">&#128465; Reset Database</button>
                                 <span id="settings-status" class="section-count" style="display:none;"></span>
                             </div>
                         </div>
@@ -2221,6 +2227,16 @@ class WorkerWebUI:
             <div class="confirm-modal-actions">
                 <button id="restart-confirm-cancel" class="confirm-modal-btn cancel" type="button" onclick="closeRestartConfirm()">Cancel</button>
                 <button id="restart-confirm-accept" class="confirm-modal-btn confirm" type="button" onclick="confirmRestartProgram()">Restart</button>
+            </div>
+        </div>
+    </div>
+    <div id="reset-db-confirm-modal" class="confirm-modal-backdrop" aria-hidden="true" onclick="dismissResetDbConfirm(event)">
+        <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="reset-db-confirm-title" aria-describedby="reset-db-confirm-body">
+            <div id="reset-db-confirm-title" class="confirm-modal-title">Reset database?</div>
+            <div id="reset-db-confirm-body" class="confirm-modal-body">This permanently deletes all stored history: error logs, statistics snapshots, gallery images, and network performance snapshots. This cannot be undone. Your settings are not affected.</div>
+            <div class="confirm-modal-actions">
+                <button id="reset-db-confirm-cancel" class="confirm-modal-btn cancel" type="button" onclick="closeResetDbConfirm()">Cancel</button>
+                <button id="reset-db-confirm-accept" class="confirm-modal-btn confirm" type="button" onclick="confirmResetDatabase()">Reset Database</button>
             </div>
         </div>
     </div>
@@ -5252,6 +5268,55 @@ class WorkerWebUI:
             }
         }
 
+        function showResetDbConfirm() {
+            var modal = document.getElementById('reset-db-confirm-modal');
+            if (!modal) return;
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+            var acceptBtn = document.getElementById('reset-db-confirm-accept');
+            if (acceptBtn) acceptBtn.focus();
+        }
+
+        function closeResetDbConfirm() {
+            var modal = document.getElementById('reset-db-confirm-modal');
+            if (!modal) return;
+            modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
+            var btn = document.getElementById('settings-reset-db-btn');
+            if (btn) btn.focus();
+        }
+
+        function dismissResetDbConfirm(event) {
+            if (event && event.target === event.currentTarget) closeResetDbConfirm();
+        }
+
+        var _resetDbInFlight = false;
+        function confirmResetDatabase() {
+            closeResetDbConfirm();
+            if (_resetDbInFlight) return;
+            _resetDbInFlight = true;
+            var btn = document.getElementById('settings-reset-db-btn');
+            if (btn) btn.disabled = true;
+            _setSettingsStatus('Resetting database...', false);
+            fetch('/api/reset-database', {method: 'POST'})
+                .then(function(r) { return r.json().catch(function() { return {}; }).then(function(body) { return {ok: r.ok, body: body}; }); })
+                .then(function(res) {
+                    _resetDbInFlight = false;
+                    if (btn) btn.disabled = false;
+                    if (!res.ok || !(res.body && res.body.ok)) {
+                        _setSettingsStatus((res.body && res.body.error) ? res.body.error : 'Database reset failed', true);
+                        return;
+                    }
+                    _setSettingsStatus('Database reset', false);
+                    updateStatus();
+                })
+                .catch(function() {
+                    _resetDbInFlight = false;
+                    if (btn) btn.disabled = false;
+                    _setSettingsStatus('Database reset failed', true);
+                });
+        }
+
         function stageQueueSetting(payload) {
             if (!payload || typeof payload !== 'object') return;
             var next = {};
@@ -7054,6 +7119,69 @@ class WorkerWebUI:
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Could not persist reset baseline: {exc}")
         return web.json_response({"reset": True})
+
+    async def _handle_reset_database(self, request: web.Request) -> web.Response:
+        """Wipe all persisted history across the SQLite databases.
+
+        Clears every table in the errors, stats and gallery databases and
+        resets the matching in-memory collections so the UI reflects an empty
+        state immediately.  Runtime settings (``webui_settings.json``) are left
+        untouched — use "Reset All" on the settings page for those.
+        """
+        # Reset in-memory state first so the next /api/status poll is empty even
+        # if a DB write below fails.
+        self.status_data["errors_history"] = []
+        self._live_errors_history = []
+        self._persisted_errors = []
+        self._gallery_dict.clear()
+        self._next_gallery_id = 0
+        self.status_data["images_count"] = 0
+        self._stats_snapshots.clear()
+        self._last_stats_snapshot_time = 0.0
+        self._horde_snapshots.clear()
+        self._persisted_horde_snapshots = []
+        self._persisted_reset_baseline = {}
+        self.status_data["stats_reset_baseline"] = {}
+
+        failed: list[str] = []
+
+        if self._errors_db_path is not None:
+            try:
+                with sqlite3.connect(self._errors_db_path) as conn:
+                    conn.execute("DELETE FROM errors_log")
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not reset errors DB: {exc}")
+                failed.append("errors")
+
+        if self._stats_db_path is not None:
+            try:
+                with sqlite3.connect(self._stats_db_path) as conn:
+                    conn.execute("DELETE FROM stats_snapshots")
+                    conn.execute("DELETE FROM horde_snapshots")
+                    conn.execute("DELETE FROM session_overview")
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not reset stats DB: {exc}")
+                failed.append("stats")
+
+        if self._gallery_db_path is not None:
+            try:
+                with sqlite3.connect(self._gallery_db_path) as conn:
+                    conn.execute("DELETE FROM gallery_images")
+                    conn.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not reset gallery DB: {exc}")
+                failed.append("gallery")
+
+        if failed:
+            return web.json_response(
+                {"ok": False, "error": f"Failed to reset: {', '.join(failed)}"},
+                status=500,
+            )
+
+        logger.info("WebUI databases reset via settings page.")
+        return web.json_response({"ok": True})
 
     async def _handle_horde_snapshots(self, request: web.Request) -> web.Response:
         """Return server-accumulated horde network performance snapshots."""

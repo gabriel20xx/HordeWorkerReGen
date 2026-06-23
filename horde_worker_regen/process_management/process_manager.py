@@ -8764,12 +8764,26 @@ class HordeWorkerProcessManager:
             bridge_data_loop = asyncio.create_task(self._bridge_data_loop(), name="bridge_data_loop")
             bridge_data_loop.add_done_callback(self._handle_exception)
 
-        # Start web UI if enabled
+        # Start web UI if enabled. A failure here (most commonly the port already being
+        # bound by a stale instance or another service) must not take down the worker —
+        # the web UI is an optional monitoring convenience, so degrade to running headless.
         webui_update_loop = None
         if self.webui is not None:
-            await self.webui.start()
-            webui_update_loop = asyncio.create_task(self._webui_update_loop(), name="webui_update_loop")
-            webui_update_loop.add_done_callback(self._handle_exception)
+            try:
+                await self.webui.start()
+            except Exception as e:
+                logger.error(
+                    f"Web UI failed to start ({type(e).__name__}: {e}). "
+                    "Continuing without the web UI — the worker will keep generating.",
+                )
+                try:
+                    await self.webui.stop()
+                except Exception:
+                    logger.debug("Failed to clean up web UI after a failed start", exc_info=True)
+                self.webui = None
+            else:
+                webui_update_loop = asyncio.create_task(self._webui_update_loop(), name="webui_update_loop")
+                webui_update_loop.add_done_callback(self._handle_exception)
 
         tasks = [process_control_loop, api_call_loop, api_get_user_info_loop, api_get_workers_details_loop, job_submit_loop]
 
