@@ -640,7 +640,7 @@ class WorkerWebUI:
                         if rb:
                             self._persisted_reset_baseline = rb
                 except Exception:
-                    pass
+                    logger.debug("Failed to load persisted reset baseline from database", exc_info=True)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not load session overview from '{self._stats_db_path}': {exc}")
 
@@ -7102,11 +7102,11 @@ class WorkerWebUI:
                                         )
                                         _conn.commit()
                                 except Exception:
-                                    pass
+                                    logger.debug("Failed to persist horde snapshot to database", exc_info=True)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    pass
+                    logger.debug("Unexpected error in horde stats polling loop", exc_info=True)
                 await asyncio.sleep(self._HORDE_POLL_INTERVAL)
 
     async def _handle_restart_program(self, request: web.Request) -> web.Response:

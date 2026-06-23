@@ -121,7 +121,8 @@ def main(
             # Print a list of fields that failed validation
             logger.error(f"The following fields in {BRIDGE_CONFIG_FILENAME} failed validation:")
             for error in e.errors():
-                logger.error(f"{error['loc'][0]}: {error['msg']}")
+                loc_str = error["loc"][0] if error.get("loc") else "<root>"
+                logger.error(f"{loc_str}: {error['msg']}")
 
         try:
             input("Press Enter to exit...")
