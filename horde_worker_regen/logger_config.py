@@ -1,6 +1,7 @@
 """Utilities for configuring the logger with a standardized format."""
 
 import os
+import re
 import sys
 import threading
 from collections.abc import Callable
@@ -8,6 +9,18 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+# ComfyUI prints "ERROR lora <key> shape '<shape>' is invalid for input of size <n>" at ERROR
+# level whenever a LoRA weight tensor is incompatible with the loaded model (e.g. an SDXL LoRA
+# applied to an SD 1.5 model). ComfyUI handles the mismatch gracefully (skips the weight), so
+# these are non-fatal noise — filter them from the console and trace sinks.
+_LORA_SHAPE_NOISE_RE = re.compile(
+    r"^ERROR lora \S+ shape '\[[^\]]*\]' is invalid for input of size \d+$"
+)
+
+
+def _is_lora_shape_noise(record: dict[str, Any]) -> bool:
+    return bool(_LORA_SHAPE_NOISE_RE.match(record.get("message", "")))
 
 
 def create_level_format_function(time_format: str = "YYYY-MM-DD HH:mm:ss.SSS") -> Callable[[dict[str, Any]], str]:
@@ -110,6 +123,8 @@ def _make_console_filter(warn_level_no: int) -> Any:
     """
 
     def _filter(record: dict[str, Any]) -> bool:
+        if _is_lora_shape_noise(record):
+            return False
         if record["level"].no >= warn_level_no:
             return True
         name: str = record["name"] or ""
@@ -267,6 +282,8 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
     # trace/ — error trace log: ERROR and above with full backtraces.
     # diagnose=True only for the main process: subprocesses run GPU/ML code and
     # introspecting CUDA tensors after an OOM or hardware fault is unsafe.
+    # Known non-fatal ComfyUI LoRA shape-mismatch messages are excluded — they flood
+    # trace.log with hundreds of lines per job and are not actionable errors.
     logger.add(
         trace_log,
         format=file_format,
@@ -278,6 +295,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         backtrace=True,
         diagnose=process_id is None,
         delay=True,
+        filter=lambda record: not _is_lora_shape_noise(record),
     )
 
     # crash/ and webui/ are main-process-only sinks.

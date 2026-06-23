@@ -334,7 +334,7 @@ class WorkerWebUI:
         # Server-side horde network performance snapshots (accumulated even when
         # no browser is connected).  Served via /api/horde-snapshots so the JS
         # can seed its chart with history going back to server startup.
-        self._horde_snapshots: deque[dict[str, Any]] = deque(maxlen=self._HORDE_MAX_SERVER_SNAPS)
+        self._horde_snapshots: deque[dict[str, Any]] = deque(maxlen=self._horde_max_server_snaps)
         # Background asyncio task handle for the horde polling loop.
         self._horde_bg_task: asyncio.Task | None = None
 
@@ -589,13 +589,13 @@ class WorkerWebUI:
                     except (ValueError, TypeError):
                         pass
 
-                # Load horde snapshots (last 3 hours / _HORDE_MAX_SERVER_SNAPS entries)
+                # Load horde snapshots up to the full retention window.
                 horde_rows = conn.execute(
                     "SELECT snapshot_json FROM ("
                     "SELECT id, snapshot_json, timestamp FROM horde_snapshots"
                     " WHERE timestamp >= ? ORDER BY timestamp DESC, id DESC LIMIT ?"
                     ") ORDER BY timestamp ASC, id ASC",
-                    (cutoff, self._HORDE_MAX_SERVER_SNAPS),
+                    (cutoff, self._horde_max_server_snaps),
                 ).fetchall()
                 for row in horde_rows:
                     try:
@@ -720,7 +720,7 @@ class WorkerWebUI:
 
         horde = getattr(self, "_persisted_horde_snapshots", [])
         if horde:
-            self._horde_snapshots = deque(horde, maxlen=self._HORDE_MAX_SERVER_SNAPS)
+            self._horde_snapshots = deque(horde, maxlen=self._horde_max_server_snaps)
 
     @staticmethod
     def _safe_snapshot_time(snapshot: dict[str, Any]) -> float:
@@ -797,7 +797,7 @@ class WorkerWebUI:
         # Rebuild horde snapshots.
         horde = getattr(self, "_persisted_horde_snapshots", [])
         if horde:
-            self._horde_snapshots = deque(horde, maxlen=self._HORDE_MAX_SERVER_SNAPS)
+            self._horde_snapshots = deque(horde, maxlen=self._horde_max_server_snaps)
 
         # Re-merge errors history (live session errors + reloaded persisted history).
         self.status_data["errors_history"] = self._merge_errors_history(self._live_errors_history)
@@ -809,6 +809,9 @@ class WorkerWebUI:
             days: New retention period in days (must be >= 1).
         """
         self._data_retention_days = max(1, min(3650, int(days)))
+        # Resize the horde snapshots deque to match the new retention period so
+        # the 6h / All window buttons have enough history to differentiate.
+        self._horde_snapshots = deque(self._horde_snapshots, maxlen=self._horde_max_server_snaps)
         self._prune_old_db_data()
 
     def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
@@ -5760,7 +5763,7 @@ class WorkerWebUI:
                  +  '<input type="checkbox" class="pfg-group-toggle"' + (enabled ? ' checked' : '')
                  +  ' onchange="this.closest(\'.pfg-group\').classList.toggle(\'pfg-group--disabled\',!this.checked);_pfgStageSection(\'' + sid + '\')" aria-label="Enable group">'
                  +  '<span class="setting-toggle-slider"></span></label>';
-            html += '<input type="text" class="pfg-name-input" value="' + e(name) + '" placeholder="Group name…"'
+            html += '<input type="text" class="pfg-name-input" value="' + e(name || 'Uncategorized') + '" placeholder="Group name…"'
                  +  ' oninput="_pfgStageSection(\'' + sid + '\')" aria-label="Group name">';
             html += '<button class="pfg-delete-btn" onclick="pfgDeleteGroup(this,\'' + sid + '\')" title="Delete group" aria-label="Delete group">×</button>';
             html += '</div>';
@@ -7057,7 +7060,16 @@ class WorkerWebUI:
         return web.json_response({"snapshots": list(self._horde_snapshots)})
 
     _HORDE_POLL_INTERVAL: float = 30.0
-    _HORDE_MAX_SERVER_SNAPS: int = 360  # 3 hours at 30-second intervals
+    _HORDE_MIN_SERVER_SNAPS: int = 360  # floor: at least 3 hours of history
+
+    @property
+    def _horde_max_server_snaps(self) -> int:
+        """Max horde snapshots to keep in memory and load from DB.
+
+        Scales with data_retention_days so the full window range (30m / 2h /
+        6h / All) is available up to the configured retention period.
+        """
+        return max(self._HORDE_MIN_SERVER_SNAPS, int(self._data_retention_days * 86400 / self._HORDE_POLL_INTERVAL))
 
     async def _poll_horde_network(self) -> None:
         """Background task: poll aihorde.net every 30 s and accumulate performance snapshots."""

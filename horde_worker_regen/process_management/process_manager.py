@@ -2627,14 +2627,15 @@ class HordeWorkerProcessManager:
         The heuristic starts from available non-concurrent process headroom and
         then adjusts based on average TOTAL job duration.  Timing tiers:
 
-        - **< 15 s** (very fast): buffer 2 × concurrent to eliminate idle time —
-          at this speed the API round-trip dominates, so deep buffering pays off.
-        - **15 – 30 s** (fast): buffer 1 × concurrent to keep workers fed.
-        - **30 – 90 s** (medium): existing headroom is sufficient; no adjustment.
-        - **90 – 300 s** (slow): cap at 1 — one pre-loaded job hides model-swap
-          latency without wasting VRAM on more.
-        - **≥ 300 s** (very slow): 1 minimum — keeps at least one job ready so
-          the worker never idles between very long generations.
+        - **< 20 s** (very fast): buffer 3 × concurrent — API round-trip
+          dominates, so deep buffering saturates the pipeline.
+        - **20 – 60 s** (fast): buffer 2 × concurrent to keep workers fed
+          through model swaps.
+        - **60 – 180 s** (medium): buffer 1 × concurrent as a comfortable
+          cushion.
+        - **180 – 600 s** (slow): at least 1 buffered job so the worker never
+          idles between long generations.
+        - **≥ 600 s** (very slow): 1 — more would tie up VRAM without benefit.
 
         Timing data is ignored until at least 3 samples have been collected to
         avoid reacting to a single anomalously fast or slow job.
@@ -2655,20 +2656,20 @@ class HordeWorkerProcessManager:
 
         avg_job_time = total_stats["sum"] / total_stats["count"]
 
-        if avg_job_time < 15:
-            # Very fast: pre-load 2 jobs per worker to eliminate idle time
+        if avg_job_time < 20:
+            # Very fast: pre-load 3 jobs per worker to saturate the pipeline
+            result = max(base, concurrent * 3)
+        elif avg_job_time < 60:
+            # Fast: pre-load 2 jobs per worker — keeps workers fed through model swaps
             result = max(base, concurrent * 2)
-        elif avg_job_time < 30:
-            # Fast: pre-load 1 job per worker
+        elif avg_job_time < 180:
+            # Medium: pre-load 1 job per worker as a comfortable buffer
             result = max(base, concurrent)
-        elif avg_job_time < 90:
-            # Medium: current headroom is adequate
-            result = base
-        elif avg_job_time < 300:
-            # Slow: one job ahead hides model-swap latency
-            result = min(base, 1)
+        elif avg_job_time < 600:
+            # Slow: at least 1 buffered job so the worker never idles between long runs
+            result = max(base, 1)
         else:
-            # Very slow: keep exactly one job ready to avoid idle time between long jobs
+            # Very slow: 1 is sufficient — more would tie up VRAM without benefit
             result = 1
 
         return max(1, result)
@@ -6491,8 +6492,13 @@ class HordeWorkerProcessManager:
         if self._process_map.get_first_available_safety_process() is None:
             return
 
-        # Don't start jobs if we can't run inference
-        if self._process_map.get_first_available_inference_process() is None:
+        # When pre-buffering is disabled (max_queue_size == 0) only pop when an inference
+        # process is immediately free — that's the natural rate-limiter.
+        # When pre-buffering is active (max_queue_size > 0) skip this check: the job is
+        # placed in jobs_pending_inference and start_inference() will dispatch it as soon
+        # as a process finishes its current job.  Blocking here would prevent the queue
+        # from ever filling up to the configured max_queue_size.
+        if max_queue_size == 0 and self._process_map.get_first_available_inference_process() is None:
             return
 
         if len(self.bridge_data.image_models_to_load) == 0:
