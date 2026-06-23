@@ -345,6 +345,33 @@ def _apply_prompt_swap(
     return pos, neg
 
 
+def _apply_conditional_add(
+    text: str,
+    conditional_add: list[str] | None = None,
+    *,
+    append_separator: bool = True,
+) -> str:
+    """Apply conditional-add rules to *text*.
+
+    Each entry is ``trigger==>add`` format: if ``trigger`` is found (case-insensitively)
+    in *text*, ``add`` is appended to the text.  Entries without ``==>`` or with an empty
+    trigger or add part are skipped.
+    """
+    for rule in (conditional_add or []):
+        if not rule or "==>" not in rule:
+            continue
+        trigger, add = rule.split("==>", 1)
+        if not trigger or not add:
+            continue
+        if re.search(re.escape(trigger), text, re.IGNORECASE):
+            if append_separator:
+                sep = ", " if text.strip() else ""
+                text = text.rstrip(" ,") + sep + add
+            else:
+                text = text + add
+    return text
+
+
 _excludes_for_job_dump = {
     "job_image_results": True,
     "sdk_api_job_info": {
@@ -2469,7 +2496,9 @@ class HordeWorkerProcessManager:
             raise ValueError(f"Unknown bridge_data field: '{key}'")
         _FILTER_GROUP_KEYS = {
             "positive_prompt_append", "positive_prompt_remove", "positive_prompt_replace",
+            "positive_prompt_conditional_add",
             "negative_prompt_append", "negative_prompt_remove", "negative_prompt_replace",
+            "negative_prompt_conditional_add",
             "prompt_swap",
         }
         if key in _FILTER_GROUP_KEYS and isinstance(value, list):
@@ -2697,22 +2726,22 @@ class HordeWorkerProcessManager:
            This is more conservative than a flat percentage on smaller cards
            (8–12 GB) where 10 % leaves almost no room for active computation.
         3. Compute available VRAM as ``total_vram - system_vram_used - inference_headroom``.
-        4. Return ``max(1, floor(available / per_model))``, capped at 16.
+        4. Return ``max(2, floor(available / per_model))``, capped at 16.
 
         When total VRAM data has not yet been collected (e.g. at startup or on
         CPU-only machines), the current ``max_inference_processes`` is returned
-        unchanged.
+        unchanged (minimum 2).
 
         Returns:
-            Recommended max active model count (>= 1).
+            Recommended max active model count (>= 2).
         """
         total_vram = self._last_total_vram_mb
         system_vram_used = self._last_system_vram_usage_mb
         worker_vram = self._last_worker_vram_mb
 
         if total_vram <= 0:
-            # No VRAM data available yet; keep current value
-            return max(1, self.max_inference_processes)
+            # No VRAM data available yet; keep current value, but never drop below 2
+            return max(2, self.max_inference_processes)
 
         # Estimate per-model VRAM from current worker usage
         num_loaded = len(
@@ -2730,9 +2759,9 @@ class HordeWorkerProcessManager:
         inference_headroom = max(2048.0, total_vram * 0.10)
         available_vram = max(0.0, total_vram - system_vram_used - inference_headroom)
         if available_vram <= 0:
-            return max(1, num_loaded)
+            return max(2, num_loaded)
 
-        auto_count = max(1, int(available_vram / per_model_vram))
+        auto_count = max(2, int(available_vram / per_model_vram))
         return min(auto_count, 16)
 
     def enable_performance_mode(self) -> None:
@@ -3996,6 +4025,11 @@ class HordeWorkerProcessManager:
                                         remove_whole_word=_gbd.prompt_remove_whole_word,
                                         remove_case_sensitive=_gbd.prompt_remove_case_sensitive,
                                     )
+                                    _gpos = _apply_conditional_add(
+                                        _gpos,
+                                        _active_filter_entries(_gbd.positive_prompt_conditional_add, _gpf_on and _gbd.positive_prompt_conditional_add_enabled),
+                                        append_separator=_gbd.prompt_append_separator,
+                                    )
                                     _gneg = _apply_prompt_filters(
                                         _gneg_orig,
                                         append=_active_filter_entries(_gbd.negative_prompt_append, _gpf_on and _gbd.negative_prompt_append_enabled),
@@ -4005,6 +4039,11 @@ class HordeWorkerProcessManager:
                                         append_separator=_gbd.prompt_append_separator,
                                         remove_whole_word=_gbd.prompt_remove_whole_word,
                                         remove_case_sensitive=_gbd.prompt_remove_case_sensitive,
+                                    )
+                                    _gneg = _apply_conditional_add(
+                                        _gneg,
+                                        _active_filter_entries(_gbd.negative_prompt_conditional_add, _gpf_on and _gbd.negative_prompt_conditional_add_enabled),
+                                        append_separator=_gbd.prompt_append_separator,
                                     )
                                     _gswap = _active_filter_entries(_gbd.prompt_swap, _gpf_on and _gbd.prompt_swap_enabled)
                                     if _gswap:
@@ -4569,14 +4608,16 @@ class HordeWorkerProcessManager:
         _original_prompt = next_job.payload.prompt
         _bd = self.bridge_data
         _pf_on = _bd.prompt_filters_enabled
-        _pos_append   = _active_filter_entries(_bd.positive_prompt_append,  _pf_on and _bd.positive_prompt_append_enabled)
-        _pos_remove   = _active_filter_entries(_bd.positive_prompt_remove,  _pf_on and _bd.positive_prompt_remove_enabled)
-        _pos_replace  = _active_filter_entries(_bd.positive_prompt_replace, _pf_on and _bd.positive_prompt_replace_enabled)
-        _neg_append   = _active_filter_entries(_bd.negative_prompt_append,  _pf_on and _bd.negative_prompt_append_enabled)
-        _neg_remove   = _active_filter_entries(_bd.negative_prompt_remove,  _pf_on and _bd.negative_prompt_remove_enabled)
-        _neg_replace  = _active_filter_entries(_bd.negative_prompt_replace, _pf_on and _bd.negative_prompt_replace_enabled)
-        _swap_entries = _active_filter_entries(_bd.prompt_swap,             _pf_on and _bd.prompt_swap_enabled)
-        if _original_prompt and (_pos_append or _pos_remove or _pos_replace or _neg_append or _neg_remove or _neg_replace or _swap_entries):
+        _pos_append        = _active_filter_entries(_bd.positive_prompt_append,          _pf_on and _bd.positive_prompt_append_enabled)
+        _pos_remove        = _active_filter_entries(_bd.positive_prompt_remove,          _pf_on and _bd.positive_prompt_remove_enabled)
+        _pos_replace       = _active_filter_entries(_bd.positive_prompt_replace,         _pf_on and _bd.positive_prompt_replace_enabled)
+        _pos_cond_add      = _active_filter_entries(_bd.positive_prompt_conditional_add, _pf_on and _bd.positive_prompt_conditional_add_enabled)
+        _neg_append        = _active_filter_entries(_bd.negative_prompt_append,          _pf_on and _bd.negative_prompt_append_enabled)
+        _neg_remove        = _active_filter_entries(_bd.negative_prompt_remove,          _pf_on and _bd.negative_prompt_remove_enabled)
+        _neg_replace       = _active_filter_entries(_bd.negative_prompt_replace,         _pf_on and _bd.negative_prompt_replace_enabled)
+        _neg_cond_add      = _active_filter_entries(_bd.negative_prompt_conditional_add, _pf_on and _bd.negative_prompt_conditional_add_enabled)
+        _swap_entries      = _active_filter_entries(_bd.prompt_swap,                     _pf_on and _bd.prompt_swap_enabled)
+        if _original_prompt and (_pos_append or _pos_remove or _pos_replace or _pos_cond_add or _neg_append or _neg_remove or _neg_replace or _neg_cond_add or _swap_entries):
             _parts = _original_prompt.split("###", 1)
             _pos = _apply_prompt_filters(
                 _parts[0],
@@ -4588,6 +4629,7 @@ class HordeWorkerProcessManager:
                 remove_whole_word=_bd.prompt_remove_whole_word,
                 remove_case_sensitive=_bd.prompt_remove_case_sensitive,
             )
+            _pos = _apply_conditional_add(_pos, _pos_cond_add, append_separator=_bd.prompt_append_separator)
             _neg = _apply_prompt_filters(
                 _parts[1] if len(_parts) > 1 else "",
                 append=_neg_append,
@@ -4598,6 +4640,7 @@ class HordeWorkerProcessManager:
                 remove_whole_word=_bd.prompt_remove_whole_word,
                 remove_case_sensitive=_bd.prompt_remove_case_sensitive,
             )
+            _neg = _apply_conditional_add(_neg, _neg_cond_add, append_separator=_bd.prompt_append_separator)
             if _swap_entries:
                 _pos, _neg = _apply_prompt_swap(
                     _pos, _neg, _swap_entries,

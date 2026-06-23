@@ -115,13 +115,26 @@ class reGenBridgeData(CombinedHordeBridgeData):
     Presence is checked against the original (pre-filter) values before any modification.
     """
 
+    positive_prompt_conditional_add: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of conditional-add rules for positive prompts in ``trigger==>add`` format.
+    If ``trigger`` is found in the prompt, ``add`` is appended to the prompt.
+    The original unmodified prompt is preserved in the Horde submission metadata.
+    """
+
+    negative_prompt_conditional_add: list[PromptFilterGroup] = Field(default_factory=list)
+    """Named groups of conditional-add rules for negative prompts in ``trigger==>add`` format.
+    If ``trigger`` is found in the prompt, ``add`` is appended to the prompt.
+    """
+
     @field_validator(
         "positive_prompt_append",
         "positive_prompt_remove",
         "positive_prompt_replace",
+        "positive_prompt_conditional_add",
         "negative_prompt_append",
         "negative_prompt_remove",
         "negative_prompt_replace",
+        "negative_prompt_conditional_add",
         "prompt_swap",
         mode="before",
     )
@@ -174,6 +187,12 @@ class reGenBridgeData(CombinedHordeBridgeData):
 
     prompt_swap_enabled: bool = True
     """When False, the swap list is ignored even if non-empty."""
+
+    positive_prompt_conditional_add_enabled: bool = True
+    """When False, the positive conditional add list is ignored even if non-empty."""
+
+    negative_prompt_conditional_add_enabled: bool = True
+    """When False, the negative conditional add list is ignored even if non-empty."""
 
     prompt_remove_whole_word: bool = True
     """When True (default), a remove entry only matches when it appears as a complete word

@@ -140,9 +140,13 @@ _SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "positive_prompt_append_enabled": {"type": bool},
     "positive_prompt_remove_enabled": {"type": bool},
     "positive_prompt_replace_enabled": {"type": bool},
+    "positive_prompt_conditional_add": {"type": list},
+    "positive_prompt_conditional_add_enabled": {"type": bool},
     "negative_prompt_append_enabled": {"type": bool},
     "negative_prompt_remove_enabled": {"type": bool},
     "negative_prompt_replace_enabled": {"type": bool},
+    "negative_prompt_conditional_add": {"type": list},
+    "negative_prompt_conditional_add_enabled": {"type": bool},
 }
 
 
@@ -5063,14 +5067,18 @@ class WorkerWebUI:
             positive_prompt_append_enabled:  ['Positive — Add Enabled',    'When off, strings in the Positive Add list are not appended even if the list is non-empty.',                                                                    'Prompt Filters', 'bool',           null, null, false, null, null],
             positive_prompt_remove:          ['Positive — Remove',         'Strings to remove from every positive prompt. One entry per line.',                                                                                              'Prompt Filters', 'str_list',        null, null, false, null, null],
             positive_prompt_remove_enabled:  ['Positive — Remove Enabled', 'When off, strings in the Positive Remove list are not removed even if the list is non-empty.',                                                                  'Prompt Filters', 'bool',           null, null, false, null, null],
-            positive_prompt_replace:         ['Positive — Replace',        'Text pairs to replace in every positive prompt. Enter the original text and the replacement for each pair.',                                                    'Prompt Filters', 'str_replace_list', null, null, false, null, null],
-            positive_prompt_replace_enabled: ['Positive — Replace Enabled','When off, rules in the Positive Replace list are not applied even if the list is non-empty.',                                                                   'Prompt Filters', 'bool',           null, null, false, null, null],
-            negative_prompt_append:          ['Negative — Add',            'Strings to append to every negative prompt. One entry per line.',                                                                                                'Prompt Filters', 'str_list',        null, null, false, null, null],
+            positive_prompt_replace:                ['Positive — Replace',              'Text pairs to replace in every positive prompt. Enter the original text and the replacement for each pair.',                                                    'Prompt Filters', 'str_replace_list', null, null, false, null, null],
+            positive_prompt_replace_enabled:        ['Positive — Replace Enabled',      'When off, rules in the Positive Replace list are not applied even if the list is non-empty.',                                                                   'Prompt Filters', 'bool',           null, null, false, null, null],
+            positive_prompt_conditional_add:        ['Positive — Conditional Add',      'Conditional-add rules for positive prompts in trigger==>add format. If trigger is found, add is appended.',                                                       'Prompt Filters', 'str_replace_list', null, null, false, null, null],
+            positive_prompt_conditional_add_enabled:['Positive — Cond. Add Enabled',   'When off, conditional-add rules in the Positive list are not applied even if the list is non-empty.',                                                             'Prompt Filters', 'bool',           null, null, false, null, null],
+            negative_prompt_append:                 ['Negative — Add',                  'Strings to append to every negative prompt. One entry per line.',                                                                                                'Prompt Filters', 'str_list',        null, null, false, null, null],
             negative_prompt_append_enabled:  ['Negative — Add Enabled',    'When off, strings in the Negative Add list are not appended even if the list is non-empty.',                                                                    'Prompt Filters', 'bool',           null, null, false, null, null],
             negative_prompt_remove:          ['Negative — Remove',         'Strings to remove from every negative prompt. One entry per line.',                                                                                              'Prompt Filters', 'str_list',        null, null, false, null, null],
             negative_prompt_remove_enabled:  ['Negative — Remove Enabled', 'When off, strings in the Negative Remove list are not removed even if the list is non-empty.',                                                                  'Prompt Filters', 'bool',           null, null, false, null, null],
-            negative_prompt_replace:         ['Negative — Replace',        'Text pairs to replace in every negative prompt.',                                                                                                                'Prompt Filters', 'str_replace_list', null, null, false, null, null],
-            negative_prompt_replace_enabled: ['Negative — Replace Enabled','When off, rules in the Negative Replace list are not applied even if the list is non-empty.',                                                                   'Prompt Filters', 'bool',           null, null, false, null, null],
+            negative_prompt_replace:                ['Negative — Replace',              'Text pairs to replace in every negative prompt.',                                                                                                                'Prompt Filters', 'str_replace_list', null, null, false, null, null],
+            negative_prompt_replace_enabled:        ['Negative — Replace Enabled',      'When off, rules in the Negative Replace list are not applied even if the list is non-empty.',                                                                   'Prompt Filters', 'bool',           null, null, false, null, null],
+            negative_prompt_conditional_add:        ['Negative — Conditional Add',      'Conditional-add rules for negative prompts in trigger==>add format. If trigger is found, add is appended.',                                                       'Prompt Filters', 'str_replace_list', null, null, false, null, null],
+            negative_prompt_conditional_add_enabled:['Negative — Cond. Add Enabled',   'When off, conditional-add rules in the Negative list are not applied even if the list is non-empty.',                                                             'Prompt Filters', 'bool',           null, null, false, null, null],
             prompt_swap:                     ['Swap',                      'Strings moved between positive and negative prompts — if a string is found in the positive prompt it is moved to the negative prompt, and vice-versa.',           'Prompt Filters', 'str_list',        null, null, false, null, null],
             prompt_swap_enabled:             ['Swap Enabled',              'When off, the swap list is ignored even if non-empty.',                                                                                                              'Prompt Filters', 'bool',           null, null, false, null, null],
             prompt_filters_enabled:           ['Prompt Filters Enabled',           'Master switch — when off, no append/remove/replace operations are applied regardless of the lists below.',                                                                         'Prompt Filters', 'bool', null, null, true,  null, null],
@@ -5099,9 +5107,11 @@ class WorkerWebUI:
             positive_prompt_append: [], positive_prompt_append_enabled: true,
             positive_prompt_remove: [], positive_prompt_remove_enabled: true,
             positive_prompt_replace: [], positive_prompt_replace_enabled: true,
+            positive_prompt_conditional_add: [], positive_prompt_conditional_add_enabled: true,
             negative_prompt_append: [], negative_prompt_append_enabled: true,
             negative_prompt_remove: [], negative_prompt_remove_enabled: true,
             negative_prompt_replace: [], negative_prompt_replace_enabled: true,
+            negative_prompt_conditional_add: [], negative_prompt_conditional_add_enabled: true,
             prompt_swap: [], prompt_swap_enabled: true,
             prompt_filters_enabled: true,
             prompt_remove_cleanup_separators: true,
@@ -5752,7 +5762,20 @@ class WorkerWebUI:
         // ── Prompt filter group helpers ──────────────────────────────────────────
 
         function _pfgSectionKey(sectionId) {
-            // sectionId: "{type}-{op}" e.g. "positive-add" / "negative-replace" or "swap"
+            // Explicit map so multi-word section IDs like "positive-conditional-add" resolve correctly.
+            var map = {
+                'positive-add': 'positive_prompt_append',
+                'positive-remove': 'positive_prompt_remove',
+                'positive-replace': 'positive_prompt_replace',
+                'positive-conditional-add': 'positive_prompt_conditional_add',
+                'negative-add': 'negative_prompt_append',
+                'negative-remove': 'negative_prompt_remove',
+                'negative-replace': 'negative_prompt_replace',
+                'negative-conditional-add': 'negative_prompt_conditional_add',
+                'swap': 'prompt_swap',
+            };
+            if (map[sectionId]) return map[sectionId];
+            // Fallback for forward-compat
             var dash = sectionId.indexOf('-');
             if (dash === -1) return 'prompt_' + sectionId;
             var type = sectionId.slice(0, dash);
@@ -5786,7 +5809,7 @@ class WorkerWebUI:
         function pfgAddGroup(sectionId) {
             var container = document.getElementById('pfgsec-' + sectionId);
             if (!container) return;
-            var isReplace = sectionId.indexOf('-replace') !== -1;
+            var isReplace = sectionId.indexOf('-replace') !== -1 || sectionId.indexOf('-conditional-add') !== -1;
             var div = document.createElement('div');
             div.className = 'pfg-group';
             div.innerHTML = _pfgGroupBodyHtml(sectionId, '', true, [], isReplace);
@@ -5873,11 +5896,14 @@ class WorkerWebUI:
             });
             html += '</div>';
             if (isReplace) {
+                var isCondAdd = sectionId.indexOf('-conditional-add') !== -1;
+                var findPh = isCondAdd ? 'Trigger (if found…)' : 'Find…';
+                var withPh = isCondAdd ? 'Add to prompt…' : 'Replace with…';
                 html += '<div class="pf-input-row">'
-                     +  '<input type="text" class="pf-input pfg-replace-find" placeholder="Find…"'
+                     +  '<input type="text" class="pf-input pfg-replace-find" placeholder="' + findPh + '"'
                      +  ' onkeydown="if(event.key===\'Enter\'){pfgAddReplacePill(this,\'' + sid + '\');event.preventDefault();}">'
                      +  '<span class="replace-arrow">→</span>'
-                     +  '<input type="text" class="pf-input pfg-replace-with" placeholder="Replace with…"'
+                     +  '<input type="text" class="pf-input pfg-replace-with" placeholder="' + withPh + '"'
                      +  ' onkeydown="if(event.key===\'Enter\'){pfgAddReplacePill(this,\'' + sid + '\');event.preventDefault();}">'
                      +  '<button class="pf-add-btn" onclick="pfgAddReplacePill(this,\'' + sid + '\')" title="Add">+</button>'
                      +  '</div>';
@@ -5894,7 +5920,7 @@ class WorkerWebUI:
 
         function _pfgRenderSection(settings, sectionId, label, key, typeEnabledKey, extraColClass) {
             var e = escapeHtml;
-            var isReplace = sectionId.indexOf('-replace') !== -1;
+            var isReplace = sectionId.indexOf('-replace') !== -1 || sectionId.indexOf('-conditional-add') !== -1;
             function getGroups(k) {
                 if (Object.prototype.hasOwnProperty.call(_settingsPending, k)) return _settingsPending[k];
                 if (Object.prototype.hasOwnProperty.call(settings, k)) return settings[k];
@@ -5942,9 +5968,10 @@ class WorkerWebUI:
                 html += '<div class="pf-block-title">' + escapeHtml(title) + '</div>';
                 html += '<div class="pf-block-desc">' + escapeHtml(desc) + '</div>';
                 html += '<div class="pf-columns">';
-                html += _pfgRenderSection(settings, type + '-add',     'Add',     type + '_prompt_append',  type + '_prompt_append_enabled');
-                html += _pfgRenderSection(settings, type + '-remove',  'Remove',  type + '_prompt_remove',  type + '_prompt_remove_enabled');
-                html += _pfgRenderSection(settings, type + '-replace', 'Replace', type + '_prompt_replace', type + '_prompt_replace_enabled');
+                html += _pfgRenderSection(settings, type + '-add',              'Add',              type + '_prompt_append',          type + '_prompt_append_enabled');
+                html += _pfgRenderSection(settings, type + '-remove',           'Remove',           type + '_prompt_remove',          type + '_prompt_remove_enabled');
+                html += _pfgRenderSection(settings, type + '-replace',          'Replace',          type + '_prompt_replace',         type + '_prompt_replace_enabled');
+                html += _pfgRenderSection(settings, type + '-conditional-add',  'Conditional Add',  type + '_prompt_conditional_add', type + '_prompt_conditional_add_enabled');
                 html += '</div></div>';
             });
 
@@ -7013,7 +7040,9 @@ class WorkerWebUI:
                 return web.json_response({"error": f"Field 'value' must be a list for setting '{key}'"}, status=400)
             _FILTER_GROUP_KEYS = {
                 "positive_prompt_append", "positive_prompt_remove", "positive_prompt_replace",
+                "positive_prompt_conditional_add",
                 "negative_prompt_append", "negative_prompt_remove", "negative_prompt_replace",
+                "negative_prompt_conditional_add",
                 "prompt_swap",
             }
             if key in _FILTER_GROUP_KEYS:
