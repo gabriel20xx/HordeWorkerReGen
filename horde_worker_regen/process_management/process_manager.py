@@ -5288,7 +5288,7 @@ class HordeWorkerProcessManager:
 
             kudos_per_second = 0.0
 
-            if new_submit.completed_job_info.time_to_generate is None:
+            if not new_submit.completed_job_info.time_to_generate:
                 logger.error(
                     f"Job {new_submit.job_id} has no time_to_generate, ignoring.",
                 )
@@ -9180,8 +9180,12 @@ class HordeWorkerProcessManager:
         if time_elapsed > timeout and process_info.last_process_state == state:
             logger.error(f"{process_info} {error_message}, replacing it")
             if process_info.process_type == HordeProcessType.SAFETY:
+                # Only set the flag here — do NOT call _replace_all_safety_process() inside
+                # the replace_hung_processes loop because it can call delete_safety_processes()
+                # which pops from the dict we are iterating, causing RuntimeError.
+                # The actual replacement is handled by the _replace_all_safety_process() call
+                # in _process_control_loop() immediately after replace_hung_processes() returns.
                 self._safety_processes_should_be_replaced = True
-                self._replace_all_safety_process()
             if process_info.process_type == HordeProcessType.INFERENCE:
                 self._replace_inference_process(process_info)
             return True
@@ -9449,8 +9453,12 @@ class HordeWorkerProcessManager:
                     self._replace_inference_process(process_info)
                     any_replaced = any_process_replaced = True
                 elif process_info.process_type == HordeProcessType.SAFETY:
+                    # Only set the flag — do NOT call _replace_all_safety_process() here.
+                    # That method can call delete_safety_processes() → pop() on the dict we
+                    # are currently iterating, causing RuntimeError.  The replacement runs via
+                    # the _replace_all_safety_process() call in _process_control_loop() that
+                    # immediately follows replace_hung_processes().
                     self._safety_processes_should_be_replaced = True
-                    self._replace_all_safety_process()
                     any_replaced = True
                 continue
 
