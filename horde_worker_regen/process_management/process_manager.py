@@ -9428,6 +9428,32 @@ class HordeWorkerProcessManager:
         # Pre-compute once so the per-process scale-down guard is O(1) rather than O(n).
         num_total_inference = self._process_map.num_inference_processes()
         for process_info in self._process_map.values():
+            # Quick dead-process detection: if the OS process is gone but the manager
+            # still thinks it is alive, replace it immediately without waiting for the
+            # heartbeat timeout (which could be up to 300 s for a process that held the
+            # inference or VAE-decode semaphore).  Processes that sent PROCESS_ENDING or
+            # PROCESS_ENDED are excluded — they exited intentionally and should not be
+            # replaced here.
+            if (
+                not process_info.mp_process.is_alive()
+                and process_info.last_process_state
+                not in (HordeProcessState.PROCESS_ENDING, HordeProcessState.PROCESS_ENDED)
+            ):
+                logger.error(
+                    f"{process_info} process has exited unexpectedly "
+                    f"(state={process_info.last_process_state.name}, "
+                    f"last heartbeat {time.time() - process_info.last_heartbeat_timestamp:.0f}s ago); "
+                    "replacing immediately",
+                )
+                if process_info.process_type == HordeProcessType.INFERENCE:
+                    self._replace_inference_process(process_info)
+                    any_replaced = any_process_replaced = True
+                elif process_info.process_type == HordeProcessType.SAFETY:
+                    self._safety_processes_should_be_replaced = True
+                    self._replace_all_safety_process()
+                    any_replaced = True
+                continue
+
             # Determine whether this process appears stuck on inference.
             #
             # INFERENCE_PROCESSING: always check, no _recently_recovered guard.

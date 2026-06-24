@@ -831,7 +831,19 @@ class HordeInferenceProcess(HordeProcess):
             list[Image] | None: The generated images, or None if inference failed.
         """
         logger.info("Checking if too many inference jobs are already running...")
-        self._inference_semaphore.acquire()
+        # Timeout prevents indefinite blocking when a process dies while holding the
+        # semaphore and the manager is slow to detect it.  The value is set to
+        # VAE_SEMAPHORE_TIMEOUT (300 s, the longest the manager allows a process to
+        # block without heartbeats) plus a 120 s buffer for detection/replacement
+        # overhead, giving the manager ample time to recover a stuck holder before
+        # this child gives up and faults the job.
+        _SEMAPHORE_ACQUIRE_TIMEOUT = HordeInferenceProcess.VAE_SEMAPHORE_TIMEOUT + 120
+        if not self._inference_semaphore.acquire(timeout=_SEMAPHORE_ACQUIRE_TIMEOUT):
+            logger.error(
+                f"Could not acquire inference semaphore within {_SEMAPHORE_ACQUIRE_TIMEOUT}s. "
+                "A stuck process may be holding it. Faulting this attempt so the manager can recover.",
+            )
+            return None
         logger.info("Acquired inference semaphore.")
         self._is_busy = True
         self._current_job_inference_steps_complete = False
