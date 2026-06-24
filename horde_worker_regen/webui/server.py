@@ -249,6 +249,14 @@ class WorkerWebUI:
         self._session_baseline: dict[str, Any] = {}
         self._persisted_reset_baseline: dict[str, Any] = {}
         self._persisted_settings: dict[str, Any] = {}
+        # Cumulative totals for count dicts loaded from DB at startup.
+        # update_status() adds current-session values on top of these so counts
+        # survive worker restarts without ever double-counting.
+        self._aggregate_baseline: dict[str, dict[str, Any]] = {
+            "images_per_model": {},
+            "failed_jobs_per_model": {},
+            "faulted_jobs_per_phase": {},
+        }
 
         if self._errors_db_path is not None:
             self._init_db()
@@ -476,6 +484,14 @@ class WorkerWebUI:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_horde_timestamp ON horde_snapshots (timestamp)",
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_aggregates (
+                        id INTEGER PRIMARY KEY CHECK (id = 1),
+                        aggregates_json TEXT NOT NULL DEFAULT '{}'
+                    )
+                    """,
+                )
                 conn.commit()
 
             # Gallery database
@@ -523,6 +539,7 @@ class WorkerWebUI:
         self._persisted_gallery: list[dict[str, Any]] = []
         self._persisted_stats: list[dict[str, Any]] = []
         self._persisted_horde_snapshots: list[dict[str, Any]] = []
+        self._persisted_aggregates: dict[str, Any] = {}
         # Max gallery_id across ALL rows (not just within retention) so _next_gallery_id
         # stays unique even when no in-retention rows are loaded at startup.
         self._persisted_max_gallery_id: int = -1
@@ -613,6 +630,18 @@ class WorkerWebUI:
                             self._persisted_horde_snapshots.append(decoded)
                     except (ValueError, TypeError):
                         pass
+
+                # Load per-model/per-phase aggregate totals.
+                try:
+                    agg_row = conn.execute(
+                        "SELECT aggregates_json FROM session_aggregates WHERE id = 1",
+                    ).fetchone()
+                    if agg_row and agg_row[0]:
+                        decoded_agg = json.loads(agg_row[0])
+                        if isinstance(decoded_agg, dict):
+                            self._persisted_aggregates = decoded_agg
+                except Exception:
+                    logger.debug("Could not load session_aggregates from database", exc_info=True)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not load stats from '{self._stats_db_path}': {exc}")
 
@@ -730,6 +759,29 @@ class WorkerWebUI:
         horde = getattr(self, "_persisted_horde_snapshots", [])
         if horde:
             self._horde_snapshots = deque(horde, maxlen=self._horde_max_server_snaps)
+
+        # Restore per-model/per-phase aggregates persisted from the previous session.
+        agg = getattr(self, "_persisted_aggregates", {})
+        if agg:
+            # Count dicts accumulate additively across restarts.  Store the persisted
+            # totals as the baseline so update_status() can add current-session counts
+            # on top without double-counting.
+            for key in ("images_per_model", "failed_jobs_per_model", "faulted_jobs_per_phase"):
+                if key in agg and isinstance(agg[key], dict):
+                    self._aggregate_baseline[key] = dict(agg[key])
+                    self.status_data[key] = dict(agg[key])
+            # Timing dicts are averages/maxes; restore last-known values so the
+            # statistics page isn't blank until the first job of the new session completes.
+            for key in (
+                "avg_time_per_job_state",
+                "max_time_per_job_state",
+                "avg_time_per_step_per_model",
+                "max_time_per_step_per_model",
+                "avg_time_per_job_per_model",
+                "max_time_per_job_per_model",
+            ):
+                if key in agg and isinstance(agg[key], dict):
+                    self.status_data[key] = dict(agg[key])
 
     @staticmethod
     def _safe_snapshot_time(snapshot: dict[str, Any]) -> float:
@@ -6533,6 +6585,24 @@ class WorkerWebUI:
                             json.dumps(sd.get("stats_reset_baseline") or {}),
                         ),
                     )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO session_aggregates (id, aggregates_json) VALUES (1, ?)",
+                        (
+                            json.dumps(
+                                {
+                                    "images_per_model": sd.get("images_per_model") or {},
+                                    "failed_jobs_per_model": sd.get("failed_jobs_per_model") or {},
+                                    "faulted_jobs_per_phase": sd.get("faulted_jobs_per_phase") or {},
+                                    "avg_time_per_job_state": sd.get("avg_time_per_job_state") or {},
+                                    "max_time_per_job_state": sd.get("max_time_per_job_state") or {},
+                                    "avg_time_per_step_per_model": sd.get("avg_time_per_step_per_model") or {},
+                                    "max_time_per_step_per_model": sd.get("max_time_per_step_per_model") or {},
+                                    "avg_time_per_job_per_model": sd.get("avg_time_per_job_per_model") or {},
+                                    "max_time_per_job_per_model": sd.get("max_time_per_job_per_model") or {},
+                                }
+                            ),
+                        ),
+                    )
                     conn.commit()
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Could not persist stats snapshot to database: {exc}")
@@ -7201,6 +7271,7 @@ class WorkerWebUI:
             conn.execute("DELETE FROM stats_snapshots")
             conn.execute("DELETE FROM horde_snapshots")
             conn.execute("DELETE FROM session_overview")
+            conn.execute("DELETE FROM session_aggregates")
             conn.commit()
 
     def _do_reset_gallery_db(self) -> None:
@@ -7285,6 +7356,20 @@ class WorkerWebUI:
         self._persisted_horde_snapshots = []
         self._persisted_reset_baseline = {}
         self.status_data["stats_reset_baseline"] = {}
+        for _agg_key in (
+            "images_per_model",
+            "failed_jobs_per_model",
+            "faulted_jobs_per_phase",
+            "avg_time_per_job_state",
+            "max_time_per_job_state",
+            "avg_time_per_step_per_model",
+            "max_time_per_step_per_model",
+            "avg_time_per_job_per_model",
+            "max_time_per_job_per_model",
+        ):
+            self.status_data[_agg_key] = {}
+        self._aggregate_baseline = {"images_per_model": {}, "failed_jobs_per_model": {}, "faulted_jobs_per_phase": {}}
+        self._persisted_aggregates = {}
 
         self._db_reset_progress = 0
         self._db_reset_error = None
@@ -7671,11 +7756,23 @@ class WorkerWebUI:
         if user_details is not None:
             self.status_data["user_details"] = user_details
         if images_per_model is not None:
-            self.status_data["images_per_model"] = dict(images_per_model)
+            bl = self._aggregate_baseline.get("images_per_model", {})
+            merged_ipm: dict[str, int] = dict(bl)
+            for k, v in images_per_model.items():
+                merged_ipm[k] = bl.get(k, 0) + v
+            self.status_data["images_per_model"] = merged_ipm
         if failed_jobs_per_model is not None:
-            self.status_data["failed_jobs_per_model"] = dict(failed_jobs_per_model)
+            bl = self._aggregate_baseline.get("failed_jobs_per_model", {})
+            merged_fjm: dict[str, int] = dict(bl)
+            for k, v in failed_jobs_per_model.items():
+                merged_fjm[k] = bl.get(k, 0) + v
+            self.status_data["failed_jobs_per_model"] = merged_fjm
         if faulted_jobs_per_phase is not None:
-            self.status_data["faulted_jobs_per_phase"] = dict(faulted_jobs_per_phase)
+            bl = self._aggregate_baseline.get("faulted_jobs_per_phase", {})
+            merged_fpp: dict[str, int] = dict(bl)
+            for k, v in faulted_jobs_per_phase.items():
+                merged_fpp[k] = bl.get(k, 0) + v
+            self.status_data["faulted_jobs_per_phase"] = merged_fpp
         if avg_time_per_job_state is not None:
             self.status_data["avg_time_per_job_state"] = dict(avg_time_per_job_state)
         if max_time_per_job_state is not None:
