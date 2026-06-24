@@ -1160,6 +1160,10 @@ class WorkerWebUI:
         .card { background: var(--card-bg); border-radius: 12px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04); border: 1px solid var(--border); }
         .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }
         .card-title { font-size: 0.8rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; display: flex; align-items: center; gap: 7px; }
+        .last-result-card-header { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; }
+        .overview-model-label { font-size: 0.75rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; text-align: center; min-width: 0; }
+        .overview-time-label { font-size: 0.75rem; color: #94a3b8; white-space: nowrap; }
+        @media (max-width: 500px) { .last-result-card-header { grid-template-columns: 1fr auto; } .overview-model-label { display: none; } }
 
         .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--page-spacing); }
         .grid-4 > *, .grid-3 > *, .grid-2 > * { min-width: 0; }
@@ -1428,6 +1432,7 @@ class WorkerWebUI:
         @media (max-width: 1200px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 768px) { .sidebar { transform: translateX(-100%); top: 90px; height: calc(100vh - 90px); } .sidebar.open { transform: translateX(0); } .mobile-navbar { display: flex; } .mobile-resources { display: grid; grid-template-columns: repeat(4, 1fr); } .main-content { margin-left: 0; padding-top: 90px; } .topbar { display: none; } .content-area { padding: 14px 12px; } .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr; } .grid-2 { grid-template-columns: 1fr; } .grid-3-popped { grid-template-columns: repeat(2, 1fr); } .overview-bottom-grid-left { grid-row: span 1; } }
         @media (max-width: 480px) { .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; } .stat-card-value { font-size: 1.4rem; } }
+        @media (max-width: 768px) { .stats-charts-grid { grid-template-columns: 1fr; } }
 
         /* ---- Theme toggle (square) ---- */
         .theme-toggle { background: none; border: 1px solid rgba(255,255,255,0.18); color: var(--text-light); font-size: 1rem; cursor: pointer; padding: 5px 9px; border-radius: 4px; line-height: 1; transition: background 0.15s; flex-shrink: 0; }
@@ -1600,7 +1605,7 @@ class WorkerWebUI:
         [data-theme="dark"] .horde-mode-badge.warning { background: #451a03; color: #fcd34d; border-color: #92400e; }
 
         /* ---- Settings page ---- */
-        .settings-header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+        .settings-header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
         .settings-page-btn { padding: 6px 11px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; cursor: pointer; border: 1px solid transparent; transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s; }
         .settings-page-btn:disabled { opacity: 0.6; cursor: not-allowed; }
         .settings-page-btn.apply { background: var(--accent); color: #fff; }
@@ -1614,7 +1619,7 @@ class WorkerWebUI:
         .settings-group-title { font-size: 0.78rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
         [data-theme="dark"] .settings-group-title { color: #94a3b8; }
         .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
-        @media (max-width: 480px) { .settings-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 480px) { .settings-grid { grid-template-columns: 1fr; } .setting-row { flex-wrap: wrap; align-items: flex-start; } .setting-ctrl { margin-left: 0; } .setting-replace-list { min-width: 0; } .setting-textarea { width: 100%; max-width: 100%; box-sizing: border-box; } }
         .setting-row { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: flex; align-items: center; gap: 10px; transition: border-color 0.15s; }
         .setting-row:hover { border-color: #cbd5e1; }
         [data-theme="dark"] .setting-row:hover { border-color: #334155; }
@@ -1944,7 +1949,7 @@ class WorkerWebUI:
                             <div id="overview-current-job" class="centered-empty-container"><div class="empty-state"><span class="empty-state-icon">&#9203;</span>No job in progress</div></div>
                         </div>
                         <div class="card">
-                            <div class="card-header" style="position:relative;"><span class="card-title">&#128444; Last Result</span><span id="overview-image-model" style="position:absolute;left:0;right:0;text-align:center;font-size:0.75rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none;padding:0 120px;"></span><span id="overview-image-time" style="margin-left:auto;font-size:0.75rem;color:#94a3b8;flex-shrink:0;white-space:nowrap;"></span></div>
+                            <div class="card-header last-result-card-header"><span class="card-title">&#128444; Last Result</span><span id="overview-image-model" class="overview-model-label"></span><span id="overview-image-time" class="overview-time-label"></span></div>
                             <div id="overview-image-container" class="last-image-container"><div class="empty-state"><span class="empty-state-icon">&#128444;</span>No image generated yet</div></div>
                         </div>
                     </div>
@@ -2136,7 +2141,7 @@ class WorkerWebUI:
                     </div>
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
-                        <div class="grid-4">
+                        <div class="grid-4 stats-charts-grid">
                             <div class="card" style="padding:14px 16px;">
                                 <div class="chart-legend">
                                     <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#fb923c;"></span>Worker</span>
