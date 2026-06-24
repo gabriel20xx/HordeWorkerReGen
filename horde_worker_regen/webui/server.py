@@ -1929,7 +1929,6 @@ class WorkerWebUI:
                 <div class="page active" id="page-overview">
                     <div class="section-header" style="padding-bottom:0;margin-bottom:6px;">
                         <span class="section-title">&#127968; Overview</span>
-                        <button class="nsfw-blur-btn" id="overview-reset-btn" onclick="resetOverviewStats()" title="Reset session statistics" style="margin-left:auto;">&#8635; Reset Stats</button>
                     </div>
                     <div class="grid-4">
                         <div class="stat-card"><div class="stat-card-label">Kudos Earned</div><div class="stat-card-value success" id="user-kudos-session">0</div></div>
@@ -2127,6 +2126,7 @@ class WorkerWebUI:
                                 <button class="stats-window-btn" id="stats-win-6h" onclick="setStatsWindow(21600, this)">6h</button>
                                 <button class="stats-window-btn" id="stats-win-all" onclick="setStatsWindow(null, this)">All</button>
                             </div>
+                            <button class="nsfw-blur-btn" id="overview-reset-btn" onclick="resetOverviewStats()" title="Reset session statistics" style="margin-left:8px;">&#8635; Reset Stats</button>
                         </div>
                         <div class="grid-4 stats-summary-grid">
                             <div class="stat-card"><div class="stat-card-label">Images Generated</div><div class="stat-card-value success" id="stats-images-generated">-</div></div>
@@ -2134,10 +2134,7 @@ class WorkerWebUI:
                             <div class="stat-card"><div class="stat-card-label">Avg Images / hr</div><div class="stat-card-value accent" id="stats-avg-iph">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Avg Kudos / hr</div><div class="stat-card-value accent" id="stats-avg-kph">-</div></div>
                         </div>
-                        <div class="grid-2 stats-summary-grid">
-                            <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value" id="stats-jobs-popped">-</div></div>
-                            <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="stats-jobs-faulted">-</div></div>
-                        </div>
+
                     </div>
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128187; Resource Usage</span></div>
