@@ -2184,7 +2184,7 @@ class WorkerWebUI:
                     <div class="section">
                         <div id="stats-job-state-model-row">
                             <div>
-                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job State (Session)</span></div>
+                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job State</span></div>
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-job-state-time-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
@@ -2192,7 +2192,7 @@ class WorkerWebUI:
                                 </div>
                             </div>
                             <div>
-                                <div class="section-header"><span class="section-title">&#127760; Images by Model (Session)</span></div>
+                                <div class="section-header"><span class="section-title">&#127760; Images by Model</span></div>
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-model-table-wrap" class="stats-model-table-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No images generated yet.</div>
@@ -2204,7 +2204,7 @@ class WorkerWebUI:
                     <div class="section">
                         <div id="stats-model-time-row">
                             <div>
-                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Step per Model (Session)</span></div>
+                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Step per Model</span></div>
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-step-time-model-wrap" class="stats-model-table-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
@@ -2212,7 +2212,7 @@ class WorkerWebUI:
                                 </div>
                             </div>
                             <div>
-                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job per Model (Session)</span></div>
+                                <div class="section-header"><span class="section-title">&#9201; Avg &amp; Max Time per Job per Model</span></div>
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-job-time-model-wrap" class="stats-model-table-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No completed jobs yet.</div>
@@ -2224,7 +2224,7 @@ class WorkerWebUI:
                     <div class="section">
                         <div id="stats-model-tables-grid">
                             <div>
-                                <div class="section-header"><span class="section-title">&#10060; Failed Jobs by Model (Session)</span></div>
+                                <div class="section-header"><span class="section-title">&#10060; Failed Jobs by Model</span></div>
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-failed-model-table-wrap" class="stats-model-table-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No failed jobs yet.</div>
@@ -2232,7 +2232,7 @@ class WorkerWebUI:
                                 </div>
                             </div>
                             <div>
-                                <div class="section-header"><span class="section-title">&#9888; Faults by Phase (Session)</span></div>
+                                <div class="section-header"><span class="section-title">&#9888; Faults by Phase</span></div>
                                 <div class="card" style="padding:14px 16px;">
                                     <div id="stats-fault-phase-table-wrap" class="stats-model-table-wrap">
                                         <div class="text-muted" style="font-size:0.85rem;">No job faults yet.</div>
