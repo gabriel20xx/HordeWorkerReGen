@@ -68,10 +68,17 @@ def load_env_vars_from_config() -> None:  # FIXME: there is a dynamic way to do 
     with open(config_file, encoding="utf-8") as f:
         config = yaml.load(f)
 
+    # ruamel.yaml returns None for an empty or comment-only file. Treat that as an empty config so
+    # the `in config` membership checks below don't raise `TypeError: argument of type 'NoneType'
+    # is not iterable`. Any genuinely-missing required fields will surface a clear error during
+    # downstream config validation rather than crashing startup here.
+    if config is None:
+        config = {}
+
     # See data_model.py's `def load_env_vars(self) -> None:`
-    if "cache_home" in config:
+    if "cache_home" in config and config["cache_home"] is not None:
         if os.getenv("AIWORKER_CACHE_HOME") is None:
-            os.environ["AIWORKER_CACHE_HOME"] = config["cache_home"]
+            os.environ["AIWORKER_CACHE_HOME"] = str(config["cache_home"])
         else:
             print(
                 "AIWORKER_CACHE_HOME environment variable already set. "
@@ -92,22 +99,24 @@ def load_env_vars_from_config() -> None:  # FIXME: there is a dynamic way to do 
                 "AIWORKER_LORA_CACHE_SIZE environment variable already set. "
                 "This will override the value for `max_lora_cache_size` in the config file.",
             )
-    if "civitai_api_token" in config:
+    if "civitai_api_token" in config and config["civitai_api_token"] is not None:
         if os.getenv("CIVIT_API_TOKEN") is None:
-            os.environ["CIVIT_API_TOKEN"] = config["civitai_api_token"]
+            os.environ["CIVIT_API_TOKEN"] = str(config["civitai_api_token"])
         else:
             print(
                 "CIVIT_API_TOKEN environment variable already set. "
                 "This will override the value for `civitai_api_token` in the config file.",
             )
 
-    if "horde_url" in config:
+    # A null/empty `horde_url` means "use the default horde"; skip the block entirely so we never
+    # assign a non-string (e.g. None) to os.environ, which would raise `TypeError: str expected`.
+    if "horde_url" in config and config["horde_url"]:
         known_ai_horde_urls = [
             "stablehorde.net",
             "aihorde.net",
         ]
 
-        custom_horde_url = config["horde_url"]
+        custom_horde_url = str(config["horde_url"])
         AI_HORDE_URL = os.getenv("AI_HORDE_URL")
         if custom_horde_url and any(url in custom_horde_url for url in known_ai_horde_urls):
             if AI_HORDE_URL is None or not AI_HORDE_URL:

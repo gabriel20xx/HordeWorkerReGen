@@ -278,11 +278,27 @@ class HordeProcess(abc.ABC):
 
     def receive_and_handle_control_messages(self) -> None:
         """Get and handle any control messages pending from the main process."""
-        while self.pipe_connection.poll():
+        while True:
+            try:
+                has_message = self.pipe_connection.poll()
+            except (EOFError, OSError) as e:
+                # On Windows a pipe whose parent end was closed, or whose owning parent terminated
+                # abnormally, raises BrokenPipeError/OSError (an OSError subclass) from poll() rather
+                # than EOFError. Treat any of these as "parent gone" and end the subprocess gracefully
+                # via the normal cleanup path instead of dying with an unhandled traceback.
+                logger.info(f"Pipe connection to parent lost ({type(e).__name__}) — ending subprocess")
+                self._end_process = True
+                return
+
+            if not has_message:
+                break
+
             try:
                 message = self.pipe_connection.recv()
-            except EOFError:
-                logger.info("Pipe connection closed by parent process — ending subprocess")
+            except (EOFError, OSError) as e:
+                # EOFError is the clean-close case; BrokenPipeError/ConnectionResetError/other OSError
+                # occur on abnormal parent death (notably on Windows). Handle them identically.
+                logger.info(f"Pipe connection closed by parent process ({type(e).__name__}) — ending subprocess")
                 self._end_process = True
                 return
 

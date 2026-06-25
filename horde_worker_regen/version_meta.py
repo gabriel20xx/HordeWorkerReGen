@@ -99,14 +99,24 @@ def do_version_check() -> None:
         logger.warning(f"Failed to get remote version meta: {e}")
         logger.warning("Using local version meta instead.")
         logger.warning("If this keeps happening, please check your internet connection and try again.")
-        version_meta = get_local_version_meta()
+        # The local fallback can itself fail: FileNotFoundError (launched from a different working
+        # directory), json.JSONDecodeError (truncated/hand-edited file), or pydantic ValidationError
+        # (missing fields). None of these should crash startup — skip version checks and continue.
+        try:
+            version_meta = get_local_version_meta()
+        except Exception as e2:
+            logger.warning(
+                f"Failed to load local version meta ({e2}); skipping version checks and continuing.",
+            )
+            return
 
-    # Version strings in the (network-fetched) version meta may be malformed; a parse
-    # failure here must not prevent the worker from starting. Default to "version OK"
-    # so version enforcement is skipped rather than crashing startup.
+    # Version strings in the (network-fetched) version meta may be malformed, or the meta may be
+    # internally inconsistent (e.g. required_min_version missing from required_min_version_info);
+    # such a failure must not prevent the worker from starting. Default to "version OK" so version
+    # enforcement is skipped rather than crashing startup.
     try:
         _check_version_requirements(version_meta)
-    except ValueError as e:
+    except (ValueError, LookupError) as e:
         logger.warning(
             f"Could not evaluate version requirements ({e}). "
             "Skipping version checks and continuing.",
@@ -121,8 +131,11 @@ def _check_version_requirements(version_meta: VersionMeta) -> None:
     """
     # If the required_min_version is not satisfied, raise an error
     if not _compare_versions(horde_worker_regen.__version__, version_meta.required_min_version) >= 0:
-        # Get the reason for the required update
-        reason_for_update = version_meta.required_min_version_info[version_meta.required_min_version].reason_for_update
+        # Get the reason for the required update. The required_min_version may be absent from the
+        # (network-controlled) required_min_version_info dict — e.g. a server-side version-bump
+        # mistake — so look it up defensively rather than risking a KeyError that would abort startup.
+        required_version_info = version_meta.required_min_version_info.get(version_meta.required_min_version)
+        reason_for_update = required_version_info.reason_for_update if required_version_info is not None else ""
 
         reason_for_update_str = f"Reason for update: {reason_for_update}" if reason_for_update else ""
 

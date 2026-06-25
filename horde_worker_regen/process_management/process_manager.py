@@ -9053,12 +9053,21 @@ class HordeWorkerProcessManager:
             if self._shut_down or not self._shutting_down:
                 return
 
-            for process in self._process_map.values():
-                try:
-                    process.mp_process.kill()
-                    process.mp_process.join(1)
-                except Exception as e:
-                    logger.error(f"Failed to kill process {process}: {e}")
+            # This runs on a daemon thread while the event-loop thread may still be mutating
+            # _process_map (adding/popping entries or clearing it during the shutdown drain).
+            # Snapshot the values with list(...) so iteration cannot raise "dictionary changed
+            # size during iteration", and wrap the whole body so any unexpected error still falls
+            # through to os._exit(1) — this is the last-resort force-kill and must never be
+            # silently disabled.
+            try:
+                for process in list(self._process_map.values()):
+                    try:
+                        process.mp_process.kill()
+                        process.mp_process.join(1)
+                    except Exception as e:
+                        logger.error(f"Failed to kill process {process}: {e}")
+            except Exception:
+                logger.exception("Unexpected error during hard shutdown; forcing exit anyway")
 
             # Use os._exit instead of sys.exit because sys.exit only raises SystemExit
             # which, when called from a non-main thread, only terminates that thread.
