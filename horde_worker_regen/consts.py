@@ -26,3 +26,10 @@ MAX_LORAS = 5
 TOTAL_LORA_DOWNLOAD_TIMEOUT = BASE_LORA_DOWNLOAD_TIMEOUT + (EXTRA_LORA_DOWNLOAD_TIMEOUT * MAX_LORAS)
 
 MAX_SOURCE_IMAGE_RETRIES = 5
+
+# Exit code the worker returns to its launch wrapper (horde-bridge.cmd / horde-bridge-directml.cmd)
+# to request an automatic restart. Used on Windows, where os.execv() cannot replace the running
+# process in-place (it spawns a new pid and exits the original, so the launching cmd.exe falls
+# through to its `pause`). The Windows batch wrappers loop while the worker exits with this code.
+# If you change this value, update the matching `if %ERRORLEVEL% EQU ...` checks in the .cmd files.
+WORKER_RESTART_EXIT_CODE = 42

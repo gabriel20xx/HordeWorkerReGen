@@ -1012,8 +1012,10 @@ def test_idle_timer_restarts_immediately_when_last_job_leaves_queue() -> None:
     # The job is the only one in the queue
     mock_manager.jobs_pending_inference = deque([fake_job])
     mock_manager.jobs_in_progress = []
-    mock_manager.jobs_lookup = MagicMock()
-    mock_manager.jobs_lookup.get = lambda k, d=None: {fake_job: job_info}.get(k, d)
+    # Use a real dict: handle_job_fault resolves the canonical key via
+    # `next(k for k in self.jobs_lookup if k.id_ == _faulted_id)`, which needs jobs_lookup to be
+    # iterable over real keys (a bare MagicMock iterates empty, sending it down the wrong branch).
+    mock_manager.jobs_lookup = {fake_job: job_info}
 
     mock_manager._skipped_line_next_job_and_process = None
     mock_manager._faulted_jobs_history = []

@@ -72,6 +72,7 @@ from horde_worker_regen.consts import (
     MAX_SOURCE_IMAGE_RETRIES,
     VRAM_HEAVY_MODELS,
     WEBUI_MODEL_STATE_FILENAME,
+    WORKER_RESTART_EXIT_CODE,
 )
 from horde_worker_regen.logger_config import create_level_format_function
 from horde_worker_regen.process_management._aliased_types import ProcessQueue
@@ -8934,12 +8935,39 @@ class HordeWorkerProcessManager:
         asyncio.run(self._main_loop())
         if self._restart_requested:
             logger.warning("Restarting worker program...")
+            # Flush log buffers BEFORE exec/exit: os.execv() replaces the process image without
+            # running atexit handlers or draining enqueued loguru sinks, so otherwise the
+            # "Restarting..." line (and any other buffered output) is silently lost.
+            self._flush_logs_for_exit()
             self._cleanup_shared_resources()
+
+            # os.execv() performs a true in-place exec on POSIX (same pid; the launching shell
+            # keeps waiting on the process), but it CANNOT replace the process on Windows: there it
+            # spawns a NEW pid and terminates the current one, so the launching cmd.exe/batch regains
+            # control, falls through to its `pause` ("Press ANY KEY to close this window"), and the
+            # re-exec'd worker is left orphaned. On Windows we therefore exit with a sentinel code
+            # that the launch wrapper (horde-bridge*.cmd) loops on to re-run the worker cleanly.
+            if sys.platform == "win32":
+                sys.exit(WORKER_RESTART_EXIT_CODE)
+
             try:
                 os.execv(sys.executable, [sys.executable, *sys.argv])
             except OSError as exc:
                 logger.exception(f"Failed to restart worker program via execv: {exc}")
                 sys.exit(1)
+
+    @staticmethod
+    def _flush_logs_for_exit() -> None:
+        """Flush stdout/stderr and drain enqueued loguru sinks before an exec/exit that skips atexit."""
+        try:
+            logger.complete()  # drains messages from any sinks configured with enqueue=True
+        except Exception:
+            pass
+        for _stream in (sys.stdout, sys.stderr):
+            try:
+                _stream.flush()
+            except Exception:
+                pass
 
     def request_program_restart(self) -> None:
         """Request a graceful shutdown followed by an in-process restart."""

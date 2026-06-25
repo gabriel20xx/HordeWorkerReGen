@@ -2391,7 +2391,7 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert "onclick=\"applyNumericSetting(\\'" not in html
         assert ".setting-number:disabled" in html
         assert "--action-btn-height: 32px;" in html
-        assert ".theme-toggle, .limit-set-btn, .limit-auto-btn, .console-pause-btn, .console-copy-btn, .job-pops-pause-btn, .errors-view-btn, .pagination-controls button, .image-overlay-close, .worker-delete-btn, .stats-window-btn, .settings-page-btn, .setting-apply-btn, .confirm-modal-btn {" in html
+        assert ".theme-toggle, .nsfw-blur-btn, .clear-maintenance-btn, .limit-set-btn, .limit-auto-btn, .console-pause-btn, .console-copy-btn, .job-pops-pause-btn, .errors-view-btn, .pagination-controls button, .image-overlay-close, .worker-delete-btn, .stats-window-btn, .horde-window-btn, .settings-page-btn, .setting-apply-btn, .confirm-modal-btn {" in html
         assert ".topbar-uptime, .status-badge, .job-state-badge, .process-type-badge, .process-state-badge, .model-badge, .worker-version-badge, .worker-type-badge, .worker-online-badge, .wcap {\n            height: var(--action-btn-height);" in html
         assert "<span class=\"process-state-badge\">'+escapeHtml(proc.state)+'</span><span class=\"process-type-badge\">'+escapeHtml(proc.type)+'</span>" in html
         assert "<span class=\"process-type-badge\">'+escapeHtml(proc.type)+'</span><span class=\"process-state-badge\">'+escapeHtml(proc.state)+'</span>" not in html
@@ -3924,7 +3924,8 @@ def test_webui_db_ignores_non_dict_stats_snapshots(tmp_path: pathlib.Path) -> No
         conn.commit()
 
     webui2 = WorkerWebUI(port=0, db_path=db_dir)
-    assert webui2._stats_snapshots == [{"t": 123.0, "jobs_completed": 7}]
+    # _stats_snapshots is a deque (ring buffer); compare its contents as a list.
+    assert list(webui2._stats_snapshots) == [{"t": 123.0, "jobs_completed": 7}]
     assert webui2._last_stats_snapshot_time == 123.0
 
 
@@ -3946,7 +3947,8 @@ def test_webui_db_malformed_stats_timestamp_does_not_crash(tmp_path: pathlib.Pat
         conn.commit()
 
     webui_reload = WorkerWebUI(port=0, db_path=db_dir)
-    assert webui_reload._stats_snapshots == [{"t": "bad-value", "jobs_completed": 7}]
+    # _stats_snapshots is a deque (ring buffer); compare its contents as a list.
+    assert list(webui_reload._stats_snapshots) == [{"t": "bad-value", "jobs_completed": 7}]
     assert webui_reload._last_stats_snapshot_time == 0.0
 
     webui._refresh_in_memory_after_prune()

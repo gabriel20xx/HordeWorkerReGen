@@ -27,6 +27,7 @@ class TestIsProcessAlive:
         mock_info.mp_process = MagicMock()
         mock_info.mp_process.is_alive.return_value = mp_is_alive
         mock_info.last_process_state = state
+        mock_info.inference_started_timestamp = None
 
         # Bind the actual method
         mock_info.is_process_alive = HordeProcessInfo.is_process_alive.__get__(mock_info, HordeProcessInfo)
@@ -78,6 +79,12 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.process_timeout = 600
 
         # Create a mock process that appears stuck on inference
@@ -86,6 +93,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_process = MagicMock()
         mock_process.process_id = 0
         mock_process.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        mock_process.inference_started_timestamp = None
         mock_process.last_heartbeat_percent_complete = 50
         mock_process.last_job_referenced = None
         mock_process.last_heartbeat_delta = 9999
@@ -122,6 +130,12 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.process_timeout = 30
 
         import time
@@ -129,6 +143,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_process = MagicMock()
         mock_process.process_id = 0
         mock_process.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        mock_process.inference_started_timestamp = None
         mock_process.last_heartbeat_percent_complete = None
         mock_process.last_job_referenced = None
         mock_process.last_heartbeat_delta = 9999
@@ -164,6 +179,12 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.process_timeout = 30
         mock_manager.bridge_data.preload_timeout = 30
         mock_manager.max_inference_processes = 2
@@ -177,6 +198,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_process.process_id = 1
         mock_process.process_type = HordeProcessType.INFERENCE
         mock_process.last_process_state = HordeProcessState.PROCESS_ENDING
+        mock_process.inference_started_timestamp = None
         mock_process.last_received_timestamp = time.time() - 120
         mock_process.last_heartbeat_timestamp = time.time() - 120
         mock_process.last_progress_timestamp = time.time() - 120
@@ -208,6 +230,12 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 60
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.process_timeout = 30
         mock_manager.bridge_data.preload_timeout = 30
         mock_manager.max_inference_processes = 3
@@ -225,6 +253,7 @@ class TestReplaceHungProcessesAnyReplaced:
         mock_process.process_id = 3
         mock_process.process_type = HordeProcessType.INFERENCE
         mock_process.last_process_state = HordeProcessState.PROCESS_ENDING
+        mock_process.inference_started_timestamp = None
         mock_process.last_received_timestamp = time.time() - 120
         mock_process.last_heartbeat_timestamp = time.time() - 120
         mock_process.last_progress_timestamp = time.time() - 120
@@ -519,6 +548,8 @@ def test_start_calls_cleanup_before_execv_on_restart() -> None:
     with (
         patch("signal.signal"),
         patch("asyncio.run"),
+        # Force the POSIX restart path (in-place os.execv); on Windows start() exits with a code instead.
+        patch("sys.platform", "linux"),
         patch("os.execv", side_effect=lambda *_: call_order.append("execv")),
         patch("horde_worker_regen.process_management.process_manager.logger"),
     ):
@@ -544,6 +575,8 @@ def test_start_exits_cleanly_when_restart_exec_fails() -> None:
     with (
         patch("signal.signal"),
         patch("asyncio.run"),
+        # Force the POSIX restart path so os.execv is exercised regardless of host OS.
+        patch("sys.platform", "linux"),
         patch("os.execv", side_effect=OSError("boom")) as mock_execv,
         patch.object(sys, "exit") as mock_exit,
         patch("horde_worker_regen.process_management.process_manager.logger") as mock_logger,
@@ -554,6 +587,37 @@ def test_start_exits_cleanly_when_restart_exec_fails() -> None:
     mock_logger.warning.assert_called_once_with("Restarting worker program...")
     mock_logger.exception.assert_called_once()
     mock_exit.assert_called_once_with(1)
+
+
+def test_start_uses_exit_code_instead_of_execv_on_windows() -> None:
+    """On Windows, start() must exit with WORKER_RESTART_EXIT_CODE instead of calling os.execv.
+
+    os.execv cannot replace the process in-place on Windows (it spawns a new pid and exits the
+    original), so the launching cmd.exe wrapper loops on this exit code to re-run the worker.
+    """
+    from horde_worker_regen.consts import WORKER_RESTART_EXIT_CODE
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+    mock_manager.signal_handler = MagicMock()
+    mock_manager._main_loop = MagicMock(return_value=None)
+    mock_manager._restart_requested = True
+
+    bound_start = HordeWorkerProcessManager.start.__get__(mock_manager, HordeWorkerProcessManager)
+
+    with (
+        patch("signal.signal"),
+        patch("asyncio.run"),
+        patch("sys.platform", "win32"),
+        patch("os.execv") as mock_execv,
+        patch("horde_worker_regen.process_management.process_manager.logger"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        bound_start()
+
+    assert exc_info.value.code == WORKER_RESTART_EXIT_CODE
+    mock_execv.assert_not_called()
+    mock_manager._cleanup_shared_resources.assert_called_once()
 
 
 def test_start_timed_shutdown_skips_hard_exit_after_clean_shutdown() -> None:
@@ -573,6 +637,7 @@ def test_start_timed_shutdown_skips_hard_exit_after_clean_shutdown() -> None:
     mock_manager.jobs_pending_submit = []
     mock_manager._shutting_down = True
     mock_manager._shut_down = True
+    mock_manager.bridge_data.force_restart_timeout = 30  # real int: used as the min() cap
     mock_manager._process_map.values.return_value = [mock_process]
 
     bound = HordeWorkerProcessManager._start_timed_shutdown.__get__(mock_manager, HordeWorkerProcessManager)
@@ -617,6 +682,7 @@ def test_start_timed_shutdown_wait_seconds_caps_at_30(
     mock_manager.jobs_pending_submit = [MagicMock()] * jobs_pending_submit
     mock_manager._shutting_down = False
     mock_manager._shut_down = False
+    mock_manager.bridge_data.force_restart_timeout = 30  # real int cap so min() works (expected cap=30)
     mock_manager._process_map.values.return_value = []
 
     bound = HordeWorkerProcessManager._start_timed_shutdown.__get__(mock_manager, HordeWorkerProcessManager)
@@ -1169,6 +1235,7 @@ class _ReceiveLoopHarnessMixin:
 
         def on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
             process_info.last_process_state = new_state
+            process_info.inference_started_timestamp = None
             process_info.state_entered_timestamp = 0.0
 
         process_map.on_process_state_change.side_effect = on_state_change
@@ -1207,6 +1274,7 @@ class TestReceiveAndHandleProcessMessagesResilience(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.inference_started_timestamp = None
         process_info.loaded_horde_model_name = None  # trigger the guard
         process_info.batch_amount = None
 
@@ -1218,6 +1286,7 @@ class TestReceiveAndHandleProcessMessagesResilience(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.inference_started_timestamp = None
         process_info.loaded_horde_model_name = "some_model"
         process_info.batch_amount = None  # trigger the guard
 
@@ -1229,6 +1298,7 @@ class TestReceiveAndHandleProcessMessagesResilience(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.inference_started_timestamp = None
         process_info.loaded_horde_model_name = "stale-model"
         process_info.batch_amount = 1
 
@@ -1242,6 +1312,7 @@ class TestReceiveAndHandleProcessMessagesResilience(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.UNLOADED_MODEL_FROM_RAM
+        process_info.inference_started_timestamp = None
         process_info.loaded_horde_model_name = "stale-model"
         process_info.batch_amount = 1
 
@@ -1256,6 +1327,7 @@ class TestSavedImagePreviewSafetyAlignment:
 
     def test_saved_image_preview_clears_safety_when_saved_images_count_mismatches(self, tmp_path) -> None:
         """Saved-image preview safety must be cleared when disk saves don't align with safety results."""
+        pytest.importorskip("hordelib")  # requires the GPU/ML stack
         import queue as queue_mod
         import types
 
@@ -1309,6 +1381,7 @@ class TestSavedImagePreviewSafetyAlignment:
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.SAFETY_EVALUATING
+        process_info.inference_started_timestamp = None
 
         process_map = MagicMock()
         process_map.__contains__ = MagicMock(side_effect=lambda key: key == 0)
@@ -1363,6 +1436,7 @@ class TestIsStuckOnInference:
         """Create a mock process map entry with configurable timestamps."""
         entry = MagicMock()
         entry.last_process_state = state
+        entry.inference_started_timestamp = None
         entry.last_progress_timestamp = last_progress_timestamp
         entry.last_heartbeat_timestamp = last_heartbeat_timestamp
         entry.last_heartbeat_delta = last_heartbeat_delta
@@ -2004,6 +2078,7 @@ class TestInferenceSemaphoreBoundedSemaphore:
 
         process_info = MagicMock()
         process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
         process_info.loaded_horde_model_name = None
 
@@ -2067,6 +2142,7 @@ class TestInferenceSemaphoreBoundedSemaphore:
 
         process_info = MagicMock()
         process_info.last_process_state = HordeProcessState.INFERENCE_STARTING
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
         process_info.loaded_horde_model_name = None
 
@@ -2105,6 +2181,7 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = job
 
         msg = self._make_message(HordeProcessState.PROCESS_ENDING)
@@ -2127,6 +2204,7 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = job
 
         msg = self._make_message(HordeProcessState.PROCESS_ENDING)
@@ -2140,6 +2218,7 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
 
         msg = self._make_message(HordeProcessState.PROCESS_ENDING)
@@ -2155,6 +2234,7 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = job
 
         call_order: list[str] = []
@@ -2207,6 +2287,7 @@ class TestProcessEndingJobFaultHandling(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = job
 
         seen_state: list[HordeProcessState] = []
@@ -2275,6 +2356,7 @@ class TestProcessEndedAutoRestart(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = prior_state
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
         process_info.process_type = process_type
 
@@ -3068,6 +3150,7 @@ class TestKeepSingleInferenceStates(_ReceiveLoopHarnessMixin):
 
         p = MagicMock()
         p.last_process_state = state
+        p.inference_started_timestamp = None
         p.batch_amount = batch_amount
 
         if model is not None:
@@ -3145,6 +3228,7 @@ class TestKeepSingleInferenceStates(_ReceiveLoopHarnessMixin):
 
         p = MagicMock()
         p.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        p.inference_started_timestamp = None
         p.batch_amount = 1
         p.last_job_referenced = MagicMock()
         p.last_job_referenced.model = "some_normal_model"
@@ -3206,6 +3290,7 @@ class TestProcessEndingReleasesInferenceSemaphore(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = prior_state
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
 
         process_map = MagicMock()
@@ -3348,6 +3433,7 @@ class TestProcessEndingReleasesVAEDecodeSemaphore(_ReceiveLoopHarnessMixin):
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = prior_state
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
 
         process_map = MagicMock()
@@ -3476,6 +3562,7 @@ class TestReplaceInferenceProcessReleasesVAEDecodeSemaphore:
 
         process_info = MagicMock()
         process_info.last_process_state = state
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
         process_info.loaded_horde_model_name = None
 
@@ -3577,6 +3664,7 @@ class TestNumBusyWithPostProcessing:
             info = MagicMock()
             info.process_type = HordeProcessType.INFERENCE
             info.last_process_state = state
+            info.inference_started_timestamp = None
             process_map[i] = info
         return process_map
 
@@ -3630,6 +3718,7 @@ class TestCanAcceptJobPostProcessingComplete:
 
         mock_info = MagicMock()
         mock_info.last_process_state = state
+        mock_info.inference_started_timestamp = None
         mock_info.can_accept_job = HordeProcessInfo.can_accept_job.__get__(mock_info, HordeProcessInfo)
         return mock_info
 
@@ -3744,6 +3833,7 @@ class TestVaeLockAcquiredFlag:
         False so the finally block does not try to release a semaphore we never held.
         _vae_acquire_attempted must be True so subsequent callbacks don't retry.
         """
+        pytest.importorskip("hordelib")  # requires the GPU/ML stack
         import multiprocessing
 
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -3783,6 +3873,7 @@ class TestVaeLockAcquiredFlag:
         """A second progress_callback invocation after a timeout must not re-attempt
         acquire (which would block up to VAE_SEMAPHORE_TIMEOUT again and spam logs).
         """
+        pytest.importorskip("hordelib")  # requires the GPU/ML stack
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
 
         proc = MagicMock(spec=HordeInferenceProcess)
@@ -3810,6 +3901,7 @@ class TestVaeLockAcquiredFlag:
 
     def test_vae_lock_flag_true_on_success(self) -> None:
         """When the VAE semaphore is successfully acquired, _vae_lock_was_acquired is True."""
+        pytest.importorskip("hordelib")  # requires the GPU/ML stack
         import multiprocessing
 
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -3979,6 +4071,7 @@ class TestReplaceHungInferenceStarting:
         proc = MagicMock()
         proc.process_id = process_id
         proc.last_process_state = state
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -3995,6 +4088,12 @@ class TestReplaceHungInferenceStarting:
         mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 300
         mock_manager.bridge_data.download_timeout = 300
@@ -4134,6 +4233,7 @@ class TestProcessEndingReleasesInferenceSemaphoreFromInferenceStarting(_ReceiveL
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = prior_state
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
 
         process_map = MagicMock()
@@ -4964,6 +5064,12 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
         mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 300
         mock_manager.bridge_data.download_timeout = 300
@@ -4994,6 +5100,7 @@ class TestReplaceHungModelPreloadingBypassesRecentlyRecovered:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = state
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -5094,6 +5201,12 @@ class TestReplaceHungWaitingForJob:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 100
         mock_manager.bridge_data.download_timeout = 300
@@ -5122,6 +5235,7 @@ class TestReplaceHungWaitingForJob:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -5224,10 +5338,12 @@ class TestResultSubmittingStuckRecovery:
         """Return a (ProcessMap-like mock, process_info mock) pair that tracks state changes."""
         process_info = MagicMock()
         process_info.last_process_state = initial_state
+        process_info.inference_started_timestamp = None
         process_info.state_entered_timestamp = 0.0
 
         def on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
             process_info.last_process_state = new_state
+            process_info.inference_started_timestamp = None
             process_info.state_entered_timestamp = 0.0
 
         process_map = MagicMock()
@@ -5528,6 +5644,12 @@ class TestResultSubmittingStuckRecovery:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 300
         mock_manager.bridge_data.download_timeout = 300
@@ -5569,6 +5691,7 @@ class TestResultSubmittingStuckRecovery:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.RESULT_SUBMITTING
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -5586,6 +5709,7 @@ class TestResultSubmittingStuckRecovery:
 
         def _on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
             proc.last_process_state = new_state
+            proc.inference_started_timestamp = None
             state_changes.append(new_state)
 
         mock_manager._process_map.on_process_state_change.side_effect = _on_state_change
@@ -5627,6 +5751,7 @@ class TestResultSubmittingStuckRecovery:
 
         def _on_state_change(*, process_id: int, new_state: HordeProcessState) -> None:
             proc.last_process_state = new_state
+            proc.inference_started_timestamp = None
             state_changes.append(new_state)
 
         mock_manager._process_map.on_process_state_change.side_effect = _on_state_change
@@ -5696,6 +5821,12 @@ class TestReplaceHungModelPreloaded:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 300
         mock_manager.bridge_data.download_timeout = 300
@@ -5725,6 +5856,7 @@ class TestReplaceHungModelPreloaded:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = state
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -5854,6 +5986,12 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 20000
         mock_manager.bridge_data.download_timeout = 300
@@ -5883,6 +6021,7 @@ class TestReplaceHungInferencePostProcessingBeforeModelLoaded:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = state
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -6172,6 +6311,7 @@ class TestPreloadModelsPipeBroken:
         available_process.safe_send_message.return_value = False
         available_process.last_send_error = BrokenPipeError("simulated broken pipe")
         available_process.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        available_process.inference_started_timestamp = None
         available_process.loaded_horde_model_name = None
 
         # Model map reports "Juggernaut XL" not loaded (so the preload is attempted)
@@ -6286,6 +6426,7 @@ class TestReplaceInferenceProcessDoesNotDoubleFault:
         process_info = MagicMock()
         process_info.last_job_referenced = job
         process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.inference_started_timestamp = None
         process_info.loaded_horde_model_name = None
         mock_manager._inference_semaphore.release.side_effect = ValueError
         mock_manager._disk_lock.release.side_effect = ValueError
@@ -6494,6 +6635,12 @@ class TestReplaceHungProcessesLocalJobsPending:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 100
         mock_manager.bridge_data.download_timeout = 300
@@ -6523,6 +6670,7 @@ class TestReplaceHungProcessesLocalJobsPending:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.MODEL_PRELOADING
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - 9999
         proc.last_heartbeat_timestamp = _time.time() - 9999
         proc.last_progress_timestamp = _time.time() - 9999
@@ -6540,6 +6688,7 @@ class TestReplaceHungProcessesLocalJobsPending:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -6695,6 +6844,12 @@ class TestReplaceHungProcessesPausedPops:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 100
         mock_manager.bridge_data.download_timeout = 300
@@ -6723,6 +6878,7 @@ class TestReplaceHungProcessesPausedPops:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed
@@ -6770,6 +6926,7 @@ class TestReplaceHungProcessesPausedPops:
         proc.process_id = 0
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - 9999
         proc.last_heartbeat_timestamp = _time.time() - 9999
         proc.last_progress_timestamp = _time.time() - 9999
@@ -6807,6 +6964,7 @@ class TestReplaceHungProcessesPausedPops:
         proc.process_id = 0
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.WAITING_FOR_JOB
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time()
         proc.last_heartbeat_timestamp = _time.time()
         proc.last_progress_timestamp = _time.time()
@@ -6842,6 +7000,7 @@ class TestReplaceHungProcessesPausedPops:
         proc.process_id = 0
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.MODEL_PRELOADED
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - 9999
         proc.last_heartbeat_timestamp = _time.time() - 9999
         proc.last_progress_timestamp = _time.time() - 9999
@@ -6906,6 +7065,7 @@ class TestReplaceHungProcessesPausedPops:
         proc.process_id = 0
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - 9999
         proc.last_heartbeat_timestamp = _time.time() - 9999
         proc.last_progress_timestamp = _time.time() - 9999
@@ -7043,6 +7203,10 @@ class TestInferenceBackgroundHeartbeat:
 
         proc = MagicMock(spec=HordeInferenceProcess)
         proc._last_inference_percent = 97
+        # Must be a real number: the loop computes `time.monotonic() - self._last_step_callback_time`,
+        # and a bare MagicMock here raises TypeError (caught internally) so send_heartbeat_message is
+        # never reached and the stop event never fires — an infinite loop.
+        proc._last_step_callback_time = 0.0
         proc._INFERENCE_HEARTBEAT_INTERVAL = 0.01  # fire almost immediately
 
         stop_event = _threading.Event()
@@ -7099,6 +7263,7 @@ class TestInferenceBackgroundHeartbeat:
         of inference), a 0% heartbeat is sent and _last_inference_percent is set to 0 so
         the background heartbeat thread can report meaningful (not None) progress.
         """
+        pytest.importorskip("hordelib")  # requires the GPU/ML stack
         from hordelib.horde import ProgressReport, ProgressState
 
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -7137,6 +7302,7 @@ class TestInferenceBackgroundHeartbeat:
         comfyui_progress=None was incorrectly resetting _last_inference_percent to 0,
         which the web UI granular floor then displayed as 1 %.
         """
+        pytest.importorskip("hordelib")  # requires the GPU/ML stack
         from hordelib.horde import ProgressReport, ProgressState
 
         from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -7176,6 +7342,7 @@ class TestInferenceBackgroundHeartbeat:
         """_last_inference_percent must be updated to the step's percentage when
         an INFERENCE_STEP heartbeat is sent in _progress_callback_impl.
         """
+        pytest.importorskip("hordelib")  # requires the GPU/ML stack
         from hordelib.horde import ProgressReport, ProgressState
         from hordelib.utils.ioredirect import ComfyUIProgress
 
@@ -7481,6 +7648,7 @@ class TestHandleJobFaultRecordsHistory:
 
         process_info = MagicMock()
         process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.inference_started_timestamp = None
 
         mock_manager.handle_job_fault(faulted_job=job, process_info=process_info)
 
@@ -7518,6 +7686,7 @@ class TestReplaceInferenceProcessBroadExceptionHandling:
         process_info = MagicMock()
         process_info.process_id = 0
         process_info.last_process_state = state
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
         process_info.loaded_horde_model_name = None
 
@@ -7669,6 +7838,7 @@ class TestProcessEndingHandlerBroadExceptionHandling:
         process_info = MagicMock()
         process_info.process_launch_identifier = 1
         process_info.last_process_state = prior_state
+        process_info.inference_started_timestamp = None
         process_info.last_job_referenced = None
 
         process_map = MagicMock()
@@ -7757,6 +7927,7 @@ class TestRecoveryTimerThreadIsDaemon:
         proc = MagicMock()
         proc.process_id = 0
         proc.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - 9999
         proc.last_heartbeat_timestamp = _time.time() - 9999
         proc.last_progress_timestamp = _time.time() - 9999
@@ -7771,6 +7942,12 @@ class TestRecoveryTimerThreadIsDaemon:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 300
         mock_manager.bridge_data.download_timeout = 300
@@ -7848,6 +8025,7 @@ class TestGetProcessByHordeModelNamePreference:
         proc.process_id = process_id
         proc.loaded_horde_model_name = model
         proc.last_process_state = state
+        proc.inference_started_timestamp = None
         proc.can_accept_job = HordeProcessInfo.can_accept_job.__get__(proc, HordeProcessInfo)
         return proc
 
@@ -7944,12 +8122,14 @@ class TestGetNextJobAndProcessModelPreloading:
         proc1 = MagicMock()
         proc1.loaded_horde_model_name = first_job_model
         proc1.last_process_state = first_process_state
+        proc1.inference_started_timestamp = None
         proc1.can_accept_job = HordeProcessInfo.can_accept_job.__get__(proc1, HordeProcessInfo)
 
         # Process for job2
         proc2 = MagicMock()
         proc2.loaded_horde_model_name = second_job_model
         proc2.last_process_state = second_process_state
+        proc2.inference_started_timestamp = None
         proc2.can_accept_job = HordeProcessInfo.can_accept_job.__get__(proc2, HordeProcessInfo)
 
         mock_process_map = MagicMock()
@@ -8286,6 +8466,7 @@ class TestPreloadStuckCooldown:
         proc = MagicMock()
         proc.process_id = 1
         proc.last_process_state = HordeProcessState.MODEL_PRELOADING
+        proc.inference_started_timestamp = None
         proc.loaded_horde_model_name = stuck_model
         proc.last_received_timestamp = _time.time() - 9999
         proc.last_heartbeat_timestamp = _time.time() - 9999
@@ -8301,6 +8482,12 @@ class TestPreloadStuckCooldown:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 300
         mock_manager.bridge_data.download_timeout = 300
@@ -8394,6 +8581,7 @@ class TestPreloadStuckCooldown:
         process_info = MagicMock()
         process_info.process_id = 1
         process_info.last_process_state = HordeProcessState.MODEL_PRELOADING
+        process_info.inference_started_timestamp = None
         process_info.last_progress_value = None
         process_info.last_job_referenced = job
         process_info.loaded_horde_model_name = "HungModel"
@@ -8473,6 +8661,7 @@ class TestPreloadStuckCooldown:
         process_info = MagicMock()
         process_info.process_id = 2
         process_info.last_process_state = HordeProcessState.INFERENCE_PROCESSING
+        process_info.inference_started_timestamp = None
         process_info.last_progress_value = 50
         process_info.last_job_referenced = job
         process_info.loaded_horde_model_name = "GoodModel"
@@ -9252,6 +9441,7 @@ class TestReplaceHungProcessesProcessStartingTimeout:
         process.process_id = 1
         process.process_type = HordeProcessType.INFERENCE
         process.last_process_state = HordeProcessState.PROCESS_STARTING
+        process.inference_started_timestamp = None
         process.last_received_timestamp = 0.0
         process.last_heartbeat_timestamp = 0.0
         process.last_progress_timestamp = 0.0
@@ -9264,6 +9454,12 @@ class TestReplaceHungProcessesProcessStartingTimeout:
         mock_manager._job_pops_paused = False
         mock_manager._shutting_down = False
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 300
         mock_manager.bridge_data.download_timeout = 300
@@ -9311,6 +9507,7 @@ class TestIsTimeForShutdownRecentlyRecovered:
         proc = MagicMock()
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = state
+        proc.inference_started_timestamp = None
         return proc
 
     def _make_manager(
@@ -9506,6 +9703,12 @@ class TestReplaceHungJobReceivedAndDownloading:
         mock_manager._hung_processes_detected = False
         mock_manager._hung_processes_detected_time = 0.0
         mock_manager.bridge_data.inference_step_timeout = 600
+        mock_manager.bridge_data.inference_timeout = 1200
+        mock_manager.bridge_data.waiting_for_job_timeout = 600
+        mock_manager.bridge_data.force_restart_timeout = 60
+        mock_manager._reap_orphaned_in_progress_jobs.return_value = False
+        mock_manager.max_concurrent_inference_processes = 1
+        mock_manager.post_process_job_overlap_allowed = False
         mock_manager.bridge_data.preload_timeout = 80
         mock_manager.bridge_data.process_timeout = 300
         mock_manager.bridge_data.download_timeout = 300
@@ -9533,6 +9736,7 @@ class TestReplaceHungJobReceivedAndDownloading:
         proc.process_id = process_id
         proc.process_type = HordeProcessType.INFERENCE
         proc.last_process_state = state
+        proc.inference_started_timestamp = None
         proc.last_received_timestamp = _time.time() - time_elapsed
         proc.last_heartbeat_timestamp = _time.time() - time_elapsed
         proc.last_progress_timestamp = _time.time() - time_elapsed

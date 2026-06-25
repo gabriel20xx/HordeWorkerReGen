@@ -2134,6 +2134,10 @@ class WorkerWebUI:
                             <div class="stat-card"><div class="stat-card-label">Avg Images / hr</div><div class="stat-card-value accent" id="stats-avg-iph">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Avg Kudos / hr</div><div class="stat-card-value accent" id="stats-avg-kph">-</div></div>
                         </div>
+                        <div class="grid-2 stats-summary-grid">
+                            <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value accent" id="stats-jobs-popped">-</div></div>
+                            <div class="stat-card"><div class="stat-card-label">Jobs Faulted</div><div class="stat-card-value error" id="stats-jobs-faulted">-</div></div>
+                        </div>
 
                     </div>
                     <div class="section">
@@ -4203,12 +4207,15 @@ class WorkerWebUI:
             var avgKph = _avgField(snaps, 'kph');
 
             var el = function(id) { return document.getElementById(id); };
-            el('stats-images-generated').textContent = noData ? '-' : imagesGenerated.toLocaleString();
-            el('stats-kudos-earned').textContent     = noData ? '-' : kudosEarned.toLocaleString(undefined, { maximumFractionDigits: 2 });
-            el('stats-avg-iph').textContent          = fmtVal(avgIph, 2);
-            el('stats-avg-kph').textContent          = fmtVal(avgKph, 2);
-            el('stats-jobs-popped').textContent      = noData ? '-' : jobsPopped.toLocaleString();
-            el('stats-jobs-faulted').textContent     = noData ? '-' : jobsFaulted.toLocaleString();
+            // Null-safe setter: a missing element must not throw and abort the whole render
+            // (which previously surfaced as "Failed to fetch /api/stats").
+            var setText = function(id, val) { var e = el(id); if (e) e.textContent = val; };
+            setText('stats-images-generated', noData ? '-' : imagesGenerated.toLocaleString());
+            setText('stats-kudos-earned',     noData ? '-' : kudosEarned.toLocaleString(undefined, { maximumFractionDigits: 2 }));
+            setText('stats-avg-iph',          fmtVal(avgIph, 2));
+            setText('stats-avg-kph',          fmtVal(avgKph, 2));
+            setText('stats-jobs-popped',      noData ? '-' : jobsPopped.toLocaleString());
+            setText('stats-jobs-faulted',     noData ? '-' : jobsFaulted.toLocaleString());
 
             // Per-model image count table (session totals, not windowed)
             var modelWrap = document.getElementById('stats-model-table-wrap');

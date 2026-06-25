@@ -22,7 +22,15 @@ if %ERRORLEVEL% NEQ 0 (
 call python -s download_models.py --directml=0
 if %ERRORLEVEL% NEQ 0 GOTO ABORT
 echo "Model Download OK. Starting worker..."
+
+:RUN_WORKER
 call python -s run_worker.py --directml=0 %*
+: Exit code 42 (consts.WORKER_RESTART_EXIT_CODE) means the worker requested a restart.
+: os.execv cannot restart in-place on Windows, so the worker exits with this code and we re-run it.
+if %ERRORLEVEL% EQU 42 (
+    echo "Worker requested a restart. Restarting..."
+    GOTO RUN_WORKER
+)
 
 GOTO END
 
