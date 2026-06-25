@@ -272,6 +272,20 @@ def init() -> int:
             logger.debug("Removed .abort file")
         except OSError as e:
             logger.warning(f"Failed to remove .abort file: {e}")
+
+    # Capture hard crashes (segfaults / access violations / fatal native errors in torch/comfyui/
+    # native libs) that bypass Python's exception handling and leave no traceback or crash.log.
+    # faulthandler dumps the C/Python stack of all threads to this file on a fatal signal, so an
+    # otherwise-silent process death is diagnosable. The file is kept open for the process lifetime.
+    try:
+        import faulthandler
+
+        os.makedirs("logs", exist_ok=True)
+        global _FAULTHANDLER_LOG
+        _FAULTHANDLER_LOG = open("logs/faulthandler.log", "a", buffering=1, encoding="utf-8")  # noqa: SIM115
+        faulthandler.enable(file=_FAULTHANDLER_LOG, all_threads=True)
+    except Exception as e:
+        logger.warning(f"Could not enable faulthandler: {e}")
     # ! IMPORTANT: End of own code
 
     # Create args for -v, allowing -vvv

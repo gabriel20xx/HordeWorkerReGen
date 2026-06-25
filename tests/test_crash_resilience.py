@@ -659,15 +659,16 @@ def test_start_timed_shutdown_skips_hard_exit_after_clean_shutdown() -> None:
 @pytest.mark.parametrize(
     ("jobs_pending_submit", "expected_wait_seconds"),
     [
-        (3, 14),   # (3 * 4) + 2
-        (100, 30),  # capped from 402 to 30
+        (3, 15),    # max((3 * 4) + 2, 15) floor → 15
+        (100, 30),  # capped from 402 to force_restart_timeout (30)
     ],
 )
 def test_start_timed_shutdown_wait_seconds_caps_at_30(
     jobs_pending_submit: int,
     expected_wait_seconds: int,
 ) -> None:
-    """Timed shutdown wait must be linear for small queues and capped for large queues."""
+    """Timed shutdown wait is floored at 15s (so graceful shutdown isn't force-killed early) and
+    capped at force_restart_timeout for large queues."""
     from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
 
     class ImmediateThread:

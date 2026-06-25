@@ -9075,17 +9075,38 @@ class HordeWorkerProcessManager:
             # user-configurable via force_restart_timeout (primarily for auto-restart-on-idle, so a
             # stuck graceful shutdown does not delay the restart indefinitely).
             force_timeout = getattr(self.bridge_data, "force_restart_timeout", 30)
-            wait_seconds = min((len(self.jobs_pending_submit) * 4) + 2, force_timeout)
+            if not isinstance(force_timeout, (int, float)):
+                force_timeout = 30
+            # Floor the wait at 15s (capped by force_timeout): ending and joining the inference /
+            # safety subprocesses — and draining any in-progress generation — routinely takes more
+            # than the old 2s minimum, so too short a wait force-killed the worker mid-shutdown,
+            # which looked like a silent crash (the log just stops, no crash.log).
+            wait_seconds = min(max((len(self.jobs_pending_submit) * 4) + 2, 15), force_timeout)
             time.sleep(wait_seconds)
 
             if self._shut_down or not self._shutting_down:
                 return
 
+            # If a restart was requested, exit with the sentinel code so the launch wrapper re-runs
+            # the worker (otherwise a slow restart would die with code 1 and leave the worker down).
+            exit_code = WORKER_RESTART_EXIT_CODE if self._restart_requested else 1
+
+            # os._exit() bypasses logging, atexit handlers, and the crash-log excepthook — so a
+            # force-kill here is otherwise completely silent (the log simply stops mid-stream with
+            # no reason and no crash.log). Announce it and flush before exiting so the watchdog
+            # firing is always visible in the log.
+            logger.error(
+                f"Graceful shutdown did not complete within {wait_seconds:.0f}s "
+                f"(restart_requested={self._restart_requested}) — watchdog force-killing the worker "
+                f"now with exit code {exit_code}.",
+            )
+            self._flush_logs_for_exit()
+
             # This runs on a daemon thread while the event-loop thread may still be mutating
             # _process_map (adding/popping entries or clearing it during the shutdown drain).
             # Snapshot the values with list(...) so iteration cannot raise "dictionary changed
             # size during iteration", and wrap the whole body so any unexpected error still falls
-            # through to os._exit(1) — this is the last-resort force-kill and must never be
+            # through to os._exit() — this is the last-resort force-kill and must never be
             # silently disabled.
             try:
                 for process in list(self._process_map.values()):
@@ -9099,7 +9120,7 @@ class HordeWorkerProcessManager:
 
             # Use os._exit instead of sys.exit because sys.exit only raises SystemExit
             # which, when called from a non-main thread, only terminates that thread.
-            os._exit(1)
+            os._exit(exit_code)
 
         threading.Thread(target=hard_shutdown, daemon=True).start()
 
@@ -9379,6 +9400,20 @@ class HordeWorkerProcessManager:
         if not self._shutting_down:
             self._shutting_down = True
             self._shutting_down_time = time.time()
+
+            # Record which code path initiated the shutdown so the cause is always visible in the
+            # log. Several paths call _shutdown() (signal, auto-restart-on-idle, web UI restart,
+            # hung-process abort, task cancellation); without this the reason can be ambiguous.
+            try:
+                import traceback as _tb
+
+                caller = _tb.extract_stack(limit=2)[0]
+                logger.warning(
+                    f"Shutdown initiated (restart_requested={self._restart_requested}) by "
+                    f"{caller.name}() at {caller.filename}:{caller.lineno}",
+                )
+            except Exception:
+                logger.warning(f"Shutdown initiated (restart_requested={self._restart_requested})")
 
             # Cleanup webui log handler
             if self._log_handler_id is not None:
