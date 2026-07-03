@@ -1104,6 +1104,11 @@ class HordeInferenceProcess(HordeProcess):
                             generation_faults=result.faults,
                         ),
                     )
+                    # Release the raw PNG buffer now that the base64 copy exists — nothing
+                    # reads rawpng after this point, and freeing it progressively halves the
+                    # peak memory held while packaging large batches.
+                    with contextlib.suppress(Exception):
+                        result.rawpng.close()
                 except Exception as encode_err:
                     logger.critical(
                         f"Failed to encode image result: {type(encode_err).__name__} {encode_err}. "

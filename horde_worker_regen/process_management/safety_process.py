@@ -272,6 +272,7 @@ class HordeSafetyProcess(HordeProcess):
                         failed=True,
                     ),
                 )
+                image_bytes.close()
                 continue
 
             original_prompt = message.prompt
@@ -419,6 +420,8 @@ class HordeSafetyProcess(HordeProcess):
                         failed=True,
                     ),
                 )
+                image_as_pil_0.close()
+                image_bytes.close()
                 continue
 
             replacement_image_base64: str | None = None
@@ -505,6 +508,11 @@ class HordeSafetyProcess(HordeProcess):
                     replacement_image_base64=replacement_image_base64,
                 ),
             )
+
+            # Release the decoded raster and PNG byte buffer now rather than waiting for
+            # GC — for large batches this keeps at most one decoded image in memory.
+            image_as_pil_0.close()
+            image_bytes.close()
 
         time_elapsed = time.time() - time_start
 

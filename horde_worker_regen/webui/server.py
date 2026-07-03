@@ -64,6 +64,27 @@ _MAX_OCCURRENCES_PER_GROUP = 50
 _DB_PRUNE_INTERVAL = 3600.0
 """Minimum seconds between automatic pruning of old data from the SQLite database."""
 
+_MAX_THUMBNAILS_IN_MEMORY = 2000
+"""Maximum number of gallery thumbnails kept in RAM when a gallery database is available.
+Older thumbnails are evicted from memory and re-fetched from the database on demand."""
+
+_MAX_FULLRES_IN_MEMORY = 20
+"""Maximum number of full-resolution gallery images kept in RAM. Full-resolution data only
+stays in memory when it could not be persisted to the gallery database (or none is
+configured); each image is several MB, so this must stay small."""
+
+_MAX_GALLERY_ENTRIES_WITH_DB = 100_000
+"""Cap on in-memory gallery entries (metadata) when a gallery database is available. Beyond
+this, the oldest entries are evicted from RAM; they remain in the database."""
+
+_MAX_GALLERY_ENTRIES_NO_DB = 1000
+"""Hard cap on in-memory gallery entries when no gallery database is configured — without a
+database there is nowhere to offload entries, so the oldest are dropped entirely."""
+
+_HORDE_MAX_SERVER_SNAPS_CEILING = 86_400
+"""Absolute ceiling for in-memory horde network snapshots (30 days at 30-second polls),
+independent of the configured data retention period."""
+
 _UNSET: Any = object()
 """Sentinel used to distinguish an explicitly-passed ``None`` from an omitted argument."""
 
@@ -565,8 +586,12 @@ class WorkerWebUI:
                 max_id_row = conn.execute("SELECT MAX(gallery_id) FROM gallery_images").fetchone()
                 if max_id_row and max_id_row[0] is not None:
                     self._persisted_max_gallery_id = int(max_id_row[0])
+                # Deliberately never SELECT base64_data here: full-resolution images are
+                # several MB each and loading them for every in-retention row can OOM the
+                # worker at startup. They stay in the DB and are fetched on demand by
+                # _handle_gallery_image / _handle_gallery_last_batch.
                 rows = conn.execute(
-                    "SELECT gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json "
+                    "SELECT gallery_id, timestamp, model, thumbnail, is_nsfw, is_csam, extra_json "
                     "FROM gallery_images WHERE timestamp >= ? ORDER BY timestamp ASC, id ASC",
                     (cutoff,),
                 ).fetchall()
@@ -575,25 +600,26 @@ class WorkerWebUI:
                         "gallery_id": row[0],
                         "timestamp": row[1],
                         "model": row[2],
-                        "is_nsfw": bool(row[5]),
-                        "is_csam": bool(row[6]),
+                        "is_nsfw": bool(row[4]),
+                        "is_csam": bool(row[5]),
                     }
-                    if row[4] is not None:
-                        # Keep only the lightweight thumbnail in memory; the full-resolution
-                        # base64 stays in the DB and is fetched on demand by the overlay
-                        # viewer. This bounds the startup memory baseline (full PNGs are
-                        # several MB each and would otherwise all be loaded into RAM).
-                        entry["thumbnail"] = row[4]
-                    else:
-                        # No thumbnail available — keep the full-resolution base64 as the
-                        # only displayable copy.
-                        entry["base64"] = row[3]
-                    if row[7]:
+                    if row[3] is not None:
+                        entry["thumbnail"] = row[3]
+                    if row[6]:
                         try:
-                            entry.update(json.loads(row[7]))
+                            entry.update(json.loads(row[6]))
                         except (ValueError, TypeError):
                             pass
                     self._persisted_gallery.append(entry)
+                # Keep thumbnails in RAM only for the newest entries; older ones are
+                # re-fetched from the DB on demand. Rows are ordered oldest-first, so
+                # everything before the last _MAX_THUMBNAILS_IN_MEMORY gets stripped.
+                for old_entry in self._persisted_gallery[:-_MAX_THUMBNAILS_IN_MEMORY]:
+                    old_entry.pop("thumbnail", None)
+                # Bound the metadata itself as well — with multi-year retention windows
+                # even thumbnail-less entries can reach millions of rows.
+                if len(self._persisted_gallery) > _MAX_GALLERY_ENTRIES_WITH_DB:
+                    self._persisted_gallery = self._persisted_gallery[-_MAX_GALLERY_ENTRIES_WITH_DB:]
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not load gallery from '{self._gallery_db_path}': {exc}")
 
@@ -747,6 +773,7 @@ class WorkerWebUI:
         if max_id >= 0:
             self._next_gallery_id = max_id + 1
         self.status_data["images_count"] = len(self._gallery_dict)
+        self._enforce_gallery_memory_caps()
 
         stats = getattr(self, "_persisted_stats", [])
         if stats:
@@ -792,8 +819,25 @@ class WorkerWebUI:
             return 0.0
 
     def _prune_old_db_data(self) -> None:
-        """Delete database rows older than the configured retention period."""
+        """Delete database rows older than the configured retention period.
+
+        When no databases are configured, prunes the in-memory gallery directly so the
+        retention window still bounds memory usage instead of never pruning at all.
+        """
         if self._errors_db_path is None:
+            cutoff = self._cutoff_timestamp()
+            # Only prune entries that carry a valid numeric timestamp — entries without
+            # one cannot be aged and remain bounded by _enforce_gallery_memory_caps.
+            expired = [
+                gid
+                for gid, e in self._gallery_dict.items()
+                if isinstance(e.get("timestamp"), (int, float)) and e["timestamp"] < cutoff
+            ]
+            for gid in expired:
+                self._gallery_dict.pop(gid, None)
+            if expired:
+                self.status_data["images_count"] = len(self._gallery_dict)
+            self._last_db_prune_time = time.time()
             return
         assert self._stats_db_path is not None
         assert self._gallery_db_path is not None
@@ -847,6 +891,7 @@ class WorkerWebUI:
         self.status_data["images_count"] = len(self._gallery_dict)
         if max_id >= 0:
             self._next_gallery_id = max_id + 1
+        self._enforce_gallery_memory_caps()
 
         # Rebuild stats snapshots.
         stats = getattr(self, "_persisted_stats", [])
@@ -6616,9 +6661,11 @@ class WorkerWebUI:
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Could not persist stats snapshot to database: {exc}")
 
-            # Periodically prune expired rows to keep the database from growing unboundedly.
-            if now - self._last_db_prune_time >= _DB_PRUNE_INTERVAL:
-                self._prune_old_db_data()
+        # Periodically prune expired data to keep the databases — or, when none are
+        # configured, the in-memory collections — from growing unboundedly. This must
+        # run regardless of whether the stats DB is available.
+        if now - self._last_db_prune_time >= _DB_PRUNE_INTERVAL:
+            self._prune_old_db_data()
 
 
     async def _handle_errors(self, request: web.Request) -> web.Response:
@@ -6818,10 +6865,23 @@ class WorkerWebUI:
             # This drastically reduces the response payload for the gallery grid view.
             # Entries without a thumbnail keep their base64 as a display fallback.
             # All entries are copied so the originals in _gallery_dict are not mutated.
-            page_images = [
-                ({k: v for k, v in entry.items() if k != "base64"} if entry.get("thumbnail") else dict(entry))
-                for entry in page_images
+            # Thumbnails evicted from memory (to bound RAM) are fetched back from the
+            # gallery DB in a single batched query for the page.
+            missing_ids = [
+                e["gallery_id"] for e in page_images if not e.get("thumbnail") and not e.get("base64")
             ]
+            db_thumbs = self._fetch_gallery_thumbnails_from_db(missing_ids)
+            rendered: list[dict[str, Any]] = []
+            for entry in page_images:
+                if entry.get("thumbnail"):
+                    rendered.append({k: v for k, v in entry.items() if k != "base64"})
+                    continue
+                copied = dict(entry)
+                db_thumb = db_thumbs.get(copied.get("gallery_id"))
+                if db_thumb:
+                    copied["thumbnail"] = db_thumb
+                rendered.append(copied)
+            page_images = rendered
 
         return web.json_response(
             {
@@ -6953,6 +7013,16 @@ class WorkerWebUI:
                 {k: v for k, v in entry.items()},
                 headers=_THUMB_CACHE_HEADERS,
             )
+        if thumbnail_only:
+            # The thumbnail was evicted from memory to bound RAM usage — fetch it back
+            # from the gallery DB on demand.
+            db_thumb = self._fetch_gallery_thumbnails_from_db([gallery_id]).get(gallery_id)
+            if db_thumb:
+                return web.json_response(
+                    {**{k: v for k, v in entry.items() if k != "base64"}, "thumbnail": db_thumb},
+                    headers=_THUMB_CACHE_HEADERS,
+                )
+            # No thumbnail anywhere — fall through and serve the full image instead.
         # Full image requested (overlay viewer) — no cache header so full-res is always fresh.
         # The full-resolution base64 may have been evicted from memory to bound RAM (it is
         # persisted in the gallery DB); fetch it back on demand when it is not in memory.
@@ -7397,9 +7467,12 @@ class WorkerWebUI:
         """Max horde snapshots to keep in memory and load from DB.
 
         Scales with data_retention_days so the full window range (30m / 2h /
-        6h / All) is available up to the configured retention period.
+        6h / All) is available up to the configured retention period, bounded
+        by an absolute ceiling — a multi-year retention setting would otherwise
+        translate into millions of in-memory snapshot dicts.
         """
-        return max(self._HORDE_MIN_SERVER_SNAPS, int(self._data_retention_days * 86400 / self._HORDE_POLL_INTERVAL))
+        scaled = int(self._data_retention_days * 86400 / self._HORDE_POLL_INTERVAL)
+        return max(self._HORDE_MIN_SERVER_SNAPS, min(scaled, _HORDE_MAX_SERVER_SNAPS_CEILING))
 
     async def _poll_horde_network(self) -> None:
         """Background task: poll aihorde.net every 30 s and accumulate performance snapshots."""
@@ -7475,6 +7548,58 @@ class WorkerWebUI:
             return row[0]
         return None
 
+    def _fetch_gallery_thumbnails_from_db(self, gallery_ids: list[int]) -> dict[int, str]:
+        """Return thumbnails for the given gallery ids from the database.
+
+        In-memory entries older than the ``_MAX_THUMBNAILS_IN_MEMORY`` window keep only
+        metadata; the gallery grid fetches their thumbnails back on demand through this
+        helper. Returns a (possibly partial) ``gallery_id -> thumbnail`` mapping; empty
+        when no database is configured or the rows cannot be read.
+        """
+        if self._gallery_db_path is None or not gallery_ids:
+            return {}
+        try:
+            with sqlite3.connect(self._gallery_db_path) as conn:
+                placeholders = ",".join("?" for _ in gallery_ids)
+                rows = conn.execute(
+                    f"SELECT gallery_id, thumbnail FROM gallery_images WHERE gallery_id IN ({placeholders})",
+                    tuple(gallery_ids),
+                ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not load gallery thumbnails from database: {exc}")
+            return {}
+        return {int(row[0]): row[1] for row in rows if row[1]}
+
+    def _enforce_gallery_memory_caps(self) -> None:
+        """Bound the amount of gallery image data (and entries) held in RAM.
+
+        - Thumbnails beyond the newest ``_MAX_THUMBNAILS_IN_MEMORY`` are dropped when a
+          gallery DB exists (they are re-fetched from it on demand).
+        - Full-resolution base64 payloads — in memory only when the DB persist failed or
+          no DB is configured — are capped at the newest ``_MAX_FULLRES_IN_MEMORY``.
+        - The total entry count is capped (``_MAX_GALLERY_ENTRIES_WITH_DB`` /
+          ``_MAX_GALLERY_ENTRIES_NO_DB``), evicting the oldest entries from RAM.
+        """
+        db_available = self._gallery_db_path is not None
+        thumbs_seen = 0
+        fullres_seen = 0
+        for entry in reversed(self._gallery_dict.values()):
+            if db_available and "thumbnail" in entry:
+                thumbs_seen += 1
+                if thumbs_seen > _MAX_THUMBNAILS_IN_MEMORY:
+                    entry.pop("thumbnail", None)
+            if "base64" in entry:
+                fullres_seen += 1
+                if fullres_seen > _MAX_FULLRES_IN_MEMORY:
+                    entry.pop("base64", None)
+
+        max_entries = _MAX_GALLERY_ENTRIES_WITH_DB if db_available else _MAX_GALLERY_ENTRIES_NO_DB
+        if len(self._gallery_dict) > max_entries:
+            excess = len(self._gallery_dict) - max_entries
+            for gid in list(self._gallery_dict.keys())[:excess]:
+                self._gallery_dict.pop(gid, None)
+            self.status_data["images_count"] = len(self._gallery_dict)
+
     def add_gallery_image(self, image_entry: dict[str, Any]) -> None:
         """Append one image entry to the gallery history.
 
@@ -7534,13 +7659,15 @@ class WorkerWebUI:
         # Bound in-RAM growth: the full-resolution base64 PNG (several MB each) is the
         # dominant memory cost and the reason the worker can exhaust RAM and be OOM-killed
         # (taking down the whole container) after running for a while. Once the image is
-        # safely persisted to the gallery DB and a lightweight thumbnail exists for the grid
-        # view, drop the full-resolution base64 from the in-memory entry; the overlay viewer
-        # fetches it back from the DB on demand (see _handle_gallery_image /
-        # _handle_gallery_last_batch). When no DB is configured or no thumbnail could be
-        # generated, the base64 is kept in memory as the only available copy.
-        if persisted and entry.get("thumbnail") and entry.get("base64") is not None:
+        # safely persisted to the gallery DB, drop the full-resolution base64 from the
+        # in-memory entry — even when no thumbnail could be generated, since
+        # _handle_gallery_image falls back to fetching the full image from the DB on
+        # demand. Only when the image could not be persisted is the base64 kept in memory
+        # as the last available copy (bounded by _enforce_gallery_memory_caps below).
+        if persisted and entry.get("base64") is not None:
             entry.pop("base64", None)
+
+        self._enforce_gallery_memory_caps()
 
     def update_status(
         self,

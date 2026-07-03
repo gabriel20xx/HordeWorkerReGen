@@ -3,6 +3,7 @@ import asyncio.exceptions
 import base64
 import collections
 import contextlib
+import datetime
 import enum
 import json
 import math
@@ -5308,8 +5309,16 @@ class HordeWorkerProcessManager:
                 self._num_jobs_faulted += 1
 
             self.kudos_generated_this_session += job_submit_response.reward
-            self.kudos_events.append((time.time(), job_submit_response.reward))
-            self.image_events.append((time.time(), new_submit.batch_count))
+            _event_time = time.time()
+            self.kudos_events.append((_event_time, job_submit_response.reward))
+            self.image_events.append((_event_time, new_submit.batch_count))
+            # Trim expired events at the source so the lists stay bounded even when the
+            # other pruning sites never run (webui disabled, user-info requests failing).
+            _event_cutoff = _event_time - METRICS_CALCULATION_WINDOW_SECONDS
+            if self.kudos_events and self.kudos_events[0][0] < _event_cutoff:
+                self.kudos_events = [(ts, k) for ts, k in self.kudos_events if ts >= _event_cutoff]
+            if self.image_events and self.image_events[0][0] < _event_cutoff:
+                self.image_events = [(ts, c) for ts, c in self.image_events if ts >= _event_cutoff]
             model_name = new_submit.completed_job_info.sdk_api_job_info.model
             if model_name:
                 self._images_per_model[model_name] = (
@@ -6487,6 +6496,37 @@ class HordeWorkerProcessManager:
             "If you continue to see this message, come to the official discord (https://discord.gg/3DxrhksKzn).",
         )
 
+    _MAX_API_MESSAGES_KEPT = 50
+    """The maximum number of API worker messages kept in memory (oldest evicted first)."""
+
+    def _prune_api_messages(self) -> None:
+        """Drop expired API messages and cap how many are kept in memory.
+
+        Without this the messages dict grows for the lifetime of the process, and expired
+        messages keep being re-printed with every status output.
+        """
+        if not self._api_messages_received:
+            return
+
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        for message_id, message in list(self._api_messages_received.items()):
+            if message.message_expiry is None:
+                continue
+            try:
+                raw_expiry = str(message.message_expiry).strip().replace("Z", "+00:00")
+                expiry = datetime.datetime.fromisoformat(raw_expiry)
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=datetime.timezone.utc)
+            except ValueError:
+                # Unparseable expiry — keep the message; the size cap below still applies.
+                continue
+            if expiry <= now_utc:
+                del self._api_messages_received[message_id]
+
+        # Dicts preserve insertion order, so evicting from the front drops the oldest.
+        while len(self._api_messages_received) > self._MAX_API_MESSAGES_KEPT:
+            del self._api_messages_received[next(iter(self._api_messages_received))]
+
     @logger.catch(reraise=True)
     async def api_job_pop(self) -> None:
         """If the job deque is not full, add any jobs that are available to the job deque."""
@@ -6758,6 +6798,7 @@ class HordeWorkerProcessManager:
                                 f"Message {message_id} from {message_origin} (expires {message_expiry}): "
                                 f"{message_text}",
                             )
+                    self._prune_api_messages()
             except Exception as e:
                 logger.error(f"Failed to process API messages: {e}")
 
@@ -7633,6 +7674,7 @@ class HordeWorkerProcessManager:
 
             logging_function("<fg #00d7ff>" + "=" * 80 + "</>")
 
+            self._prune_api_messages()
             if len(self._api_messages_received) > 0:
                 logging_function("<b><fg #ffd700>API Messages:</></b>")
                 for message_id, message in self._api_messages_received.items():
@@ -9188,6 +9230,25 @@ class HordeWorkerProcessManager:
         if self._skipped_line_next_job_and_process is not None:
             self._skipped_line_next_job_and_process = None
             logger.error("Cleared skipped line next job and process")
+
+        # Drop bookkeeping for jobs that are no longer referenced anywhere. The clears above
+        # intentionally keep jobs_lookup entries for jobs kept for retry (see note), but jobs
+        # dropped from the safety/submit queues or not kept for retry would otherwise leak
+        # here forever — including their base64 image results and any downloaded source
+        # images, which adds up when purge-recovery happens repeatedly. Match by id_ (not
+        # object equality) because filtered copies of a job can hash/compare differently
+        # from the canonical object stored in these structures.
+        referenced_job_ids = {j.id_ for j in self.jobs_pending_inference if j.id_ is not None} | {
+            j.id_ for j in self.jobs_in_progress if j.id_ is not None
+        }
+        for job in [j for j in self.jobs_lookup if j.id_ not in referenced_job_ids]:
+            del self.jobs_lookup[job]
+        for job in [j for j in self.job_pop_timestamps if j.id_ not in referenced_job_ids]:
+            del self.job_pop_timestamps[job]
+        for job in [j for j in self._pending_completed_job_timings if j.id_ not in referenced_job_ids]:
+            del self._pending_completed_job_timings[job]
+        for job_id in [jid for jid in self.job_faults if jid not in referenced_job_ids]:
+            del self.job_faults[job_id]
 
         self._invalidate_megapixelsteps_cache()
 

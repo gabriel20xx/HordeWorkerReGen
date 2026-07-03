@@ -280,8 +280,12 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
     )
 
     # trace/ — error trace log: ERROR and above with full backtraces.
-    # diagnose=True only for the main process: subprocesses run GPU/ML code and
-    # introspecting CUDA tensors after an OOM or hardware fault is unsafe.
+    # diagnose is disabled everywhere: subprocesses run GPU/ML code where introspecting
+    # CUDA tensors after an OOM or hardware fault is unsafe, and the main process holds
+    # multi-MB base64 image payloads (jobs_lookup, result messages) whose repr() loguru
+    # builds IN FULL before truncating to 128 chars — a transient allocation spike of
+    # tens of MB per frame variable, at exactly the moment errors fire under memory
+    # pressure. backtrace=True keeps complete stack traces.
     # Known non-fatal ComfyUI LoRA shape-mismatch messages are excluded — they flood
     # trace.log with hundreds of lines per job and are not actionable errors.
     logger.add(
@@ -293,7 +297,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
         retention=_TRACE_RETENTION,
         encoding="utf-8",
         backtrace=True,
-        diagnose=process_id is None,
+        diagnose=False,
         delay=True,
         filter=lambda record: not _is_lora_shape_noise(record),
     )
@@ -301,6 +305,9 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
     # crash/ and webui/ are main-process-only sinks.
     if process_id is None:
         # crash/ — CRITICAL only: first place to look when the worker dies.
+        # diagnose=False for the same reason as the trace sink: rendering variable
+        # values repr()s multi-MB image payloads held by the main process, risking an
+        # OOM spike while handling the very failure being logged.
         logger.add(
             date_dir / "crash" / "crash.log",
             format=file_format,
@@ -310,7 +317,7 @@ def configure_logger_format(process_id: int | None = None, *, enable_stderr: boo
             retention=_CRASH_RETENTION,
             encoding="utf-8",
             backtrace=True,
-            diagnose=True,
+            diagnose=False,
             delay=True,
         )
 

@@ -902,6 +902,125 @@ async def test_webui_gallery_full_res_served_from_db_when_evicted(tmp_path: path
         await webui.stop()
 
 
+def test_webui_gallery_base64_evicted_even_without_thumbnail(tmp_path: pathlib.Path) -> None:
+    """Once persisted, the full base64 is dropped from memory even when no thumbnail exists.
+
+    Entries that fail thumbnail generation must not pin their multi-MB base64 in RAM
+    forever — the image stays recoverable from the gallery database on demand.
+    """
+    webui = WorkerWebUI(port=0, db_path=str(tmp_path))
+    # An invalid PNG payload: thumbnail generation fails, but persistence still succeeds.
+    webui.add_gallery_image({"base64": "notapngB", "timestamp": 1.0, "model": "m"})
+
+    entry = webui._gallery_dict[0]
+    assert "thumbnail" not in entry
+    assert "base64" not in entry, "base64 must be evicted once persisted, even without a thumbnail"
+    assert webui._fetch_gallery_base64_from_db(0) == "notapngB"
+
+
+def test_webui_gallery_thumbnail_cap_evicts_oldest(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the newest _MAX_THUMBNAILS_IN_MEMORY thumbnails stay in RAM; older ones stay in the DB."""
+    import time
+
+    monkeypatch.setattr("horde_worker_regen.webui.server._MAX_THUMBNAILS_IN_MEMORY", 3)
+    webui = WorkerWebUI(port=0, db_path=str(tmp_path))
+    now = time.time()
+    for i in range(5):
+        webui.add_gallery_image(
+            {"base64": "notapngB", "thumbnail": f"thumb{i}", "timestamp": now + i, "model": "m"},
+        )
+
+    in_memory = [gid for gid, e in webui._gallery_dict.items() if "thumbnail" in e]
+    assert in_memory == [2, 3, 4], "only the newest three thumbnails may stay in memory"
+    # Evicted thumbnails must remain recoverable from the DB for the gallery grid.
+    assert webui._fetch_gallery_thumbnails_from_db([0, 1]) == {0: "thumb0", 1: "thumb1"}
+
+
+def test_webui_gallery_fullres_cap_without_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without a DB, at most _MAX_FULLRES_IN_MEMORY entries keep their full-resolution base64."""
+    import time
+
+    monkeypatch.setattr("horde_worker_regen.webui.server._MAX_FULLRES_IN_MEMORY", 2)
+    webui = WorkerWebUI(port=0)
+    now = time.time()
+    for i in range(4):
+        webui.add_gallery_image({"base64": f"payload{i}", "timestamp": now + i, "model": "m"})
+
+    with_fullres = [gid for gid, e in webui._gallery_dict.items() if "base64" in e]
+    assert with_fullres == [2, 3], "only the newest two full-resolution payloads may stay in memory"
+    assert len(webui._gallery_dict) == 4, "entries themselves are kept (only the base64 is dropped)"
+
+
+def test_webui_gallery_entry_cap_without_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without a DB the total entry count is hard-capped, evicting the oldest entries."""
+    import time
+
+    monkeypatch.setattr("horde_worker_regen.webui.server._MAX_GALLERY_ENTRIES_NO_DB", 3)
+    webui = WorkerWebUI(port=0)
+    now = time.time()
+    for i in range(5):
+        webui.add_gallery_image({"base64": None, "timestamp": now + i, "model": "m"})
+
+    assert list(webui._gallery_dict) == [2, 3, 4]
+    assert webui.status_data["images_count"] == 3
+
+
+def test_webui_gallery_startup_never_loads_fullres(tmp_path: pathlib.Path) -> None:
+    """Rows without thumbnails must load as metadata-only — never with full-res base64 in RAM.
+
+    Before this bound existed, a large retention window full of thumbnail-less rows
+    (e.g. created before thumbnail support) would load every full-resolution image into
+    memory at startup and OOM the worker.
+    """
+    import time
+
+    now = time.time()
+    webui1 = WorkerWebUI(port=0, db_path=str(tmp_path))
+    webui1.add_gallery_image({"base64": "notapngA", "thumbnail": "thumbA", "timestamp": now, "model": "m"})
+    webui1.add_gallery_image({"base64": "notapngB", "timestamp": now + 1, "model": "m"})
+
+    webui2 = WorkerWebUI(port=0, db_path=str(tmp_path))
+    assert len(webui2._gallery_dict) == 2
+    assert webui2._gallery_dict[0].get("thumbnail") == "thumbA"
+    assert "base64" not in webui2._gallery_dict[0]
+    # The thumbnail-less row is metadata-only in RAM; the full image stays in the DB.
+    assert "base64" not in webui2._gallery_dict[1]
+    assert "thumbnail" not in webui2._gallery_dict[1]
+    assert webui2._fetch_gallery_base64_from_db(1) == "notapngB"
+
+
+@pytest.mark.asyncio
+async def test_webui_gallery_image_thumbnail_fetched_from_db_when_evicted(tmp_path: pathlib.Path) -> None:
+    """/api/gallery/image?thumbnail_only=1 falls back to the DB after in-memory eviction."""
+    webui = WorkerWebUI(port=0, db_path=str(tmp_path))
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        webui.add_gallery_image({"base64": "notapngA", "thumbnail": "thumbA", "timestamp": 1.0, "model": "m"})
+        # Simulate the memory cap evicting this thumbnail from RAM.
+        webui._gallery_dict[0].pop("thumbnail", None)
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/gallery/image?id=0&thumbnail_only=1",
+        ) as response:
+            assert response.status == 200
+            img = await response.json()
+        assert img.get("thumbnail") == "thumbA"
+        assert "base64" not in img
+    finally:
+        await webui.stop()
+
+
+def test_webui_horde_snapshots_absolute_ceiling() -> None:
+    """A multi-year retention setting must not translate into millions of snapshot slots."""
+    from horde_worker_regen.webui.server import _HORDE_MAX_SERVER_SNAPS_CEILING
+
+    webui = WorkerWebUI(port=0, data_retention_days=3650)
+    assert webui._horde_max_server_snaps == _HORDE_MAX_SERVER_SNAPS_CEILING
+
+
 @pytest.mark.asyncio
 async def test_webui_status_excludes_errors_history_and_has_errors_count() -> None:
     """Test that /api/status omits errors_history and includes errors_count."""
@@ -4130,20 +4249,27 @@ def test_webui_db_expired_errors_not_loaded(tmp_path: pathlib.Path) -> None:
 
 def test_webui_no_db_path_no_persistence() -> None:
     """WorkerWebUI without a db_path must work normally without any DB operations."""
+    import time
+
     webui = WorkerWebUI(port=0)
     assert webui._errors_db_path is None
     assert webui._stats_db_path is None
     assert webui._gallery_db_path is None
 
-    # These should all work without any DB operations or prune attempts.
-    webui.add_gallery_image({"base64": None, "timestamp": 1.0, "model": "sdxl"})
+    # These should all work without any DB operations.
+    webui.add_gallery_image({"base64": None, "timestamp": 1.0, "model": "sdxl"})  # long expired
+    webui.add_gallery_image({"base64": None, "timestamp": time.time(), "model": "sdxl"})
     webui.update_status(errors_history=["err1", "err2"])
     webui._last_stats_snapshot_time = 0.0
     webui._record_stats_snapshot()
     webui.set_data_retention_days(3)
 
-    # Gallery and errors should still work in memory
+    # Gallery and errors should still work in memory. Without a DB the retention window
+    # is applied directly to the in-memory gallery (this is what bounds RAM usage), so
+    # the expired entry is pruned while the recent one survives.
     assert len(webui._gallery_dict) == 1
+    remaining = next(iter(webui._gallery_dict.values()))
+    assert remaining["timestamp"] > 1.0
     assert webui.status_data["errors_history"] == ["err1", "err2"]
     assert len(webui._stats_snapshots) >= 1
 
