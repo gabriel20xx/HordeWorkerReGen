@@ -177,6 +177,16 @@ class HordeInferenceProcess(HordeProcess):
             # process gets process_id 1. The parent normally passes an explicit value.
             download_legacy_references = process_id == 1
 
+        if download_legacy_references:
+            # horde_model_reference's downloader makes one non-retrying HTTP request per reference
+            # category (controlnet, safety_checker, etc.) and only logs an ERROR on a non-200
+            # response -- a transient network blip or GitHub rate limit on any one of the ~9
+            # sequential requests otherwise leaves that category's local reference file stale or
+            # missing until the next full worker restart. Retry it ourselves here, then tell
+            # load_model_managers() below not to also attempt its own single-shot download.
+            self._download_legacy_model_references_with_retry()
+            download_legacy_references = False
+
         try:
             with logger.catch(reraise=True):
                 SharedModelManager.load_model_managers(
@@ -213,6 +223,52 @@ class HordeInferenceProcess(HordeProcess):
             process_state=HordeProcessState.WAITING_FOR_JOB,
             info="Waiting for job",
         )
+
+    def _download_legacy_model_references_with_retry(
+        self,
+        *,
+        max_attempts: int = 3,
+        retry_delay_seconds: float = 3.0,
+    ) -> None:
+        """Download the legacy model reference JSON files, retrying categories that fail.
+
+        Each category (controlnet, safety_checker, etc.) is fetched with its own plain HTTP GET
+        and no retry logic upstream, so a single transient network blip or GitHub rate limit is
+        enough to leave that category's cached reference file stale or missing until the worker is
+        restarted. Retrying here, keyed on whether the target file actually exists afterward (not
+        the ambiguous return value, which is also None when a fresh copy already existed), lets a
+        one-off failure self-heal within the same startup instead of requiring a restart.
+        """
+        from horde_model_reference.legacy.legacy_download_manager import LegacyReferenceDownloadManager
+        from horde_model_reference.meta_consts import MODEL_REFERENCE_CATEGORY
+        from horde_model_reference.path_consts import get_model_reference_file_path
+
+        download_manager = LegacyReferenceDownloadManager()
+
+        for category in MODEL_REFERENCE_CATEGORY:
+            target_path = get_model_reference_file_path(category, base_path=download_manager.legacy_path)
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    download_manager.download_legacy_model_reference(
+                        model_category_name=category,
+                        override_existing=True,
+                    )
+                except Exception as e:
+                    logger.debug(f"Error downloading {category} legacy model reference: {type(e).__name__} {e}")
+
+                if target_path.exists():
+                    break
+
+                if attempt < max_attempts:
+                    time.sleep(retry_delay_seconds)
+            else:
+                logger.warning(
+                    f"Failed to download the {category} legacy model reference after {max_attempts} attempts; "
+                    "continuing with any existing cached copy.",
+                )
+
+        with contextlib.suppress(Exception):
+            download_manager.convert_legacy_references()
 
     def _comfyui_callback(self, label: str, data: dict, _id: str) -> None:
         self.send_heartbeat_message(heartbeat_type=HordeHeartbeatType.PIPELINE_STATE_CHANGE)
