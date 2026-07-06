@@ -1226,6 +1226,9 @@ class WorkerWebUI:
         .stat-card-value.warning { color: var(--warning); }
         .stat-card-value.error   { color: var(--error); }
         .stat-card-value.accent  { color: var(--accent); }
+        .trust-indicator { font-size: 1.1rem; margin-left: 6px; cursor: help; vertical-align: middle; }
+        .trust-indicator.success { color: var(--success); }
+        .trust-indicator.error   { color: var(--error); }
 
         .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid #f8fafc; }
         .stat-row:last-child { border-bottom: none; }
@@ -1976,7 +1979,7 @@ class WorkerWebUI:
                         <span class="section-title">&#127968; Overview</span>
                     </div>
                     <div class="grid-4">
-                        <div class="stat-card"><div class="stat-card-label">Kudos Earned</div><div class="stat-card-value success" id="user-kudos-session">0</div></div>
+                        <div class="stat-card"><div class="stat-card-label">Images Generated</div><div class="stat-card-value success" id="overview-images-generated">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="images-per-hour">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Popped</div><div class="stat-card-value accent" id="jobs-popped">0</div></div>
                         <div class="stat-card"><div class="stat-card-label">Jobs Submitted</div><div class="stat-card-value success" id="jobs-completed">0</div></div>
@@ -2061,15 +2064,11 @@ class WorkerWebUI:
                 <div class="page" id="page-user">
                     <div class="section">
                         <div class="section-header"><span class="section-title">&#128100; User Details</span></div>
-                        <div class="grid-3 user-details-grid">
-                            <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value" id="user-page-username">-</div></div>
+                        <div class="grid-4 user-details-grid">
+                            <div class="stat-card"><div class="stat-card-label">Username</div><div class="stat-card-value"><span id="user-page-username">-</span><span id="user-page-trust-indicator" class="trust-indicator"></span></div></div>
                             <div class="stat-card"><div class="stat-card-label">Total Kudos</div><div class="stat-card-value success" id="user-page-kudos-total">-</div></div>
                             <div class="stat-card"><div class="stat-card-label">Worker Count</div><div class="stat-card-value" id="user-page-worker-count">-</div></div>
-                        </div>
-                        <div class="grid-3 user-details-grid">
-                            <div class="stat-card"><div class="stat-card-label">Images / Hour</div><div class="stat-card-value accent" id="user-page-images-per-hour">0</div></div>
                             <div class="stat-card"><div class="stat-card-label">Kudos / Hour</div><div class="stat-card-value accent" id="user-page-kudos-per-hour">0</div></div>
-                            <div class="stat-card"><div class="stat-card-label">Trusted</div><div class="stat-card-value" id="user-page-trusted">-</div></div>
                         </div>
                         <div class="card">
                             <div class="card-header"><span class="card-title">&#127881; Kudos Breakdown</span></div>
@@ -3869,7 +3868,7 @@ class WorkerWebUI:
                     document.getElementById('mobile-uptime').textContent = '\u23F1 ' + uptimeStr;
                     var _rb = data.stats_reset_baseline || {};
                     function _subReset(val, key) { return Math.max(0, (val || 0) - (_rb[key] || 0)); }
-                    document.getElementById('user-kudos-session').textContent = _subReset(data.kudos_earned_session, 'kudos_earned_session').toLocaleString(undefined, {maximumFractionDigits: 2});
+                    document.getElementById('overview-images-generated').textContent = _subReset(data.jobs_completed, 'jobs_completed');
                     document.getElementById('images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     document.getElementById('jobs-popped').textContent = _subReset(data.jobs_popped, 'jobs_popped');
                     document.getElementById('jobs-completed').textContent = _subReset(data.jobs_completed, 'jobs_completed');
@@ -4124,10 +4123,11 @@ class WorkerWebUI:
                     document.getElementById('user-page-username').textContent = data.horde_username || '-';
                     document.getElementById('user-page-kudos-total').textContent = data.user_kudos_total != null ? data.user_kudos_total.toLocaleString(undefined, {maximumFractionDigits: 2}) : '-';
                     document.getElementById('user-page-kudos-per-hour').textContent = (data.kudos_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
-                    document.getElementById('user-page-images-per-hour').textContent = (data.images_per_hour || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
                     const trusted = ud.trusted;
-                    document.getElementById('user-page-trusted').textContent = trusted === true ? '\u2714 Yes' : (trusted === false ? '\u2718 No' : '-');
-                    document.getElementById('user-page-trusted').className = 'stat-card-value ' + (trusted === true ? 'success' : (trusted === false ? 'error' : ''));
+                    const trustIndicator = document.getElementById('user-page-trust-indicator');
+                    trustIndicator.textContent = trusted === true ? '\u2714' : (trusted === false ? '\u2718' : '');
+                    trustIndicator.className = 'trust-indicator ' + (trusted === true ? 'success' : (trusted === false ? 'error' : ''));
+                    trustIndicator.title = trusted === true ? 'Trusted' : (trusted === false ? 'Not trusted' : '');
                     document.getElementById('user-page-worker-count').textContent = ud.worker_count != null ? ud.worker_count : '-';
                     const kb = document.getElementById('user-page-kudos-breakdown');
                     const kd = ud.kudos_details || {};
