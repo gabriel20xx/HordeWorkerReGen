@@ -3634,6 +3634,11 @@ class WorkerWebUI:
         let _lastFetchedImageTimestamp = null;
         // Stores the raw timestamp so the 1-second tick can reformat the "X seconds ago" label.
         let _lastImageSubmissionTimestamp = null;
+        // Timestamp of the gallery batch shown as the Last Result preview before any image
+        // has been generated this session. Kept separate from _lastImageSubmissionTimestamp
+        // because every /api/status poll re-derives that from the session value (0 while no
+        // session image exists) — a shared variable would be nulled again within a second.
+        let _galleryPreviewTimestamp = null;
         // Track the current job id and its highest-seen progress so the bar never goes
         // backwards for the same job.  Reset whenever the displayed job id changes.
         let _currentJobId = null;
@@ -3662,7 +3667,10 @@ class WorkerWebUI:
             }
             const timeEl = document.getElementById('overview-image-time');
             if (timeEl) {
-                timeEl.textContent = _lastImageSubmissionTimestamp ? formatTimeAgo(_lastImageSubmissionTimestamp) : '';
+                // Fall back to the gallery-preview timestamp so the restored Last Result
+                // image shows its age before any image is generated this session.
+                const labelTimestamp = _lastImageSubmissionTimestamp || _galleryPreviewTimestamp;
+                timeEl.textContent = labelTimestamp ? formatTimeAgo(labelTimestamp) : '';
             }
         }, 1000);
         function _getImageKey(rawB64, timestamp, model, safety) {
@@ -4048,6 +4056,7 @@ class WorkerWebUI:
                             // On the initial null → 0 transition leave the container alone so the
                             // initializeUpdates gallery preview can still render.
                             if (_prevImageTs !== null && _prevImageTs !== 0) {
+                                _galleryPreviewTimestamp = null;
                                 renderLastImages([], document.getElementById('overview-image-container'), 0, null, null);
                             }
                         }
@@ -6316,6 +6325,9 @@ class WorkerWebUI:
                     _lastFetchedImageTimestamp = ts;
                     var hasSessionImage = ts !== 0 && imgData.last_image_base64 && imgData.last_image_base64.length > 0;
                     if (hasSessionImage) {
+                        // Set the label source immediately instead of waiting up to a
+                        // second for the first /api/status poll to repeat the value.
+                        _lastImageSubmissionTimestamp = ts;
                         renderLastImages(
                             imgData.last_image_base64 || [],
                             document.getElementById('overview-image-container'),
@@ -6335,6 +6347,8 @@ class WorkerWebUI:
                                 var b64arr = imgs.map(function(i) { return i.base64; }).filter(Boolean);
                                 if (b64arr.length === 0) return;
                                 var safety = imgs.map(function(i) { return { is_nsfw: i.is_nsfw, is_csam: i.is_csam }; });
+                                var previewTs = Number(imgs[0].timestamp);
+                                _galleryPreviewTimestamp = (Number.isFinite(previewTs) && previewTs > 0) ? previewTs : null;
                                 renderLastImages(
                                     b64arr,
                                     document.getElementById('overview-image-container'),

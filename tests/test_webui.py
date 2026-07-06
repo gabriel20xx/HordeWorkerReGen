@@ -3350,6 +3350,42 @@ async def test_webui_settings_html_api_ref_section() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webui_last_result_time_ago_shown_for_gallery_preview() -> None:
+    """The Last Result time-ago label must also work for the restored gallery preview.
+
+    Before any image is generated in the current session, the overview card is populated
+    from the last gallery batch. The time-ago ticker previously read only the session
+    timestamp delivered by /api/status — 0 in a fresh session and re-derived (nulled)
+    every poll — so the restored preview image showed no "Last submission: ... ago"
+    value at all until a new image was generated.
+    """
+    webui = WorkerWebUI(port=0)
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        # Fallback variable is declared and feeds the 1-second ticker.
+        assert "let _galleryPreviewTimestamp = null;" in html
+        assert "const labelTimestamp = _lastImageSubmissionTimestamp || _galleryPreviewTimestamp;" in html
+        assert "timeEl.textContent = labelTimestamp ? formatTimeAgo(labelTimestamp) : '';" in html
+        # The gallery-preview path records its batch timestamp for the label.
+        assert "_galleryPreviewTimestamp = (Number.isFinite(previewTs) && previewTs > 0) ? previewTs : null;" in html
+        # The immediate session-image restore seeds the label without waiting for a poll.
+        assert "_lastImageSubmissionTimestamp = ts;" in html
+        # Clearing a vanished session image also clears the preview label (declaration + clear).
+        assert html.count("_galleryPreviewTimestamp = null;") >= 2
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_settings_post_float() -> None:
     """Test that POST /api/settings accepts a float setting (horde_model_stickiness)."""
     webui = WorkerWebUI(port=0)
