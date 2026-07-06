@@ -103,6 +103,7 @@ class HordeInferenceProcess(HordeProcess):
         process_launch_identifier: int,
         *,
         high_memory_mode: bool = False,
+        download_legacy_references: bool | None = None,
     ) -> None:
         """Initialise the HordeInferenceProcess.
 
@@ -119,6 +120,9 @@ class HordeInferenceProcess(HordeProcess):
             high_memory_mode (bool, optional): Whether or not to use high memory mode. This mode uses more memory, but\
                 may be faster if the system has enough memory and VRAM. \
                 Defaults to False.
+            download_legacy_references (bool | None, optional): Whether this process should download the legacy \
+                model reference databases. The parent passes True for the first inference process it launches. \
+                When None (legacy behaviour), falls back to `process_id == 1`. Defaults to None.
         """
         super().__init__(
             process_id=process_id,
@@ -168,10 +172,24 @@ class HordeInferenceProcess(HordeProcess):
             logger.critical(f"Failed to initialise HordeCheckpointLoader: {type(e).__name__} {e}")
             sys.exit(1)
 
-        SharedModelManager.load_model_managers(
-            multiprocessing_lock=self.disk_lock,
-            download_legacy_references=process_id == 1,  # Only download legacy references in the first process
-        )
+        if download_legacy_references is None:
+            # Legacy fallback: with the default single safety process, the first inference
+            # process gets process_id 1. The parent normally passes an explicit value.
+            download_legacy_references = process_id == 1
+
+        try:
+            with logger.catch(reraise=True):
+                SharedModelManager.load_model_managers(
+                    multiprocessing_lock=self.disk_lock,
+                    download_legacy_references=download_legacy_references,
+                )
+        except Exception as e:
+            logger.critical(f"Failed to load model managers: {type(e).__name__} {e}")
+            self.send_process_state_change_message(
+                process_state=HordeProcessState.PROCESS_ENDED,
+                info=f"Failed to load model managers: {type(e).__name__} {e}",
+            )
+            sys.exit(1)
 
         if SharedModelManager.manager.compvis is None:
             logger.critical("Failed to initialise SharedModelManager")

@@ -48,6 +48,10 @@ def load_env_vars_from_config() -> None:  # FIXME: there is a dynamic way to do 
         lines = f.readlines()
         found_backslashes = False
         for line in lines:
+            # Comment lines can legitimately contain backslashes (e.g. "# was D:\models");
+            # only values are a problem, so skip full-line comments.
+            if line.lstrip().startswith("#"):
+                continue
             if "\\" in line:
                 print(f"Backslashes found in the following line:\n{line}")
                 found_backslashes = True

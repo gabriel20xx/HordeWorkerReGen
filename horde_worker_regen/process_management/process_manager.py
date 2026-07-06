@@ -2098,8 +2098,8 @@ class HordeWorkerProcessManager:
 
         self.total_ram_bytes = psutil.virtual_memory().total
 
-        self.target_ram_overhead_bytes = target_ram_overhead_bytes
-        self.target_ram_overhead_bytes = min(int(self.total_ram_bytes / 2), 9)
+        # Keep at most half of system RAM as headroom, capped at the requested overhead (9 GB default).
+        self.target_ram_overhead_bytes = min(int(self.total_ram_bytes / 2), target_ram_overhead_bytes)
 
         if any(model in VRAM_HEAVY_MODELS for model in self.bridge_data.image_models_to_load):
             # If the system ram is less than 24GB, then we're going to exit with an error
@@ -2222,6 +2222,10 @@ class HordeWorkerProcessManager:
         # Track per-process-slot restart timestamps for crash-loop rate limiting.
         self._process_restart_history: dict[int, deque[float]] = {}
 
+        # Whether an inference process has already been tasked with downloading the
+        # legacy model reference databases (only the first one launched should).
+        self._legacy_references_download_assigned = False
+
         # Track when an in-progress job was first observed orphaned (its handling process died,
         # was replaced, or hung before completing). Maps job-id str → epoch time first seen
         # orphaned, so _reap_orphaned_in_progress_jobs only faults after a short grace period.
@@ -2273,37 +2277,48 @@ class HordeWorkerProcessManager:
         self._container_cpu_processes: dict[int, psutil.Process] = {self._main_process.pid: self._main_process}
 
         if self.bridge_data.enable_webui:
-            from horde_worker_regen.webui.server import WorkerWebUI
+            # The web UI is an optional monitoring convenience: a failure to import or
+            # construct it (missing/broken aiohttp, unexpected init error) must not take
+            # down the worker — degrade to headless, mirroring the .start() guard in
+            # _main_loop().
+            try:
+                from horde_worker_regen.webui.server import WorkerWebUI
 
-            self.webui = WorkerWebUI(
-                port=self.bridge_data.webui_port,
-                update_interval=self.bridge_data.webui_update_interval,
-                db_path=self._get_model_state_file_path(),
-                data_retention_days=self.bridge_data.data_retention_days,
-            )
-            self.webui.set_delete_worker_callback(self._delete_worker)
-            self.webui.set_job_pops_paused_callback(self.set_job_pops_paused)
-            self.webui.set_max_queue_size_callback(self.set_max_queue_size)
-            self.webui.set_max_active_models_callback(self.set_max_active_models)
-            self.webui.set_queue_size_auto_mode_callback(self.set_queue_size_auto_mode)
-            self.webui.set_max_active_models_auto_mode_callback(self.set_max_active_models_auto_mode)
-            self.webui.set_setting_callback(self.apply_setting)
-            self.webui.set_restart_program_callback(self.request_program_restart)
-            self.webui.set_toggle_model_callback(self._toggle_model)
-            logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
+                self.webui = WorkerWebUI(
+                    port=self.bridge_data.webui_port,
+                    update_interval=self.bridge_data.webui_update_interval,
+                    db_path=self._get_model_state_file_path(),
+                    data_retention_days=self.bridge_data.data_retention_days,
+                )
+                self.webui.set_delete_worker_callback(self._delete_worker)
+                self.webui.set_job_pops_paused_callback(self.set_job_pops_paused)
+                self.webui.set_max_queue_size_callback(self.set_max_queue_size)
+                self.webui.set_max_active_models_callback(self.set_max_active_models)
+                self.webui.set_queue_size_auto_mode_callback(self.set_queue_size_auto_mode)
+                self.webui.set_max_active_models_auto_mode_callback(self.set_max_active_models_auto_mode)
+                self.webui.set_setting_callback(self.apply_setting)
+                self.webui.set_restart_program_callback(self.request_program_restart)
+                self.webui.set_toggle_model_callback(self._toggle_model)
+                logger.info(f"Web UI enabled on port {self.bridge_data.webui_port}")
 
-            # Add a log handler to capture logs for webui with colored output.
-            # Use the same format function and timestamp format as the standard
-            # stderr console sink so the webui log display exactly matches the
-            # standard console output (timestamp, level, message, coloring).
-            webui_format_record = create_level_format_function(time_format="YYYY-MM-DD HH:mm:ss.SSS")
+                # Add a log handler to capture logs for webui with colored output.
+                # Use the same format function and timestamp format as the standard
+                # stderr console sink so the webui log display exactly matches the
+                # standard console output (timestamp, level, message, coloring).
+                webui_format_record = create_level_format_function(time_format="YYYY-MM-DD HH:mm:ss.SSS")
 
-            self._log_handler_id = logger.add(
-                self._capture_log_for_webui,
-                format=webui_format_record,
-                level="INFO",
-                colorize=True,
-            )
+                self._log_handler_id = logger.add(
+                    self._capture_log_for_webui,
+                    format=webui_format_record,
+                    level="INFO",
+                    colorize=True,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Web UI failed to initialise ({type(e).__name__}: {e}). "
+                    "Continuing without the web UI — the worker will keep generating.",
+                )
+                self.webui = None
 
     def _capture_log_for_webui(self, message: str) -> None:
         """Capture log messages for webui display.
@@ -2971,6 +2986,13 @@ class HordeWorkerProcessManager:
         """
         vram_heavy_models = any(model in VRAM_HEAVY_MODELS for model in self.bridge_data.image_models_to_load)
 
+        # Exactly one inference process per worker run should download the legacy model
+        # reference databases. Decide it here in the parent: the historical child-side
+        # `process_id == 1` heuristic breaks when the safety process count is not 1 and
+        # never re-fires for replacement processes.
+        download_legacy_references = not self._legacy_references_download_assigned
+        self._legacy_references_download_assigned = True
+
         pipe_connection, child_pipe_connection = multiprocessing.Pipe(duplex=True)
         # Create a new process that will run the start_inference_process function
         process = multiprocessing.Process(
@@ -2991,6 +3013,7 @@ class HordeWorkerProcessManager:
                 "amd_gpu": self._amd_gpu,
                 "directml": self._directml,
                 "vram_heavy_models": vram_heavy_models,
+                "download_legacy_references": download_legacy_references,
             },
         )
         process.start()
@@ -7338,8 +7361,20 @@ class HordeWorkerProcessManager:
     _replaced_due_to_maintenance = False
 
     async def _process_control_loop(self) -> None:
-        self.start_safety_processes()
-        self.start_inference_processes()
+        # If spawning the child processes fails (out of memory/page file, fork/spawn refused,
+        # import failure re-raised by multiprocessing, ...), initiate a shutdown instead of
+        # letting only this task die: the API loops would otherwise keep popping jobs that
+        # nothing can ever process, leaving a zombie worker.
+        try:
+            self.start_safety_processes()
+            self.start_inference_processes()
+        except Exception:
+            logger.critical(
+                "Failed to start worker child processes during startup — shutting down. "
+                "(Common causes: insufficient RAM/page file, or the OS refusing to spawn new processes.)",
+            )
+            self._shutdown()
+            raise
 
         while True:
             try:

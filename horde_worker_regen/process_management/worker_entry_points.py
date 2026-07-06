@@ -29,7 +29,13 @@ def _suppress_cuda_init_noise() -> Generator[None, None, None]:
     initial hordelib import; loguru's own sink is unaffected because it writes through
     sys.stderr, which is restored before any logging occurs.
     """
-    saved_fd2 = os.dup(2)
+    try:
+        saved_fd2 = os.dup(2)
+    except OSError:
+        # fd 2 is not a valid/dup-able descriptor (detached process, pythonw, closed
+        # stderr) — there is nothing to silence, so run the block unmodified.
+        yield
+        return
     try:
         devnull_fd = os.open(os.devnull, os.O_WRONLY)
         try:
@@ -75,6 +81,7 @@ def start_inference_process(
     amd_gpu: bool = False,
     directml: int | None = None,
     vram_heavy_models: bool = False,
+    download_legacy_references: bool | None = None,
 ) -> None:
     """Start an inference process.
 
@@ -96,8 +103,16 @@ def start_inference_process(
         directml (int | None, optional): If not None, the process will attempt to use DirectML \
             with the specified device
         vram_heavy_models (bool, optional): If true, the process will attempt to reserve more VRAM. Defaults to False.
+        download_legacy_references (bool | None, optional): Whether this process should download the legacy model \
+            reference databases. When None, falls back to the historical `process_id == 1` heuristic.
     """
     logger.remove()
+    # Temporary bootstrap sink: until _initialize_horde_logging() sets up the real sinks,
+    # loguru has NO handlers, so a failure in the hordelib import below would be silently
+    # dropped and the child would die with no recorded reason. configure_logger_format()
+    # calls logger.remove() itself, which disposes of this sink once real logging is up.
+    with contextlib.suppress(Exception):
+        logger.add(sys.stderr, level="INFO")
 
     # Prevent ONNX Runtime from attempting to set CPU thread affinity, which fails in containers
     # and restricted environments with error: "pthread_setaffinity_np failed ... Invalid argument"
@@ -174,6 +189,14 @@ def start_inference_process(
 
     except Exception as e:
         logger.critical(f"Failed to initialise hordelib: {type(e).__name__} {e}")
+        # Last-resort channel: if the failure happened while logging sinks were being
+        # (re)configured, the logger.critical above may have had no sink to write to.
+        print(
+            f"CRITICAL: inference process {process_id} failed to initialise hordelib: "
+            f"{type(e).__name__} {e}",
+            file=sys.stderr,
+            flush=True,
+        )
         sys.exit(1)
 
     from horde_worker_regen.process_management.inference_process import HordeInferenceProcess
@@ -187,6 +210,8 @@ def start_inference_process(
         aux_model_lock=aux_model_lock,
         vae_decode_semaphore=vae_decode_semaphore,
         process_launch_identifier=process_launch_identifier,
+        high_memory_mode=high_memory_mode,
+        download_legacy_references=download_legacy_references,
     )
 
     worker_process.main_loop()
@@ -220,6 +245,10 @@ def start_safety_process(
             with the specified device
     """
     logger.remove()
+    # Temporary bootstrap sink — same rationale as in start_inference_process(): without
+    # it, a failure during logging initialisation below would be silently dropped.
+    with contextlib.suppress(Exception):
+        logger.add(sys.stderr, level="INFO")
 
     try:
         _initialize_horde_logging(process_id)
@@ -236,6 +265,12 @@ def start_safety_process(
 
     except Exception as e:
         logger.critical(f"Failed to initialise: {type(e).__name__} {e}")
+        # Last-resort channel in case logging sinks were mid-(re)configuration.
+        print(
+            f"CRITICAL: safety process {process_id} failed to initialise: {type(e).__name__} {e}",
+            file=sys.stderr,
+            flush=True,
+        )
         sys.exit(1)
 
     from horde_worker_regen.process_management.safety_process import HordeSafetyProcess
@@ -246,13 +281,20 @@ def start_safety_process(
         f"cpu_only={cpu_only}, high_memory_mode={high_memory_mode} "
         f"and amd_gpu={amd_gpu}",
     )
-    worker_process = HordeSafetyProcess(
-        process_id=process_id,
-        process_message_queue=process_message_queue,
-        pipe_connection=pipe_connection,
-        disk_lock=disk_lock,
-        process_launch_identifier=process_launch_identifier,
-        cpu_only=cpu_only,
-    )
+    # HordeSafetyProcess.__init__ re-raises on failure (e.g. horde_safety import/model
+    # download errors) — exit cleanly with a logged cause instead of dying with an
+    # unhandled exception, matching the inference process behaviour.
+    try:
+        worker_process = HordeSafetyProcess(
+            process_id=process_id,
+            process_message_queue=process_message_queue,
+            pipe_connection=pipe_connection,
+            disk_lock=disk_lock,
+            process_launch_identifier=process_launch_identifier,
+            cpu_only=cpu_only,
+        )
+    except Exception as e:
+        logger.critical(f"Failed to initialise the safety process: {type(e).__name__} {e}")
+        sys.exit(1)
 
     worker_process.main_loop()

@@ -80,7 +80,11 @@ def download_all_models(
             )
     except Exception as e:
         logger.error(e)
-        input("Press any key to exit...")
+        # stdin is closed in non-interactive environments (Docker, CI) — don't crash on EOFError.
+        try:
+            input("Press any key to exit...")
+        except EOFError:
+            pass
 
     if bridge_data is None:
         logger.error("Failed to load bridge data")

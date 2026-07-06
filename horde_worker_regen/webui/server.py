@@ -7946,14 +7946,29 @@ class WorkerWebUI:
             await self.runner.setup()
             self.site = web.TCPSite(self.runner, "0.0.0.0", self.port)
             await self.site.start()
-            # Update self.port to the actual bound port (relevant when port=0 lets the OS pick).
-            if self.site._server and self.site._server.sockets:
-                self.port = self.site._server.sockets[0].getsockname()[1]
+            # Update self.port to the actual bound port (only needed when port=0 lets the
+            # OS pick). `_server` is a private aiohttp attribute — access it defensively so
+            # an aiohttp-internal rename can never fail a server that already bound fine.
+            if self.port == 0:
+                _server = getattr(self.site, "_server", None)
+                _sockets = getattr(_server, "sockets", None) if _server is not None else None
+                if _sockets:
+                    self.port = _sockets[0].getsockname()[1]
             logger.info(f"Web UI started at http://0.0.0.0:{self.port}")
             self._horde_bg_task = asyncio.create_task(self._poll_horde_network())
+            self._horde_bg_task.add_done_callback(self._log_bg_task_exception)
         except Exception as e:
             logger.error(f"Failed to start web UI server: {e}")
             raise
+
+    @staticmethod
+    def _log_bg_task_exception(task: asyncio.Task) -> None:
+        """Log an exception that escaped the horde polling task instead of losing it silently."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(f"Web UI horde polling task ended with an error: {type(exc).__name__}: {exc}")
 
     async def stop(self) -> None:
         """Stop the web server."""

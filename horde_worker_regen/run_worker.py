@@ -37,8 +37,12 @@ def main(
     *,
     amd_gpu: bool = False,
     directml: int | None = None,
-) -> None:
-    """Check for a valid config and start the driver ('main') process for the reGen worker."""
+) -> int:
+    """Check for a valid config and start the driver ('main') process for the reGen worker.
+
+    Returns:
+        int: Exit code (0 for success, non-zero when startup failed).
+    """
     from horde_model_reference.meta_consts import MODEL_REFERENCE_CATEGORY
     from horde_model_reference.model_reference_manager import ModelReferenceManager
     from pydantic import ValidationError
@@ -98,7 +102,7 @@ def main(
                 )
 
                 logger.error("Exiting...")
-                return
+                return 1
         else:
             bridge_data = BridgeDataLoader.load(
                 file_path=BRIDGE_CONFIG_FILENAME,
@@ -110,7 +114,7 @@ def main(
             input("Press Enter to exit...")
         except EOFError:
             pass
-        return
+        return 1
     except Exception as e:
         logger.exception(e)
 
@@ -128,11 +132,11 @@ def main(
             input("Press Enter to exit...")
         except EOFError:
             pass
-        return
+        return 1
 
     if not bridge_data:
         logger.error("Failed to load bridge data. Exiting...")
-        return
+        return 1
 
     bridge_data.load_env_vars()
 
@@ -146,6 +150,7 @@ def main(
 
     logger.info("Worker has finished working.")
     logger.info("Exiting...")
+    return 0
 
 
 class LogConsoleRewriter(io.StringIO):
@@ -401,14 +406,12 @@ def init() -> int:
 
     # We only need to download the legacy DBs once, so we do it here instead of in the worker processes
 
-    main(
+    return main(
         multiprocessing.get_context("spawn"),
         args.load_config_from_env_vars,
         amd_gpu=args.amd,
         directml=args.directml,
     )
-
-    return 0
 
 
 if __name__ == "__main__":

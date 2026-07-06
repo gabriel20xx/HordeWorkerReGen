@@ -165,7 +165,12 @@ def _check_version_requirements(version_meta: VersionMeta) -> None:
             if reason_for_update_str:
                 logger.error(reason_for_update_str)
 
-            input("Press Enter to continue...")
+            # In non-interactive environments (Docker, CI) stdin is closed and input()
+            # raises EOFError — exit cleanly with the message above instead of a traceback.
+            try:
+                input("Press Enter to continue...")
+            except EOFError:
+                pass
             exit(1)
 
     if not _compare_versions(horde_worker_regen.__version__, version_meta.recommended_version) >= 0:

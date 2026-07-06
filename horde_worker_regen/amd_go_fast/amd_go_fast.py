@@ -1,7 +1,16 @@
 import torch
 from loguru import logger
 
-if "AMD" in torch.cuda.get_device_name() or "Radeon" in torch.cuda.get_device_name():
+# torch.cuda.get_device_name() raises RuntimeError when no CUDA/ROCm device is visible
+# (no GPU, CPU-only box, CUDA_VISIBLE_DEVICES="", DirectML-only). This module is imported
+# during hordelib initialisation, so an unguarded query would crash the inference process
+# at startup on such machines — fall back to "no AMD GPU" instead.
+try:
+    _device_name = torch.cuda.get_device_name() if torch.cuda.is_available() else ""
+except Exception:
+    _device_name = ""
+
+if "AMD" in _device_name or "Radeon" in _device_name:
     try:  # this import is handled via  script, skipping it in mypy. If this fails somehow the module will simply not run.
         from flash_attn import flash_attn_func  # type: ignore
 
@@ -37,4 +46,4 @@ if "AMD" in torch.cuda.get_device_name() or "Radeon" in torch.cuda.get_device_na
     except ImportError as e:
         logger.debug(f"# # # AMD GO SLOW {e} # # #")
 else:
-    logger.debug(f"# # # AMD GO SLOW Could not detect AMD GPU from: {torch.cuda.get_device_name()} # # #")
+    logger.debug(f"# # # AMD GO SLOW Could not detect AMD GPU from: {_device_name!r} # # #")
