@@ -355,6 +355,16 @@ def init() -> int:
         # if 'load_config_from_env_vars' is True, then we are ignoring the config file
         load_env_vars_from_config()
 
+    # Remove stale annotator files from hordelib's legacy package directory before any
+    # process calls hordelib's preload_annotators(), which emits a startup WARNING for
+    # each file it finds there ("This file can be safely deleted").
+    try:
+        from horde_worker_regen.download_models import remove_legacy_annotators
+
+        remove_legacy_annotators()
+    except Exception as e:
+        logger.debug(f"Could not clean up legacy annotator files: {type(e).__name__}: {e}")
+
     from horde_worker_regen.version_meta import do_version_check
 
     do_version_check()

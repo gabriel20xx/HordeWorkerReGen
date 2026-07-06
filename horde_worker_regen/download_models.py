@@ -4,25 +4,53 @@ import importlib.util
 import pathlib
 import warnings
 
-# Files that hordelib used to bundle inside its package that have since moved.
-_HORDELIB_LEGACY_ANNOTATOR_FILES = [
-    "nodes/comfy_controlnet_preprocessors/ckpts/dpt_hybrid-midas-501f0c75.pt",
+# Directory inside the hordelib package where annotator models used to live. Annotators are
+# stored in the model cache nowadays; hordelib's preload_annotators() warns on startup for
+# every model file it still finds here ("This file can be safely deleted").
+_HORDELIB_LEGACY_CKPTS_DIR = ("nodes", "comfy_controlnet_preprocessors", "ckpts")
+
+# Model files and interrupted-download leftovers (*.partial) in the legacy directory.
+_HORDELIB_LEGACY_ANNOTATOR_GLOBS = [
+    "*.pt",
+    "*.pth",
+    "*.ckpt",
+    "*.safetensors",
+    "*.partial",
 ]
 
 
-def _remove_legacy_annotators() -> None:
-    """Delete stale annotator files that hordelib moved out of its package directory."""
+def remove_legacy_annotators() -> None:
+    """Delete stale annotator files that hordelib moved out of its package directory.
+
+    hordelib warns about each of these on startup and states they can be safely deleted,
+    so this silences the warnings by doing exactly that. Called both by the model download
+    script and by worker startup.
+    """
     spec = importlib.util.find_spec("hordelib")
     if spec is None or not spec.origin:
         return
-    pkg_root = pathlib.Path(spec.origin).parent
-    for rel in _HORDELIB_LEGACY_ANNOTATOR_FILES:
-        legacy = pkg_root / rel
-        if legacy.exists():
+    ckpts_dir = pathlib.Path(spec.origin).parent.joinpath(*_HORDELIB_LEGACY_CKPTS_DIR)
+    if not ckpts_dir.is_dir():
+        return
+
+    removed: list[str] = []
+    for pattern in _HORDELIB_LEGACY_ANNOTATOR_GLOBS:
+        for legacy in ckpts_dir.glob(pattern):
+            if not legacy.is_file():
+                continue
             try:
                 legacy.unlink()
+                removed.append(legacy.name)
             except OSError:
                 pass
+
+    if removed:
+        from loguru import logger
+
+        logger.info(
+            f"Removed {len(removed)} legacy annotator file(s) from the hordelib package directory: "
+            f"{', '.join(sorted(removed))}",
+        )
 
 
 def download_all_models(
@@ -163,7 +191,7 @@ def download_all_models(
                 continue
 
             SharedModelManager.manager.controlnet.download_model(cn_model)
-        _remove_legacy_annotators()
+        remove_legacy_annotators()
         if not SharedModelManager.preload_annotators():
             logger.error("Failed to download the controlnet annotators")
             exit(1)
