@@ -966,11 +966,13 @@ def test_webui_gallery_entry_cap_without_db(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_webui_gallery_startup_never_loads_fullres(tmp_path: pathlib.Path) -> None:
-    """Rows without thumbnails must load as metadata-only — never with full-res base64 in RAM.
+    """Startup must restore gallery rows as metadata-only — no image data in RAM at all.
 
-    Before this bound existed, a large retention window full of thumbnail-less rows
-    (e.g. created before thumbnail support) would load every full-resolution image into
-    memory at startup and OOM the worker.
+    Before this bound existed, startup loaded every in-retention row's image columns:
+    full-resolution base64 could OOM the worker, and even thumbnail-only loading forced
+    SQLite to walk each row's base64_data overflow pages (a full-file read that stalled
+    startup for minutes on large galleries). Both stay in the DB now and are fetched on
+    demand per page.
     """
     import time
 
@@ -981,11 +983,13 @@ def test_webui_gallery_startup_never_loads_fullres(tmp_path: pathlib.Path) -> No
 
     webui2 = WorkerWebUI(port=0, db_path=str(tmp_path))
     assert len(webui2._gallery_dict) == 2
-    assert webui2._gallery_dict[0].get("thumbnail") == "thumbA"
+    # Both rows are metadata-only in RAM; image data stays in the DB.
     assert "base64" not in webui2._gallery_dict[0]
-    # The thumbnail-less row is metadata-only in RAM; the full image stays in the DB.
+    assert "thumbnail" not in webui2._gallery_dict[0]
     assert "base64" not in webui2._gallery_dict[1]
     assert "thumbnail" not in webui2._gallery_dict[1]
+    # Image data remains available on demand via the lazy fetch paths.
+    assert webui2._fetch_gallery_thumbnails_from_db([0]).get(0) == "thumbA"
     assert webui2._fetch_gallery_base64_from_db(1) == "notapngB"
 
 
@@ -3993,6 +3997,53 @@ def test_webui_db_next_gallery_id_restored_from_expired_rows(tmp_path: pathlib.P
     webui2 = WorkerWebUI(port=0, db_path=db_dir)
     assert webui2._gallery_dict == {}, "expired rows should not be loaded into memory"
     assert webui2._next_gallery_id == 100, "_next_gallery_id must be MAX(gallery_id)+1 from DB"
+
+
+def test_webui_gallery_startup_load_is_metadata_only_and_bounded(tmp_path: pathlib.Path) -> None:
+    """The startup gallery load must fetch bounded, metadata-only rows — never image blobs.
+
+    The previous implementation fetched every in-retention row INCLUDING thumbnail blobs
+    via fetchall() and only then trimmed in Python. Because the metadata and thumbnail
+    columns sit after the multi-MB base64_data blob in each record, that amounted to a
+    full-file read which silently stalled worker startup for minutes once the gallery
+    database grew large. Thumbnails are now fetched lazily per page instead.
+    """
+    import sqlite3
+    import time
+    from unittest.mock import patch
+
+    db_dir = str(tmp_path)
+    gallery_db = str(tmp_path / "webui_gallery.db")
+
+    WorkerWebUI(port=0, db_path=db_dir)  # initialise the schema
+
+    now = time.time()
+    with sqlite3.connect(gallery_db) as conn:
+        for i in range(30):
+            conn.execute(
+                "INSERT INTO gallery_images"
+                " (gallery_id, timestamp, model, base64_data, thumbnail, is_nsfw, is_csam, extra_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (i, now - (30 - i), f"model_{i}", "full_image_data", f"thumb_{i}", 0, 0, '{"seed": 1}'),
+            )
+        conn.commit()
+
+    with patch("horde_worker_regen.webui.server._MAX_GALLERY_ENTRIES_WITH_DB", 20):
+        webui = WorkerWebUI(port=0, db_path=db_dir)
+
+    # Only the newest 20 rows (gallery_ids 10..29) are loaded; the oldest are dropped in SQL.
+    assert set(webui._gallery_dict.keys()) == set(range(10, 30))
+    # Metadata (including extra_json keys) is restored...
+    assert webui._gallery_dict[10]["model"] == "model_10"
+    assert webui._gallery_dict[29]["seed"] == 1
+    # ...but no image data is preloaded into memory at startup.
+    for entry in webui._gallery_dict.values():
+        assert "thumbnail" not in entry
+        assert "base64" not in entry
+    # Thumbnails remain available on demand via the lazy per-page fetch path.
+    lazy_thumbnails = webui._fetch_gallery_thumbnails_from_db([29, 10])
+    assert lazy_thumbnails.get(29) == "thumb_29"
+    assert lazy_thumbnails.get(10) == "thumb_10"
 
 
 def test_webui_db_restores_stats_snapshots(tmp_path: pathlib.Path) -> None:

@@ -280,9 +280,18 @@ class WorkerWebUI:
         }
 
         if self._errors_db_path is not None:
+            # INFO before the load, not after: this phase reads the errors/stats/gallery
+            # databases and has historically been the silent multi-minute gap in startup
+            # logs when those files grew large. Announcing it first means a stall here is
+            # attributable from the log instead of looking like a hang.
+            logger.info("Loading persisted web UI data (errors, stats, gallery)...")
+            _load_started = time.monotonic()
             self._init_db()
             self._load_persisted_data()
             self._load_session_baseline()
+            _load_elapsed = time.monotonic() - _load_started
+            log_persisted_load = logger.info if _load_elapsed >= 2.0 else logger.debug
+            log_persisted_load(f"Persisted web UI data loaded in {_load_elapsed:.1f}s")
         self._load_persisted_settings()
 
         # Status data that will be updated by the worker
@@ -535,6 +544,19 @@ class WorkerWebUI:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_gallery_timestamp ON gallery_images (timestamp)",
                 )
+                # Covering index for the startup metadata load. The metadata columns
+                # (is_nsfw, is_csam, extra_json) physically sit AFTER the multi-MB
+                # base64_data blob in each table record, so reading them from the table
+                # forces SQLite to walk every row's overflow-page chain — effectively a
+                # full-file read that silently stalled startup for minutes on large
+                # galleries. With this index the load is an index-only scan that never
+                # touches the image blobs. Building it on an existing large DB pays that
+                # full read once, inside the announced "Loading persisted web UI data"
+                # phase; afterwards startups are fast.
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_gallery_meta ON gallery_images "
+                    "(timestamp, id, gallery_id, model, is_nsfw, is_csam, extra_json)",
+                )
                 conn.commit()
 
         except Exception as exc:  # noqa: BLE001
@@ -586,40 +608,37 @@ class WorkerWebUI:
                 max_id_row = conn.execute("SELECT MAX(gallery_id) FROM gallery_images").fetchone()
                 if max_id_row and max_id_row[0] is not None:
                     self._persisted_max_gallery_id = int(max_id_row[0])
-                # Deliberately never SELECT base64_data here: full-resolution images are
-                # several MB each and loading them for every in-retention row can OOM the
-                # worker at startup. They stay in the DB and are fetched on demand by
-                # _handle_gallery_image / _handle_gallery_last_batch.
+                # Load lightweight metadata ONLY — never base64_data (several MB per row,
+                # can OOM the worker) and never thumbnails (tens of KB per row, and
+                # reaching the thumbnail column requires SQLite to walk past each row's
+                # base64_data overflow pages — a full-file read that silently stalled
+                # startup for minutes on large galleries). Thumbnails are fetched lazily,
+                # per page, by _handle_gallery / _handle_gallery_image via
+                # _fetch_gallery_thumbnails_from_db. The row count is bounded in SQL, and
+                # the column list matches the idx_gallery_meta covering index so this is
+                # an index-only scan that never touches the image blobs.
                 rows = conn.execute(
-                    "SELECT gallery_id, timestamp, model, thumbnail, is_nsfw, is_csam, extra_json "
-                    "FROM gallery_images WHERE timestamp >= ? ORDER BY timestamp ASC, id ASC",
-                    (cutoff,),
+                    "SELECT gallery_id, timestamp, model, is_nsfw, is_csam, extra_json FROM ("
+                    "SELECT id, gallery_id, timestamp, model, is_nsfw, is_csam, extra_json "
+                    "FROM gallery_images WHERE timestamp >= ?"
+                    " ORDER BY timestamp DESC, id DESC LIMIT ?"
+                    ") ORDER BY timestamp ASC, id ASC",
+                    (cutoff, _MAX_GALLERY_ENTRIES_WITH_DB),
                 ).fetchall()
                 for row in rows:
                     entry: dict[str, Any] = {
                         "gallery_id": row[0],
                         "timestamp": row[1],
                         "model": row[2],
-                        "is_nsfw": bool(row[4]),
-                        "is_csam": bool(row[5]),
+                        "is_nsfw": bool(row[3]),
+                        "is_csam": bool(row[4]),
                     }
-                    if row[3] is not None:
-                        entry["thumbnail"] = row[3]
-                    if row[6]:
+                    if row[5]:
                         try:
-                            entry.update(json.loads(row[6]))
+                            entry.update(json.loads(row[5]))
                         except (ValueError, TypeError):
                             pass
                     self._persisted_gallery.append(entry)
-                # Keep thumbnails in RAM only for the newest entries; older ones are
-                # re-fetched from the DB on demand. Rows are ordered oldest-first, so
-                # everything before the last _MAX_THUMBNAILS_IN_MEMORY gets stripped.
-                for old_entry in self._persisted_gallery[:-_MAX_THUMBNAILS_IN_MEMORY]:
-                    old_entry.pop("thumbnail", None)
-                # Bound the metadata itself as well — with multi-year retention windows
-                # even thumbnail-less entries can reach millions of rows.
-                if len(self._persisted_gallery) > _MAX_GALLERY_ENTRIES_WITH_DB:
-                    self._persisted_gallery = self._persisted_gallery[-_MAX_GALLERY_ENTRIES_WITH_DB:]
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not load gallery from '{self._gallery_db_path}': {exc}")
 

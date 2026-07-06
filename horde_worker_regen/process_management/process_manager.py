@@ -2236,6 +2236,7 @@ class HordeWorkerProcessManager:
 
         self.stable_diffusion_reference = None
 
+        _references_load_started = time.monotonic()
         while self.stable_diffusion_reference is None:
             try:
                 horde_model_reference_manager = ModelReferenceManager(
@@ -2254,6 +2255,9 @@ class HordeWorkerProcessManager:
             except Exception as e:
                 logger.error(e)
                 time.sleep(5)
+        _references_load_elapsed = time.monotonic() - _references_load_started
+        if _references_load_elapsed >= 5.0:
+            logger.info(f"Model reference database loaded in {_references_load_elapsed:.1f}s")
 
         # Initialize web UI if enabled
         self.webui: WorkerWebUI | None = None  # noqa: F823
