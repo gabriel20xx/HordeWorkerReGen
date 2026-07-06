@@ -8964,15 +8964,30 @@ class HordeWorkerProcessManager:
         queue feeder thread at process exit (which would otherwise block), and closes any
         open pipe connections so the process-map entries are properly released.
         """
+        from multiprocessing.resource_tracker import unregister as _rt_unregister
         from multiprocessing.synchronize import SemLock
 
         def _try_cleanup_sem(sem_or_lock: Any) -> None:
             try:
                 name = sem_or_lock._semlock.name
-                if name is not None:
-                    SemLock._cleanup(name)
             except Exception as exc:
-                logger.debug("Failed to clean up semaphore %r: %s", sem_or_lock, exc)
+                logger.debug("Failed to read semaphore name for %r: %s", sem_or_lock, exc)
+                return
+            if name is None:
+                return
+            try:
+                # SemLock._cleanup() does sem_unlink(name) followed by resource_tracker.unregister().
+                # sem_unlink() can raise (e.g. FileNotFoundError) if the name was already unlinked by
+                # a child process's own finalizer racing with this cleanup -- that must not skip the
+                # unregister() call below, or the tracker's cache entry survives and it warns about a
+                # "leaked" semaphore at shutdown even though the underlying resource is already gone.
+                SemLock._cleanup(name)
+            except Exception as exc:
+                logger.debug("sem_unlink failed for %r (already unlinked?): %s", sem_or_lock, exc)
+                try:
+                    _rt_unregister(name, "semaphore")
+                except Exception as exc2:
+                    logger.debug("Failed to unregister semaphore %r: %s", sem_or_lock, exc2)
 
         _try_cleanup_sem(self._inference_semaphore)
         _try_cleanup_sem(self._vae_decode_semaphore)
@@ -9194,6 +9209,15 @@ class HordeWorkerProcessManager:
                         logger.error(f"Failed to kill process {process}: {e}")
             except Exception:
                 logger.exception("Unexpected error during hard shutdown; forcing exit anyway")
+
+            # os._exit() skips atexit/Finalize callbacks just like os.execv() does, so named
+            # semaphores/locks would otherwise be left registered with the resource tracker
+            # (see _cleanup_shared_resources()'s docstring). Best-effort only: this is the
+            # last-resort force-kill path and must still exit even if cleanup itself errors.
+            try:
+                self._cleanup_shared_resources()
+            except Exception:
+                logger.exception("Unexpected error cleaning up shared resources during hard shutdown")
 
             # Use os._exit instead of sys.exit because sys.exit only raises SystemExit
             # which, when called from a non-main thread, only terminates that thread.

@@ -699,6 +699,48 @@ def test_start_timed_shutdown_wait_seconds_caps_at_30(
     mock_exit.assert_not_called()
 
 
+def test_start_timed_shutdown_hard_exit_cleans_up_shared_resources() -> None:
+    """The watchdog force-kill path must clean up shared semaphores before os._exit().
+
+    os._exit() skips atexit/Finalize callbacks just like os.execv() does, so without an
+    explicit call here, named semaphores/locks are left registered with the resource
+    tracker and it warns about "leaked" semaphores at shutdown.
+    """
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    class ImmediateThread:
+        def __init__(self, *, target: object, daemon: bool) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+    mock_manager = MagicMock()
+    mock_manager.jobs_pending_submit = []
+    mock_manager._shutting_down = True
+    mock_manager._shut_down = False
+    mock_manager._restart_requested = False
+    mock_manager.bridge_data.force_restart_timeout = 30
+    mock_manager._process_map.values.return_value = []
+
+    call_order: list[str] = []
+    mock_manager._cleanup_shared_resources.side_effect = lambda: call_order.append("cleanup")
+
+    bound = HordeWorkerProcessManager._start_timed_shutdown.__get__(mock_manager, HordeWorkerProcessManager)
+
+    with (
+        patch("threading.Thread", side_effect=ImmediateThread),
+        patch("time.sleep"),
+        patch("os._exit", side_effect=lambda *_: call_order.append("exit")) as mock_exit,
+    ):
+        bound()
+
+    mock_manager._cleanup_shared_resources.assert_called_once()
+    mock_exit.assert_called_once_with(1)
+    assert call_order == ["cleanup", "exit"], "_cleanup_shared_resources() must be called before os._exit()"
+
+
 class TestCheckAutoRestartOnIdle:
     """Tests for _check_auto_restart_on_idle()."""
 
