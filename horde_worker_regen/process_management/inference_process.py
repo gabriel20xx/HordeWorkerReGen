@@ -229,34 +229,57 @@ class HordeInferenceProcess(HordeProcess):
         *,
         max_attempts: int = 3,
         retry_delay_seconds: float = 3.0,
+        overall_deadline_seconds: float = 120.0,
     ) -> None:
         """Download the legacy model reference JSON files, retrying categories that fail.
 
         Each category (controlnet, safety_checker, etc.) is fetched with its own plain HTTP GET
         and no retry logic upstream, so a single transient network blip or GitHub rate limit is
         enough to leave that category's cached reference file stale or missing until the worker is
-        restarted. Retrying here, keyed on whether the target file actually exists afterward (not
-        the ambiguous return value, which is also None when a fresh copy already existed), lets a
-        one-off failure self-heal within the same startup instead of requiring a restart.
+        restarted. Retrying here lets a one-off failure self-heal within the same startup.
+
+        The GET is performed directly rather than via ``LegacyReferenceDownloadManager`` because
+        upstream's ``requests.get`` has NO timeout: against a wedged gateway each attempt would
+        hang indefinitely and stall worker startup for many minutes. Per-request timeouts plus
+        ``overall_deadline_seconds`` bound the total time this refresh can add to process init;
+        anything not refreshed in time falls back to the existing cached copy.
         """
+        import requests
+
         from horde_model_reference.legacy.legacy_download_manager import LegacyReferenceDownloadManager
         from horde_model_reference.meta_consts import MODEL_REFERENCE_CATEGORY
-        from horde_model_reference.path_consts import get_model_reference_file_path
+        from horde_model_reference.path_consts import LEGACY_MODEL_GITHUB_URLS, get_model_reference_file_path
 
         download_manager = LegacyReferenceDownloadManager()
+        deadline = time.monotonic() + overall_deadline_seconds
 
         for category in MODEL_REFERENCE_CATEGORY:
+            if time.monotonic() > deadline:
+                logger.warning(
+                    f"Legacy model reference refresh exceeded its {overall_deadline_seconds:.0f}s budget; "
+                    "continuing startup with existing cached copies for the remaining categories.",
+                )
+                break
+
             target_path = get_model_reference_file_path(category, base_path=download_manager.legacy_path)
+            url = download_manager.proxy_url + LEGACY_MODEL_GITHUB_URLS[category]
+
             for attempt in range(1, max_attempts + 1):
                 try:
-                    download_manager.download_legacy_model_reference(
-                        model_category_name=category,
-                        override_existing=True,
-                    )
+                    response = requests.get(url, timeout=(10, 30))
+                    if response.status_code != 200:
+                        raise RuntimeError(f"HTTP {response.status_code}")
+                    json.loads(response.content)  # reject HTML error pages and truncated bodies
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    target_path.write_bytes(response.content)
+                    break
                 except Exception as e:
-                    logger.debug(f"Error downloading {category} legacy model reference: {type(e).__name__} {e}")
+                    logger.debug(
+                        f"Error downloading {category} legacy model reference "
+                        f"(attempt {attempt}/{max_attempts}): {type(e).__name__} {e}",
+                    )
 
-                if target_path.exists():
+                if time.monotonic() > deadline:
                     break
 
                 if attempt < max_attempts:

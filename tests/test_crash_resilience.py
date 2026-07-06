@@ -741,6 +741,175 @@ def test_start_timed_shutdown_hard_exit_cleans_up_shared_resources() -> None:
     assert call_order == ["cleanup", "exit"], "_cleanup_shared_resources() must be called before os._exit()"
 
 
+def _make_api_job_pop_mock_manager() -> MagicMock:
+    """Build a mock manager whose state passes every api_job_pop gate up to the HTTP request."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+
+    mock_manager._shutting_down = False
+    mock_manager._job_pops_paused = False
+    mock_manager._job_pops_pause_until = None
+    mock_manager.horde_client_session = MagicMock()
+    mock_manager._too_many_consecutive_failed_jobs = False
+    mock_manager._consecutive_failed_jobs = 0
+    mock_manager._consecutive_pop_failures = 0
+    mock_manager._consecutive_pop_failure_warn_threshold = 3
+    mock_manager._job_pop_frequency = 0.0
+    mock_manager._error_job_pop_frequency = 5.0
+    mock_manager._default_job_pop_frequency = 4.0
+    mock_manager._last_pop_maintenance_mode = False
+    mock_manager._replaced_due_to_maintenance = False
+    mock_manager.bridge_data.queue_size = 5
+    mock_manager.bridge_data.max_threads = 1
+    mock_manager.jobs_pending_inference = []
+    mock_manager.jobs_in_progress = []
+    mock_manager.jobs_pending_submit = []
+    mock_manager.max_queue_size = 5
+    mock_manager._process_map.get_first_available_safety_process.return_value = MagicMock()
+    mock_manager._process_map.get_first_available_inference_process.return_value = MagicMock()
+    mock_manager.bridge_data.image_models_to_load = ["test_model"]
+    mock_manager.should_wait_for_pending_megapixelsteps.return_value = False
+    mock_manager._triggered_max_pending_megapixelsteps = False
+    mock_manager._last_job_pop_time = 0.0
+    mock_manager.bridge_data.horde_model_stickiness = 0
+    mock_manager.bridge_data.custom_models = None
+    mock_manager.bridge_data.api_key = "0" * 22  # must be 22 characters
+    mock_manager.bridge_data.dreamer_worker_name = "test_worker"
+    mock_manager.bridge_data.blacklist = []
+    mock_manager.bridge_data.nsfw = False
+    mock_manager.max_concurrent_inference_processes = 1
+    mock_manager.bridge_data.max_power = 8
+    mock_manager.bridge_data.require_upfront_kudos = False
+    mock_manager.bridge_data.allow_img2img = True
+    mock_manager.bridge_data.allow_inpainting = True
+    mock_manager.bridge_data.allow_unsafe_ip = False
+    mock_manager.bridge_data.allow_post_processing = True
+    mock_manager.bridge_data.allow_controlnet = True
+    mock_manager.bridge_data.allow_sdxl_controlnet = False
+    mock_manager.bridge_data.extra_slow_worker = False
+    mock_manager.bridge_data.limit_max_steps = False
+    mock_manager.bridge_data.allow_lora = True
+    mock_manager.bridge_data.max_batch = 1
+    mock_manager.max_inference_processes = 1
+
+    # Inference-failure cooldown: no models in cooldown
+    mock_manager._inference_failures = {}
+    mock_manager._INFERENCE_FAILURE_THRESHOLD = HordeWorkerProcessManager._INFERENCE_FAILURE_THRESHOLD
+    mock_manager._INFERENCE_FAILURE_WINDOW = HordeWorkerProcessManager._INFERENCE_FAILURE_WINDOW
+    mock_manager._INFERENCE_FAILURE_COOLDOWN = HordeWorkerProcessManager._INFERENCE_FAILURE_COOLDOWN
+    mock_manager._last_warned_inference_cooldown_models = frozenset()
+    mock_manager._last_warned_inference_cooldown_at = 0.0
+    mock_manager._prune_preload_stuck_failures = types.MethodType(
+        HordeWorkerProcessManager._prune_preload_stuck_failures,
+        mock_manager,
+    )
+    mock_manager._is_model_in_inference_cooldown = types.MethodType(
+        HordeWorkerProcessManager._is_model_in_inference_cooldown,
+        mock_manager,
+    )
+
+    return mock_manager
+
+
+def test_api_job_pop_times_out_instead_of_hanging() -> None:
+    """A job-pop request that never gets a response must fail within _JOB_POP_TIMEOUT_SECONDS.
+
+    horde_sdk passes no per-request timeout to aiohttp, so a wedged gateway that accepts the
+    connection but never responds used to stall the pop loop silently for many minutes.
+    api_job_pop must cap the request via asyncio.wait_for, count the failure, and switch to
+    the error pop frequency so the retry happens promptly and visibly.
+    """
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = _make_api_job_pop_mock_manager()
+    mock_manager._JOB_POP_TIMEOUT_SECONDS = 0.05
+
+    async def _hang(*_args: object, **_kwargs: object) -> None:
+        await asyncio.sleep(3600)
+
+    mock_manager.horde_client_session.submit_request = _hang
+
+    with patch("horde_worker_regen.process_management.process_manager.logger") as mock_logger:
+        bound = HordeWorkerProcessManager.api_job_pop.__get__(mock_manager, HordeWorkerProcessManager)
+        asyncio.run(asyncio.wait_for(bound(), timeout=10))
+
+    assert mock_manager._consecutive_pop_failures == 1
+    assert mock_manager._job_pop_frequency == mock_manager._error_job_pop_frequency
+    warning_text = mock_logger.warning.call_args[0][0]
+    assert "(Timeout)" in warning_text, f"Expected a pop-timeout warning, got: {warning_text!r}"
+
+
+def test_remove_maintenance_returns_false_when_api_unresponsive() -> None:
+    """remove_maintenance() must give up after its bounded join instead of hanging forever.
+
+    The synchronous horde_sdk client performs requests with no timeout; when the API is
+    unresponsive the call must return False within the caller-supplied timeout (plus a
+    warning) rather than blocking the caller — which, from the event loop, would silence
+    the whole worker.
+    """
+    import time as _time
+
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+    mock_manager.bridge_data.dreamer_worker_name = "test_worker"
+    mock_manager.bridge_data.api_key = "0" * 22
+
+    hang_seconds = 2.0
+
+    class _HangingClient:
+        def worker_details_by_name(self, worker_name: str) -> None:
+            _time.sleep(hang_seconds)
+
+        def worker_modify(self, request: object) -> None:  # pragma: no cover - never reached
+            raise AssertionError("worker_modify must not be reached when details hang")
+
+    bound = HordeWorkerProcessManager.remove_maintenance.__get__(mock_manager, HordeWorkerProcessManager)
+
+    start = _time.monotonic()
+    with (
+        patch(
+            "horde_worker_regen.process_management.process_manager.AIHordeAPISimpleClient",
+            _HangingClient,
+        ),
+        patch("horde_worker_regen.process_management.process_manager.logger") as mock_logger,
+    ):
+        result = bound(timeout=0.1)
+    elapsed = _time.monotonic() - start
+
+    assert result is False
+    assert elapsed < hang_seconds, f"remove_maintenance blocked for {elapsed:.2f}s despite timeout=0.1"
+    assert mock_logger.warning.called
+
+
+def test_remove_maintenance_returns_true_on_success() -> None:
+    """remove_maintenance() must return True when the API confirms the modification."""
+    from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+    mock_manager = MagicMock()
+    mock_manager.bridge_data.dreamer_worker_name = "test_worker"
+    mock_manager.bridge_data.api_key = "0" * 22
+
+    mock_client = MagicMock()
+    mock_client.worker_details_by_name.return_value = MagicMock(id_="00000000-0000-0000-0000-000000000000")
+
+    bound = HordeWorkerProcessManager.remove_maintenance.__get__(mock_manager, HordeWorkerProcessManager)
+
+    with (
+        patch(
+            "horde_worker_regen.process_management.process_manager.AIHordeAPISimpleClient",
+            return_value=mock_client,
+        ),
+        patch("horde_worker_regen.process_management.process_manager.ModifyWorkerRequest") as mock_request,
+        patch("horde_worker_regen.process_management.process_manager.logger"),
+    ):
+        result = bound(timeout=5.0)
+
+    assert result is True
+    mock_client.worker_modify.assert_called_once_with(mock_request.return_value)
+
+
 class TestCheckAutoRestartOnIdle:
     """Tests for _check_auto_restart_on_idle()."""
 

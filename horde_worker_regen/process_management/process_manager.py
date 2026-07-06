@@ -2339,30 +2339,70 @@ class HordeWorkerProcessManager:
             if level is not None and level.no >= logger.level("ERROR").no:
                 self._errors_history.appendleft(clean_message)
 
-    def remove_maintenance(self) -> None:
-        """Removes the maintenance from the named worker."""
-        simple_client = AIHordeAPISimpleClient()
-        worker_details: SingleWorkerDetailsResponse = simple_client.worker_details_by_name(
-            worker_name=self.bridge_data.dreamer_worker_name,
-        )
-        if worker_details is None:
-            logger.debug(
-                f"Worker with name {self.bridge_data.dreamer_worker_name} "
-                "does not appear to exist already to remove maintenance.",
+    def remove_maintenance(self, *, timeout: float = 60.0) -> bool:
+        """Remove maintenance mode from the named worker via the API.
+
+        horde_sdk's synchronous client performs plain ``requests`` calls with no timeout,
+        so the two API calls here run on a daemon thread with a bounded join: a wedged
+        gateway then costs at most ``timeout`` seconds instead of hanging the caller
+        indefinitely (called from the event loop, such a hang silences the entire worker).
+
+        Returns:
+            bool: True when maintenance removal was confirmed. False when the worker does
+                not exist (yet) or the API did not respond within ``timeout`` seconds.
+
+        Raises:
+            Exception: Whatever the underlying API calls raised, re-raised on the calling
+                thread.
+        """
+        import threading
+
+        result: dict[str, Any] = {"done": False, "exception": None}
+
+        def _do_remove() -> None:
+            try:
+                simple_client = AIHordeAPISimpleClient()
+                worker_details: SingleWorkerDetailsResponse = simple_client.worker_details_by_name(
+                    worker_name=self.bridge_data.dreamer_worker_name,
+                )
+                if worker_details is None:
+                    logger.debug(
+                        f"Worker with name {self.bridge_data.dreamer_worker_name} "
+                        "does not appear to exist already to remove maintenance.",
+                    )
+                    return
+                modify_worker_request = ModifyWorkerRequest(
+                    apikey=self.bridge_data.api_key,
+                    worker_id=worker_details.id_,
+                    maintenance=False,
+                )
+
+                simple_client.worker_modify(modify_worker_request)
+
+                logger.debug(
+                    f"Ensured worker with name {self.bridge_data.dreamer_worker_name} "
+                    f"({worker_details.id_}) is removed from maintenance.",
+                )
+                result["done"] = True
+            except Exception as e:
+                result["exception"] = e
+
+        worker_thread = threading.Thread(target=_do_remove, daemon=True, name="remove_maintenance")
+        worker_thread.start()
+        worker_thread.join(timeout)
+
+        if worker_thread.is_alive():
+            logger.warning(
+                f"Could not confirm maintenance removal within {timeout:.0f}s — the API or gateway "
+                "appears unresponsive. Continuing; removal will be retried automatically.",
             )
-            return
-        modify_worker_request = ModifyWorkerRequest(
-            apikey=self.bridge_data.api_key,
-            worker_id=worker_details.id_,
-            maintenance=False,
-        )
+            return False
 
-        simple_client.worker_modify(modify_worker_request)
+        exception = result["exception"]
+        if exception is not None:
+            raise exception
 
-        logger.debug(
-            f"Ensured worker with name {self.bridge_data.dreamer_worker_name} "
-            f"({worker_details.id_}) is removed from maintenance.",
-        )
+        return bool(result["done"])
 
     def set_job_pops_paused(self, paused: bool, pause_until: float | None = None) -> None:
         """Pause or resume accepting new job pops.
@@ -6482,6 +6522,13 @@ class HordeWorkerProcessManager:
     _consecutive_pop_failure_warn_threshold: int = 3
     """Number of consecutive pop failures before logging a prominent warning."""
 
+    _JOB_POP_TIMEOUT_SECONDS: float = 90.0
+    """Hard client-side cap on a single job-pop request. A pop normally completes in
+    under a couple of seconds; without this cap a wedged gateway that accepts the
+    connection but never responds can stall the pop loop for many minutes with no
+    log output (observed: ~8 minutes of total silence), instead of failing fast and
+    retrying at ``_error_job_pop_frequency``."""
+
     _idle_process_warning_logged: bool = False
     """Whether the idle process warning has already been logged for the current idle period."""
 
@@ -6792,9 +6839,14 @@ class HordeWorkerProcessManager:
                 amount=self.bridge_data.max_batch,
             )
 
-            job_pop_response = await self.horde_client_session.submit_request(
-                job_pop_request,
-                ImageGenerateJobPopResponse,
+            # horde_sdk passes no per-request timeout to aiohttp, so bound the pop here:
+            # a wedged gateway must fail fast and retry, not silently stall the loop.
+            job_pop_response = await asyncio.wait_for(
+                self.horde_client_session.submit_request(
+                    job_pop_request,
+                    ImageGenerateJobPopResponse,
+                ),
+                timeout=self._JOB_POP_TIMEOUT_SECONDS,
             )
             try:
                 if (
@@ -6845,8 +6897,11 @@ class HordeWorkerProcessManager:
                         ):
                             self._last_maintenance_removal_attempt = now_maint
                             try:
-                                self.remove_maintenance()
-                                logger.success("Maintenance mode automatically deactivated")
+                                # to_thread: remove_maintenance uses horde_sdk's synchronous
+                                # client — calling it inline would block the entire event loop
+                                # (job pops, status output, heartbeats) until the API responds.
+                                if await asyncio.to_thread(self.remove_maintenance):
+                                    logger.success("Maintenance mode automatically deactivated")
                             except Exception:
                                 logger.error("Maintenance mode couldn't been deactivated automatically", exc_info=True)
                 elif "we cannot accept workers serving" in job_pop_response.message.lower():
@@ -6877,6 +6932,25 @@ class HordeWorkerProcessManager:
                 f"Failed to pop job (Unexpected Content-Type): "
                 f"The API returned a non-JSON response. "
                 f"This may be a temporary gateway/server issue. "
+                f"Retrying in {self._error_job_pop_frequency:.0f}s. "
+                f"(consecutive failures: {self._consecutive_pop_failures})"
+            )
+            if self._consecutive_pop_failures >= self._consecutive_pop_failure_warn_threshold:
+                logger.error(message)
+            else:
+                logger.warning(message)
+            self._job_pop_frequency = self._error_job_pop_frequency
+            return
+
+        except (TimeoutError, asyncio.TimeoutError):
+            # Covers both the asyncio.wait_for cap above and aiohttp's own timeouts.
+            # (asyncio.TimeoutError is builtins.TimeoutError from 3.11 on, but catch
+            # both spellings so this also holds on older interpreters.)
+            self._consecutive_pop_failures += 1
+            message = (
+                f"Failed to pop job (Timeout): "
+                f"no response from the API within {self._JOB_POP_TIMEOUT_SECONDS:.0f}s. "
+                f"The API or gateway appears unresponsive. "
                 f"Retrying in {self._error_job_pop_frequency:.0f}s. "
                 f"(consecutive failures: {self._consecutive_pop_failures})"
             )
@@ -8928,7 +9002,17 @@ class HordeWorkerProcessManager:
         auto_restart_idle_loop.add_done_callback(self._handle_exception)
         tasks.append(auto_restart_idle_loop)
 
-        self._aiohttp_client_session = ClientSession(requote_redirect_url=False)
+        # horde_sdk's async client passes no per-request timeout, so the session default
+        # is the only bound on every API call made through it (job pops, submits, user
+        # info, source-image downloads). Without an explicit value a wedged gateway can
+        # hold requests open for many minutes (observed: ~8 minutes of total silence).
+        # total=180s comfortably covers the biggest legitimate transfers (multi-MB job
+        # submits and source-image downloads on slow links); requests that need a
+        # different bound set their own per-request timeout, which overrides this.
+        self._aiohttp_client_session = ClientSession(
+            requote_redirect_url=False,
+            timeout=aiohttp.ClientTimeout(total=180, connect=30, sock_connect=30),
+        )
         self.horde_client_session = AIHordeAPIAsyncClientSession(
             aiohttp_session=self._aiohttp_client_session,
             apikey=self.bridge_data.api_key,

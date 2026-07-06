@@ -887,6 +887,7 @@ def test_api_job_pop_flushes_idle_time_before_reset() -> None:
     mock_manager._job_pop_frequency = 0.0
     mock_manager._error_job_pop_frequency = 30.0
     mock_manager._default_job_pop_frequency = 4.0
+    mock_manager._JOB_POP_TIMEOUT_SECONDS = 90.0  # real float: passed to asyncio.wait_for
     mock_manager._last_pop_maintenance_mode = False
     mock_manager._replaced_due_to_maintenance = False
     mock_manager.bridge_data.queue_size = 5
@@ -1400,6 +1401,7 @@ class TestApiJobPopPerModelFilterRemoved:
         mock_manager._job_pop_frequency = 0.0
         mock_manager._error_job_pop_frequency = 30.0
         mock_manager._default_job_pop_frequency = 4.0
+        mock_manager._JOB_POP_TIMEOUT_SECONDS = 90.0  # real float: passed to asyncio.wait_for
         mock_manager._process_map.values.return_value = []
         mock_manager.bridge_data.horde_model_stickiness = 0
         mock_manager.bridge_data.custom_models = None
