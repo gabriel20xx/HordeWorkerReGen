@@ -335,6 +335,49 @@ def test_resolve_meta_instructions_does_not_override_explicit_empty_config() -> 
     assert result == [], "Explicit (but invalid) model list should not be replaced with default"
 
 
+def test_resolve_meta_instructions_with_retry_recovers_from_transient_error() -> None:
+    """A transient error (e.g., a Cloudflare 522) should be retried and succeed without raising."""
+    from unittest.mock import MagicMock, patch
+
+    with patch("horde_worker_regen.bridge_data.load_config.time.sleep") as mock_sleep:
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_meta_instructions.side_effect = [
+            Exception("Error getting stats for models: "),
+            {"Model A"},
+        ]
+
+        result = BridgeDataLoader._resolve_meta_instructions_with_retry(
+            mock_resolver,
+            ["top 1"],
+            MagicMock(),
+            retry_delay_seconds=0,
+        )
+
+    assert result == {"Model A"}
+    assert mock_resolver.resolve_meta_instructions.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+def test_resolve_meta_instructions_with_retry_gives_up_after_max_attempts() -> None:
+    """After repeated failures, the retry helper should give up and return an empty set instead of raising."""
+    from unittest.mock import MagicMock, patch
+
+    with patch("horde_worker_regen.bridge_data.load_config.time.sleep"):
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_meta_instructions.side_effect = Exception("Error getting stats for models: ")
+
+        result = BridgeDataLoader._resolve_meta_instructions_with_retry(
+            mock_resolver,
+            ["top 1"],
+            MagicMock(),
+            max_attempts=3,
+            retry_delay_seconds=0,
+        )
+
+    assert result == set()
+    assert mock_resolver.resolve_meta_instructions.call_count == 3
+
+
 def test_bridge_data_deprecated_lora_cache_size_remap(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that deprecated lora_cache_size remaps to max_lora_cache_size, is removed from extras, and emits a warning."""
     warning_messages: list[str] = []

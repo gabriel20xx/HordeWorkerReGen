@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import time
 from enum import auto
 from pathlib import Path
 
@@ -215,6 +216,41 @@ class BridgeDataLoader:
                     )
 
     @staticmethod
+    def _resolve_meta_instructions_with_retry(
+        load_resolver: ImageModelLoadResolver,
+        instructions: list[str],
+        client: AIHordeAPIManualClient,
+        *,
+        max_attempts: int = 3,
+        retry_delay_seconds: float = 5.0,
+    ) -> set[str]:
+        """Resolve meta instructions, retrying on transient API failures.
+
+        `ImageModelLoadResolver.resolve_meta_instructions` makes a single, non-retrying stats
+        request and raises outright on any error response (e.g., a Cloudflare 522 while the
+        origin is briefly unreachable). Left unhandled, that exception propagates out of
+        `load_from_env_vars()` and crashes the entire worker on startup. Retry it a few times
+        here; if it still fails, log and treat it as "no models resolved" so startup can
+        continue rather than requiring manual intervention.
+        """
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return load_resolver.resolve_meta_instructions(instructions, client)
+            except Exception as e:
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"Error resolving meta instructions {instructions} "
+                        f"(attempt {attempt}/{max_attempts}): {e}. Retrying in {retry_delay_seconds}s...",
+                    )
+                    time.sleep(retry_delay_seconds)
+                else:
+                    logger.error(
+                        f"Failed to resolve meta instructions {instructions} after {max_attempts} attempts: {e}. "
+                        "Continuing without applying these meta instructions.",
+                    )
+        return set()
+
+    @staticmethod
     def _resolve_meta_instructions(  # FIXME: This should be moved into the SDK
         bridge_data: reGenBridgeData,
         horde_model_reference_manager: ModelReferenceManager,
@@ -241,13 +277,15 @@ class BridgeDataLoader:
 
         resolved_models = None
         if bridge_data.meta_load_instructions is not None:
-            resolved_models = load_resolver.resolve_meta_instructions(
+            resolved_models = BridgeDataLoader._resolve_meta_instructions_with_retry(
+                load_resolver,
                 list(bridge_data.meta_load_instructions),
                 AIHordeAPIManualClient(),
             )
 
         if bridge_data.meta_skip_instructions is not None:
-            skip_models: set[str] = load_resolver.resolve_meta_instructions(
+            skip_models: set[str] = BridgeDataLoader._resolve_meta_instructions_with_retry(
+                load_resolver,
                 list(bridge_data.meta_skip_instructions),
                 AIHordeAPIManualClient(),
             )
