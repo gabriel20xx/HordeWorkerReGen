@@ -15,6 +15,7 @@ import re
 import sqlite3
 import ssl
 import sys
+import threading
 import time
 from asyncio import CancelledError, Task
 from asyncio import Lock as Lock_Asyncio
@@ -690,10 +691,12 @@ class ProcessMap(dict[int, HordeProcessInfo]):
     """Seconds to wait for progress to advance from 0 % before declaring the process stuck.
 
     Used as the ``zero_progress_timeout`` argument to :meth:`is_stuck_on_inference` (check 2).
-    When a process is in INFERENCE_PROCESSING and has reported 0 % progress but no real
-    diffusion step has produced any output, this shorter timeout fires instead of the full
-    ``inference_step_timeout`` (600 s by default) or the VAE-decode-safe
-    ``no_step_heartbeat_timeout`` (300 s).
+    When a process is in INFERENCE_PROCESSING and has reported 0 % progress (or none at all)
+    because no real diffusion step has produced any output, this is the governing timeout:
+    the per-step check (check 1, ``inference_step_timeout``, 30 s by default) deliberately
+    does not apply before the first step — model loading into VRAM routinely takes longer
+    than that — and the VAE-decode-safe ``no_step_heartbeat_timeout`` (300 s) would be far
+    too slow for a genuine pre-first-step hang.
 
     VAE decode — where ``no_step_heartbeat_timeout`` must stay at 300 s — only occurs at
     100 % progress after all steps complete, so reducing the 0 %-stuck timeout does not risk
@@ -942,8 +945,11 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         """Return true if the process is actively doing inference but progress has stalled.
 
         This detects jobs that are stuck in the INFERENCE_STARTING or INFERENCE_PROCESSING state with:
-        1. Progress not advancing for timeout period (stuck at same percentage), OR
-        2. Progress stuck at exactly 0 % for zero_progress_timeout seconds (or
+        1. Progress not advancing for timeout period (stuck at the same percentage after having
+           advanced past 0 % — the pre-first-step phase is deliberately exempt because model
+           loading into VRAM routinely takes longer than inference_step_timeout; it is covered
+           by check 2 instead), OR
+        2. Progress stuck at 0 % (or never reported) for zero_progress_timeout seconds (or
            no_step_heartbeat_timeout if zero_progress_timeout is None) — fastest early-stall
            detection — see detailed note below, OR
         3. A single diffusion step taking longer than MAX_INFERENCE_STEP_TIMEOUT seconds, OR
@@ -1002,9 +1008,19 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         # complete no further progress increments are expected (the process is in the VAE
         # decode phase), so a stalled 100 % value is normal behaviour.  The heartbeat-based
         # checks below are sufficient to detect genuine failures at that stage.
+        # Also skip while progress is still at 0 % (or no progress has been reported at all):
+        # before the first diffusion step the process is legitimately busy loading the model
+        # into VRAM, which routinely takes longer than inference_step_timeout (30 s by
+        # default) — killing at that point faulted perfectly healthy jobs.  The 0 %/None
+        # phase is governed by check 2 below (zero_progress_timeout, 120 s) and by the
+        # heartbeat-based checks, exactly as documented on ZERO_PROGRESS_TIMEOUT.
         time_since_progress = time.time() - self[process_id].last_progress_timestamp
-        if time_since_progress > inference_step_timeout and self[process_id].last_progress_value != 100:
-            # Progress hasn't advanced in too long - job is stuck
+        if time_since_progress > inference_step_timeout and self[process_id].last_progress_value not in (
+            None,
+            0,
+            100,
+        ):
+            # Progress advanced past 0 % but has now stalled for too long - job is stuck
             return True
 
         # Faster stall detection when progress is stuck at exactly 0 %.
@@ -1019,10 +1035,14 @@ class ProcessMap(dict[int, HordeProcessInfo]):
         # VAE decode (the reason no_step_heartbeat_timeout must stay at 300 s) only ever
         # happens at 100 % progress, not at 0 %.
         _zero_progress_effective = zero_progress_timeout if zero_progress_timeout is not None else no_step_heartbeat_timeout
+        # last_progress_value None is treated like 0: it means no progress callback has fired
+        # with a percentage yet (e.g. only PIPELINE_STATE_CHANGE heartbeats), which is the
+        # same not-yet-produced-any-output situation — and VAE decode (the reason the longer
+        # heartbeat timeouts exist) can likewise never be running before the first step.
         if (
             state == HordeProcessState.INFERENCE_PROCESSING
             and _zero_progress_effective is not None
-            and self[process_id].last_progress_value == 0
+            and self[process_id].last_progress_value in (0, None)
             and time_since_progress > _zero_progress_effective
         ):
             return True
@@ -2159,6 +2179,26 @@ class HordeWorkerProcessManager:
 
         self._process_message_queue = multiprocessing.Queue()
 
+        # Child→parent messages are pulled off the multiprocessing queue by a dedicated
+        # daemon thread and buffered in this deque, which the (asyncio) control loop then
+        # drains non-blockingly.  Reading the queue directly from the event loop is unsafe:
+        # a child SIGKILLed while writing to the queue (see _end_inference_process /
+        # _replace_inference_process) can leave a *truncated* message in the queue pipe, and
+        # Queue.get() — even with block=False, whose non-blocking guarantee only covers the
+        # lock acquire and the readiness poll — then blocks forever inside _recv_bytes()
+        # waiting for the rest of a payload that will never arrive.  That froze the entire
+        # worker silently (no exception, no further log output).  With this design only the
+        # reader thread can get stuck; _check_process_message_queue_health() detects the
+        # stall and restarts the worker with a clear CRITICAL log instead.
+        self._received_process_messages: deque[HordeProcessMessage] = deque()
+        self._queue_reader_last_tick: float = time.time()
+        self._queue_reader_thread = threading.Thread(
+            target=self._queue_reader_loop,
+            daemon=True,
+            name="process-message-queue-reader",
+        )
+        self._queue_reader_thread.start()
+
         self.kudos_events: list[tuple[float, float]] = []
         self.image_events: list[tuple[float, int]] = []
 
@@ -3142,8 +3182,18 @@ class HordeWorkerProcessManager:
             )
 
         try:
-            process_info.mp_process.join(timeout=1)
-            process_info.mp_process.kill()
+            # Give a child that acknowledged END_PROCESS a real chance to exit on its own.
+            # SIGKILLing a child while its queue feeder thread is mid-write into the shared
+            # process message queue truncates the in-flight payload and can permanently
+            # corrupt the queue for every process (reader blocks forever / write lock left
+            # held).  A gracefully-exiting child is actively sending its final state messages
+            # during this window, so the old 1s grace routinely guaranteed exactly that race;
+            # 5s lets model unloading and the final sends complete in the common case.  A
+            # truly hung child (stuck in a GPU op) sends nothing, so for it the extra wait
+            # only delays the replacement, never adds risk.
+            process_info.mp_process.join(timeout=5)
+            if process_info.mp_process.is_alive():
+                process_info.mp_process.kill()
             # Brief join after kill to confirm the process is dead before callers release
             # shared semaphores (e.g. VAE decode semaphore).  Without this there is a small
             # window where the old child could still acquire a semaphore after the manager
@@ -3422,6 +3472,101 @@ class HordeWorkerProcessManager:
 
         logger.info(f"Ended safety process {self._process_label(process_info.process_id)}")
 
+    _QUEUE_READER_POLL_SECONDS = 2.0
+    """Timeout for each Queue.get() in the reader thread.
+
+    Bounds how often the reader thread refreshes its liveness tick when the queue is idle,
+    so it must be well below _QUEUE_READER_STALL_TIMEOUT."""
+
+    _QUEUE_READER_STALL_TIMEOUT = 30.0
+    """Seconds without a reader-thread tick before the process message queue is declared dead.
+
+    A healthy reader ticks at least every _QUEUE_READER_POLL_SECONDS; the only ways to exceed
+    this threshold are a Queue.get() blocked forever mid-``_recv_bytes()`` on a queue corrupted
+    by a SIGKILLed child (truncated payload), or transferring a single message so large it takes
+    longer than this to read — far beyond any real inference-result message."""
+
+    _queue_reader_stall_handled = False
+    """One-shot flag so the queue-death recovery (worker restart) is only initiated once."""
+
+    def _queue_reader_loop(self) -> None:
+        """Continuously move messages from the multiprocessing queue into the local deque.
+
+        Runs on a dedicated daemon thread.  This is the ONLY place allowed to call
+        ``self._process_message_queue.get()``: if a child process is SIGKILLed while its queue
+        feeder thread is mid-write, the queue pipe is left with a truncated payload and the
+        next ``get()`` blocks forever inside ``_recv_bytes()`` — with no timeout applying and
+        no exception raised.  Confining that risk to this thread keeps the asyncio event loop
+        alive so _check_process_message_queue_health() can detect the stall (frozen tick) and
+        restart the worker instead of freezing silently.
+        """
+        while True:
+            if self._shut_down:
+                return
+            try:
+                message = self._process_message_queue.get(timeout=self._QUEUE_READER_POLL_SECONDS)
+            except queue.Empty:
+                self._queue_reader_last_tick = time.time()
+                continue
+            except (EOFError, ConnectionError, BrokenPipeError, OSError, ValueError) as e:
+                # The queue is closed (normal during shutdown/cleanup) or its pipe is broken
+                # (fatal).  Either way no further messages can ever be read — exit the thread;
+                # outside of shutdown the health check treats a dead reader thread as a dead
+                # queue and restarts the worker.
+                if not (self._shutting_down or self._shut_down):
+                    logger.error(
+                        f"Process message queue reader failed ({type(e).__name__}): {e} — "
+                        "no further child process messages can be received.",
+                    )
+                return
+            except Exception as e:
+                # A single message failed to deserialize (e.g. unpickling error from a payload
+                # written by a child that died mid-shutdown).  The frame was consumed, so
+                # subsequent messages are unaffected — log and keep reading.
+                logger.error(f"Failed to read a process message from the queue ({type(e).__name__}): {e}")
+                self._queue_reader_last_tick = time.time()
+                continue
+
+            self._queue_reader_last_tick = time.time()
+            self._received_process_messages.append(message)
+
+    def _check_process_message_queue_health(self) -> None:
+        """Detect a dead process message queue and restart the worker instead of freezing.
+
+        If a child process is killed while writing to the shared message queue, the queue can
+        be corrupted two ways: the reader blocks forever on a truncated payload (stuck reader
+        thread), and/or the queue's shared write lock is left permanently held (children can
+        never send again).  Both are unrecoverable — the queue cannot be rebuilt because every
+        child holds a reference to it.  When detected, initiate a logged restart: the horde
+        re-queues any abandoned jobs after they time out server-side.
+        """
+        if self._shutting_down or self._shut_down or self._queue_reader_stall_handled:
+            return
+        reader_thread = getattr(self, "_queue_reader_thread", None)
+        if not isinstance(reader_thread, threading.Thread):
+            return
+
+        stalled_for = time.time() - self._queue_reader_last_tick
+        if reader_thread.is_alive() and stalled_for <= self._QUEUE_READER_STALL_TIMEOUT:
+            return
+
+        reason = (
+            f"its reader thread has been blocked mid-read for {stalled_for:.0f}s "
+            "(a child process was most likely killed while writing to the queue, truncating a message)"
+            if reader_thread.is_alive()
+            else "its reader thread has died"
+        )
+        self._queue_reader_stall_handled = True
+        logger.critical(
+            f"The inter-process message queue is dead: {reason}. Child process messages can no longer "
+            "be received, so the worker cannot continue operating. Restarting the worker now — "
+            "in-progress jobs will be abandoned and re-queued by the horde after they time out.",
+        )
+        self.request_program_restart()
+        self._purge_jobs()
+        self._shutdown()
+        self._start_timed_shutdown()
+
     def receive_and_handle_process_messages(self) -> None:
         """Receive and handle any messages from the child processes.
 
@@ -3435,16 +3580,36 @@ class HordeWorkerProcessManager:
         See also `._process_map` and `._horde_model_map`, which are updated by this function, and `HordeProcessState` \
             and `ModelLoadState` for the possible states that the processes and models can be in.
         """
-        # We want to completely flush the queue, to maximize the chances we get the most up to date information
-        while not self._process_message_queue.empty():
-            try:
-                message: HordeProcessMessage = self._process_message_queue.get(block=False)
-            except queue.Empty:
-                logger.debug("Queue was empty, breaking")
+        # We want to completely flush the buffered messages, to maximize the chances we get the most
+        # up to date information.
+        #
+        # In production the dedicated reader thread (see _queue_reader_loop) is the only place that
+        # reads the multiprocessing queue — Queue.get() can block forever on a queue corrupted by a
+        # child killed mid-write, and that must never happen on the event loop thread.  The direct
+        # queue reads below are a fallback for tests, which bind this method to lightweight mock
+        # managers that carry a plain queue but no reader thread or deque.
+        use_reader_thread = isinstance(getattr(self, "_queue_reader_thread", None), threading.Thread) and isinstance(
+            getattr(self, "_received_process_messages", None),
+            deque,
+        )
+        while True:
+            message: HordeProcessMessage
+            if use_reader_thread:
+                try:
+                    message = self._received_process_messages.popleft()
+                except IndexError:
+                    break
+            elif self._process_message_queue.empty():
                 break
-            except (EOFError, ConnectionError, BrokenPipeError, OSError) as e:
-                logger.error(f"Process message queue IPC failure ({type(e).__name__}): {e}")
-                break
+            else:
+                try:
+                    message = self._process_message_queue.get(block=False)
+                except queue.Empty:
+                    logger.debug("Queue was empty, breaking")
+                    break
+                except (EOFError, ConnectionError, BrokenPipeError, OSError) as e:
+                    logger.error(f"Process message queue IPC failure ({type(e).__name__}): {e}")
+                    break
 
             self._in_deadlock = False
             self._in_queue_deadlock = False
@@ -7469,6 +7634,7 @@ class HordeWorkerProcessManager:
                     ):
                         self.receive_and_handle_process_messages()
                         self.detect_deadlock()
+                        self._check_process_message_queue_health()
 
                     if len(self.jobs_pending_safety_check) > 0:
                         async with self._jobs_safety_check_lock:
@@ -9951,10 +10117,10 @@ class HordeWorkerProcessManager:
 
                 # Check if an INFERENCE_STARTING process is stuck because the semaphore is
                 # unavailable even though no other process is actively running inference.
-                # is_stuck_on_inference() uses inference_step_timeout (600 s by default), which
-                # is far too long for this phase: a process waiting to acquire the semaphore
-                # should not have to wait more than preload_timeout seconds when no other
-                # inference is running.  We skip this check when another process IS in
+                # is_stuck_on_inference()'s heartbeat check uses inference_step_timeout, which
+                # measures the wrong thing for this phase: a process waiting to acquire the
+                # semaphore should not have to wait more than preload_timeout seconds when no
+                # other inference is running.  We skip this check when another process IS in
                 # INFERENCE_PROCESSING, because that process legitimately holds the semaphore
                 # and INFERENCE_STARTING should wait for it to finish.
                 # The _recently_recovered guard is deliberately NOT applied here: with frequent

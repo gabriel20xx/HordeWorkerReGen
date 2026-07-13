@@ -1681,8 +1681,16 @@ class TestIsStuckOnInference:
         process_map = self._make_process_map(entry)
         assert process_map.is_stuck_on_inference(0, 600) is False
 
-    def test_inference_starting_no_progress_returns_true(self) -> None:
-        """A process in INFERENCE_STARTING with stalled progress beyond timeout is stuck."""
+    def test_inference_starting_no_progress_with_fresh_heartbeat_not_stuck(self) -> None:
+        """INFERENCE_STARTING with no progress reported yet but fresh heartbeats is NOT stuck.
+
+        Before the first diffusion step there is no progress to stall (last_progress_value is
+        None), so the progress-stalled check (check 1) must not fire — a job legitimately
+        loading its model or waiting on the semaphore was previously killed by this check after
+        only inference_step_timeout (30 s by default), faulting healthy jobs.  A genuinely hung
+        INFERENCE_STARTING process is detected by the no-heartbeat check (check 4) and by the
+        manager's dedicated preload_timeout-based INFERENCE_STARTING check instead.
+        """
         import time
 
         entry = self._make_process_map_entry(
@@ -1691,7 +1699,7 @@ class TestIsStuckOnInference:
             last_heartbeat_timestamp=time.time() - 10,
         )
         process_map = self._make_process_map(entry)
-        assert process_map.is_stuck_on_inference(0, 600) is True
+        assert process_map.is_stuck_on_inference(0, 600) is False
 
     def test_inference_starting_no_heartbeat_returns_true(self) -> None:
         """A process in INFERENCE_STARTING with no heartbeat beyond timeout is stuck."""
@@ -1719,8 +1727,14 @@ class TestIsStuckOnInference:
         process_map = self._make_process_map(entry)
         assert process_map.is_stuck_on_inference(0, 600) is False
 
-    def test_inference_processing_no_progress_returns_true(self) -> None:
-        """A process in INFERENCE_PROCESSING with stalled progress is stuck."""
+    def test_inference_processing_no_progress_reported_yet_uses_zero_progress_timeout(self) -> None:
+        """INFERENCE_PROCESSING with no progress percentage reported yet is governed by check 2.
+
+        last_progress_value None means no progress callback has fired with a percentage
+        (e.g. only PIPELINE_STATE_CHANGE heartbeats) — the same pre-first-step situation as
+        0 %, so it must be treated identically: exempt from the progress-stalled check
+        (check 1) and detected by zero_progress_timeout (check 2) instead.
+        """
         import time
 
         entry = self._make_process_map_entry(
@@ -1729,7 +1743,54 @@ class TestIsStuckOnInference:
             last_heartbeat_timestamp=time.time() - 10,
         )
         process_map = self._make_process_map(entry)
-        assert process_map.is_stuck_on_inference(0, 600) is True
+        # Bare call: check 1 is exempt pre-first-step and check 2 is inactive without a
+        # zero_progress/no_step timeout → not stuck.  (Production always passes those for
+        # INFERENCE_PROCESSING.)
+        assert process_map.is_stuck_on_inference(0, 600) is False
+        # With the production zero_progress_timeout, the stall is detected via check 2.
+        assert process_map.is_stuck_on_inference(0, 600, zero_progress_timeout=120) is True
+
+    def test_inference_processing_zero_progress_not_killed_at_step_timeout(self) -> None:
+        """A 0 %-progress job must NOT be flagged stuck at inference_step_timeout (regression).
+
+        Regression test for the false positive that faulted healthy jobs: with the default
+        inference_step_timeout of 30 s, a job whose model was still loading into VRAM
+        (0 % progress, fresh heartbeats, ~40 s elapsed) was killed by the progress-stalled
+        check (check 1) long before the deliberate 120 s ZERO_PROGRESS_TIMEOUT (check 2)
+        could allow it to finish loading.
+        """
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 40,  # 40 s at 0 % — model still loading
+            last_heartbeat_timestamp=time.time() - 1,  # heartbeats flowing
+            heartbeats_inference_steps=0,
+            last_progress_value=0,
+        )
+        process_map = self._make_process_map(entry)
+        # Realistic production call: inference_step_timeout=30 (default), zero_progress_timeout=120.
+        assert (
+            process_map.is_stuck_on_inference(0, 30, no_step_heartbeat_timeout=300, zero_progress_timeout=120)
+            is False
+        )
+
+    def test_inference_processing_zero_progress_still_detected_after_zero_progress_timeout(self) -> None:
+        """A 0 %-progress job IS flagged stuck once zero_progress_timeout elapses."""
+        import time
+
+        entry = self._make_process_map_entry(
+            state=HordeProcessState.INFERENCE_PROCESSING,
+            last_progress_timestamp=time.time() - 130,  # 130 s > zero_progress_timeout=120
+            last_heartbeat_timestamp=time.time() - 1,
+            heartbeats_inference_steps=0,
+            last_progress_value=0,
+        )
+        process_map = self._make_process_map(entry)
+        assert (
+            process_map.is_stuck_on_inference(0, 30, no_step_heartbeat_timeout=300, zero_progress_timeout=120)
+            is True
+        )
 
     def test_inference_processing_no_heartbeat_returns_true(self) -> None:
         """A process in INFERENCE_PROCESSING with no heartbeat beyond timeout is stuck.
@@ -2092,7 +2153,12 @@ class TestIsStuckOnInference:
         assert process_map.is_stuck_on_inference(0, 600, no_step_heartbeat_timeout=300) is False
 
     def test_zero_progress_without_shorter_timeout_falls_back_to_full_timeout(self) -> None:
-        """Without no_step_heartbeat_timeout the 0 % check does not apply; only the 600 s check fires."""
+        """Without no_step_heartbeat_timeout / zero_progress_timeout, the 0 % check is inactive.
+
+        The progress-stalled check (check 1) is exempt at 0 % (pre-first-step model loading),
+        so with neither optional timeout provided only the heartbeat-based checks can flag the
+        process — and heartbeats are fresh here.
+        """
         import time
 
         entry = self._make_process_map_entry(
@@ -2103,7 +2169,7 @@ class TestIsStuckOnInference:
             last_progress_value=0,
         )
         process_map = self._make_process_map(entry)
-        # no_step_heartbeat_timeout not provided → new check inactive; 350s < 600s → not stuck
+        # no_step_heartbeat_timeout not provided → check 2 inactive; heartbeats fresh → not stuck
         assert process_map.is_stuck_on_inference(0, 600) is False
 
     def test_zero_progress_check_does_not_apply_to_inference_starting(self) -> None:
@@ -2231,6 +2297,183 @@ class TestIsStuckOnInference:
         assert process_map.is_stuck_on_inference(
             0, 600, no_step_heartbeat_timeout=300, zero_progress_timeout=120
         ) is False
+
+
+class TestProcessMessageQueueFreezeResilience:
+    """Tests for the queue reader thread and the dead-queue watchdog.
+
+    A child process SIGKILLed while writing to the shared process message queue can leave a
+    truncated payload in the queue pipe; Queue.get() then blocks forever inside _recv_bytes()
+    — its non-blocking/timeout guarantees only cover the lock acquire and the readiness poll.
+    The manager therefore reads the queue exclusively on a dedicated daemon thread and watches
+    that thread's liveness tick, restarting the worker when the queue dies instead of freezing
+    silently (no status output, no stuck detection, children idle forever).
+    """
+
+    def _make_manager_with_bound_health_check(self) -> tuple[MagicMock, object]:
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = MagicMock()
+        mgr._shutting_down = False
+        mgr._shut_down = False
+        mgr._queue_reader_stall_handled = False
+        mgr._QUEUE_READER_STALL_TIMEOUT = HordeWorkerProcessManager._QUEUE_READER_STALL_TIMEOUT
+        bound = HordeWorkerProcessManager._check_process_message_queue_health.__get__(
+            mgr, HordeWorkerProcessManager
+        )
+        return mgr, bound
+
+    def _assert_restart_initiated(self, mgr: MagicMock) -> None:
+        mgr.request_program_restart.assert_called_once()
+        mgr._purge_jobs.assert_called_once()
+        mgr._shutdown.assert_called_once()
+        mgr._start_timed_shutdown.assert_called_once()
+        assert mgr._queue_reader_stall_handled is True
+
+    def _assert_no_restart(self, mgr: MagicMock) -> None:
+        mgr.request_program_restart.assert_not_called()
+        mgr._purge_jobs.assert_not_called()
+        mgr._shutdown.assert_not_called()
+        mgr._start_timed_shutdown.assert_not_called()
+
+    def test_healthy_reader_thread_does_not_trigger_restart(self) -> None:
+        """A live reader thread with a recent tick must not trigger any recovery action."""
+        import threading
+        import time
+
+        mgr, check = self._make_manager_with_bound_health_check()
+        stop = threading.Event()
+        reader = threading.Thread(target=stop.wait, daemon=True)
+        reader.start()
+        try:
+            mgr._queue_reader_thread = reader
+            mgr._queue_reader_last_tick = time.time()
+            check()
+            self._assert_no_restart(mgr)
+            assert mgr._queue_reader_stall_handled is False
+        finally:
+            stop.set()
+
+    def test_stalled_reader_thread_triggers_restart(self) -> None:
+        """A reader thread blocked mid-read past the stall timeout must initiate a restart.
+
+        This is the corrupted-queue scenario: the thread is alive but stuck forever inside
+        Queue.get() on a truncated payload, so its liveness tick stops advancing.
+        """
+        import threading
+        import time
+
+        mgr, check = self._make_manager_with_bound_health_check()
+        stop = threading.Event()
+        reader = threading.Thread(target=stop.wait, daemon=True)
+        reader.start()
+        try:
+            mgr._queue_reader_thread = reader
+            mgr._queue_reader_last_tick = time.time() - (mgr._QUEUE_READER_STALL_TIMEOUT + 5)
+            check()
+            self._assert_restart_initiated(mgr)
+        finally:
+            stop.set()
+
+    def test_dead_reader_thread_triggers_restart(self) -> None:
+        """A reader thread that has died must initiate a restart even with a fresh tick."""
+        import threading
+        import time
+
+        mgr, check = self._make_manager_with_bound_health_check()
+        # A Thread that was never started reports is_alive() False, like a crashed one.
+        mgr._queue_reader_thread = threading.Thread(target=lambda: None, daemon=True)
+        mgr._queue_reader_last_tick = time.time()
+        check()
+        self._assert_restart_initiated(mgr)
+
+    def test_restart_is_initiated_only_once(self) -> None:
+        """The recovery action is one-shot; repeated health checks must not re-trigger it."""
+        import threading
+        import time
+
+        mgr, check = self._make_manager_with_bound_health_check()
+        mgr._queue_reader_thread = threading.Thread(target=lambda: None, daemon=True)
+        mgr._queue_reader_last_tick = time.time()
+        check()
+        check()
+        check()
+        mgr.request_program_restart.assert_called_once()
+        mgr._start_timed_shutdown.assert_called_once()
+
+    def test_health_check_skipped_during_shutdown(self) -> None:
+        """No recovery is initiated while the worker is already shutting down."""
+        import threading
+        import time
+
+        mgr, check = self._make_manager_with_bound_health_check()
+        mgr._shutting_down = True
+        mgr._queue_reader_thread = threading.Thread(target=lambda: None, daemon=True)
+        mgr._queue_reader_last_tick = time.time() - 9999
+        check()
+        self._assert_no_restart(mgr)
+
+    def test_queue_reader_loop_transfers_messages_and_exits_on_shutdown(self) -> None:
+        """The reader loop moves queue messages into the deque, ticks, and exits on shutdown."""
+        import queue as queue_mod
+        import threading
+        import time
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mgr = MagicMock()
+        mgr._shut_down = False
+        mgr._shutting_down = False
+        mgr._QUEUE_READER_POLL_SECONDS = 0.05  # keep the shutdown poll fast for the test
+        mgr._process_message_queue = queue_mod.Queue()
+        mgr._received_process_messages = deque()
+        mgr._queue_reader_last_tick = 0.0
+
+        bound = HordeWorkerProcessManager._queue_reader_loop.__get__(mgr, HordeWorkerProcessManager)
+        reader = threading.Thread(target=bound, daemon=True)
+        reader.start()
+
+        mgr._process_message_queue.put("a message")
+        deadline = time.time() + 5
+        while time.time() < deadline and not mgr._received_process_messages:
+            time.sleep(0.01)
+        assert list(mgr._received_process_messages) == ["a message"]
+        assert mgr._queue_reader_last_tick > 0.0
+
+        mgr._shut_down = True
+        reader.join(timeout=5)
+        assert not reader.is_alive()
+
+    def test_receive_uses_buffered_messages_when_reader_thread_present(self) -> None:
+        """With a real reader thread + deque, receive drains the deque and never touches the queue.
+
+        Reading the multiprocessing queue directly from the event loop is exactly what the
+        reader thread exists to prevent, so when the reader infrastructure is present the
+        receive loop must consume only the thread-fed deque.
+        """
+        import queue as queue_mod
+        import threading
+        from collections import deque
+
+        from horde_worker_regen.process_management.process_manager import HordeWorkerProcessManager
+
+        mock_manager = MagicMock()
+        mock_manager._queue_reader_thread = threading.Thread(target=lambda: None, daemon=True)
+        # Non-HordeProcessMessage payloads are logged and skipped, which exercises the drain
+        # loop without requiring the full message-handling surface.
+        mock_manager._received_process_messages = deque(["not a real message", "also not one"])
+        sentinel_queue = queue_mod.Queue()
+        sentinel_queue.put("must remain untouched")
+        mock_manager._process_message_queue = sentinel_queue
+
+        bound = HordeWorkerProcessManager.receive_and_handle_process_messages.__get__(
+            mock_manager, HordeWorkerProcessManager
+        )
+        bound()
+
+        assert len(mock_manager._received_process_messages) == 0
+        assert sentinel_queue.qsize() == 1
 
 
 class TestInferenceSemaphoreBoundedSemaphore:

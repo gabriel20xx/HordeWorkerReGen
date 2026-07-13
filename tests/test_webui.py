@@ -2525,7 +2525,11 @@ async def test_webui_stats_job_state_time_container() -> None:
         assert ".user-details-grid + .user-details-grid," in html
         assert ".user-details-grid + .card," in html
         assert ".stats-summary-grid + .stats-summary-grid { margin-top: var(--page-spacing); }" in html
-        assert html.count('class="grid-3 user-details-grid"') == 2
+        # The user details section is a single 4-column grid: the former second grid-3 row was
+        # merged into it when the "Trusted" tile became a trust indicator next to the username.
+        assert html.count('class="grid-4 user-details-grid"') == 1
+        assert 'class="grid-3 user-details-grid"' not in html
+        assert 'id="user-page-trust-indicator"' in html
         assert 'class="grid-4 stats-summary-grid"' in html
         assert 'class="grid-2 stats-summary-grid"' in html
     finally:
