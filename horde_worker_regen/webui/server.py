@@ -457,6 +457,13 @@ class WorkerWebUI:
         self._horde_snapshots: deque[dict[str, Any]] = deque(maxlen=self._horde_max_server_snaps)
         # Background asyncio task handle for the horde polling loop.
         self._horde_bg_task: asyncio.Task | None = None
+        # Latest aihorde.net maintenance/invite-only mode flags, refreshed periodically by
+        # the same background task that polls performance snapshots. Served via
+        # /api/horde-modes so the browser never has to call aihorde.net directly (that
+        # cross-origin request requires a CORS preflight for the custom Client-Agent
+        # header, which aihorde.net does not reliably grant for arbitrary worker origins).
+        self._horde_modes: dict[str, Any] = {}
+        self._last_horde_modes_fetch: float = 0.0
 
         # Database reset progress: None = idle, 0-100 = in progress/done.
         self._db_reset_progress: int | None = None
@@ -1189,6 +1196,7 @@ class WorkerWebUI:
         self.app.router.add_post("/api/reset-database", self._handle_reset_database)
         self.app.router.add_get("/api/reset-database/progress", self._handle_reset_database_progress)
         self.app.router.add_get("/api/horde-snapshots", self._handle_horde_snapshots)
+        self.app.router.add_get("/api/horde-modes", self._handle_horde_modes)
 
     async def _handle_config(self, request: web.Request) -> web.Response:
         """Handle config API request."""
@@ -2672,7 +2680,13 @@ class WorkerWebUI:
                 // Trigger an immediate fetch when navigating here if there are no snapshots
                 // yet or the most recent one is older than the poll interval.
                 var _hordeLastTs = (_hordeSnapshots && _hordeSnapshots.length > 0) ? _hordeSnapshots[_hordeSnapshots.length - 1].t : 0;
-                if (Date.now() / 1000 - _hordeLastTs > 30) fetchHordeData();
+                // Same hoisting hazard as startHordeFetching(): this can run (via the
+                // initial hash-based routing call) before "var _hordeWindowSecs = 1800"
+                // further down the file has executed, so fall back to its eventual
+                // default explicitly instead of passing along a hoisted `undefined`.
+                if (Date.now() / 1000 - _hordeLastTs > 30) {
+                    _fetchHordeHistory(_hordeWindowSecs === undefined ? 1800 : _hordeWindowSecs);
+                }
             }
             if (pageId === 'settings') {
                 fetchSettings();
@@ -2776,10 +2790,14 @@ class WorkerWebUI:
             if (_overlayFetchController) _overlayFetchController.abort();
             _overlayFetchController = new AbortController();
             const ctrl = _overlayFetchController;
+            // Pause any in-flight background gallery-thumbnail batch fetch so the
+            // full-resolution image the user is looking at gets network priority instead
+            // of competing with it; resumed in closeImageOverlay() once the overlay shuts.
+            if (_galleryBatchAbort) { _galleryBatchAbort.abort(); _galleryBatchAbort = null; }
             const el = document.getElementById('overlay-image');
             const content = document.getElementById('overlay-content');
             content.classList.add('is-loading');
-            fetch('/api/gallery/image?id=' + galleryId, { signal: ctrl.signal })
+            fetch('/api/gallery/image?id=' + galleryId, { signal: ctrl.signal, priority: 'high' })
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(data) { if (ctrl !== _overlayFetchController) return; el.src = 'data:image/png;base64,' + data.base64; content.classList.remove('is-loading'); })
                 .catch(function(err) { if (err.name === 'AbortError') { if (ctrl === _overlayFetchController) content.classList.remove('is-loading'); return; } console.error('Failed to load gallery image:', err); content.classList.remove('is-loading'); });
@@ -2815,7 +2833,12 @@ class WorkerWebUI:
             if (_overlayFetchController) { _overlayFetchController.abort(); _overlayFetchController = null; }
             document.getElementById('overlay-content').classList.remove('is-loading');
             document.getElementById('image-overlay').classList.remove('active');
+            const wasGalleryOverlay = _galleryOverlayIds !== null;
             overlayImages = []; overlayIndex = -1; _galleryOverlayIds = null;
+            // Resume any gallery thumbnail loading that was paused to prioritize the overlay
+            // image (loadGalleryThumbnails skips ids already cached, so this is a no-op if
+            // the batch had already finished before the overlay was closed).
+            if (wasGalleryOverlay && _currentPageGalleryIds.length > 0) loadGalleryThumbnails(_currentPageGalleryIds);
         }
         document.getElementById('image-overlay').addEventListener('click', function(e) { if (e.target === this) closeImageOverlay(); });
         document.addEventListener('keydown', function(e) {
@@ -3397,63 +3420,56 @@ class WorkerWebUI:
             if (btn) btn.classList.add('active');
             if (_galleryCurrentPageImages) {
                 renderGalleryPageSkeleton(_galleryCurrentPageImages, galleryTotalImages, galleryCurrentPage, galleryTotalPages);
-                loadGalleryThumbnailsOneByOne(_currentPageGalleryIds);
+                loadGalleryThumbnails(_currentPageGalleryIds);
             }
         }
-        function loadGalleryThumbnailsOneByOne(galleryIds) {
+        function loadGalleryThumbnails(galleryIds) {
             // Increment the batch ID so any stale responses from a previous page are discarded.
             const batchId = ++_galleryThumbnailBatchId;
-            // Use an AbortController so in-flight requests are truly cancelled when the page changes.
-            const batchAbort = new AbortController();
-            function buildThumbnailDataUrl(data) {
-                if (data.thumbnail) return 'data:image/jpeg;base64,'+data.thumbnail;
-                if (data.base64) return 'data:image/png;base64,'+data.base64;
-                return null;
+            // Abort any previous batch fetch (e.g. from the page just switched away from, or
+            // one paused to prioritize the overlay image — see _loadGalleryOverlayImage).
+            if (_galleryBatchAbort) { try { _galleryBatchAbort.abort(); } catch(_){} _galleryBatchAbort = null; }
+            // Skip ids already in cache — they were rendered directly by the skeleton.
+            const idsNeeded = galleryIds.filter(id => !_galleryThumbnailCache.has(id));
+            if (idsNeeded.length === 0) return;
+            function setTileLoadError(galleryId) {
+                const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
+                if (container) container.classList.remove('loading');
             }
-            // Pool-based parallel loader: keep up to CONCURRENCY fetches in-flight at once.
-            const CONCURRENCY = 8;
-            let nextIndex = 0;
-            let activeCount = 0;
-            function fetchOne(galleryId) {
-                fetch('/api/gallery/image?id='+galleryId+'&thumbnail_only=true', { signal: batchAbort.signal })
-                    .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-                    .then(data => {
-                        if (batchId !== _galleryThumbnailBatchId) return;
+            // Re-request the current page without metadata_only: the server already batches
+            // thumbnail lookups (including the DB fallback for ones evicted from RAM) into a
+            // single response, so this is one HTTP round-trip for the whole page instead of
+            // one request per image.
+            const batchAbort = new AbortController();
+            _galleryBatchAbort = batchAbort;
+            const modelParam = galleryModelFilter ? '&model='+encodeURIComponent(galleryModelFilter) : '';
+            const safetyParam = gallerySafetyFilter ? '&safety='+encodeURIComponent(gallerySafetyFilter) : '';
+            fetch('/api/gallery?page='+galleryCurrentPage+'&page_size='+galleryPageSize+modelParam+safetyParam,
+                { signal: batchAbort.signal, priority: 'low' })
+                .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                .then(data => {
+                    if (batchId !== _galleryThumbnailBatchId) return;
+                    (data.images || []).forEach(entry => {
+                        const galleryId = entry.gallery_id;
                         const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
                         const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
-                        const thumbSrc = buildThumbnailDataUrl(data);
+                        const thumbSrc = entry.thumbnail ? 'data:image/jpeg;base64,'+entry.thumbnail : (entry.base64 ? 'data:image/png;base64,'+entry.base64 : null);
                         // Only cache actual JPEG thumbnails (Pillow-generated, small).
                         // When Pillow is absent the response falls back to full-resolution PNG;
                         // caching those would balloon memory for workers without Pillow.
-                        if (data.thumbnail && thumbSrc) { _cacheThumbnail(galleryId, thumbSrc); }
+                        if (entry.thumbnail && thumbSrc) { _cacheThumbnail(galleryId, thumbSrc); }
                         if (thumbSrc && imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
                         // Always remove the shimmer class; if no image data was returned the tile
                         // shows as an empty placeholder rather than spinning indefinitely.
                         if (container) container.classList.remove('loading');
-                    })
-                    .catch(err => {
-                        if (err.name === 'AbortError') return;
-                        console.error('Thumbnail load error for id '+galleryId+':', err);
-                        // On error, stop the shimmer so the tile doesn't spin forever.
-                        const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
-                        if (container) container.classList.remove('loading');
-                    })
-                    .finally(() => { activeCount--; launchNext(); });
-            }
-            function launchNext() {
-                while (activeCount < CONCURRENCY && nextIndex < galleryIds.length) {
-                    if (batchId !== _galleryThumbnailBatchId) return;
-                    const galleryId = galleryIds[nextIndex++];
-                    // Skip items already in cache — they were rendered by the skeleton.
-                    if (_galleryThumbnailCache.has(galleryId)) { continue; }
-                    activeCount++;
-                    fetchOne(galleryId);
-                }
-            }
-            // Abort the previous batch's requests and register the new controller.
-            if (_galleryBatchAbort) { try { _galleryBatchAbort.abort(); } catch(_){} }
-            _galleryBatchAbort = batchAbort;
-            launchNext();
+                    });
+                })
+                .catch(err => {
+                    if (err.name === 'AbortError') return;
+                    console.error('Gallery thumbnail batch load error:', err);
+                    // On error, stop the shimmer for every tile still waiting so nothing spins forever.
+                    idsNeeded.forEach(setTileLoadError);
+                });
         }
         function fetchGalleryPage(page) {
             if (galleryFetchInProgress) return;
@@ -3473,8 +3489,8 @@ class WorkerWebUI:
                     if (glEl) glEl.style.display = 'none';
                     renderGalleryPageSkeleton(data.images, data.total, data.page, data.total_pages);
                     galleryFetchInProgress = false;
-                    // Phase 2: load each thumbnail one by one, updating the skeleton as images arrive.
-                    loadGalleryThumbnailsOneByOne(data.images.map(img => img.gallery_id));
+                    // Phase 2: fetch all thumbnails for the page in a single batched request.
+                    loadGalleryThumbnails(data.images.map(img => img.gallery_id));
                 })
                 .catch(err => {
                     console.error('Gallery fetch error:', err);
@@ -5079,35 +5095,36 @@ class WorkerWebUI:
         var _hordeLastModeFetch = 0;
         var _HORDE_POLL_MS = 30000;
         var _HORDE_MODE_REFRESH_MS = 300000;
-        var _HORDE_MAX_SNAPS = 10800; // 3 hours at 1s intervals
-        var _HORDE_CLIENT_AGENT = 'horde-worker-regen:0:unknown';
-
-        function _mergeHordeHistoryResponse(serverSnapshots) {
-            // Server snapshots (already filtered to the requested window and downsampled,
-            // see the `window` query param below) are the base truth for that window;
-            // keep any client-only live-polled points newer than the server's last sample
-            // so there's no visible gap between "server history" and "now".
-            if (!serverSnapshots || serverSnapshots.length === 0) return;
-            var serverLastT = serverSnapshots[serverSnapshots.length - 1].t;
-            var localTail = _hordeSnapshots.filter(function(s) { return s.t > serverLastT; });
-            _hordeSnapshots = serverSnapshots.concat(localTail);
-            if (_hordeSnapshots.length > _HORDE_MAX_SNAPS) {
-                _hordeSnapshots = _hordeSnapshots.slice(_hordeSnapshots.length - _HORDE_MAX_SNAPS);
-            }
-        }
 
         function _fetchHordeHistory(windowSecs) {
             // The bigger the requested window, the more the server downsamples -- this
             // never ships/renders more than roughly a few hundred points, regardless of
             // how much raw history the configured retention period actually holds.
+            // Fetches our own /api/horde-snapshots (server-polled every 30s independent of
+            // any browser being open) rather than aihorde.net directly: a direct
+            // cross-origin browser request needs a CORS preflight for the custom
+            // Client-Agent header, which aihorde.net does not reliably grant for
+            // arbitrary worker origins.
+            if (_hordeAbortCtrl) _hordeAbortCtrl.abort();
+            _hordeAbortCtrl = new AbortController();
+            var ctrl = _hordeAbortCtrl;
             var windowParam = (windowSecs === null) ? 'all' : String(windowSecs);
-            return fetch('/api/horde-snapshots?window=' + windowParam)
-                .then(function(r) { return r.json(); })
+            return fetch('/api/horde-snapshots?window=' + windowParam, { signal: ctrl.signal })
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(data) {
-                    _mergeHordeHistoryResponse(data.snapshots || []);
+                    if (ctrl !== _hordeAbortCtrl) return;
+                    _hordeAbortCtrl = null;
+                    _hordeSnapshots = data.snapshots || [];
+                    var errEl = document.getElementById('horde-fetch-error');
+                    if (errEl) errEl.style.display = 'none';
                     renderHordePage();
                 })
-                .catch(function() {});
+                .catch(function(err) {
+                    if (err.name === 'AbortError') return;
+                    console.error('Failed to fetch Horde network data:', err);
+                    var errEl = document.getElementById('horde-fetch-error');
+                    if (errEl) errEl.style.display = '';
+                });
         }
 
         function startHordeFetching() {
@@ -5130,15 +5147,19 @@ class WorkerWebUI:
             // eventual default explicitly rather than silently fetching an unwindowed
             // (and therefore coarser) "all" view on first load.
             _fetchHordeHistory(_hordeWindowSecs === undefined ? 1800 : _hordeWindowSecs);
-            fetchHordeData();
             fetchHordeModes();
+            // `|| 30000`: same hoisting hazard as above -- `_HORDE_POLL_MS` is still
+            // hoisted-but-undefined at this point, and setInterval coerces an
+            // undefined/NaN delay to 0, which previously made this fire on every
+            // JS tick (a few ms apart) instead of every 30s, hammering this endpoint
+            // (and, before it was proxied through our own server, aihorde.net itself).
             _hordeFetchTimer = setInterval(function() {
-                fetchHordeData();
+                _fetchHordeHistory(_hordeWindowSecs);
                 var now = Date.now();
                 if (now - _hordeLastModeFetch >= _HORDE_MODE_REFRESH_MS) {
                     fetchHordeModes();
                 }
-            }, _HORDE_POLL_MS);
+            }, _HORDE_POLL_MS || 30000);
         }
 
         function stopHordeFetching() {
@@ -5150,51 +5171,14 @@ class WorkerWebUI:
             if (_hordeModesAbortCtrl) { _hordeModesAbortCtrl.abort(); _hordeModesAbortCtrl = null; }
         }
 
-        function fetchHordeData() {
-            if (_hordeAbortCtrl) _hordeAbortCtrl.abort();
-            _hordeAbortCtrl = new AbortController();
-            var ctrl = _hordeAbortCtrl;
-            fetch('https://aihorde.net/api/v2/status/performance', {
-                signal: ctrl.signal,
-                headers: { 'Client-Agent': _HORDE_CLIENT_AGENT }
-            })
-                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-                .then(function(data) {
-                    if (ctrl !== _hordeAbortCtrl) return;
-                    _hordeAbortCtrl = null;
-                    var snap = {
-                        t: Math.floor(Date.now() / 1000),
-                        workers: data.worker_count || 0,
-                        threads: data.thread_count || 0,
-                        queued_req: data.queued_requests || 0,
-                        queued_mps: data.queued_megapixelsteps || 0,
-                        past_min_mps: data.past_minute_megapixelsteps || 0
-                    };
-                    _hordeSnapshots.push(snap);
-                    if (_hordeSnapshots.length > _HORDE_MAX_SNAPS) {
-                        _hordeSnapshots = _hordeSnapshots.slice(_hordeSnapshots.length - _HORDE_MAX_SNAPS);
-                    }
-                    var errEl = document.getElementById('horde-fetch-error');
-                    if (errEl) errEl.style.display = 'none';
-                    renderHordePage();
-                })
-                .catch(function(err) {
-                    if (err.name === 'AbortError') return;
-                    console.error('Failed to fetch Horde performance data:', err);
-                    var errEl = document.getElementById('horde-fetch-error');
-                    if (errEl) errEl.style.display = '';
-                });
-        }
-
         function fetchHordeModes() {
             if (_hordeModesAbortCtrl) _hordeModesAbortCtrl.abort();
             _hordeModesAbortCtrl = new AbortController();
             var ctrl = _hordeModesAbortCtrl;
             _hordeLastModeFetch = Date.now();
-            fetch('https://aihorde.net/api/v2/status/modes', {
-                signal: ctrl.signal,
-                headers: { 'Client-Agent': _HORDE_CLIENT_AGENT }
-            })
+            // Proxied through our own origin for the same CORS reason as
+            // /api/horde-snapshots above -- see _fetchHordeHistory.
+            fetch('/api/horde-modes', { signal: ctrl.signal })
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(data) {
                     if (ctrl !== _hordeModesAbortCtrl) return;
@@ -7049,7 +7033,11 @@ class WorkerWebUI:
             missing_ids = [
                 e["gallery_id"] for e in page_images if not e.get("thumbnail") and not e.get("base64")
             ]
-            db_thumbs = self._fetch_gallery_thumbnails_from_db(missing_ids)
+            db_thumbs = await asyncio.get_running_loop().run_in_executor(
+                None,
+                self._fetch_gallery_thumbnails_from_db,
+                missing_ids,
+            )
             rendered: list[dict[str, Any]] = []
             for entry in page_images:
                 if entry.get("thumbnail"):
@@ -7143,7 +7131,11 @@ class WorkerWebUI:
             # persisted in the gallery DB, so fetch it back on demand when missing.
             b64 = e.get("base64")
             if not b64:
-                b64 = self._fetch_gallery_base64_from_db(e.get("gallery_id"))
+                b64 = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    self._fetch_gallery_base64_from_db,
+                    e.get("gallery_id"),
+                )
             result.append(
                 {
                     "base64": b64 or "",
@@ -7195,7 +7187,12 @@ class WorkerWebUI:
         if thumbnail_only:
             # The thumbnail was evicted from memory to bound RAM usage — fetch it back
             # from the gallery DB on demand.
-            db_thumb = self._fetch_gallery_thumbnails_from_db([gallery_id]).get(gallery_id)
+            db_thumbs = await asyncio.get_running_loop().run_in_executor(
+                None,
+                self._fetch_gallery_thumbnails_from_db,
+                [gallery_id],
+            )
+            db_thumb = db_thumbs.get(gallery_id)
             if db_thumb:
                 return web.json_response(
                     {**{k: v for k, v in entry.items() if k != "base64"}, "thumbnail": db_thumb},
@@ -7206,7 +7203,11 @@ class WorkerWebUI:
         # The full-resolution base64 may have been evicted from memory to bound RAM (it is
         # persisted in the gallery DB); fetch it back on demand when it is not in memory.
         if not entry.get("base64"):
-            full_b64 = self._fetch_gallery_base64_from_db(gallery_id)
+            full_b64 = await asyncio.get_running_loop().run_in_executor(
+                None,
+                self._fetch_gallery_base64_from_db,
+                gallery_id,
+            )
             if full_b64:
                 entry = {**entry, "base64": full_b64}
         return web.json_response(entry)
@@ -7646,6 +7647,17 @@ class WorkerWebUI:
         snapshots = _downsample_series(snapshots, _CHART_MAX_POINTS)
         return web.json_response({"snapshots": snapshots})
 
+    async def _handle_horde_modes(self, request: web.Request) -> web.Response:
+        """Return the last server-polled aihorde.net maintenance/invite-only mode flags.
+
+        Served from a cache refreshed by the background _poll_horde_network task rather
+        than fetched live per-request, and proxied through our own origin rather than
+        called directly by the browser -- aihorde.net's CORS policy does not reliably
+        allow the preflight for the custom Client-Agent header from arbitrary worker
+        origins, which made the direct browser-side fetch fail in real deployments.
+        """
+        return web.json_response(self._horde_modes)
+
     _HORDE_POLL_INTERVAL: float = 30.0
     _HORDE_MIN_SERVER_SNAPS: int = 360  # floor: at least 3 hours of history
 
@@ -7661,8 +7673,17 @@ class WorkerWebUI:
         scaled = int(self._data_retention_days * 86400 / self._HORDE_POLL_INTERVAL)
         return max(self._HORDE_MIN_SERVER_SNAPS, min(scaled, _HORDE_MAX_SERVER_SNAPS_CEILING))
 
+    _HORDE_MODES_POLL_INTERVAL: float = 300.0
+
     async def _poll_horde_network(self) -> None:
-        """Background task: poll aihorde.net every 30 s and accumulate performance snapshots."""
+        """Background task: poll aihorde.net every 30 s and accumulate performance snapshots.
+
+        Also refreshes maintenance/invite-only mode flags every _HORDE_MODES_POLL_INTERVAL
+        seconds. Both are polled server-side (rather than by the browser) because the
+        browser calling aihorde.net directly requires a CORS preflight for the custom
+        Client-Agent header, which aihorde.net does not reliably grant for arbitrary
+        worker origins -- a server-to-server request has no such restriction.
+        """
         await asyncio.sleep(5)  # brief startup delay
         async with aiohttp.ClientSession() as session:
             while True:
@@ -7697,6 +7718,23 @@ class WorkerWebUI:
                     raise
                 except Exception:
                     logger.debug("Unexpected error in horde stats polling loop", exc_info=True)
+
+                now = time.time()
+                if now - self._last_horde_modes_fetch >= self._HORDE_MODES_POLL_INTERVAL:
+                    self._last_horde_modes_fetch = now
+                    try:
+                        async with session.get(
+                            "https://aihorde.net/api/v2/status/modes",
+                            headers={"Client-Agent": "horde-worker-regen:0:unknown"},
+                            timeout=aiohttp.ClientTimeout(total=15),
+                        ) as resp:
+                            if resp.status == 200:
+                                self._horde_modes = await resp.json()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.debug("Unexpected error fetching horde mode flags", exc_info=True)
+
                 await asyncio.sleep(self._HORDE_POLL_INTERVAL)
 
     async def _handle_restart_program(self, request: web.Request) -> web.Response:
