@@ -68,6 +68,71 @@ _STATS_MAX_SNAPSHOTS_CEILING = 100_000
 """Absolute ceiling on in-memory/persisted statistics snapshots, independent of the
 configured retention period (mirrors _HORDE_MAX_SERVER_SNAPS_CEILING)."""
 
+_CHART_MAX_POINTS = 480
+"""Target number of points returned by the stats/horde-snapshots endpoints per request.
+A browser chart only has a few hundred pixels of width to plot on, so a wide time window
+(e.g. "All" over weeks/months of retention) is downsampled down to roughly this many
+points server-side rather than shipping and rendering every raw sample -- the bigger the
+requested window, the coarser the returned resolution, never the reverse."""
+
+_STATS_CUMULATIVE_KEYS = frozenset({"jc", "jf", "jp", "ks"})
+"""Statistics snapshot fields that are running totals rather than point-in-time gauges.
+Downsampling must not average these -- see _downsample_series."""
+
+
+def _downsample_series(
+    rows: list[dict[str, Any]],
+    max_points: int,
+    cumulative_keys: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Reduce a chronological list of snapshot dicts to at most ``max_points`` entries.
+
+    Splits ``rows`` into contiguous buckets and collapses each bucket to a single point:
+    gauge-like fields are averaged (smooth trend, no aliasing spikes), while fields named
+    in ``cumulative_keys`` (running totals such as a jobs-completed counter) keep the
+    earliest raw value in the first bucket and the latest raw value in every other bucket.
+    That guarantees the first and last returned points still carry the true earliest/latest
+    counter values, so a caller computing a delta from ``result[0]`` and ``result[-1]``
+    gets the exact total over the whole range even though interior points are approximate.
+    """
+    n = len(rows)
+    if n <= max_points or max_points <= 0:
+        return rows
+    bucket_size = math.ceil(n / max_points)
+    result = []
+    for i in range(0, n, bucket_size):
+        bucket = rows[i : i + bucket_size]
+        is_first_bucket = i == 0
+        point: dict[str, Any] = {}
+        for key in bucket[-1].keys():
+            if key == "t":
+                point["t"] = bucket[-1]["t"]
+            elif key in cumulative_keys:
+                point[key] = bucket[0][key] if is_first_bucket else bucket[-1][key]
+            else:
+                values = [b[key] for b in bucket if isinstance(b.get(key), (int, float))]
+                point[key] = (sum(values) / len(values)) if values else bucket[-1].get(key)
+        result.append(point)
+    return result
+
+
+def _windowed_snapshots(snapshots: list[dict[str, Any]], window_param: str | None) -> list[dict[str, Any]]:
+    """Filter a chronological snapshot list to the trailing window requested by the client.
+
+    ``window_param`` is the raw ``window`` query-string value: ``None``/absent or ``"all"``
+    returns everything, otherwise it's parsed as a number of seconds measured back from the
+    most recent snapshot. An invalid value is treated the same as "all" rather than erroring,
+    since a malformed window shouldn't make the whole chart fail to load.
+    """
+    if not snapshots or not window_param or window_param == "all":
+        return snapshots
+    try:
+        window_secs = float(window_param)
+    except ValueError:
+        return snapshots
+    cutoff = snapshots[-1].get("t", 0) - window_secs
+    return [s for s in snapshots if s.get("t", 0) >= cutoff]
+
 _MAX_PERSISTED_ERRORS = 1000
 """Maximum number of error rows to load from the database on startup (matches ProcessManager in-memory cap)."""
 
@@ -2606,7 +2671,7 @@ class WorkerWebUI:
                 renderHordePage();
                 // Trigger an immediate fetch when navigating here if there are no snapshots
                 // yet or the most recent one is older than the poll interval.
-                var _hordeLastTs = _hordeSnapshots.length > 0 ? _hordeSnapshots[_hordeSnapshots.length - 1].t : 0;
+                var _hordeLastTs = (_hordeSnapshots && _hordeSnapshots.length > 0) ? _hordeSnapshots[_hordeSnapshots.length - 1].t : 0;
                 if (Date.now() / 1000 - _hordeLastTs > 30) fetchHordeData();
             }
             if (pageId === 'settings') {
@@ -4247,7 +4312,11 @@ class WorkerWebUI:
             _statsWindowSecs = windowSecs;
             document.querySelectorAll('.stats-window-btn').forEach(function(b) { b.classList.remove('active'); });
             if (btn) btn.classList.add('active');
-            if (_statsData) renderStatsPage(_statsData);
+            // Re-fetch rather than re-rendering the cached response: the server now
+            // filters and downsamples by window, so switching to a wider window needs
+            // a request for that window's (still small) data, not a client-side re-filter
+            // of an already-loaded array.
+            fetchStats(true);
         }
 
         function fetchStats(force) {
@@ -4262,7 +4331,8 @@ class WorkerWebUI:
             if (_statsAbortController) _statsAbortController.abort();
             _statsAbortController = new AbortController();
             var ctrl = _statsAbortController;
-            fetch('/api/stats', { signal: ctrl.signal })
+            var windowParam = (_statsWindowSecs === null) ? 'all' : String(_statsWindowSecs);
+            fetch('/api/stats?window=' + windowParam, { signal: ctrl.signal })
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(data) {
                     if (ctrl !== _statsAbortController) return;
@@ -4278,10 +4348,10 @@ class WorkerWebUI:
         }
 
         function _getWindowedSnapshots(snapshots) {
-            if (!snapshots || snapshots.length === 0) return [];
-            if (_statsWindowSecs === null) return snapshots;
-            var cutoff = snapshots[snapshots.length - 1].t - _statsWindowSecs;
-            return snapshots.filter(function(s) { return s.t >= cutoff; });
+            // The server already filters to the requested window and downsamples the
+            // result (see fetchStats' window query param), so this is just a defensive
+            // no-op pass-through in case a caller ever renders stale/unfiltered data.
+            return snapshots || [];
         }
 
         function _avgField(arr, key) {
@@ -5012,28 +5082,54 @@ class WorkerWebUI:
         var _HORDE_MAX_SNAPS = 10800; // 3 hours at 1s intervals
         var _HORDE_CLIENT_AGENT = 'horde-worker-regen:0:unknown';
 
-        function startHordeFetching() {
-            if (_hordeFetchTimer !== null) return; // already running
-            // _hordeSnapshots may already be pre-seeded via inline injection in the HTML.
-            // Fetch fresh server snapshots anyway to pick up any gap since the page was rendered,
-            // but only merge them — don't overwrite snapshots we already have.
-            fetch('/api/horde-snapshots')
+        function _mergeHordeHistoryResponse(serverSnapshots) {
+            // Server snapshots (already filtered to the requested window and downsampled,
+            // see the `window` query param below) are the base truth for that window;
+            // keep any client-only live-polled points newer than the server's last sample
+            // so there's no visible gap between "server history" and "now".
+            if (!serverSnapshots || serverSnapshots.length === 0) return;
+            var serverLastT = serverSnapshots[serverSnapshots.length - 1].t;
+            var localTail = _hordeSnapshots.filter(function(s) { return s.t > serverLastT; });
+            _hordeSnapshots = serverSnapshots.concat(localTail);
+            if (_hordeSnapshots.length > _HORDE_MAX_SNAPS) {
+                _hordeSnapshots = _hordeSnapshots.slice(_hordeSnapshots.length - _HORDE_MAX_SNAPS);
+            }
+        }
+
+        function _fetchHordeHistory(windowSecs) {
+            // The bigger the requested window, the more the server downsamples -- this
+            // never ships/renders more than roughly a few hundred points, regardless of
+            // how much raw history the configured retention period actually holds.
+            var windowParam = (windowSecs === null) ? 'all' : String(windowSecs);
+            return fetch('/api/horde-snapshots?window=' + windowParam)
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
-                    if (data.snapshots && data.snapshots.length > 0) {
-                        // Only use server snapshots if we don't already have newer data.
-                        var existingLastT = _hordeSnapshots.length > 0 ? _hordeSnapshots[_hordeSnapshots.length - 1].t : 0;
-                        var serverLastT = data.snapshots[data.snapshots.length - 1].t;
-                        if (serverLastT > existingLastT) {
-                            _hordeSnapshots = data.snapshots.slice();
-                            if (_hordeSnapshots.length > _HORDE_MAX_SNAPS) {
-                                _hordeSnapshots = _hordeSnapshots.slice(_hordeSnapshots.length - _HORDE_MAX_SNAPS);
-                            }
-                            renderHordePage();
-                        }
-                    }
+                    _mergeHordeHistoryResponse(data.snapshots || []);
+                    renderHordePage();
                 })
                 .catch(function() {});
+        }
+
+        function startHordeFetching() {
+            // Truthy check, not `!== null`: this is called at top-level script execution
+            // (see the unconditional call further up the file), before the
+            // "var _hordeFetchTimer = null" declaration further down runs -- at that point
+            // it's hoisted-but-undefined, and `undefined !== null` is true, which used to
+            // make this bail out immediately on the very first call. `undefined` and
+            // `null` are both falsy, so this check behaves the same for every real state
+            // (unset/stopped vs. a live interval id) while no longer misfiring on that
+            // first hoisted-undefined call.
+            if (_hordeFetchTimer) return; // already running
+            // _hordeSnapshots may already be pre-seeded (coarsely downsampled) via inline
+            // injection in the HTML. Fetch the currently-selected window's history from
+            // the server to fill in proper resolution for it and pick up any gap since
+            // the page was rendered.
+            // Note: this function is invoked at top-level script execution (before the
+            // "var _hordeWindowSecs = 1800" declaration further down the file runs), so
+            // `_hordeWindowSecs` is still hoisted-but-undefined here -- fall back to its
+            // eventual default explicitly rather than silently fetching an unwindowed
+            // (and therefore coarser) "all" view on first load.
+            _fetchHordeHistory(_hordeWindowSecs === undefined ? 1800 : _hordeWindowSecs);
             fetchHordeData();
             fetchHordeModes();
             _hordeFetchTimer = setInterval(function() {
@@ -5147,7 +5243,9 @@ class WorkerWebUI:
             _hordeWindowSecs = secs;
             document.querySelectorAll('.horde-window-btn').forEach(function(b) { b.classList.remove('active'); });
             if (btn) btn.classList.add('active');
-            renderHordePage();
+            // Re-fetch for the newly selected window rather than just re-filtering
+            // whatever happens to already be loaded client-side -- see _fetchHordeHistory.
+            _fetchHordeHistory(secs);
         }
 
         function renderHordePage() {
@@ -6426,7 +6524,10 @@ class WorkerWebUI:
         """
         # Inject server-accumulated horde snapshots so they're available synchronously
         # the moment the page loads — no separate /api/horde-snapshots round-trip needed.
-        snaps_json = json.dumps(list(self._horde_snapshots))
+        # Downsampled the same way as the /api/horde-snapshots endpoint: this seed is sent
+        # on every single page load regardless of whether the user ever opens the Horde
+        # tab, so it must never scale with the full retention window's raw sample count.
+        snaps_json = json.dumps(_downsample_series(list(self._horde_snapshots), _CHART_MAX_POINTS))
         html = html.replace(
             "var _hordeSnapshots = [];",
             f"var _hordeSnapshots = {snaps_json};",
@@ -6600,10 +6701,15 @@ class WorkerWebUI:
     async def _handle_stats(self, request: web.Request) -> web.Response:
         """Return historical statistics snapshots and per-model image counts.
 
-        Returns all stored snapshots in chronological order (oldest first).
-        Each snapshot contains a Unix timestamp plus CPU/GPU/VRAM/RAM usage
-        percentages, container CPU percentage, images/hour, kudos/hour, and
-        cumulative job/kudos counters for the current session.
+        Accepts an optional ``window`` query parameter (seconds, or ``"all"``/absent for
+        the full retention window) selecting how far back to look. The matching snapshots
+        are downsampled to roughly _CHART_MAX_POINTS points server-side -- the wider the
+        requested window, the coarser the resolution -- so a multi-day/week "All" view
+        doesn't ship and re-render every raw 10-second sample.
+
+        Returns snapshots in chronological order (oldest first). Each snapshot contains a
+        Unix timestamp plus CPU/GPU/VRAM/RAM usage percentages, container CPU percentage,
+        images/hour, kudos/hour, and cumulative job/kudos counters for the current session.
 
         Response shape::
 
@@ -6634,8 +6740,10 @@ class WorkerWebUI:
                 "jobs_faulted": <int>  # session-total jobs faulted
             }
         """
+        snapshots = _windowed_snapshots(list(self._stats_snapshots), request.query.get("window"))
+        snapshots = _downsample_series(snapshots, _CHART_MAX_POINTS, _STATS_CUMULATIVE_KEYS)
         return web.json_response({
-            "snapshots": list(self._stats_snapshots),
+            "snapshots": snapshots,
             "images_per_model": self.status_data.get("images_per_model", {}),
             "failed_jobs_per_model": self.status_data.get("failed_jobs_per_model", {}),
             "faulted_jobs_per_phase": self.status_data.get("faulted_jobs_per_phase", {}),
@@ -7527,8 +7635,16 @@ class WorkerWebUI:
         return web.json_response({"started": True})
 
     async def _handle_horde_snapshots(self, request: web.Request) -> web.Response:
-        """Return server-accumulated horde network performance snapshots."""
-        return web.json_response({"snapshots": list(self._horde_snapshots)})
+        """Return server-accumulated horde network performance snapshots.
+
+        Accepts the same optional ``window`` query parameter as /api/stats (seconds, or
+        ``"all"``/absent) and downsamples the result to roughly _CHART_MAX_POINTS points
+        server-side, for the same reason: a multi-day "All" view has no need for every
+        raw 30-second sample once there are more of them than chart pixels to plot on.
+        """
+        snapshots = _windowed_snapshots(list(self._horde_snapshots), request.query.get("window"))
+        snapshots = _downsample_series(snapshots, _CHART_MAX_POINTS)
+        return web.json_response({"snapshots": snapshots})
 
     _HORDE_POLL_INTERVAL: float = 30.0
     _HORDE_MIN_SERVER_SNAPS: int = 360  # floor: at least 3 hours of history
