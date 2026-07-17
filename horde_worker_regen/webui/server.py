@@ -49,11 +49,24 @@ _ERROR_TIMESTAMP_RE = re.compile(
     r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?\b|\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b",
 )
 
-_STATS_SNAPSHOT_INTERVAL = 10.0
-"""Minimum seconds between statistics snapshots recorded by WorkerWebUI."""
+_STATS_MIN_SNAPSHOT_INTERVAL = 10.0
+"""Finest seconds-between-snapshots interval, used while the configured retention window
+is short enough not to need coarsening (this was the previous fixed interval)."""
 
-_MAX_STATS_SNAPSHOTS = 2160
-"""Maximum number of statistics snapshots to keep (approx. 6 hours at 10-second intervals)."""
+_STATS_MAX_SNAPSHOT_INTERVAL = 3600.0
+"""Coarsest seconds-between-snapshots interval. Long retention windows collect less often
+(down to once per hour) instead of accumulating an unbounded number of snapshot rows."""
+
+_STATS_TARGET_SNAPSHOT_COUNT = 60_480
+"""Target number of statistics snapshots spanning the full retention window. At the
+default 7-day retention this works out to exactly _STATS_MIN_SNAPSHOT_INTERVAL, so the
+out-of-the-box collection cadence is unchanged; longer retention windows automatically
+space snapshots out further (see WorkerWebUI._stats_snapshot_interval) so that the full
+window is still covered without the snapshot count growing unbounded."""
+
+_STATS_MAX_SNAPSHOTS_CEILING = 100_000
+"""Absolute ceiling on in-memory/persisted statistics snapshots, independent of the
+configured retention period (mirrors _HORDE_MAX_SERVER_SNAPS_CEILING)."""
 
 _MAX_PERSISTED_ERRORS = 1000
 """Maximum number of error rows to load from the database on startup (matches ProcessManager in-memory cap)."""
@@ -369,7 +382,7 @@ class WorkerWebUI:
         self._next_gallery_id: int = 0
 
         # Ring buffer for time-series statistics snapshots served by /api/stats.
-        self._stats_snapshots: deque[dict[str, Any]] = deque(maxlen=_MAX_STATS_SNAPSHOTS)
+        self._stats_snapshots: deque[dict[str, Any]] = deque(maxlen=self._stats_max_snapshots)
         # Unix timestamp of the most recently recorded snapshot (0 = none yet).
         self._last_stats_snapshot_time: float = 0.0
 
@@ -566,6 +579,29 @@ class WorkerWebUI:
         """Return the Unix timestamp before which rows are considered expired."""
         return time.time() - self._data_retention_days * 86400.0
 
+    @property
+    def _stats_snapshot_interval(self) -> float:
+        """Seconds between recorded statistics snapshots, scaled to the retention window.
+
+        Spacing snapshots out further for long retention windows (instead of collecting
+        at a fixed cadence forever) keeps the full window representable within
+        _STATS_TARGET_SNAPSHOT_COUNT rows rather than growing without bound.
+        """
+        needed = (self._data_retention_days * 86400.0) / _STATS_TARGET_SNAPSHOT_COUNT
+        return max(_STATS_MIN_SNAPSHOT_INTERVAL, min(needed, _STATS_MAX_SNAPSHOT_INTERVAL))
+
+    @property
+    def _stats_max_snapshots(self) -> int:
+        """Max statistics snapshots to keep in memory and load from the database.
+
+        Scales with data_retention_days (via _stats_snapshot_interval) so the full
+        retention window is representable, bounded by an absolute ceiling — a
+        multi-year retention setting would otherwise translate into an unbounded
+        number of in-memory snapshot dicts.
+        """
+        scaled = int((self._data_retention_days * 86400.0) / self._stats_snapshot_interval) + 1
+        return min(scaled, _STATS_MAX_SNAPSHOTS_CEILING)
+
     def _load_persisted_data(self) -> None:
         """Load persisted errors, gallery images, and stats snapshots from the databases.
 
@@ -650,7 +686,7 @@ class WorkerWebUI:
                     "SELECT id, snapshot_json, timestamp FROM stats_snapshots"
                     " WHERE timestamp >= ? ORDER BY timestamp DESC, id DESC LIMIT ?"
                     ") ORDER BY timestamp ASC, id ASC",
-                    (cutoff, _MAX_STATS_SNAPSHOTS),
+                    (cutoff, self._stats_max_snapshots),
                 ).fetchall()
                 for row in rows:
                     try:
@@ -796,7 +832,7 @@ class WorkerWebUI:
 
         stats = getattr(self, "_persisted_stats", [])
         if stats:
-            self._stats_snapshots = deque(stats, maxlen=_MAX_STATS_SNAPSHOTS)
+            self._stats_snapshots = deque(stats, maxlen=self._stats_max_snapshots)
             if self._stats_snapshots:
                 # Restore the last snapshot time so the interval guard works correctly.
                 last = self._stats_snapshots[-1]
@@ -914,7 +950,7 @@ class WorkerWebUI:
 
         # Rebuild stats snapshots.
         stats = getattr(self, "_persisted_stats", [])
-        self._stats_snapshots = deque(stats, maxlen=_MAX_STATS_SNAPSHOTS)
+        self._stats_snapshots = deque(stats, maxlen=self._stats_max_snapshots)
         if self._stats_snapshots:
             last = self._stats_snapshots[-1]
             self._last_stats_snapshot_time = self._safe_snapshot_time(last)
@@ -934,9 +970,10 @@ class WorkerWebUI:
             days: New retention period in days (must be >= 1).
         """
         self._data_retention_days = max(1, min(3650, int(days)))
-        # Resize the horde snapshots deque to match the new retention period so
+        # Resize the horde/stats snapshot deques to match the new retention period so
         # the 6h / All window buttons have enough history to differentiate.
         self._horde_snapshots = deque(self._horde_snapshots, maxlen=self._horde_max_server_snaps)
+        self._stats_snapshots = deque(self._stats_snapshots, maxlen=self._stats_max_snapshots)
         self._prune_old_db_data()
 
     def set_delete_worker_callback(self, callback: Callable[[str], Awaitable[bool]] | None) -> None:
@@ -2328,6 +2365,7 @@ class WorkerWebUI:
                         <div id="settings-body">
                             <div class="settings-unavailable">Loading settings&#8230;</div>
                         </div>
+                        <div id="models-section-container"></div>
                     </div>
                 </div>
 
@@ -5558,6 +5596,10 @@ class WorkerWebUI:
         function fetchSettings() {
             if (_settingsFetchInProgress) return;
             _settingsFetchInProgress = true;
+            // Kick off the models fetch in parallel rather than after the settings
+            // render completes -- it targets its own container (#models-section-container)
+            // so there's no ordering dependency on the settings HTML being built first.
+            fetchModels();
             fetch('/api/settings')
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(data) {
@@ -5725,8 +5767,6 @@ class WorkerWebUI:
             _updateAllResetBtns();
             // Render the API reference section for the pause-jobs endpoint
             _renderApiRefSection(body, settings);
-            // Fetch and render the Models section after the settings categories
-            fetchModels();
         }
 
         var _modelsFetchInProgress = false;
@@ -5769,18 +5809,12 @@ class WorkerWebUI:
         }
 
         function renderModelsSection(enabled, disabled) {
-            var body = document.getElementById('settings-body');
-            if (!body) return;
-            // Remove any existing models section before re-rendering
-            var existing = document.getElementById('models-section');
-            if (existing) existing.remove();
+            var container = document.getElementById('models-section-container');
+            if (!container) return;
 
-            if (enabled.length === 0 && disabled.length === 0) return;
+            if (enabled.length === 0 && disabled.length === 0) { container.innerHTML = ''; return; }
 
-            var section = document.createElement('div');
-            section.id = 'models-section';
-            section.className = 'settings-group';
-            var h = '<div class="settings-group-title">Models</div>';
+            var h = '<div class="settings-group" id="models-section"><div class="settings-group-title">Models</div>';
             h += '<div class="models-containers">';
             // Enabled box
             h += '<div class="models-box">';
@@ -5806,17 +5840,21 @@ class WorkerWebUI:
                 }
             }
             h += '</div></div>';
-            h += '</div>';
-            section.innerHTML = h;
-            var modelButtons = section.querySelectorAll('.model-pill[data-model][data-enable]');
-            for (var k = 0; k < modelButtons.length; k++) {
-                modelButtons[k].addEventListener('click', function() {
-                    var modelName = this.getAttribute('data-model') || '';
+            h += '</div></div>';
+            container.innerHTML = h;
+            // Single delegated listener instead of one per pill -- with large model
+            // lists (hundreds of entries) attaching an individual listener to every
+            // button was measurably slow to set up and had to be redone on every toggle.
+            if (!container._modelsClickBound) {
+                container.addEventListener('click', function(e) {
+                    var btn = e.target.closest('.model-pill[data-model][data-enable]');
+                    if (!btn) return;
+                    var modelName = btn.getAttribute('data-model') || '';
                     if (!modelName) return;
-                    toggleModel(modelName, this.getAttribute('data-enable') === 'true');
+                    toggleModel(modelName, btn.getAttribute('data-enable') === 'true');
                 });
+                container._modelsClickBound = true;
             }
-            body.appendChild(section);
         }
 
         function toggleModel(modelName, enable) {
@@ -6613,7 +6651,7 @@ class WorkerWebUI:
     def _record_stats_snapshot(self) -> None:
         """Append a statistics snapshot to the ring buffer if enough time has elapsed."""
         now = time.time()
-        if now - self._last_stats_snapshot_time < _STATS_SNAPSHOT_INTERVAL:
+        if now - self._last_stats_snapshot_time < self._stats_snapshot_interval:
             return
         self._last_stats_snapshot_time = now
         sd = self.status_data
@@ -7958,7 +7996,7 @@ class WorkerWebUI:
         # Update uptime
         self.status_data["uptime"] = time.time() - self.status_data["session_start_time"]
 
-        # Record a statistics snapshot (throttled to at most once per _STATS_SNAPSHOT_INTERVAL).
+        # Record a statistics snapshot (throttled to at most once per _stats_snapshot_interval).
         self._record_stats_snapshot()
 
     def reset_session_start_time(self) -> None:
