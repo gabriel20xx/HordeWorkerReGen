@@ -196,7 +196,7 @@ class HordeProcess(abc.ABC):
         Note that this will only send a heartbeat message if the last heartbeat was sent more than
         `_heartbeat_limit_interval_seconds` ago or if the heartbeat type has changed.
         """
-        if (heartbeat_type != self._last_heartbeat_type) and (
+        if (heartbeat_type == self._last_heartbeat_type) and (
             time.time() - self._last_heartbeat_time
         ) < self._heartbeat_limit_interval_seconds:
             return
