@@ -1561,6 +1561,11 @@ class TestSavedImagePreviewSafetyAlignment:
         completed_job_info = MagicMock()
         completed_job_info.sdk_api_job_info.id_ = job_id
         completed_job_info.sdk_api_job_info.model = "stable_diffusion_xl"
+        # No payload metadata for this test -- it only cares about the base64/timestamp/model
+        # fields and the safety-mismatch clearing behaviour, not the optional inference_steps/
+        # width/height/prompt enrichment that process_manager.py adds when a payload is present.
+        completed_job_info.sdk_api_job_info.payload = None
+        completed_job_info.time_to_generate = None
         completed_job_info.job_image_results = [
             HordeImageResult(image_base64="img-a"),
             HordeImageResult(image_base64="img-b"),
