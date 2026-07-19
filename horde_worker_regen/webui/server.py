@@ -17,6 +17,8 @@ import aiohttp
 from aiohttp import web
 from loguru import logger
 
+import horde_worker_regen
+
 try:
     from PIL import Image as _PILImage
 
@@ -1186,6 +1188,7 @@ class WorkerWebUI:
         self.app.router.add_get("/health", self._handle_health)
         self.app.router.add_delete("/api/worker/{worker_id}", self._handle_delete_worker)
         self.app.router.add_post("/api/job_pops/pause", self._handle_set_job_pops_paused)
+        self.app.router.add_get("/api/job_pops/time_without_jobs", self._handle_get_time_without_jobs)
         self.app.router.add_post("/api/maintenance/clear", self._handle_clear_maintenance_mode)
         self.app.router.add_get("/api/settings", self._handle_get_settings)
         self.app.router.add_post("/api/settings", self._handle_set_setting)
@@ -1951,6 +1954,37 @@ class WorkerWebUI:
         .api-ref-badge.optional { background: #e0f2fe; color: #075985; }
         [data-theme="dark"] .api-ref-badge.required { background: #450a0a; color: #fca5a5; }
         [data-theme="dark"] .api-ref-badge.optional { background: #082f49; color: #7dd3fc; }
+        /* API page: method colour variants, per-endpoint blocks, group descriptions */
+        .api-ref-method.get { background: #dbeafe; color: #1e40af; }
+        [data-theme="dark"] .api-ref-method.get { background: #1e3a8a; color: #93c5fd; }
+        .api-ref-method.delete { background: #fee2e2; color: #991b1b; }
+        [data-theme="dark"] .api-ref-method.delete { background: #7f1d1d; color: #fca5a5; }
+        .api-ref-intro { font-size: 0.82rem; color: var(--text-muted); line-height: 1.5; margin-bottom: var(--page-spacing); max-width: 760px; }
+        .api-ref-group-desc { font-size: 0.8rem; color: var(--text-muted); margin: -4px 0 12px; }
+        .api-ref-endpoint-desc { font-size: 0.82rem; color: #475569; margin-bottom: 8px; line-height: 1.45; }
+        [data-theme="dark"] .api-ref-endpoint-desc { color: #94a3b8; }
+        .api-ref-endpoint-block + .api-ref-endpoint-block { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        /* About page */
+        .about-hero { display: flex; gap: 18px; align-items: flex-start; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: var(--page-spacing); }
+        .about-hero-icon { font-size: 2.4rem; line-height: 1; flex-shrink: 0; }
+        .about-hero-title { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+        .about-hero-sub { font-size: 0.8rem; color: var(--text-muted); margin: 2px 0 10px; }
+        .about-hero-desc { font-size: 0.85rem; color: #475569; line-height: 1.55; max-width: 640px; }
+        [data-theme="dark"] .about-hero-desc { color: #94a3b8; }
+        .about-hero-desc a { color: #2563eb; text-decoration: none; }
+        .about-hero-desc a:hover { text-decoration: underline; }
+        [data-theme="dark"] .about-hero-desc a { color: #60a5fa; }
+        .about-hero-links { display: flex; gap: 14px; margin-top: 12px; flex-wrap: wrap; }
+        .about-link { font-size: 0.82rem; font-weight: 600; color: #2563eb; text-decoration: none; }
+        .about-link:hover { text-decoration: underline; }
+        [data-theme="dark"] .about-link { color: #60a5fa; }
+        .about-tech-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+        .about-tech-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+        .about-tech-card-name { font-size: 0.85rem; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+        .about-tech-card-desc { font-size: 0.78rem; color: #64748b; line-height: 1.45; }
+        [data-theme="dark"] .about-tech-card-desc { color: #94a3b8; }
+        .about-tech-card-tag { display: inline-block; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #7c3aed; background: #ede9fe; border-radius: 3px; padding: 1px 6px; margin-bottom: 6px; }
+        [data-theme="dark"] .about-tech-card-tag { color: #c4b5fd; background: #2e1065; }
         /* Models section */
         .models-containers { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         @media (max-width: 640px) { .models-containers { grid-template-columns: 1fr; } }
@@ -2047,6 +2081,12 @@ class WorkerWebUI:
             </button>
             <button class="nav-item" onclick="showPage('settings', this)" id="nav-settings">
                 <span class="nav-icon">&#9881;</span> Settings
+            </button>
+            <button class="nav-item" onclick="showPage('api', this)" id="nav-api">
+                <span class="nav-icon">&#128268;</span> API
+            </button>
+            <button class="nav-item" onclick="showPage('about', this)" id="nav-about">
+                <span class="nav-icon">&#8505;</span> About
             </button>
         </nav>
     </aside>
@@ -2442,6 +2482,54 @@ class WorkerWebUI:
                     </div>
                 </div>
 
+                <!-- API PAGE -->
+                <div class="page" id="page-api">
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="section-title">&#128268; API</span>
+                        </div>
+                        <div class="api-ref-intro">Every endpoint below is unauthenticated and reachable from any address that can reach this worker's web UI port &mdash; there is no separate "external" API surface, just this one. Treat network access to this port as the access control.</div>
+                        <div id="api-page-body"></div>
+                    </div>
+                </div>
+
+                <!-- ABOUT PAGE -->
+                <div class="page" id="page-about">
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="section-title">&#8505; About</span>
+                        </div>
+                        <div class="about-hero">
+                            <div class="about-hero-icon">&#127912;</div>
+                            <div class="about-hero-body">
+                                <div class="about-hero-title">AI Horde Worker (reGen)</div>
+                                <div class="about-hero-sub">Version {{WORKER_VERSION}} &middot; AGPL-3.0</div>
+                                <div class="about-hero-desc">Connects this machine to the <a href="https://aihorde.net" target="_blank" rel="noopener noreferrer">AI Horde</a>, a crowdsourced, distributed cluster for AI image generation, turning spare GPU time into images for the community in exchange for kudos.</div>
+                                <div class="about-hero-links">
+                                    <a class="about-link" href="https://github.com/Haidra-Org/AI-Horde-Worker" target="_blank" rel="noopener noreferrer">&#128279; GitHub Repository</a>
+                                    <a class="about-link" href="https://aihorde.net" target="_blank" rel="noopener noreferrer">&#127760; AI Horde</a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <div class="settings-group-title">Tech Stack</div>
+                            <div class="about-tech-grid">
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Language</span><div class="about-tech-card-name">Python 3.10+</div><div class="about-tech-card-desc">Core worker runtime, process management, and this Web UI.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Web</span><div class="about-tech-card-name">aiohttp</div><div class="about-tech-card-desc">Async HTTP server powering this Web UI and its JSON API.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Frontend</span><div class="about-tech-card-name">Vanilla HTML / CSS / JS</div><div class="about-tech-card-desc">This page is server-rendered with no frontend framework or build step.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Storage</span><div class="about-tech-card-name">SQLite</div><div class="about-tech-card-desc">Local persistence for error logs, gallery images, and statistics history.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Imaging</span><div class="about-tech-card-name">Pillow</div><div class="about-tech-card-desc">Generates gallery thumbnails (optional &mdash; falls back to full-resolution images if absent).</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Logging</span><div class="about-tech-card-name">Loguru</div><div class="about-tech-card-desc">Structured logging to console and the Logs page.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">ML</span><div class="about-tech-card-name">PyTorch</div><div class="about-tech-card-desc">GPU tensor runtime underpinning image generation.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">ML</span><div class="about-tech-card-name">horde_engine (hordelib)</div><div class="about-tech-card-desc">ComfyUI-based diffusion pipeline execution.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Horde</span><div class="about-tech-card-name">horde_sdk</div><div class="about-tech-card-desc">AI Horde job protocol: popping, submitting, and reporting faults for jobs.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Horde</span><div class="about-tech-card-name">horde_safety</div><div class="about-tech-card-desc">NSFW / CSAM detection applied to generated images before submission.</div></div>
+                                <div class="about-tech-card"><span class="about-tech-card-tag">Data</span><div class="about-tech-card-name">Pydantic</div><div class="about-tech-card-desc">Validation and schemas for Horde API payloads.</div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -2492,7 +2580,7 @@ class WorkerWebUI:
             if (str === null || str === undefined) return '';
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
-        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'stats', 'logs', 'settings']);
+        const VALID_PAGES = Object.freeze(['overview', 'gallery', 'user', 'horde', 'stats', 'logs', 'settings', 'api', 'about']);
         let galleryCurrentPage = 1, galleryTotalPages = 1, galleryTotalImages = 0, galleryFetchInProgress = false;
         const GALLERY_DEFAULT_PAGE_SIZE = 96;
         let galleryPageSize = GALLERY_DEFAULT_PAGE_SIZE;
@@ -2690,6 +2778,10 @@ class WorkerWebUI:
             }
             if (pageId === 'settings') {
                 fetchSettings();
+            }
+            if (pageId === 'api' && !_apiPageRendered) {
+                renderApiPage();
+                _apiPageRendered = true;
             }
         }
         window.addEventListener('popstate', function() {
@@ -5922,8 +6014,6 @@ class WorkerWebUI:
             body.innerHTML = html || '<div class="settings-unavailable">No configurable settings available.</div>';
             _updateApplyButtonState();
             _updateAllResetBtns();
-            // Render the API reference section for the pause-jobs endpoint
-            _renderApiRefSection(body, settings);
         }
 
         var _modelsFetchInProgress = false;
@@ -5941,28 +6031,133 @@ class WorkerWebUI:
                     if (_modelsFetchPending) { _modelsFetchPending = false; fetchModels(); }
                 });
         }
-        function _renderApiRefSection(body, settings) {
-            var existing = document.getElementById('api-ref-section');
-            if (existing) existing.remove();
-            var webuiUrl = (settings && settings.webui_url) ? String(settings.webui_url) : window.location.origin;
-            var pauseUrl = webuiUrl.replace(/\/+$/, '') + '/api/job_pops/pause';
-            var section = document.createElement('div');
-            section.id = 'api-ref-section';
-            section.className = 'settings-group';
-            var h = '<div class="settings-group-title">API Reference</div>';
-            h += '<div class="api-ref-box">';
+        // Full reference for every route registered on this server. Grouped for display on
+        // the API page; kept as data rather than inline markup so adding a new endpoint is a
+        // one-entry addition here instead of hand-written HTML.
+        var _API_GROUPS = [
+            {
+                title: 'Status & Monitoring',
+                desc: 'Read-only endpoints safe to poll from external dashboards or scripts.',
+                endpoints: [
+                    { method: 'GET', path: '/api/status', desc: 'Full worker status snapshot: jobs, kudos, processes, resource usage, and more. Excludes the last-image payload and full error history to keep polls lightweight.' },
+                    { method: 'GET', path: '/api/stats', desc: 'Historical statistics snapshots (CPU/GPU/VRAM/RAM, kudos/images per hour, cumulative counters) plus per-model and per-job-state aggregates.', params: [
+                        { name: 'window', type: 'string', required: false, desc: 'Seconds of history to include, or <code>all</code> for the full retention window. Omit for the full window.' },
+                    ] },
+                    { method: 'GET', path: '/health', desc: 'Basic health check. Returns <code>{"status": "ok"}</code>.' },
+                    { method: 'GET', path: '/api/config', desc: 'Static worker configuration (currently just the status-poll interval, in milliseconds).' },
+                    { method: 'GET', path: '/api/job_pops/time_without_jobs', desc: 'Total seconds this session has gone with no jobs popped or available, matching the value shown on the Overview page.' },
+                    { method: 'GET', path: '/api/horde-snapshots', desc: 'Server-accumulated AI Horde network performance snapshots.', params: [
+                        { name: 'window', type: 'string', required: false, desc: 'Same as <code>/api/stats</code>.' },
+                    ] },
+                    { method: 'GET', path: '/api/horde-modes', desc: 'Last-polled aihorde.net maintenance / invite-only mode flags.' },
+                ],
+            },
+            {
+                title: 'Job Pop Control',
+                desc: 'Pause or resume the worker accepting new jobs from the Horde.',
+                endpoints: [
+                    { method: 'POST', path: '/api/job_pops/pause', desc: 'Pause or resume accepting new job pops.', params: [
+                        { name: 'paused', type: 'boolean', required: true, desc: '<code>true</code> to pause accepting new jobs, <code>false</code> to resume.' },
+                        { name: 'duration_seconds', type: 'number', required: false, desc: 'How long to pause in seconds. Omit or set to <code>null</code> for an indefinite pause.' },
+                    ] },
+                ],
+            },
+            {
+                title: 'Gallery',
+                desc: 'Browse generated images and their metadata.',
+                endpoints: [
+                    { method: 'GET', path: '/api/gallery', desc: 'Paginated gallery image history, newest first.', params: [
+                        { name: 'page', type: 'integer', required: false, desc: '1-based page number. Default 1.' },
+                        { name: 'page_size', type: 'integer', required: false, desc: 'Images per page. Default and max 96.' },
+                        { name: 'metadata_only', type: 'boolean', required: false, desc: 'If true, omit image/thumbnail data and return only lightweight metadata.' },
+                        { name: 'model', type: 'string', required: false, desc: 'Filter to a single model name (case-insensitive).' },
+                        { name: 'safety', type: 'string', required: false, desc: 'One of <code>sfw</code>, <code>nsfw</code>, <code>csam</code>.' },
+                    ] },
+                    { method: 'GET', path: '/api/gallery/models', desc: 'Distinct model names in the gallery with per-model image counts.' },
+                    { method: 'GET', path: '/api/gallery/safety', desc: 'Per-safety-category (sfw/nsfw/csam) image counts.' },
+                    { method: 'GET', path: '/api/gallery/image', desc: 'A single gallery image by id.', params: [
+                        { name: 'id', type: 'integer', required: true, desc: 'The <code>gallery_id</code> assigned when the image was added.' },
+                        { name: 'thumbnail_only', type: 'boolean', required: false, desc: 'If true, return only the thumbnail rather than the full-resolution image.' },
+                    ] },
+                    { method: 'GET', path: '/api/gallery/last-batch', desc: 'Full-resolution images from the most recently completed job (all outputs sharing one timestamp).' },
+                    { method: 'GET', path: '/api/last_image', desc: 'The last generated image(s) and their submission timestamp, kept separate from <code>/api/status</code> to keep that endpoint lightweight.' },
+                ],
+            },
+            {
+                title: 'Errors & Logs',
+                endpoints: [
+                    { method: 'GET', path: '/api/errors', desc: 'Paginated raw error history.', params: [
+                        { name: 'page', type: 'integer', required: false, desc: '1-based page number. Default 1.' },
+                        { name: 'page_size', type: 'integer', required: false, desc: 'Errors per page. Default 10, max 100.' },
+                    ] },
+                    { method: 'GET', path: '/api/errors/grouped', desc: 'Errors grouped by normalised message text (variable IDs stripped), sorted by occurrence count.', params: [
+                        { name: 'page', type: 'integer', required: false, desc: '1-based page number. Default 1.' },
+                        { name: 'page_size', type: 'integer', required: false, desc: 'Groups per page. Default 10, max 100.' },
+                    ] },
+                    { method: 'POST', path: '/api/errors/clear', desc: 'Clear all accumulated error history, including the persisted database log.' },
+                ],
+            },
+            {
+                title: 'Settings & Models',
+                endpoints: [
+                    { method: 'GET', path: '/api/settings', desc: 'All runtime-configurable settings and their current values.' },
+                    { method: 'POST', path: '/api/settings', desc: 'Change a single runtime setting.', params: [
+                        { name: 'key', type: 'string', required: true, desc: 'The setting name.' },
+                        { name: 'value', type: 'any', required: true, desc: 'The new value; type depends on the setting.' },
+                    ] },
+                    { method: 'GET', path: '/api/models', desc: 'Enabled and disabled model lists.' },
+                    { method: 'POST', path: '/api/models', desc: 'Enable or disable a model.', params: [
+                        { name: 'model', type: 'string', required: true, desc: 'The model name.' },
+                        { name: 'enabled', type: 'boolean', required: true, desc: '<code>true</code> to enable, <code>false</code> to disable.' },
+                    ] },
+                ],
+            },
+            {
+                title: 'Maintenance & Lifecycle',
+                desc: 'Destructive or worker-lifecycle actions &mdash; as reachable externally as every other endpoint on this page, so use with care.',
+                endpoints: [
+                    { method: 'POST', path: '/api/maintenance/clear', desc: 'Clear the worker\'s Horde maintenance-mode flag.' },
+                    { method: 'POST', path: '/api/restart', desc: 'Restart the worker process. Interrupts any in-progress job processing.' },
+                    { method: 'POST', path: '/api/reset-stats', desc: 'Reset the session overview statistics displayed in the UI back to zero (does not delete underlying history).' },
+                    { method: 'POST', path: '/api/reset-database', desc: 'Permanently delete all stored history: errors, statistics, gallery images, and Horde network snapshots. Runtime settings are unaffected. Returns immediately; poll <code>/api/reset-database/progress</code> for completion.' },
+                    { method: 'GET', path: '/api/reset-database/progress', desc: 'Progress (0-100) of an in-flight database reset, or <code>null</code> if idle.' },
+                    { method: 'DELETE', path: '/api/worker/{worker_id}', desc: 'Remove an offline worker from the Horde account. Fails if the worker is online or is the one currently running.' },
+                ],
+            },
+        ];
+        var _apiPageRendered = false;
+        function _apiEndpointBlockHtml(baseUrl, ep) {
+            var h = '<div class="api-ref-endpoint-block">';
             h += '<div class="api-ref-endpoint">';
-            h += '<span class="api-ref-method">POST</span>';
-            h += '<span class="api-ref-url" id="api-ref-pause-url">' + escapeHtml(pauseUrl) + '</span>';
+            h += '<span class="api-ref-method ' + ep.method.toLowerCase() + '">' + escapeHtml(ep.method) + '</span>';
+            h += '<span class="api-ref-url">' + escapeHtml(baseUrl + ep.path) + '</span>';
             h += '</div>';
-            h += '<div class="api-ref-params-title">Pause / resume job pops &mdash; body parameters</div>';
-            h += '<table class="api-ref-table"><thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead><tbody>';
-            h += '<tr><td>paused</td><td>boolean<span class="api-ref-badge required">required</span></td><td><code>true</code> to pause accepting new jobs, <code>false</code> to resume.</td></tr>';
-            h += '<tr><td>duration_seconds</td><td>number<span class="api-ref-badge optional">optional</span></td><td>How long to pause in seconds. Omit or set to <code>null</code> for an indefinite pause.</td></tr>';
-            h += '</tbody></table>';
+            if (ep.desc) h += '<div class="api-ref-endpoint-desc">' + ep.desc + '</div>';
+            if (ep.params && ep.params.length) {
+                h += '<table class="api-ref-table"><thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead><tbody>';
+                ep.params.forEach(function(p) {
+                    var badge = '<span class="api-ref-badge ' + (p.required ? 'required">required' : 'optional">optional') + '</span>';
+                    h += '<tr><td>' + escapeHtml(p.name) + '</td><td>' + escapeHtml(p.type) + badge + '</td><td>' + p.desc + '</td></tr>';
+                });
+                h += '</tbody></table>';
+            }
             h += '</div>';
-            section.innerHTML = h;
-            body.insertBefore(section, body.firstChild);
+            return h;
+        }
+        function renderApiPage() {
+            var body = document.getElementById('api-page-body');
+            if (!body) return;
+            var baseUrl = window.location.origin.replace(/\/+$/, '');
+            var h = '';
+            _API_GROUPS.forEach(function(group) {
+                h += '<div class="settings-group api-ref-group">';
+                h += '<div class="settings-group-title">' + escapeHtml(group.title) + '</div>';
+                if (group.desc) h += '<div class="api-ref-group-desc">' + group.desc + '</div>';
+                h += '<div class="api-ref-box">';
+                group.endpoints.forEach(function(ep) { h += _apiEndpointBlockHtml(baseUrl, ep); });
+                h += '</div></div>';
+            });
+            body.innerHTML = h;
         }
 
         function renderModelsSection(enabled, disabled) {
@@ -6591,6 +6786,7 @@ class WorkerWebUI:
             "var _hordeSnapshots = [];",
             f"var _hordeSnapshots = {snaps_json};",
         )
+        html = html.replace("{{WORKER_VERSION}}", horde_worker_regen.__version__)
         return web.Response(text=html, content_type="text/html")
 
     async def _handle_delete_worker(self, request: web.Request) -> web.Response:
@@ -6700,6 +6896,25 @@ class WorkerWebUI:
         self.status_data["job_pops_paused"] = paused
         self.status_data["job_pops_pause_until"] = pause_until
         return web.json_response({"job_pops_paused": paused, "job_pops_pause_until": pause_until})
+
+    async def _handle_get_time_without_jobs(self, request: web.Request) -> web.Response:
+        """Return the total time (in seconds) this session has gone with no jobs popped or available.
+
+        Like ``/api/job_pops/pause``, this endpoint is accessible from any IP address so
+        external applications and automation scripts can poll it without needing access to
+        the local UI -- e.g. to decide when to intervene on a worker that has gone idle.
+
+        The value matches what the web UI's overview page displays: it is subject to the
+        same "reset stats" baseline subtraction as ``/api/status``'s ``time_without_jobs``
+        field, so it reflects time accumulated since the last stats reset rather than since
+        process start.
+
+        Returns 200 with ``{"time_without_jobs": <float seconds>}``.
+        """
+        reset_baseline = self.status_data.get("stats_reset_baseline") or {}
+        raw_time_without_jobs = float(self.status_data.get("time_without_jobs", 0.0))
+        time_without_jobs = max(0.0, raw_time_without_jobs - float(reset_baseline.get("time_without_jobs", 0.0)))
+        return web.json_response({"time_without_jobs": time_without_jobs})
 
     async def _handle_clear_maintenance_mode(self, request: web.Request) -> web.Response:
         """Handle a request to clear the worker's maintenance mode.

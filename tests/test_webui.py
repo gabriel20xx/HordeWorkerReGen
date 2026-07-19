@@ -2210,6 +2210,55 @@ async def test_job_pops_pause_endpoint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_time_without_jobs_endpoint() -> None:
+    """Test the GET /api/job_pops/time_without_jobs endpoint."""
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        # --- default: no status pushed yet -> 0.0 ---
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/job_pops/time_without_jobs",
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        assert body["time_without_jobs"] == 0.0
+
+        # --- reflects the value pushed via update_status ---
+        webui.update_status(time_without_jobs=123.4)
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/job_pops/time_without_jobs",
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        assert body["time_without_jobs"] == pytest.approx(123.4)
+
+        # --- subject to the same reset-stats baseline subtraction as /api/status ---
+        webui.status_data["stats_reset_baseline"] = {"time_without_jobs": 100.0}
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/job_pops/time_without_jobs",
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        assert body["time_without_jobs"] == pytest.approx(23.4)
+
+        # --- floors at 0 rather than going negative when the baseline exceeds the raw value ---
+        webui.status_data["stats_reset_baseline"] = {"time_without_jobs": 999999.0}
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/api/job_pops/time_without_jobs",
+        ) as response:
+            assert response.status == 200
+            body = await response.json()
+        assert body["time_without_jobs"] == 0.0
+
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
 async def test_webui_gallery_model_filter() -> None:
     """Test that /api/gallery?model=... filters images by model name (case-insensitive)."""
     webui = WorkerWebUI(port=0)
@@ -3329,8 +3378,8 @@ async def test_webui_settings_html_nav_and_page() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webui_settings_html_api_ref_section() -> None:
-    """Test that the settings page HTML includes the API Reference section."""
+async def test_webui_api_page_html() -> None:
+    """Test that the API page (not Settings) hosts the API reference, covering every route."""
     webui = WorkerWebUI(port=0)
 
     try:
@@ -3344,11 +3393,66 @@ async def test_webui_settings_html_api_ref_section() -> None:
             assert response.status == 200
             html = await response.text()
 
-        # API Reference section must be rendered by _renderApiRefSection
-        assert "API Reference" in html
-        assert "/api/job_pops/pause" in html
-        assert "api-ref-section" in html
-        assert "api-ref-pause-url" in html
+        # Nav item must be present, positioned after the Settings nav item.
+        assert 'id="nav-api"' in html
+        assert "showPage('api'" in html
+        assert html.index('id="nav-settings"') < html.index('id="nav-api"')
+
+        # Page container must be present.
+        assert 'id="page-api"' in html
+        assert 'id="api-page-body"' in html
+
+        # A representative sample of routes across every group must be documented.
+        for path in (
+            "/api/status",
+            "/health",
+            "/api/job_pops/pause",
+            "/api/job_pops/time_without_jobs",
+            "/api/gallery",
+            "/api/errors",
+            "/api/settings",
+            "/api/reset-database",
+            "/api/worker/{worker_id}",
+        ):
+            assert path in html
+
+        # The old settings-page-only API reference implementation must be gone.
+        assert "api-ref-pause-url" not in html
+    finally:
+        await webui.stop()
+
+
+@pytest.mark.asyncio
+async def test_webui_about_page_html() -> None:
+    """Test that the About page is present, last in the navigation, and shows the tech stack."""
+    import horde_worker_regen
+
+    webui = WorkerWebUI(port=0)
+
+    try:
+        await webui.start()
+        await asyncio.sleep(0.5)
+        actual_port = webui.site._server.sockets[0].getsockname()[1] if webui.site else 0
+
+        async with aiohttp.ClientSession() as session, session.get(
+            f"http://localhost:{actual_port}/",
+        ) as response:
+            assert response.status == 200
+            html = await response.text()
+
+        # Nav item must be present and be the last nav item (after API).
+        assert 'id="nav-about"' in html
+        assert "showPage('about'" in html
+        assert html.index('id="nav-api"') < html.index('id="nav-about"')
+
+        # Page container must be present with the actual running version substituted in.
+        assert 'id="page-about"' in html
+        assert "{{WORKER_VERSION}}" not in html
+        assert f"Version {horde_worker_regen.__version__}" in html
+
+        # A sample of the documented tech stack must be present.
+        for tech in ("Python 3.10+", "aiohttp", "SQLite", "PyTorch", "Pydantic"):
+            assert tech in html
     finally:
         await webui.stop()
 
