@@ -3423,6 +3423,34 @@ class WorkerWebUI:
                 loadGalleryThumbnails(_currentPageGalleryIds);
             }
         }
+        // Stops the loading shimmer on the given tiles without populating an image — used both
+        // when a thumbnail batch request fails and for ids a successful response didn't cover.
+        function _clearGalleryTileLoadingState(galleryIds) {
+            galleryIds.forEach(galleryId => {
+                const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
+                if (container) container.classList.remove('loading');
+            });
+        }
+        // Applies a /api/gallery response's image entries to the currently rendered grid: caches
+        // each thumbnail and updates the matching <img> if it is present in the DOM. Shared by
+        // loadGalleryThumbnails() and fetchGalleryPage()'s concurrent thumbnail fetch so both
+        // paths stay in sync.
+        function _applyGalleryThumbnailBatch(images) {
+            (images || []).forEach(entry => {
+                const galleryId = entry.gallery_id;
+                const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
+                const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
+                const thumbSrc = entry.thumbnail ? 'data:image/jpeg;base64,'+entry.thumbnail : (entry.base64 ? 'data:image/png;base64,'+entry.base64 : null);
+                // Only cache actual JPEG thumbnails (Pillow-generated, small).
+                // When Pillow is absent the response falls back to full-resolution PNG;
+                // caching those would balloon memory for workers without Pillow.
+                if (entry.thumbnail && thumbSrc) { _cacheThumbnail(galleryId, thumbSrc); }
+                if (thumbSrc && imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
+                // Always remove the shimmer class; if no image data was returned the tile
+                // shows as an empty placeholder rather than spinning indefinitely.
+                if (container) container.classList.remove('loading');
+            });
+        }
         function loadGalleryThumbnails(galleryIds) {
             // Increment the batch ID so any stale responses from a previous page are discarded.
             const batchId = ++_galleryThumbnailBatchId;
@@ -3432,10 +3460,6 @@ class WorkerWebUI:
             // Skip ids already in cache — they were rendered directly by the skeleton.
             const idsNeeded = galleryIds.filter(id => !_galleryThumbnailCache.has(id));
             if (idsNeeded.length === 0) return;
-            function setTileLoadError(galleryId) {
-                const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
-                if (container) container.classList.remove('loading');
-            }
             // Re-request the current page without metadata_only: the server already batches
             // thumbnail lookups (including the DB fallback for ones evicted from RAM) into a
             // single response, so this is one HTTP round-trip for the whole page instead of
@@ -3449,27 +3473,42 @@ class WorkerWebUI:
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                 .then(data => {
                     if (batchId !== _galleryThumbnailBatchId) return;
-                    (data.images || []).forEach(entry => {
-                        const galleryId = entry.gallery_id;
-                        const container = document.querySelector('.image-grid-item[data-gallery-id="'+galleryId+'"],.gallery-list-item[data-gallery-id="'+galleryId+'"]');
-                        const imgEl = container ? container.querySelector('img[data-gallery-id="'+galleryId+'"]') : null;
-                        const thumbSrc = entry.thumbnail ? 'data:image/jpeg;base64,'+entry.thumbnail : (entry.base64 ? 'data:image/png;base64,'+entry.base64 : null);
-                        // Only cache actual JPEG thumbnails (Pillow-generated, small).
-                        // When Pillow is absent the response falls back to full-resolution PNG;
-                        // caching those would balloon memory for workers without Pillow.
-                        if (entry.thumbnail && thumbSrc) { _cacheThumbnail(galleryId, thumbSrc); }
-                        if (thumbSrc && imgEl) { imgEl.src = thumbSrc; imgEl.style.display = ''; }
-                        // Always remove the shimmer class; if no image data was returned the tile
-                        // shows as an empty placeholder rather than spinning indefinitely.
-                        if (container) container.classList.remove('loading');
-                    });
+                    _applyGalleryThumbnailBatch(data.images);
                 })
                 .catch(err => {
                     if (err.name === 'AbortError') return;
                     console.error('Gallery thumbnail batch load error:', err);
                     // On error, stop the shimmer for every tile still waiting so nothing spins forever.
-                    idsNeeded.forEach(setTileLoadError);
+                    _clearGalleryTileLoadingState(idsNeeded);
                 });
+        }
+        // AbortController for the background next-page prefetch; aborted if a new prefetch
+        // (or a real page navigation) supersedes it before it completes.
+        let _galleryPrefetchAbort = null;
+        // Warms _galleryThumbnailCache for an adjacent page so that navigating there can
+        // render straight from cache instead of waiting on a network round trip. This only
+        // ever primes the thumbnail cache -- the real navigation still performs its own
+        // metadata fetch, so if new images arrive in the meantime and shift page boundaries,
+        // the prefetch just becomes a partial cache hit rather than showing stale data.
+        function prefetchAdjacentGalleryPage(page) {
+            if (page < 1 || page > galleryTotalPages || page === galleryCurrentPage) return;
+            if (_galleryPrefetchAbort) { try { _galleryPrefetchAbort.abort(); } catch(_){} }
+            const ctrl = new AbortController();
+            _galleryPrefetchAbort = ctrl;
+            const modelParam = galleryModelFilter ? '&model='+encodeURIComponent(galleryModelFilter) : '';
+            const safetyParam = gallerySafetyFilter ? '&safety='+encodeURIComponent(gallerySafetyFilter) : '';
+            fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+modelParam+safetyParam,
+                { signal: ctrl.signal, priority: 'low' })
+                .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                .then(data => {
+                    (data.images || []).forEach(entry => {
+                        const galleryId = entry.gallery_id;
+                        if (_galleryThumbnailCache.has(galleryId)) return;
+                        const thumbSrc = entry.thumbnail ? 'data:image/jpeg;base64,'+entry.thumbnail : (entry.base64 ? 'data:image/png;base64,'+entry.base64 : null);
+                        if (entry.thumbnail && thumbSrc) _cacheThumbnail(galleryId, thumbSrc);
+                    });
+                })
+                .catch(err => { if (err.name !== 'AbortError') console.debug('Gallery prefetch skipped:', err); });
         }
         function fetchGalleryPage(page) {
             if (galleryFetchInProgress) return;
@@ -3479,18 +3518,54 @@ class WorkerWebUI:
             const glEl = document.getElementById('gallery-loading'), geEl = document.getElementById('gallery-empty');
             if (glEl) glEl.style.display = 'block';
             if (geEl) geEl.style.display = 'none';
-            // Phase 1: fetch lightweight metadata only so the page skeleton can be shown
-            // immediately without waiting for all thumbnail data to transfer.
             const modelParam = galleryModelFilter ? '&model='+encodeURIComponent(galleryModelFilter) : '';
             const safetyParam = gallerySafetyFilter ? '&safety='+encodeURIComponent(gallerySafetyFilter) : '';
+            // Fire the metadata (skeleton) request and the thumbnail-bearing request for this
+            // page at the same time instead of sequentially. This is the path used whenever the
+            // Gallery tab is opened with an empty grid — i.e. the coldest possible cache, where
+            // page 1's thumbnails have never been fetched — so there is no "already cached" fast
+            // path to lose by not waiting on phase 1 before starting phase 2. Previously phase 2
+            // only began after phase 1's full round trip completed and the skeleton had already
+            // rendered; starting both together removes that extra round trip from time-to-thumbnail.
+            const thumbBatchId = ++_galleryThumbnailBatchId;
+            if (_galleryBatchAbort) { try { _galleryBatchAbort.abort(); } catch(_){} }
+            const batchAbort = new AbortController();
+            _galleryBatchAbort = batchAbort;
+            const thumbPromise = fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+modelParam+safetyParam,
+                { signal: batchAbort.signal, priority: 'low' })
+                .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+                .catch(err => {
+                    if (err.name === 'AbortError') return null;
+                    console.error('Gallery thumbnail batch load error:', err);
+                    return null;
+                });
+
             fetch('/api/gallery?page='+page+'&page_size='+galleryPageSize+'&metadata_only=true'+modelParam+safetyParam)
                 .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
                 .then(data => {
                     if (glEl) glEl.style.display = 'none';
                     renderGalleryPageSkeleton(data.images, data.total, data.page, data.total_pages);
                     galleryFetchInProgress = false;
-                    // Phase 2: fetch all thumbnails for the page in a single batched request.
-                    loadGalleryThumbnails(data.images.map(img => img.gallery_id));
+                    const galleryIds = data.images.map(img => img.gallery_id);
+                    // Apply thumbnails as soon as the (already in-flight) batch request settles —
+                    // immediately if it beat the metadata request back, otherwise as soon as it
+                    // arrives. On failure, clear the shimmer instead of leaving tiles spinning.
+                    thumbPromise.then(thumbData => {
+                        if (thumbBatchId !== _galleryThumbnailBatchId) return;
+                        if (thumbData) {
+                            _applyGalleryThumbnailBatch(thumbData.images);
+                        } else {
+                            _clearGalleryTileLoadingState(galleryIds);
+                        }
+                    });
+                    // Warm the next page's thumbnail cache in the background (after this
+                    // page's own request is underway) so clicking "Next" typically renders
+                    // instantly instead of waiting on a fresh round trip.
+                    if (typeof requestIdleCallback === 'function') {
+                        requestIdleCallback(function() { prefetchAdjacentGalleryPage(page + 1); }, { timeout: 2000 });
+                    } else {
+                        setTimeout(function() { prefetchAdjacentGalleryPage(page + 1); }, 300);
+                    }
                 })
                 .catch(err => {
                     console.error('Gallery fetch error:', err);
